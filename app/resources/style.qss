@@ -1,0 +1,85 @@
+/* 전역 */
+* { font-family: "Malgun Gothic", "Noto Sans CJK KR", sans-serif; }
+QMainWindow, QWidget { background: #f5f7fa; color: #111; }
+
+/* 메인 타이틀: 카드 없이 큼직하고 굵게 */
+#MainTitle {
+  font-size: 26px;      /* '조금 더 큰' */
+  font-weight: 800;     /* 두껍게 */
+  color: #0f172a;
+  padding-left: 4px;
+}
+
+/* 카드 공통 */
+#Card {
+  background: #ffffff;
+  border: 1px solid #e6e9ef;
+  border-radius: 10px;  /* 너무 각지지 않게, 과도하게 둥글지도 않게 */
+}
+
+/* ✅ 카드 제목 라벨은 카드 배경과 동일하게 보이도록 완전 투명 처리 */
+#CardTitle {
+  color: #111827;
+  background: transparent;
+}
+#Card QLabel {
+  background: transparent;
+}
+
+/* 자리표시자 텍스트 */
+#Placeholder {
+  color: #6b7280;
+  font-style: italic;
+}
+
+/* 버튼/라인에딧 */
+QPushButton {
+  background: #2563eb;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  padding: 6px 12px;
+}
+QPushButton:hover { background: #1d4ed8; }
+QPushButton:pressed { background: #1e40af; }
+
+QLineEdit {
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+QLineEdit:focus {
+  border: 1px solid #2563eb;
+}
+
+/* 결합 모듈의 로그 박스: 각진 사각 + 검정 배경 */
+#LogBox {
+  background: #0b1020;
+  color: #e5e7eb;
+  border: 1px solid #1f2937;
+  border-radius: 0;     /* 둥근 모서리 제거 (각진 사각) */
+  padding: 8px;
+}
+
+/* 하단 검정 바(빈틈 없이 전체 폭, 각진) */
+#FooterFull {
+  background: #111111;
+  color: #ffffff;
+  border-radius: 0;
+  padding: 8px 10px;
+}
+
+QPushButton#ModeBtn {
+  background: #eef1f6;
+  color: #111;
+  border: 1px solid #cfd5e1;
+  border-radius: 12px;
+  font-weight: 600;
+}
+QPushButton#ModeBtn:hover {
+  background: #e6ebf3;
+}
+QPushButton#ModeBtn:pressed {
+  background: #dde3ee;
+}
