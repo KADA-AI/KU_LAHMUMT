@@ -69,7 +69,7 @@ class FlowVisualizer(QWidget):
         self.font_title.setBold(True)
 
     # ----------------------- Public API -----------------------
-    def trigger(self, module: str, direction: str = "in", speed: float = 0.9, ttl: float = 1.4):
+    def trigger(self, module: str, direction: str = "in", speed: float = 1.5, ttl: float = 0.1):
         """
         특정 모듈의 화살표에 '빛나는 흐름' 애니메이션 트리거
         module: "monitor" | "mission" | "decision"
@@ -142,8 +142,9 @@ class FlowVisualizer(QWidget):
         arrow_out_len = arrow_in_len
 
         # 각 박스 중앙 y에서 좌우로 그릴 화살표 y
-        centers = {k: int(r.y() + r.height() / 2) for k, r in boxes.items()}
-
+        offset_y = -10   # 위로 10픽셀 올림 (필요 시 값 조정)
+        centers = {k: int(r.y() + r.height() / 2) + offset_y for k, r in boxes.items()}
+        
         return {
             "spine": (spine_x, spine_t, spine_b),
             "boxes": boxes,

@@ -1,0 +1,10 @@
+# MissionID 0301 임무계획
+
+ulong timestamp
+uint missionPlanID
+ulong missionPlanTimestamp
+float planningTime
+uint plannerID
+uint inputMissionPackageID
+uint missionReferencePackageID
+List<Aircraft> aircraftList

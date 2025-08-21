@@ -1,0 +1,10 @@
+# MessageID 0203 비행참조정보
+
+ulong timestamp
+uint missionReferencePackageID
+ulong inputTimestamp
+List<TakeOverInfo> takeOverInfoList
+List<HandOverInfo> handOverInfoList
+List<RTBCoordinate> rtbCoordinateList
+List<FlightArea> flightAreaList
+List<ProhibitedArea> prohibitedAreaList

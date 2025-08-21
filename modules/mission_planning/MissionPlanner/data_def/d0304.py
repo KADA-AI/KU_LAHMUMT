@@ -1,0 +1,184 @@
+# ──────────────────────────────────────────────────────────────────
+# d0304.py  ― LAH FlightPlan (aircraft 1·2·3) 고정 100 m 버전
+#           · 2번: +100 m north, 3번: –100 m north offset
+# ──────────────────────────────────────────────────────────────────
+from __future__ import annotations
+import math
+from collections import OrderedDict
+from typing import List, Tuple
+
+from .mission_helpers import now_ms_since_2000
+
+WP_INTERVAL_M = 500.0        # Waypoint 간격(m) ─ 기본값
+
+# ── 고정 WP 확장 블록 ─────────────────────────────────────────────
+_DEFAULT_WP_EXT = OrderedDict([
+    ("hovering", OrderedDict([("time", 0)])),
+    ("loiter",   OrderedDict([
+        ("radius",    0),
+        ("direction", 0),
+        ("time",      0),
+        ("speed",     0),
+    ])),
+    ("attack",   OrderedDict([
+        ("targetID",   0),      # ← 반드시 0
+        ("weaponType", 0),
+    ])),
+])
+
+# ── ID 할당기 ────────────────────────────────────────────────────
+class _WPAllocator:
+    def __init__(self, start: int = 1):
+        self._next = start
+    def alloc(self) -> int:
+        if self._next > 65_535:
+            raise RuntimeError("WaypointID pool exhausted")
+        wid = self._next
+        self._next += 1
+        return wid
+
+# ── 좌표 오프셋(N/E[m]) → lat/lon 변환 ───────────────────────────
+def _offset_coord(lat: float, lon: float,
+                  north_m: float = 0.0,
+                  east_m: float  = 0.0) -> Tuple[float, float]:
+    """
+    위도·경도 점을 북쪽/동쪽 거리(m)만큼 평면 이동시킨 좌표 반환
+    (+north = 북, +east = 동). 100 m 급 이동에 충분한 근사치.
+    """
+    k = 111_132.92                         # m/deg (위도)
+    dlat = north_m / k
+    dlon = east_m  / (k * math.cos(math.radians(lat)))
+    return lat + dlat, lon + dlon
+
+# ── 두 점 사이 고정 간격 분할 ────────────────────────────────────
+def _split_line(p0: Tuple[float, float],
+                p1: Tuple[float, float],
+                step_m: float = WP_INTERVAL_M) -> List[Tuple[float, float]]:
+    lat1, lon1 = p0; lat2, lon2 = p1
+    k = 111_132.92
+    cos = math.cos(math.radians((lat1 + lat2) / 2))
+    dx = (lon2 - lon1) * k * cos; dy = (lat2 - lat1) * k
+    dist = math.hypot(dx, dy)
+    if dist < 1e-6:
+        return []
+    n_seg = int(dist // step_m)
+    return [
+        (
+            lat1 + (lat2 - lat1) * (i * step_m / dist),
+            lon1 + (lon2 - lon1) * (i * step_m / dist),
+        )
+        for i in range(1, n_seg + 1)
+    ] + [p1]
+
+# ── 패킷 검증 ────────────────────────────────────────────────────
+def _validate_lah_flight_plans(pkts: List[dict]) -> None:
+    seen_path = set()
+    for pidx, pkt in enumerate(pkts, 1):
+        aid = pkt["aircraftID"]
+        if aid not in (1, 2, 3):
+            raise ValueError(f"[0304] pkt#{pidx}: aircraftID must be 1–3")
+        path_id = pkt["pathID"]
+        if path_id in seen_path:
+            raise ValueError(f"[0304] duplicate pathID {path_id}")
+        seen_path.add(path_id)
+        lo = {1:100_000_001, 2:200_000_001, 3:300_000_001}[aid]
+        if not (lo <= path_id < lo+100_000_000):
+            raise ValueError(f"[0304] aircraft {aid}: pathID {path_id} out of range")
+
+        for widx, wp in enumerate(pkt["waypointList"], 1):
+            atk = wp.get("attack")
+            if atk is None:
+                raise ValueError(f"[0304] pkt#{pidx}/wp#{widx}: 'attack' 필드 없음")
+            tid = atk.get("targetID")
+            if not isinstance(tid, int):
+                raise ValueError(f"[0304] pkt#{pidx}/wp#{widx}: targetID must be int")
+            if not (0 <= tid <= 0xFFFFFFFF):
+                raise ValueError(f"[0304] pkt#{pidx}/wp#{widx}: targetID out of range")
+
+# ── 메인 빌더 ────────────────────────────────────────────────────
+def build_lah_flight_plans_fixed(
+    missions: List[dict],
+    *,
+    cruise_speed: float = 40.0,
+    wp_interval_m: float = WP_INTERVAL_M,
+    wp_alloc: _WPAllocator | None = None,
+) -> List[dict]:
+    """
+    0302 → 0304 FlightPlan 변환.
+    · LAH-1 은 원본 좌표 그대로 사용
+    · LAH-2 → 경로 전체를 +100 m 북쪽(offset = +100 m north)
+    · LAH-3 → 경로 전체를 –100 m 북쪽(offset = -100 m north)
+    """
+    wp_alloc = wp_alloc or _WPAllocator()
+    now_ms   = now_ms_since_2000()
+    packets: List[dict] = []
+
+    for miss in missions:
+        aid = miss["aircraftID"]
+        if aid not in (1, 2, 3):
+            continue  # LAH 기체가 아니면 skip
+
+        path_id = miss.get("pathID")
+        if path_id is None:
+            raise ValueError(f"[0304] aircraft {aid}: mission missing pathID")
+
+        info   = miss.get("individualMissionInfo", {})
+        coords = [(c["latitude"], c["longitude"])
+                  for c in info.get("coordinateList", [])]
+        if not coords:
+            continue
+
+        # ── 100 m 오프셋 적용 ─────────────────────────
+        offset_north = 0.0
+        if aid == 2:
+            offset_north = 100.0      # +100 m north
+        elif aid == 3:
+            offset_north = -100.0     # –100 m north
+        if offset_north:
+            coords = [_offset_coord(lat, lon, north_m=offset_north)
+                      for lat, lon in coords]
+        # ─────────────────────────────────────────────
+
+        is_move = len(coords) > 1
+        path: List[Tuple[float, float]] = [coords[0]]
+        if is_move:
+            for p, q in zip(coords, coords[1:]):
+                path.extend(_split_line(p, q, step_m=wp_interval_m))
+
+        total_len = max((len(path) - 1) * wp_interval_m, 1.0)
+        cum_len   = 0.0
+        wplist    = []
+
+        for idx, (lat, lon) in enumerate(path):
+            if idx:
+                cum_len += wp_interval_m
+            eta_ms = int(cum_len / cruise_speed * 1000) if idx else 0
+            ecf    = 1.0 if len(path) == 1 else round(cum_len / total_len, 2)
+
+            wp = OrderedDict([
+                ("waypointID", wp_alloc.alloc()),
+                ("coordinate", {
+                    "latitude":  round(lat, 6),
+                    "longitude": round(lon, 6),
+                    "altitude":  300,
+                }),
+                ("speed", cruise_speed),
+                ("eta",   eta_ms),
+                ("ecf",   ecf),
+                ("nextWaypointID", 0),
+            ])
+            wp.update(_DEFAULT_WP_EXT)
+            wplist.append(wp)
+
+        for i in range(len(wplist) - 1):
+            wplist[i]["nextWaypointID"] = wplist[i + 1]["waypointID"]
+
+        packets.append(OrderedDict([
+            ("timestamp",   now_ms),
+            ("pathID",      path_id),
+            ("aircraftID",  aid),
+            ("waypointList", wplist),
+        ]))
+
+    _validate_lah_flight_plans(packets)
+    return packets

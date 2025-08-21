@@ -1,0 +1,8 @@
+# MissionID 0303 무인기 비행계획
+
+ulong timestamp
+uint pathID
+uint aircraftID
+bool isFormationFlight
+Formation formation
+List<Waypoint> waypointList
