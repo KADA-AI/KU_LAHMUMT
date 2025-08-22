@@ -1,31 +1,30 @@
-# generator/message0601_generator.py
-
-import random
+# push/message0601_push.py
+from System.Collections.Generic import List
+from nFusion.Model.msg_0601 import *
+from generator.message0601_generator import make_msg0601_body  # 메시지 바디 생성기
 import json
-from datetime import datetime, timezone
 
-# ── 공통 유틸 ─────────────────────────────────────────────
-_EPOCH_2000 = datetime(2000, 1, 1, tzinfo=timezone.utc)
-_now_ms = lambda: int((datetime.utcnow().replace(tzinfo=timezone.utc) -
-                       _EPOCH_2000).total_seconds() * 1000)
 
-rand_int = lambda lo, hi: random.randint(lo, hi)
-# ─────────────────────────────────────────────────────────
 
-def make_msg0601_body() -> dict:
-    """
-    0601 – UnderlyingAction 랜덤 바디 (소문자 키)
-    • timestamp   : ulong (8 bytes, ms since 2000-01-01)
-    • aircraft    : uint[1] (1 byte, 0~6)
-    • flightMode  : uint[1] (1 byte, 0~9)
-    • filmingMode : uint[1] (1 byte, 0~6)
-    """
-    return {
-        "timestamp"   : _now_ms(),
-        "aircraft"    : rand_int(0, 6),
-        "flightMode"  : rand_int(0, 9),
-        "filmingMode" : rand_int(0, 6),
-    }
 
-if __name__ == "__main__":
-    print(json.dumps(make_msg0601_body(), ensure_ascii=False, indent=2))
+def _dict_to_obj(body: dict):
+    ua = BasicAction()
+    ua.timestamp    = body["timestamp"]
+    ua.aircraft     = body["aircraft"]
+    ua.flightMode   = body["flightMode"]
+    ua.filmingMode  = body["filmingMode"]
+    return ua
+
+def make_and_push(body_dict: dict, node_messenger) -> bytes:
+    msg = _dict_to_obj(body_dict)
+    #print(f"Message pushed: {msg}")
+    node_messenger.Push(msg)
+
+    log_line = (
+        f"[0601] BODY  : {json.dumps(body_dict, ensure_ascii=False)}\n"
+        f"[0601] PUSH 완료"
+    )
+    return log_line.encode()
+
+def make_random_and_push(node_messenger) -> None:
+    return make_and_push(make_msg0601_body(), node_messenger)

@@ -138,45 +138,79 @@
 #   • PLAN_DIR 안 *.json → 파일명 숫자 = individualMissionPackageID
 #   • {timestamp, individualMissionPackageID} 두 필드만 채워 Push
 # ─────────────────────────────────────────────────────────────
-import os, glob, json, time
-from nFusion.Model.msg_0302 import *      # IndividualMissionPlan 포함
-from datetime import datetime, timezone   # ← 추가
+# 파일: modules\common\push\message0302_push.py
+# 목적: 0302(IndividualMissionPlan) PUSH - DB 루트 경로를 ENV(KU_MISSION_DB_ROOT)로부터 수신
+# 동작:
+#   • (ENV) KU_MISSION_DB_ROOT/IndividualMissionPlan 아래의 *.json 파일 스캔
+#   • 파일명 숫자 → individualMissionPackageID 로 간주
+#   • {timestamp(ms since 2000-01-01 UTC), individualMissionPackageID} 최소 필드만 채워 Push
+# 반환:
+#   • make_and_push(...) → bytes (GUI 로그용)
+#   • make_random_and_push(...) → bytes (여러 건이면 \n로 합침), 없으면 None
 
-_EPOCH_2000 = datetime(2000, 1, 1, tzinfo=timezone.utc)
-_now_ms     = lambda: int(
-    (datetime.utcnow().replace(tzinfo=timezone.utc) - _EPOCH_2000).total_seconds() * 1000
-)
+from __future__ import annotations
+import os
+import glob
+import json
+from pathlib import Path
+from datetime import datetime, timezone
+from typing import List as PyList, Optional
 
-# 1) ★ IndividualMissionPlan JSON 저장 위치 (절대경로) ------------
-PLAN_DIR = r"C:\Users\LAHMUMT_2\Desktop\nFusion\missionPlanner\plannedMission\IndividualMissionPlan"
-
+# C# 메시지 타입 (nFusion 바인딩)
+from nFusion.Model.msg_0302 import IndividualMissionPlan  # noqa: F401
+from nFusion.Model.msg_0302 import *  # IndividualMission, RelatedMission 등은 사용 안 하지만 호환 위해 유지
 
 # ─────────────────────────────────────────────────────────────
-def _dict_to_obj(body_dict: dict):
+# 타임스탬프: 2000-01-01 00:00:00 UTC 기준 ms
+_EPOCH_2000 = datetime(2000, 1, 1, tzinfo=timezone.utc)
+_now_ms = lambda: int((datetime.utcnow().replace(tzinfo=timezone.utc) - _EPOCH_2000).total_seconds() * 1000)
+
+def _get_imp_dir() -> str:
+    r"""
+    KU_MISSION_DB_ROOT가 있으면 <root>\IndividualMissionPlan
+    없으면 '프로젝트 루트\database\IndividualMissionPlan' 로 폴백
+    (이 파일 경로: ...\modules\common\push\message0302_push.py)
+      └ parents[1] = common
+      └ parents[2] = modules
+      └ parents[3] = 프로젝트 루트
+    """
+    env_root = os.getenv("KU_MISSION_DB_ROOT")
+    if env_root:
+        return str(Path(env_root) / "IndividualMissionPlan")
+
+    proj_root = Path(__file__).resolve().parents[3]  # ← 프로젝트 루트
+    return str(proj_root / "database" / "IndividualMissionPlan")
+
+
+def _list_package_ids() -> PyList[int]:
+    """
+    IndividualMissionPlan 디렉터리의 *.json 파일명 → 숫자 individualMissionPackageID 목록
+    ex) '700123.json' -> 700123
+    """
+    imp_dir = _get_imp_dir()
+    ids: PyList[int] = []
+    for path in glob.glob(os.path.join(imp_dir, "*.json")):
+        stem = os.path.splitext(os.path.basename(path))[0]
+        if stem.isdigit():
+            ids.append(int(stem))
+    return sorted(ids)
+
+
+def _dict_to_obj(body_dict: dict) -> IndividualMissionPlan:
     """
     dict → IndividualMissionPlan(C# 객체)
     • 요구사항: timestamp / individualMissionPackageID 두 필드만 세팅
     """
     imp = IndividualMissionPlan()
-    imp.timestamp                  = body_dict["timestamp"]
-    imp.individualMissionPackageID = body_dict["individualMissionPackageID"]
-    # aircraftID·individualMissionList 등은 기본값(0, null) 유지
+    imp.timestamp = int(body_dict["timestamp"])
+    imp.individualMissionPackageID = int(body_dict["individualMissionPackageID"])
+    # aircraftID / individualMissionList 등 나머지는 기본값 유지
     return imp
 
 
-def _list_plan_ids() -> list[int]:
-    """PLAN_DIR의 *.json 파일명을 숫자 individualMissionPackageID 목록으로 반환"""
-    ids: list[int] = []
-    for path in glob.glob(os.path.join(PLAN_DIR, "*.json")):
-        stem = os.path.splitext(os.path.basename(path))[0]
-        if stem.isdigit():          # ex) "700123"
-            ids.append(int(stem))
-    return sorted(ids)
-
-
-def make_and_push(body_dict: dict, node_messenger) -> bytes | None:
+def make_and_push(body_dict: dict, node_messenger) -> Optional[bytes]:
     """
-    dict → IndividualMissionPlan(C#) 변환 후 Push · GUI 로그 bytes 반환
+    단건 생성·전송 + GUI 로그 생성
     """
     msg = _dict_to_obj(body_dict)
     node_messenger.Push(msg)
@@ -188,15 +222,15 @@ def make_and_push(body_dict: dict, node_messenger) -> bytes | None:
     return log_line.encode()
 
 
-def make_random_and_push(node_messenger) -> bytes | None:
+def make_random_and_push(node_messenger) -> Optional[bytes]:
     """
-    • PLAN_DIR의 *.json → individualMissionPackageID 추출
+    • (ENV) KU_MISSION_DB_ROOT/IndividualMissionPlan 의 *.json → individualMissionPackageID 추출
     • 2000-01-01 UTC 기준 ms 단위 timestamp 로 전송
     """
-    logs: list[bytes] = []
-    for pid in _list_plan_ids():
+    logs: PyList[bytes] = []
+    for pid in _list_package_ids():
         body = {
-            "timestamp": _now_ms(),      # ← 여기!
+            "timestamp": _now_ms(),
             "individualMissionPackageID": pid,
         }
         log = make_and_push(body, node_messenger)
@@ -204,4 +238,3 @@ def make_random_and_push(node_messenger) -> bytes | None:
             logs.append(log)
 
     return b"\n".join(logs) if logs else None
-# ─────────────────────────────────────────────────────────────

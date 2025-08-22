@@ -1,0 +1,8 @@
+uint aircraftID
+bool isUnmanned
+CommonType.Coordinate coordinate
+Velocity velocity
+float fuel
+uint health
+MannedInfo mannedInfo
+UnmannedInfo unmannedInfo

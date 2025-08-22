@@ -1,48 +1,57 @@
-# message0203_generator.py
+# generator/message0203_generator.py
 import random
 import string
-import time
 import json
+from datetime import datetime, timezone
 
+# ---------- 공통: 2000-01-01 UTC 기준 ms ----------
+_EPOCH_2000 = datetime(2000, 1, 1, tzinfo=timezone.utc)
+def _now_ms() -> int:
+    return int((datetime.utcnow().replace(tzinfo=timezone.utc) - _EPOCH_2000).total_seconds() * 1000)
+
+# ---------- 랜덤 유틸 ----------
 UINT32_MAX = (1 << 32) - 1
-rand_uint32 = lambda: random.randint(0, UINT32_MAX)      # 0 ~ 4 294 967 295
+rand_uint32 = lambda: random.randint(0, UINT32_MAX)      # 0 ~ 4,294,967,295
 
-rand_str8  = lambda: ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
-rand_int   = lambda lo=0, hi=100: random.randint(lo, hi)
-rand_float = lambda lo, hi, nd=6: round(random.uniform(lo, hi), nd)
+def rand_int(lo=0, hi=100) -> int:
+    return random.randint(lo, hi)
+
+def rand_float(lo: float, hi: float, nd: int = 6) -> float:
+    return round(random.uniform(lo, hi), nd)
 
 rand_lat = lambda: rand_float(-90,   90, 6)
 rand_lon = lambda: rand_float(-180, 180, 6)
-rand_alt = lambda: rand_float(0, 50000, 1)
+rand_alt = lambda: rand_int(0, 50000)   # ← altitude는 int로 고정
 
-def _coord():
+def _coord() -> dict:
     return {
         "latitude":  rand_lat(),
         "longitude": rand_lon(),
-        "altitude":  rand_alt()
+        "altitude":  rand_alt(),   # int
     }
 
-def _area_lat_lon():
+def _area_lat_lon() -> dict:
     return {
         "latitude":  rand_lat(),
-        "longitude": rand_lon()
+        "longitude": rand_lon(),
     }
 
-def _altitude_limits():
-    # lowerLimit이 upperLimit보다 작도록 정렬
+def _altitude_limits() -> dict:
     a = rand_alt()
     b = rand_alt()
     lower, upper = (a, b) if a <= b else (b, a)
     return {
-        "lowerLimit": lower,
-        "upperLimit": upper
+        "lowerLimit": lower,   # int
+        "upperLimit": upper,   # int
     }
 
 def make_msg0203_body() -> dict:
     """
     FlightReferenceInfo(0203) 메시지 바디 생성 (소문자 카멜)
+    - timestamp / inputTimestamp : 2000-01-01 UTC 기준 ms
+    - altitude 관련 값은 모두 int
     """
-    now_ms = int(time.time() * 1000)
+    now_ms = _now_ms()
     body = {
         "timestamp":                  now_ms,
         "missionReferencePackageID":  rand_uint32(),
@@ -51,24 +60,22 @@ def make_msg0203_body() -> dict:
         "handOverInfoList":           [],
         "rtbCoordinateList":          [],
         "flightAreaList":             [],
-        "prohibitedAreaList":         []
+        "prohibitedAreaList":         [],
     }
 
     # TakeOverInfoList (1~3개)
     for _ in range(rand_int(1, 3)):
-        entry = {
+        body["takeOverInfoList"].append({
             "aircraftID": rand_int(0, 6),
-            "coordinate": _coord()
-        }
-        body["takeOverInfoList"].append(entry)
+            "coordinate": _coord(),
+        })
 
     # HandOverInfoList (1~3개)
     for _ in range(rand_int(1, 3)):
-        entry = {
+        body["handOverInfoList"].append({
             "aircraftID": rand_int(0, 6),
-            "coordinate": _coord()
-        }
-        body["handOverInfoList"].append(entry)
+            "coordinate": _coord(),
+        })
 
     # RTBCoordinateList (1~4개)
     for _ in range(rand_int(1, 4)):
@@ -76,21 +83,19 @@ def make_msg0203_body() -> dict:
 
     # FlightAreaList (1~2개)
     for _ in range(rand_int(1, 2)):
-        area = {
+        body["flightAreaList"].append({
             "flightAreaID":   rand_uint32(),
             "areaLatLonList": [_area_lat_lon() for _ in range(rand_int(3, 6))],
-            "altitudeLimits": _altitude_limits()
-        }
-        body["flightAreaList"].append(area)
+            "altitudeLimits": _altitude_limits(),
+        })
 
     # ProhibitedAreaList (0~2개)
     for _ in range(rand_int(0, 2)):
-        area = {
+        body["prohibitedAreaList"].append({
             "prohibitedAreaID": rand_uint32(),
             "areaLatLonList":   [_area_lat_lon() for _ in range(rand_int(3, 6))],
-            "altitudeLimits":   _altitude_limits()
-        }
-        body["prohibitedAreaList"].append(area)
+            "altitudeLimits":   _altitude_limits(),
+        })
 
     return body
 

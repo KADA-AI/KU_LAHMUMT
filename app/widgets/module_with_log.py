@@ -72,7 +72,7 @@ class ModuleWithLog(Card):
         row_titles.setContentsMargins(0, 0, 0, 0)
         row_titles.setSpacing(24)
         lbl_rx = QLabel("수신 목록", self)
-        lbl_tx = QLabel("송신 목록", self)
+        lbl_tx = QLabel("발신 목록", self)
         lbl_rx.setObjectName("TableTitle")
         lbl_tx.setObjectName("TableTitle")
         row_titles.addWidget(lbl_rx, 1, alignment=Qt.AlignLeft)
@@ -192,5 +192,29 @@ class ModuleWithLog(Card):
             self._set_count(self.table_tx, str(code), int(cnt), self.tx_row, self.tx_counts)
 
     def append_log(self, text: str):
-        """로그 추가"""
+        """
+        같은 텍스트가 짧은 시간(0.8s) 안에 연속으로 들어오면 중복 로깅을 막는다.
+        (대시보드에서 동일 문구 브로드캐스트가 겹쳐도 카드에는 1회만 표시)
+        """
+        try:
+            import time
+            now = time.monotonic()
+            last_txt = getattr(self, "_last_log_text", None)
+            last_ts  = getattr(self, "_last_log_ts", 0.0)
+            if text == last_txt and (now - last_ts) < 0.8:
+                return
+            self._last_log_text = text
+            self._last_log_ts = now
+        except Exception:
+            pass
+
         self.log.append(text)
+
+    def set_mode_text(self, text: str):
+        """
+        대시보드에서 'Mode 모니터링 txt'에 표시할 텍스트를 설정한다.
+        """
+        try:
+            self.mode_line.setText(str(text))
+        except Exception:
+            pass

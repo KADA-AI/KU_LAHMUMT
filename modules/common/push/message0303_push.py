@@ -160,45 +160,82 @@
 #   • {timestamp, pathID} 두 필드만 채워 Push
 #   • timestamp: 2000-01-01 UTC 기준 ms
 # ─────────────────────────────────────────────────────────────
-import os, glob, json
+# 파일: modules\common\push\message0303_push.py
+# 목적: 0303 (UAVFlightPlan) PUSH
+# 동작:
+#   • (ENV) KU_MISSION_DB_ROOT/FlightPath 또는 상대경로 FlightPath 의 *.json 스캔
+#   • 파일명 숫자이며 첫 글자가 4/5/6인 경우 → 무인기로 간주, 그 숫자를 pathID로 사용
+#   • {timestamp(ms since 2000-01-01 UTC), pathID} 최소 필드만 채워 Push
+# 반환:
+#   • make_and_push(...) → bytes (GUI 로그용)
+#   • make_random_and_push(...) → bytes (여러 건이면 \n로 합침), 없으면 None
+
+from __future__ import annotations
+import os
+import glob
+import json
+from pathlib import Path
 from datetime import datetime, timezone
-from nFusion.Model.msg_0303 import *   # UAVFlightPlan, …
+from typing import List as PyList, Optional
 
-# 1) ★ FlightPath JSON 위치 (절대경로) --------------------------
-PLAN_DIR = r"C:\Users\LAHMUMT_2\Desktop\nFusion\missionPlanner\plannedMission\FlightPath"
-
-# 2) 2000-01-01 UTC 기준 ms 계산용 ------------------------------
-_EPOCH_2000 = datetime(2000, 1, 1, tzinfo=timezone.utc)
-_now_ms     = lambda: int(
-    (datetime.utcnow().replace(tzinfo=timezone.utc) - _EPOCH_2000).total_seconds() * 1000
-)
+from nFusion.Model.msg_0303 import UAVFlightPlan  # 메시지 타입
 
 # ─────────────────────────────────────────────────────────────
-def _dict_to_obj(body_dict: dict):
-    """dict → UAVFlightPlan(C# 객체) – timestamp / pathID 만 세팅"""
-    fp = UAVFlightPlan()
-    fp.timestamp = body_dict["timestamp"]
-    fp.pathID    = body_dict["pathID"]
-    # aircraftID·waypointList 등은 기본값(0, null) 그대로
-    return fp
+# 타임스탬프: 2000-01-01 00:00:00 UTC 기준 ms
+_EPOCH_2000 = datetime(2000, 1, 1, tzinfo=timezone.utc)
+_now_ms = lambda: int((datetime.utcnow().replace(tzinfo=timezone.utc) - _EPOCH_2000).total_seconds() * 1000)
 
 
-def _list_path_ids() -> list[int]:
+def _get_fp_dir() -> str:
+    r"""
+    KU_MISSION_DB_ROOT가 있으면 <root>\MissionPlan
+    없으면 '프로젝트 루트\database\MissionPlan' 로 폴백
+    (이 파일 경로: ...\modules\common\push\message0301_push.py)
+      └ parents[1] = common
+      └ parents[2] = modules
+      └ parents[3] = 프로젝트 루트
     """
-    PLAN_DIR 의 *.json 중
-    • 파일명이 전부 숫자이고
-    • 첫 글자가 4·5·6 (무인기) → pathID 목록 반환
+    env_root = os.getenv("KU_MISSION_DB_ROOT")
+    print(env_root)
+    if env_root:
+        return str(Path(env_root) / "FlightPath")
+
+    proj_root = Path(__file__).resolve().parents[3]   # ← 프로젝트 루트
+    return str(proj_root / "database" / "FlightPath")
+
+
+def _list_path_ids() -> PyList[int]:
     """
-    ids: list[int] = []
-    for path in glob.glob(os.path.join(PLAN_DIR, "*.json")):
+    FlightPath 디렉터리의 *.json 중
+    - 파일명이 전부 숫자이고
+    - 첫 글자가 4/5/6 (무인기)
+    인 파일들의 숫자 부분을 pathID로 반환
+    """
+    fp_dir = _get_fp_dir()
+    ids: PyList[int] = []
+    for path in glob.glob(os.path.join(fp_dir, "*.json")):
         stem = os.path.splitext(os.path.basename(path))[0]
         if stem.isdigit() and stem[0] in "456":
             ids.append(int(stem))
     return sorted(ids)
 
 
-def make_and_push(body_dict: dict, node_messenger) -> bytes | None:
-    """dict → C# 객체 변환·Push, GUI 로그 bytes 반환"""
+def _dict_to_obj(body_dict: dict) -> UAVFlightPlan:
+    """
+    dict → UAVFlightPlan(C# 객체)
+    • 요구사항: timestamp / pathID 두 필드만 세팅
+    """
+    fp = UAVFlightPlan()
+    fp.timestamp = int(body_dict["timestamp"])
+    fp.pathID    = int(body_dict["pathID"])
+    # aircraftID / waypointList 등 나머지는 기본값 유지
+    return fp
+
+
+def make_and_push(body_dict: dict, node_messenger) -> Optional[bytes]:
+    """
+    단건 생성·전송 + GUI 로그 생성
+    """
     msg = _dict_to_obj(body_dict)
     node_messenger.Push(msg)
 
@@ -209,12 +246,12 @@ def make_and_push(body_dict: dict, node_messenger) -> bytes | None:
     return log_line.encode()
 
 
-def make_random_and_push(node_messenger) -> bytes | None:
+def make_random_and_push(node_messenger) -> Optional[bytes]:
     """
-    • PLAN_DIR 의 무인기(4~6**) JSON 이름을 pathID 로 사용
+    • (ENV/상대) FlightPath의 무인기(4~6***) JSON 이름을 pathID로 사용
     • {timestamp, pathID} 메시지를 차례로 Push
     """
-    logs: list[bytes] = []
+    logs: PyList[bytes] = []
     for pid in _list_path_ids():
         body = {
             "timestamp": _now_ms(),
@@ -225,4 +262,3 @@ def make_random_and_push(node_messenger) -> bytes | None:
             logs.append(log)
 
     return b"\n".join(logs) if logs else None
-# ─────────────────────────────────────────────────────────────

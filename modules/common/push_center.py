@@ -1,4 +1,6 @@
-import importlib
+import importlib, socket, json, os
+
+_DASH_PORT = int(os.getenv("KU_DASHBOARD_PORT", "45991"))
 
 # 필요시 동적으로 늘릴 수 있게 리스트로 관리
 SEARCH_PREFIXES = [

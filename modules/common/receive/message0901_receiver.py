@@ -1,33 +1,36 @@
-# receive/message0901_receiver.py
+# -*- coding: utf-8 -*-
 # ──────────────────────────────────────────────────────────────
-from dll_files.nFusionImports import *            # IFusionReceive, IsLocal, IsSingletone
-from nFusion.Model.msg_0901 import *              # RequestOptionInfo, Option …
+from dll_files.nFusionImports import *             # IFusionReceive, IsLocal, IsSingletone
+from nFusion.Model.msg_0901 import RequestOptionInfo
+from nFusion.Model.CommonType import PendingOption  # ✅ CommonType 네임스페이스
 from .database import received_db
 from receive_center import notify
 import json, traceback, sys
 
-# ────────── 대/소문자 안전 접근 헬퍼 ──────────
-_get = lambda obj, *names: next((getattr(obj, n) for n in names if hasattr(obj, n)), None)
+# 안전 접근 헬퍼
+def _get(obj, *names):
+    for n in names:
+        if hasattr(obj, n):
+            return getattr(obj, n)
+    return None
 
-# ────────── CLR → dict 변환 ──────────
+# CLR → dict
 def _request_option_info_to_dict(req: RequestOptionInfo) -> dict:
-    body = {
+    seq = _get(req, "pendingOptionList", "PendingOptionList") or []
+    return {
         "timestamp":   _get(req, "timestamp",   "Timestamp"),
+        "source":      _get(req, "source",      "Source"),
         "requestTime": _get(req, "requestTime", "RequestTime"),
-        "optionList":  []
+        "pendingOptionList": [
+            {
+                "optionID":      _get(itm, "optionID",      "OptionID"),
+                "optionName":    _get(itm, "optionName",    "OptionName"),
+                "missionPlanID": _get(itm, "missionPlanID", "MissionPlanID"),
+            } for itm in seq
+        ],
     }
 
-    for itm in (_get(req, "optionList", "OptionList") or []):
-        option_dict = {
-            "optionID":      _get(itm, "optionID",      "OptionID"),
-            "optionName":    _get(itm, "optionName",    "OptionName"),
-            "missionPlanID": _get(itm, "missionPlanID", "MissionPlanID")
-        }
-        body["optionList"].append(option_dict)
-
-    return body
-
-# ────────── Receiver 클래스 ──────────
+# Receiver
 class RequestOptionInfoReceiver_0901(
     IFusionReceive[RequestOptionInfo], IsLocal, IsSingletone
 ):
@@ -39,11 +42,8 @@ class RequestOptionInfoReceiver_0901(
             # 1) DB 저장
             received_db.set_received_0901(data)
 
-            # 2) GUI에 JSON 바디 형태로 전달
-            notify(
-                "0901",
-                json.dumps(_request_option_info_to_dict(data), ensure_ascii=False).encode()
-            )
+            # 2) GUI로 JSON 바디 전달
+            notify("0901", json.dumps(_request_option_info_to_dict(data), ensure_ascii=False).encode("utf-8", "ignore"))
 
         except Exception:
             print("[ERROR][Receive-0901] traceback ↓↓↓")

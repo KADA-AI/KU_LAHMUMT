@@ -4,8 +4,6 @@ from generator.message0903_generator import make_msg0903_body
 import json
 
 
-
-
 def _dict_to_obj(body: dict) -> RequestRenewMission:
     req = RequestRenewMission()
     req.timestamp = body["timestamp"]

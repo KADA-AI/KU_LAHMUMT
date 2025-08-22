@@ -12,6 +12,7 @@ from ..widgets.mode_buttons_panel import ModeButtonsPanel
 from ..widgets.flow_visualizer import FlowVisualizer
 from ..widgets.operation_flow_panel import OperationFlowPanel
 import os, subprocess
+from pathlib import Path
 
 class MainWindow(QMainWindow):
     """메인 화면: 35x50 가상 그리드에 구역 배치"""
@@ -83,42 +84,161 @@ class MainWindow(QMainWindow):
         # ✅ 테스트 단축키/데모 설치
         self._install_flow_test_shortcuts()
 
-        # 의사결정 지원 GUI
-        self.module_decision.btn_run.clicked.connect(
-            lambda: self._launch_gui(
-                r"C:\Users\LAHMUMT_2\anaconda3\envs\LAHMUMT\python.exe",
-                r"C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\app\modules\decision_support\decision_support_gui.py"
-            )
-        )
+        self._bind_module_buttons()
+        self._init_msg_monitor()
 
-        # 임무 할당·계획수립 GUI (AssignmentPlanningTab 전용)
-        self.module_mission.btn_run.clicked.connect(
-            lambda: self._launch_gui(
-                r"C:\Users\LAHMUMT_2\anaconda3\envs\LAHMUMT\python.exe",
-                r"C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\app\modules\mission_planning\mission_planning_gui.py"
-            )
-        )
+    def _launch_gui(self, script_name: str):
+        """
+        modules/decision_support 아래의 단일 GUI 스크립트를
+        프로젝트 루트 기준 절대경로로 찾아 실행한다.
+        """
+        import sys
 
-        # 임무 모니터링·판단 GUI
-        self.module_monitor.btn_run.clicked.connect(
-            lambda: self._launch_gui(
-                r"C:\Users\LAHMUMT_2\anaconda3\envs\LAHMUMT\python.exe",
-                r"C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\app\modules\monitoring\monitoring_gui.py"
-            )
-        )
+        # main_window.py 위치: <root>/app/ui/main_window.py
+        root = Path(__file__).resolve().parents[2]   # 프로젝트 루트
+        ds_dir = root / "modules" / "decision_support"
+        script = ds_dir / script_name
 
-    def _launch_gui(self, py_exe: str, script_path: str):
+        if not script.exists():
+            # 공용 로그 박스가 있으면 의사결정 카드 로그에 남김
+            try:
+                self.module_decision.append_log(f"[RUN ERR] not found: {script}")
+            except Exception:
+                pass
+            return
+
         try:
             subprocess.Popen(
-                [py_exe, script_path],
-                cwd=os.path.dirname(script_path),
+                [sys.executable, str(script)],
+                cwd=str(root),                         # 항상 루트에서 실행
                 shell=False,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)  # 콘솔 숨김(Windows)
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
         except Exception as e:
-            # 필요 시 모듈 로그에 기록하고 싶으면 주석 해제
-            # self.module_decision.append_log(f"[RUN ERR] {e}")
-            print(e)
+            try:
+                self.module_decision.append_log(f"[RUN ERR] {e}")
+            except Exception:
+                pass
+
+    def _bind_module_buttons(self):
+        for btn in (getattr(self.module_decision, "btn_run", None),
+                    getattr(self.module_mission,  "btn_run", None),
+                    getattr(self.module_monitor,  "btn_run", None)):
+            try: btn.clicked.disconnect()
+            except Exception: pass
+
+        self.module_decision.btn_run.clicked.connect(lambda: self._launch_role("decision"))
+        self.module_mission.btn_run.clicked.connect( lambda: self._launch_role("mission"))
+        self.module_monitor.btn_run.clicked.connect( lambda: self._launch_role("monitor"))
+
+
+    def mark_received(self, msg_id: str, raw: bytes | None = None):
+        mid = str(msg_id)
+
+        def handle(module_key: str, kind: str):
+            # kind: "tx" → out, "rx" → in
+            mod = {"mission": self.module_mission,
+                "monitor": self.module_monitor,
+                "decision": self.module_decision}[module_key]
+            if kind == "tx":
+                if hasattr(mod, "bump_tx"): mod.bump_tx(mid)
+                if hasattr(self, "flow"):   self.flow.trigger(module_key, "out")
+                if hasattr(mod, "append_log"): mod.append_log(f"[{mid}] PUSH 완료")
+            else:
+                if hasattr(mod, "bump_rx"): mod.bump_rx(mid)
+                if hasattr(self, "flow"):   self.flow.trigger(module_key, "in")
+                if hasattr(mod, "append_log"): mod.append_log(f"[{mid}] RX 수신")
+
+        maps = getattr(self, "_msg_maps", {})
+        for key in ("mission", "monitor", "decision"):
+            m = maps.get(key, {})
+            if mid in m.get("tx", set()):
+                handle(key, "tx")
+            if mid in m.get("rx", set()):
+                handle(key, "rx")
+
+    def _init_msg_monitor(self):
+        from importlib import import_module
+        from receive_center import register_listener  # GUI 스레드 안전 큐잉으로 호출됨
+
+        # 탭 정의에서 (msg_id 리스트) 가져오기
+        mods = {
+            "mission":  ("Tabs.assignment_planning_tab", "AssignmentPlanningTab"),
+            "monitor":  ("Tabs.mission_monitoring_tab", "MissionMonitoringTab"),
+            "decision": ("Tabs.decision_support_tab",   "DecisionSupportTab"),
+        }
+
+        self._msg_maps = {}
+        all_ids = set()
+
+        for key, (mod_name, cls_name) in mods.items():
+            mod = import_module(mod_name)
+            cls = getattr(mod, cls_name)
+            tx = set(mid for mid, _ in getattr(cls, "PUSH_MESSAGES", []))
+            rx = set(mid for mid, _ in getattr(cls, "RECEIVE_MESSAGES", []))
+            self._msg_maps[key] = {"tx": tx, "rx": rx}
+            all_ids |= tx | rx
+
+        # 모든 msg_id를 메인 윈도우(self) 리스너로 등록
+        for mid in sorted(all_ids):
+            register_listener(mid, self)
+
+    def _launch_role(self, role: str):
+        import sys, subprocess
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[2]
+
+        if role == "decision":
+            candidates = [
+                root / "modules" / "decision_support" / "decision_support_gui.py",
+                root / "app"     / "modules" / "decision_support" / "decision_support_gui.py",
+            ]
+            target_log = self.module_decision
+
+        elif role == "mission":
+            candidates = [
+                root / "modules" / "mission_planning" / "mission_planning_gui.py",
+                root / "app"     / "modules" / "mission_planning" / "mission_planning_gui.py",
+                # fallback (옛 파일명)
+                root / "modules" / "decision_support" / "assignment_planning_gui.py",
+                root / "app"     / "modules" / "decision_support" / "assignment_planning_gui.py",
+            ]
+            target_log = self.module_mission
+
+        elif role == "monitor":
+            candidates = [
+                root / "modules" / "monitoring" / "monitoring_gui.py",
+                root / "app"     / "modules" / "monitoring" / "monitoring_gui.py",
+                # fallback (DS 폴더에 둘 경우)
+                root / "modules" / "decision_support" / "monitoring_gui.py",
+                root / "modules" / "decision_support" / "monitoritng_gui.py",
+                root / "app"     / "modules" / "decision_support" / "monitoring_gui.py",
+                root / "app"     / "modules" / "decision_support" / "monitoritng_gui.py",
+            ]
+            target_log = self.module_monitor
+
+        else:
+            return
+
+        script = next((p for p in candidates if p.exists()), None)
+        if not script:
+            try:
+                target_log.append_log("[RUN ERR] not found:\n" + "\n".join(str(p) for p in candidates))
+            except Exception:
+                pass
+            return
+
+        try:
+            subprocess.Popen([sys.executable, str(script)], cwd=str(root),
+                            shell=False,
+                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        except Exception as e:
+            try:
+                target_log.append_log(f"[RUN ERR] {e}")
+            except Exception:
+                pass
+
 
     def _install_flow_test_shortcuts(self):
         """데이터 흐름 애니메이션 테스트용 단축키 설치"""

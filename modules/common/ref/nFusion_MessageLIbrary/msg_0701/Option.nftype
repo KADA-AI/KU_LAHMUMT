@@ -1,0 +1,10 @@
+uint optionID
+uint optionName
+uint missionPlanID
+int survivalRate
+int timeContraction
+int recogEffectiveness
+uint distance
+uint target
+List<UAVMissionPlanID> uavMissionPlanIDList
+List<LAHMissionPlanID> lahMissionPlanIDList

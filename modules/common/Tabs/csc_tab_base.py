@@ -121,7 +121,30 @@ class CSCTabBase(QWidget):
         tbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         tbl.setStyleSheet("font-size:12px;")
         return tbl
+
+    def _module_human_name(self) -> str:
+        """
+        KU_ROLE 기준으로 모듈 표시명을 반환.
+        monitoring → Mission State Monitor
+        mission    → Multi-agent Mission Planner
+        decision   → Mission Option Builder
+        """
+        import os
+        role = (os.environ.get("KU_ROLE") or "").lower()
+        return {
+            "monitoring": "Mission State Monitor",
+            "mission":    "Multi-agent Mission Planner",
+            "decision":   "Mission Option Builder",
+        }.get(role, "Multi-agent Mission Planner")
     
+    def _build_overridden_body(self, msg_id: str):
+        """
+        0102 바디는 generator/message0102_push.py가 표준 규칙으로 생성한다.
+        여기서는 개입하지 않고, 0102에 대해서만 빈 dict를 넘겨 '기본값 사용'을 의미하도록 한다.
+        """
+        return {} if str(msg_id).strip() == "0102" else None
+
+
     def _make_rx_table(self) -> QTableWidget:
         """
         수신 테이블: 4열(메시지ID·이름·상태·데이터) 구성
@@ -341,17 +364,17 @@ class CSCTabBase(QWidget):
     def _on_tx_double_clicked(self, row: int, _col: int):
         msg_id = self.tbl_tx.item(row, 0).text()
         freq = self.periodic_config.get(msg_id, None)
+        body = self._build_overridden_body(msg_id)  # ★ 0102 바디 강제
 
         if freq is None:
-            # 비주기: 클릭 시 한 번만 push_message 실행
             ok = push_message(
                 msg_id, self.messenger,
-                on_done=lambda mid, raw: self._mark_single_sent(row, mid, raw)
+                on_done=lambda mid, raw: self._mark_single_sent(row, mid, raw),
+                body_dict=body
             )
             if not ok:
                 self.tbl_tx.item(row, 2).setText("발신 실패")
         else:
-            # 주기: 이미 타이머가 있으면 중지, 없으면 시작
             if msg_id in self.periodic_timers:
                 self._stop_periodic_send(msg_id, row)
             else:
@@ -427,13 +450,13 @@ class CSCTabBase(QWidget):
 
     def _periodic_timeout(self, msg_id: str, row: int):
         """
-        주기 타이머가 만료될 때마다 호출됩니다.
-        push_message를 실행하되, 상태는 그대로 '전송중'으로 유지하고
-        로그만 기록합니다.
+        주기 타이머 만료 시 호출. 상태는 '전송중' 유지, 로그만 기록.
         """
+        body = self._build_overridden_body(msg_id)  # ★ 0102 바디 강제
         ok = push_message(
             msg_id, self.messenger,
-            on_done=lambda mid, raw: self._log_only(row, mid, raw)
+            on_done=lambda mid, raw: self._log_only(row, mid, raw),
+            body_dict=body
         )
         if not ok:
             self.tbl_tx.item(row, 2).setText("전송 실패")
@@ -455,16 +478,54 @@ class CSCTabBase(QWidget):
                 break
 
     def _write_log(self,
-                   log_w: QTextEdit,
-                   tag: str,
-                   msg_id: str,
-                   raw: bytes | None):
+                log_w: QTextEdit,
+                tag: str,
+                msg_id: str,
+                raw: bytes | None):
+        """
+        로그 출력:
+        - 0102일 때만 BODY JSON을 'Timestamp, Status, SourceModuleName' 순서로 재정렬해서 보기 좋게 표시
+        - 값은 변경하지 않음(재계산/추가 금지), 'sent' 같은 내부 키는 제거
+        """
         ts = datetime.now().strftime("%H:%M:%S")
         line = f"[{ts}] {tag:<4} : {msg_id}"
+
         if raw:
             try:
                 decoded = raw.decode(errors="ignore")
+                if str(msg_id).strip() == "0102":
+                    import json, re
+                    from collections import OrderedDict
+                    m = re.search(r"\{.*\}", decoded, flags=re.S)
+                    if m:
+                        try:
+                            obj = json.loads(m.group(0))
+                            # 필요한 값만 그대로 꺼내고, 순서만 보장
+                            payload = OrderedDict()
+                            if "Timestamp" in obj:
+                                payload["Timestamp"] = obj["Timestamp"]
+                            elif "timestamp" in obj:
+                                payload["Timestamp"] = obj["timestamp"]
+                            if "Status" in obj:
+                                payload["Status"] = obj["Status"]
+                            elif "status" in obj:
+                                payload["Status"] = obj["status"]
+                            if "SourceModuleName" in obj:
+                                payload["SourceModuleName"] = obj["SourceModuleName"]
+                            elif "source" in obj:
+                                payload["SourceModuleName"] = obj["source"]
+                            elif "requestModuleName" in obj:
+                                payload["SourceModuleName"] = obj["requestModuleName"]
+                            # 불필요한 내부 키 제거
+                            for k in ("sent", ):
+                                payload.pop(k, None)
+
+                            new_json = json.dumps(payload, ensure_ascii=False)
+                            decoded = decoded[:m.start()] + new_json + decoded[m.end():]
+                        except Exception:
+                            pass
                 line += f"\n{decoded}"
             except Exception:
                 line += " (binary)"
+
         log_w.append(line)

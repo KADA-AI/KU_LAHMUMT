@@ -15,7 +15,15 @@ from PyQt5.QtCore import QUrl
 from PyQt5.QtWebChannel import QWebChannel
 from PyQt5.QtWidgets import QApplication
 
+
+HERE = Path(__file__).resolve()            # .../modules/mission_planning/MissionPlanner/main_MP.py
+PKG_DIR = HERE.parent                      # .../modules/mission_planning/MissionPlanner
+if str(PKG_DIR) not in sys.path:
+    # • 패키지(-m)로 실행 시에도 로컬 모듈(data_def, AnS, corridor_planner) 임포트 가능하게
+    sys.path.insert(0, str(PKG_DIR))
+
 # ───────── data_def 패키지 ──────────
+_app_guard = QApplication.instance() or QApplication([])
 
 from data_def import (
     mission_helpers as mh,
@@ -33,6 +41,8 @@ from AnS import (
     run_divide_and_pattern,     # 0201+0203 → IMP(.json) 리스트
     build_mission_plan_0301,    # CMPK+MRPK+IMP → 0301 MissionPlan
 )
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 def gui_logger(widget):
     """텍스트 위젯에 실시간 로그를 남기기 위한 래퍼"""
@@ -52,15 +62,17 @@ def _html_kv(title: str, dic: dict) -> str:
 class MainGUI(QWidget):
     BRIDGE_THRESH_M = 150.0
     CRUISE_SP       = 40.0
-    SAVE_DIR        = Path(r"C:\Users\LAHMUMT_2\Desktop\nFusion\missionPlanner\plannedMission")
-    DIR_0201        = SAVE_DIR / "InputMissionPlan"
-    DIR_0203        = SAVE_DIR / "MissionReferenceInfo"
+
+    # ★ 저장 루트: <프로젝트루트>\database
+    SAVE_DIR = _PROJECT_ROOT / "database"
+
+    # 하위 폴더들
+    DIR_0201 = SAVE_DIR / "InputMissionPlan"
+    DIR_0203 = SAVE_DIR / "MissionReferenceInfo"
 
     def __init__(self) -> None:
         super().__init__()
-        self.SAVE_DIR.mkdir(parents=True, exist_ok=True)
-
-        # ── 폴더 생성 --------------------------------------------------
+        # ── 새로운 임무 저장 전에 기존 파일 전체 삭제 ──
         for d in (self.SAVE_DIR, self.DIR_0201, self.DIR_0203):
             d.mkdir(parents=True, exist_ok=True)
 
@@ -109,6 +121,23 @@ class MainGUI(QWidget):
         base = Path(__file__).resolve().parent       # missionPlanner 디렉터리
         self.default_dir = base / "plannedMission" / "임무계획"
         self.default_dir.mkdir(parents=True, exist_ok=True)
+
+    def _init_save_dirs(self):
+        """
+        plannedMission/database 하위 필요한 폴더 자동 생성
+        """
+        for p in [
+            self.SAVE_DIR,
+            self.DIR_0201,
+            self.DIR_0203,
+            self.DIR_0301,
+            self.DIR_0302,
+            self.DIR_0303,
+        ]:
+            try:
+                p.mkdir(parents=True, exist_ok=True)
+            except Exception as e:
+                print(f"[WARN] create dir failed: {p} -> {e}")
 
     # ───────────────────────── 지도 관련 ──────────────────────────
     def _build_map(self):
@@ -1174,21 +1203,38 @@ class MainGUI(QWidget):
 
     def _save_all_missions(self):
         """
-        • 0301 MissionPlan         →  MissionPlan/<MissionPlanID>.json
-        • 0302 IndividualMission   →  IndividualMissionPlan/<IMP_ID>.json
-        • 0303‧0304 FlightPath     →  FlightPath/<PathID>.json
-        Save 후에는 mission_output 임시폴더를 자동 삭제.
+        • 저장 폴더: SAVE_DIR/database 하위(구성에 따라) 또는 SAVE_DIR 하위
+        - MissionPlan/<MissionPlanID>.json
+        - IndividualMissionPlan/<IMP_ID>.json
+        - FlightPath/<PathID>.json
+        • 새로운 임무 저장 전, 위 3개 폴더의 기존 *.json 전부 삭제(클린 세이브)
+        • Save 후 mission_output 임시폴더 자동 삭제
         """
         import json, shutil
 
-        # ── 1. 최종 저장 폴더 준비 ─────────────────────────────
+        # ── 1) 최종 저장 폴더 준비 ─────────────────────────────
         dir_mp  = self.SAVE_DIR / "MissionPlan"
         dir_imp = self.SAVE_DIR / "IndividualMissionPlan"
         dir_fp  = self.SAVE_DIR / "FlightPath"
         for d in (dir_mp, dir_imp, dir_fp):
             d.mkdir(parents=True, exist_ok=True)
 
-        # ── 2. 0301 MissionPlan 1개 저장 ─────────────────────
+        # ── 2) 기존 임무 파일 전부 삭제(클린 세이브) ────────────
+        for d in (dir_mp, dir_imp, dir_fp):
+            try:
+                removed = 0
+                for p in d.glob("*.json"):
+                    try:
+                        p.unlink()
+                        removed += 1
+                    except Exception as ie:
+                        self.log0304.appendPlainText(f"[WARN] 삭제 실패: {p} → {ie}")
+                if removed:
+                    self.log0304.appendPlainText(f"[INFO] 기존 임무 정리: {d} ({removed}개 삭제)")
+            except Exception as e:
+                self.log0304.appendPlainText(f"[WARN] 기존 파일 정리 실패: {d} → {e}")
+
+        # ── 3) 0301 MissionPlan 1개 저장 ─────────────────────
         try:
             mp_data = json.loads(self.log0301.toPlainText())
             mp_id   = str(mp_data.get("missionPlanID") or mp_data.get("MissionPlanID"))
@@ -1197,19 +1243,19 @@ class MainGUI(QWidget):
         except Exception as e:
             self.log0304.appendPlainText(f"[WARN] 0301 저장 실패: {e}")
 
-        # ── 3. 0302 IndividualMissionPlan 여러 개 저장 ───────
+        # ── 4) 0302 IndividualMissionPlan 여러 개 저장 ───────
         imp_cnt = 0
         try:
             for pkg in json.loads(self.log0302.toPlainText()):
                 imp_id = str(pkg.get("individualMissionPackageID")
-                             or pkg.get("individualMissionPlanPackageID"))
+                            or pkg.get("individualMissionPlanPackageID"))
                 (dir_imp / f"{imp_id}.json").write_text(
                     json.dumps(pkg, indent=2, ensure_ascii=False), encoding="utf-8")
                 imp_cnt += 1
         except Exception as e:
             self.log0304.appendPlainText(f"[WARN] 0302 저장 실패: {e}")
 
-        # ── 4. 0303·0304 FlightPath 저장 ────────────────────
+        # ── 5) 0303‧0304 FlightPath 저장 ─────────────────────
         fp_cnt = 0
         for lst in (self.flight_plans, self.flight_plans_0304):
             for fp in lst:
@@ -1221,7 +1267,7 @@ class MainGUI(QWidget):
                 except Exception as e:
                     self.log0304.appendPlainText(f"[WARN] PathID {pid} 저장 실패: {e}")
 
-        # ── 5. 임시 mission_output 폴더 자동 삭제 ─────────────
+        # ── 6) 임시 mission_output 폴더 자동 삭제 ─────────────
         tmp_dir = self.SAVE_DIR / "mission_output"
         try:
             if tmp_dir.exists():
@@ -1230,16 +1276,28 @@ class MainGUI(QWidget):
         except Exception as e:
             self.log0304.appendPlainText(f"[WARN] 임시폴더 삭제 실패: {e}")
 
-        # ── 6. 완료 로그 ─────────────────────────────────────
+        # ── 7) 완료 로그 ─────────────────────────────────────
         self.log0304.appendPlainText(
-            f"✔ 저장 완료  →  MissionPlan 1, IndividualMission {imp_cnt}, FlightPath {fp_cnt}")
+            f"✔ 저장 완료  →  MissionPlan 1, IndividualMission {imp_cnt}, FlightPath {fp_cnt}"
+        )
+
 
 
 # ════════════════════════════════════════════════════════════════════
-if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    gui = MainGUI()
-    gui.show()
+def main():
+    import sys, os
+    from PyQt5.QtWidgets import QApplication
+
+    if os.name == "nt":
+        import multiprocessing
+        multiprocessing.freeze_support()
+
+    # 이미 위에서 가드 인스턴스를 만들었으므로, 여기서는 재사용
+    app = QApplication.instance() or QApplication(sys.argv)
+
+    win = MainGUI()
+    win.show()
     sys.exit(app.exec_())
 
-    
+if __name__ == "__main__":
+    main()

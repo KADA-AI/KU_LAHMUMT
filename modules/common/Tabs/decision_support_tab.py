@@ -6,6 +6,7 @@ class DecisionSupportTab(CSCTabBase):
     
     # **FB → Push**
     PUSH_MESSAGES = [
+        ("0102", "운용모드 설정"),
         ("0701", "옵션정보 전송"),
     ]
     
