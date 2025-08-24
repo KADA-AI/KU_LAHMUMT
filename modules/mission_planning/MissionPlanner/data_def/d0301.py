@@ -111,19 +111,22 @@ def _parse_uint32(value: int | str | None, name: str) -> int:
 # ----------------------------------------------------------------
 def _validate_mission_plan(mp: Dict) -> None:
     ROOT_SPECS = {
-        "timestamp":                 (int,        0, 2**64 - 1),
-        "missionPlanID":             (int,        0, 2**32 - 1),
-        "missionPlanTimestamp":      (int,        0, 2**64 - 1),
-        "planningTime":              ((int, float), 0, 2**64 - 1),
-        "plannerID":                 (int,        0, 6),
-        "inputMissionPackageID":     (int,        0, 2**32 - 1),
-        "missionReferencePackageID": (int,        0, 2**32 - 1),
+        "timestamp":                 (int,   0, 2**64 - 1),
+        "missionPlanID":             (int,   0, 2**32 - 1),
+        "missionPlanTimestamp":      (int,   0, 2**64 - 1),
+        "planningTime":              (float, 0.0, float(2**63 - 1)),  # float(초)
+        "plannerID":                 (int,   0, 6),
+        "inputMissionPackageID":     (int,   0, 2**32 - 1),
+        "missionReferencePackageID": (int,   0, 2**32 - 1),
     }
     for key, (typ, lo, hi) in ROOT_SPECS.items():
         if key not in mp:
             raise ValueError(f"[0301] missing '{key}'")
+        # planningTime만 float 강제, 정수면 float로 승격
+        if key == "planningTime" and isinstance(mp[key], int):
+            mp[key] = float(mp[key])
         if not isinstance(mp[key], typ):
-            raise TypeError(f"[0301] '{key}' type must be {typ}, got {type(mp[key]).__name__}")
+            raise TypeError(f"[0301] '{key}' type must be {typ.__name__}, got {type(mp[key]).__name__}")
         if not (lo <= mp[key] <= hi):
             raise ValueError(f"[0301] '{key}' out of range: {mp[key]}")
 
@@ -131,10 +134,15 @@ def _validate_mission_plan(mp: Dict) -> None:
     if not isinstance(al, list) or not al:
         raise ValueError("[0301] 'aircraftList' must be a non-empty list")
 
+    seen: set[int] = set()
     for idx, ac in enumerate(al, 1):
         aid = ac.get("aircraftID")
-        if not (isinstance(aid, int) and 0 <= aid <= 6):
-            raise ValueError(f"[0301] aircraftList[{idx}].aircraftID invalid: {aid}")
+        if not (isinstance(aid, int) and 1 <= aid <= 6):
+            raise ValueError(f"[0301] aircraftList[{idx}].aircraftID must be 1..6, got: {aid}")
+        if aid in seen:
+            raise ValueError(f"[0301] duplicated aircraftID in aircraftList: {aid}")
+        seen.add(aid)
+
         imp = ac.get("individualMissionPackageID")
         if not (isinstance(imp, int) and 0 <= imp <= 2**32 - 1):
             raise ValueError(f"[0301] aircraftList[{idx}].individualMissionPackageID invalid: {imp}")
@@ -152,9 +160,9 @@ def build_mission_plan(
     planner_id: int = 1,
     planning_time_s: float = 0.0,
 ) -> Dict:
-    # ── 필수 연결 ID 두 개 ------------------------------------------------
-    impkg_id = _parse_uint32(input_mission_package_id,     "inputMissionPackageID")
-    refpkg_id = _parse_uint32(mission_reference_package_id,"missionReferencePackageID")
+    # ── 필수 연결 ID ------------------------------------------------------
+    impkg_id  = _parse_uint32(input_mission_package_id,      "inputMissionPackageID")
+    refpkg_id = _parse_uint32(mission_reference_package_id,  "missionReferencePackageID")
 
     # ── missionPlanID -----------------------------------------------------
     if mission_plan_id is None or (isinstance(mission_plan_id, str) and not mission_plan_id.strip()):
@@ -170,13 +178,13 @@ def build_mission_plan(
         "timestamp":                 ts_now,
         "missionPlanID":             mission_plan_id,
         "missionPlanTimestamp":      ts_now,
-        "planningTime":              int(planning_time_s * 1000),
+        "planningTime":              float(planning_time_s),  # float(초)
         "plannerID":                 planner_id,
         "inputMissionPackageID":     impkg_id,
         "missionReferencePackageID": refpkg_id,
         "aircraftList": [
             {
-                "aircraftID": ac["aircraftID"],
+                "aircraftID": ac["aircraftID"],  # 1..6 가정
                 "individualMissionPackageID": ac.get(
                     "individualMissionPackageID",
                     _next_counter("impPackageID"),

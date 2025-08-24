@@ -853,8 +853,6 @@ def generate_example(msg_id: str) -> Dict[str, object]:
     if not root_tname:
         root_tname = next(iter(msg_types.keys()))
     root_tname = pick_better_root(root_tname, reg)
-    # ★ 0201 전용 힌트 적용
-    root_tname = pick_root_by_signature(msg_id, reg, root_tname)
     dlog(f"Root chosen: {root_tname}")
 
     root_def = reg.get_typedef(root_tname)
@@ -875,30 +873,6 @@ def generate_example(msg_id: str) -> Dict[str, object]:
         save_id_state(ID_STATE_PATH, ID_STATE)
 
     return example
-
-# 0201 루트가 반드시 가져야 하는 키 세트
-ROOT_SIG = {
-    "0201": {"timestamp","inputMissionPackageID","inputMissionPackageType",
-             "mainSensor","availableAircraftList","inputMissionList"}
-}
-
-def pick_root_by_signature(msg_id: str, reg: Registry, fallback: str) -> str:
-    need = ROOT_SIG.get(msg_id)
-    if not need:
-        return fallback
-    best = fallback
-    best_hits = -1
-    for tname in reg.all_message_types():
-        tdef = reg.get_typedef(tname)
-        if not tdef: 
-            continue
-        fields = {fname for fname, _ in tdef}
-        hits = len(fields & need)
-        # 시그니처를 더 많이 만족하는 타입을 선택
-        if hits > best_hits:
-            best_hits = hits
-            best = tname
-    return best
 
 
 def main():

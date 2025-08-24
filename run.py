@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import os, sys, subprocess, threading
-os.environ.setdefault("KU_ROLE", "dashboard")
+os.environ["KU_ROLE"] = "decision"
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 
 
-from PyQt5.QtCore import qInstallMessageHandler, QtMsgType, QObject, pyqtSignal
+from PyQt5.QtCore import qInstallMessageHandler, QtMsgType, QObject, pyqtSignal, QTimer
 from PyQt5.QtWidgets import QApplication, QTextEdit, QPlainTextEdit
+
 
 # ─────────────────────────────────────────────────────────────
 # Qt 경고 필터 (선택)
@@ -143,15 +144,21 @@ try:
 except Exception:
     from main_window import MainWindow  # type: ignore
 
-# 필요한 위젯 타입(검색용)
 try:
-    from module_with_log import ModuleWithLog  # type: ignore
+    from app.ui.widgets.module_with_log import ModuleWithLog
 except Exception:
-    ModuleWithLog = object  # fallback
+    try:
+        from module_with_log import ModuleWithLog
+    except Exception:
+        ModuleWithLog = object
+
 try:
-    from flow_visualizer import FlowVisualizer  # type: ignore
+    from app.ui.widgets.flow_visualizer import FlowVisualizer
 except Exception:
-    FlowVisualizer = object  # fallback
+    try:
+        from flow_visualizer import FlowVisualizer
+    except Exception:
+        FlowVisualizer = object
 
 # receive_center API 확보(공용/DS 통합 어느쪽이든)
 _register_listener = None
@@ -243,7 +250,6 @@ class DashboardOrchestrator(QObject):
         self.widgets = self._resolve_widgets(window)
         self.msg_map = _load_tab_defs()
 
-        # ⬇️ 추가: cross-thread 안전 연결
         self.dashEvent.connect(self._handle_dash_event)
         self.uiLog.connect(self._log_assignment)
 
@@ -251,6 +257,10 @@ class DashboardOrchestrator(QObject):
         self._connect_launch_buttons()
         self._start_bus_monitor()
         self._start_dashboard_socket()
+
+        # [추가] 앱 시작 시, 초기 모드를 전원 OFF로 강제
+        self._set_mode_text_all("전원 OFF")
+        self._broadcast_ctrl({"cmd": "mode", "text": "전원 OFF"})
 
     def _start_dashboard_socket(self):
         """
@@ -352,14 +362,15 @@ class DashboardOrchestrator(QObject):
 
     # --------- UI 위젯 해결 ---------
     def _resolve_widgets(self, win):
-        # FlowVisualizer 찾기
-        flow = None
-        try:
-            for fv in win.findChildren(FlowVisualizer):
-                flow = fv
-                break
-        except Exception:
-            pass
+        # FlowVisualizer: 인스턴스 직접 참조
+        flow = getattr(win, "flow", None)
+        if flow is None:
+            try:
+                for fv in win.findChildren(FlowVisualizer):
+                    flow = fv
+                    break
+            except Exception:
+                pass
 
         # 전역 로그 위젯(있으면) - ModuleWithLog 내부(LogBox)는 제외
         log_edit = None
@@ -368,19 +379,17 @@ class DashboardOrchestrator(QObject):
             def _inside_module_with_log(w):
                 p = w.parent()
                 while p is not None:
-                    if isinstance(p, ModuleWithLog):
+                    # 타입 미스매치 방지: 이름 기반으로 회피
+                    if getattr(p, "objectName", None) and "ModuleWithLog" in str(type(p)):
                         return True
                     p = p.parent()
                 return False
 
-            # 1순위: objectName에 'log'/'logger' 포함 & ModuleWithLog 내부가 아닌 것
             for ed in win.findChildren((QPlainTextEdit, QTextEdit)):
                 name = (ed.objectName() or "").lower()
                 if ("log" in name or "logger" in name) and not _inside_module_with_log(ed):
                     log_edit = ed
                     break
-
-            # 2순위: 아무 텍스트 편집기라도 ModuleWithLog 내부가 아닌 것
             if log_edit is None:
                 for ed in win.findChildren((QPlainTextEdit, QTextEdit)):
                     if not _inside_module_with_log(ed):
@@ -389,41 +398,39 @@ class DashboardOrchestrator(QObject):
         except Exception:
             pass
 
-        # 모듈 로그 박스 추출
-        modules = {"assignment": None, "monitoring": None, "decision": None}
-        try:
-            mws = win.findChildren(ModuleWithLog)
-        except Exception:
-            mws = []
+        # 모듈 카드: MainWindow 속성 직접 사용(타입 의존 X)
+        modules = {
+            "assignment": getattr(win, "module_mission",  None),
+            "monitoring": getattr(win, "module_monitor",  None),
+            "decision":   getattr(win, "module_decision", None),
+        }
 
-        # 타이틀로 추정
-        for w in mws:
-            title = ""
-            for attr in ("title", "title_text", "titleLabel", "title_label"):
-                if hasattr(w, attr):
-                    obj = getattr(w, attr)
-                    try:
-                        title = obj if isinstance(obj, str) else obj.text()
-                    except Exception:
-                        pass
-                    if title:
-                        break
-            tl = (title or "").lower()
-            if any(k in tl for k in ("할당", "assignment", "계획")) and modules["assignment"] is None:
-                modules["assignment"] = w
-            elif any(k in tl for k in ("모니터", "mission", "monitor", "상태")) and modules["monitoring"] is None:
-                modules["monitoring"] = w
-            elif any(k in tl for k in ("의사", "decision", "option", "옵션")) and modules["decision"] is None:
-                modules["decision"] = w
-
-        # 부족하면 순번으로 채움
-        it = iter(mws)
-        for key in ("assignment", "monitoring", "decision"):
-            if modules[key] is None:
-                try:
-                    modules[key] = next(it)
-                except StopIteration:
-                    modules[key] = None
+        # 부족하면 최후의 보정: 순서대로 채우기
+        if not all(modules.values()):
+            try:
+                # 타입 매칭 실패 대비: 모든 위젯 중 title/text로 추정
+                candidates = []
+                for w in win.findChildren(object):
+                    t = ""
+                    for attr in ("title", "title_text", "titleLabel", "title_label"):
+                        if hasattr(w, attr):
+                            obj = getattr(w, attr)
+                            try:
+                                t = obj if isinstance(obj, str) else obj.text()
+                            except Exception:
+                                pass
+                            if t:
+                                break
+                    if t:
+                        tl = t.lower()
+                        if any(k in tl for k in ("할당", "assignment", "계획")) and modules["assignment"] is None:
+                            modules["assignment"] = w
+                        elif any(k in tl for k in ("모니터", "monitor", "상태")) and modules["monitoring"] is None:
+                            modules["monitoring"] = w
+                        elif any(k in tl for k in ("의사", "decision", "option", "옵션")) and modules["decision"] is None:
+                            modules["decision"] = w
+            except Exception:
+                pass
 
         return {"flow": flow, "log_edit": log_edit, **modules}
 
@@ -533,7 +540,7 @@ class DashboardOrchestrator(QObject):
                 btn_init.clicked.disconnect()
             except Exception:
                 pass
-            btn_init.clicked.connect(lambda _=False: self._enter_initial_plan_and_run())
+            btn_init.clicked.connect(lambda _=False: self._enter_initial_plan())
 
         # ⑤ 개별 GUI 실행: 각 카드의 'GUI 실행' 버튼에만 연결
         mapping = {
@@ -992,6 +999,10 @@ class DashboardOrchestrator(QObject):
         for sn in ("mission_planning_gui.py", "monitoring_gui.py", "decision_support_gui.py"):
             self._launch_gui(sn)
 
+        # ★ GUI들이 CTRL UDP 바인드 시간을 가진 뒤, 메인스레드에서 전원 ON 브로드캐스트
+        QTimer.singleShot(1000, lambda: self._set_mode_text_all("전원 ON"))
+        QTimer.singleShot(1000, lambda: self._broadcast_ctrl({"cmd": "mode", "text": "전원 ON"}))
+        QTimer.singleShot(1000, lambda: self._log_everywhere("모든 SW 전원 ON"))
 
     def _find_button(self, keywords) -> Optional[object]:
         """
@@ -1130,10 +1141,32 @@ class DashboardOrchestrator(QObject):
         threading.Thread(target=_rx_setup, daemon=True).start()
 
     def mark_received(self, msg_id: str, raw: bytes | None = None):
-        mid = self._norm_code(msg_id)  # ← 4자리 표준화
+        mid = self._norm_code(msg_id)
 
-        # UDP로 바로 직전에 처리된 동일 mid가 있으면 BUS는 스킵
-        if self._recently_seen("bus", mid):
+        # --- raw에서 source 추출(MMR/MSM/MOB 또는 한글 풀네임) ---
+        src_key = None
+        if raw:
+            try:
+                import re, json
+                txt = raw.decode("utf-8", "ignore")
+                m = re.search(r"\{.*\}", txt, flags=re.S)
+                if m:
+                    obj = json.loads(m.group(0))
+                    src = obj.get("SourceModuleName") or obj.get("source") or obj.get("requestModuleName")
+                    if src:
+                        s = str(src).upper()
+                        if "MMR" in s or "MULTI-AGENT MISSION PLANNER" in s:
+                            src_key = "assignment"
+                        elif "MSM" in s or "MISSION STATE MONITOR" in s:
+                            src_key = "monitoring"
+                        elif "MOB" in s or "MISSION OPTION BUILDER" in s:
+                            src_key = "decision"
+            except Exception:
+                pass
+
+        # --- 디듀프: 모듈별로 분리 + 5Hz 고려해 0.02s ---
+        tag = f"bus:{src_key or 'all'}"
+        if self._recently_seen(tag, mid, window=0.02):
             return
 
         key_to_widget = {
@@ -1142,11 +1175,24 @@ class DashboardOrchestrator(QObject):
             "decision":   self.widgets.get("decision"),
         }
 
-        for module_key, defs in self.msg_map.items():
+        # 업데이트 대상 모듈 결정
+        if src_key:
+            targets = [src_key]
+        else:
+            # 소스가 불명확하면 메시지 정의에 따라 모두 반영(기존 맵)
+            targets = []
+            for key, defs in self.msg_map.items():
+                tx = {m for m, _ in defs.get("tx", [])}
+                rx = {m for m, _ in defs.get("rx", [])}
+                if mid in tx or mid in rx:
+                    targets.append(key)
+
+        # 반영
+        for module_key in targets:
             w = key_to_widget.get(module_key)
             if not w:
                 continue
-
+            defs = self.msg_map.get(module_key, {})
             tx_ids = {m for m, _ in defs.get("tx", [])}
             rx_ids = {m for m, _ in defs.get("rx", [])}
 
@@ -1163,9 +1209,6 @@ class DashboardOrchestrator(QObject):
                 if hasattr(w, "append_log"): w.append_log(f"[{mid}] RX 수신")
                 touched = True
 
-            if touched:
-                break
-
 
     def _bump(self, mod, kind: str, msg_id: str):
         fn = getattr(mod, f"bump_{kind}", None)
@@ -1176,18 +1219,28 @@ class DashboardOrchestrator(QObject):
                 pass
 
     def _animate(self, module_key: str, direction: str):
+        # module_key: 'assignment' | 'monitoring' | 'decision'
+        vis_key = {"assignment": "mission", "monitoring": "monitor", "decision": "decision"}.get(module_key, module_key)
+
+        # 1) MainWindow에 내장된 헬퍼가 있으면 그것부터 사용(동일 로직 보장)
+        fnp = getattr(self.win, "_pulse", None)
+        if callable(fnp):
+            try:
+                fnp(vis_key, direction)
+                return
+            except Exception:
+                pass
+
+        # 2) 직접 flow.trigger 호출
         flow = self.widgets.get("flow")
         if not flow:
             return
-        key_map = { "assignment": "mission", "monitoring": "monitor", "decision": "decision" }
-        vis_key = key_map.get(module_key, module_key)
         fn = getattr(flow, "trigger", None)
         if callable(fn):
             try:
                 fn(vis_key, direction)
             except Exception:
                 pass
-
 
     def _append_log_module(self, mod, text: str):
         fn = getattr(mod, "append_log", None)
@@ -1226,12 +1279,9 @@ def main():
     _load_qss(app)
     win = MainWindow()
     win.show()
-
     # 오케스트레이터 구동(버튼 연결, 목록/카운트/애니메이션/로그)
-    DashboardOrchestrator(win)
-
+    orch = DashboardOrchestrator(win)
     sys.exit(app.exec_())
-
 
 if __name__ == "__main__":
     main()

@@ -1,68 +1,131 @@
-# receive/message0701_receiver.py
-# ──────────────────────────────────────────────────────────────
+# modules/common/receive/message0701_receiver.py
+# auto-generated at 2025-08-24T16:37:13.108870+00:00
+
 from dll_files.nFusionImports import *            # IFusionReceive, IsLocal, IsSingletone
-from nFusion.Model.msg_0701 import *              # MissionPlanOptionInfo, Option …
+from nFusion.Model.msg_0701 import *            # C# 모델
+from nFusion.Model.CommonType import *             # 공통 타입
 from .database import received_db
 from receive_center import notify
-import json, traceback, sys
+import json, traceback, sys, os, importlib
 
-# ────────── 대/소문자 헬퍼 ──────────
+# 대/소문자 안전 접근
 _get = lambda obj, *names: next((getattr(obj, n) for n in names if hasattr(obj, n)), None)
 
-# ────────── CLR → dict 변환 ──────────
-def _mpoi_to_dict(mpoi: MissionPlanOptionInfo) -> dict:
-    body = {
-        "timestamp":     _get(mpoi, "timestamp",     "Timestamp"),
-        "autoExecution": _get(mpoi, "autoExecution", "AutoExecution"),
-        "optionList":    []
-    }
+# ── Embedded rules (TX/DB 공용) ──────────────────────────────────────────
+TX_FIELD_WHITELIST = {'0201': ['timestamp', 'inputMissionPackageID'], '0203': ['timestamp', 'missionReferencePackageID'], '0301': ['timestamp', 'missionPlanID'], '0302': ['timestamp', 'individualMissionPackageID'], '0303': ['timestamp', 'pathID'], '0304': ['timestamp', 'pathID']}
+DB_DIR_RULES        = {'0201': 'InputMissionPlan', '0203': 'FlightReferenceInfo', '0301': 'MissionPlan', '0302': 'IndividualMissionPlan', '0303': 'UAVFlightPlan', '0304': 'FlightPath'}
+DB_FETCH_ON_RECEIVE = {'0201', '0203'}
+ID_FIELD_FOR        = {'0201': 'inputMissionPackageID', '0203': 'missionReferencePackageID', '0301': 'missionPlanID', '0302': 'individualMissionPackageID', '0303': 'pathID', '0304': 'pathID'}
 
-    for opt in (_get(mpoi, "optionList", "OptionList") or []):
-        opt_dict = {
-            "optionID":           _get(opt, "optionID",           "OptionID"),
-            "optionName":         _get(opt, "optionName",         "OptionName"),
-            "survivalRate":       _get(opt, "survivalRate",       "SurvivalRate"),
-            "timeContraction":    _get(opt, "timeContraction",    "TimeContraction"),
-            "recogEffectiveness": _get(opt, "recogEffectiveness", "RecogEffectiveness"),
-            "distance":           _get(opt, "distance",           "Distance"),
-            "target":             _get(opt, "target",             "Target"),
-            "uavMissionPlanIDList": [],
-            "lahMissionPlanIDList": []
-        }
+def _project_root_for_recv_file(__file_path: str):
+    from pathlib import Path
+    return Path(__file_path).resolve().parents[3]
 
-        # UAV 리스트
-        for u in (_get(opt, "uavMissionPlanIDList", "UavMissionPlanIDList") or []):
-            opt_dict["uavMissionPlanIDList"].append({
-                "uavMissionPlanID": _get(u, "uavMissionPlanID", "UavMissionPlanID")
-            })
+def _db_dir_for(msgid: str, __file_path: str) -> str:
+    from pathlib import Path
+    env_root = os.getenv("KU_MISSION_DB_ROOT")
+    name = DB_DIR_RULES.get(msgid)
+    if not name:
+        return str(_project_root_for_recv_file(__file_path))
+    if env_root:
+        return str(Path(env_root) / name)
+    return str(_project_root_for_recv_file(__file_path) / "database" / name)
 
-        # LAH 리스트
-        for l in (_get(opt, "lahMissionPlanIDList", "LahMissionPlanIDList") or []):
-            opt_dict["lahMissionPlanIDList"].append({
-                "lahMissionPlanID": _get(l, "lahMissionPlanID", "LahMissionPlanID")
-            })
+def _try_save_received(msgid: str, data_obj):
+    try:
+        fn = getattr(received_db, f"set_received_{msgid}")
+        fn(data_obj)
+    except Exception:
+        pass
 
-        body["optionList"].append(opt_dict)
+def _try_read_db_body(msgid: str, data_obj):
+    """DB_FETCH_ON_RECEIVE에 포함된 메시지는 ID 필드로 DB JSON을 찾아 반환(없으면 None)."""
+    try:
+        if msgid not in DB_FETCH_ON_RECEIVE:
+            return None
+        id_field = ID_FIELD_FOR.get(msgid)
+        if not id_field:
+            return None
+        # 객체에서 ID 값을 추출(대/소문자 안전)
+        _val = _get(data_obj, id_field, id_field[:1].upper()+id_field[1:])
+        if _val is None:
+            return None
+        vid = int(_val)
+        dbdir = _db_dir_for(msgid, __file__)
+        fpath = os.path.join(dbdir, f"{vid}.json")
+        print(f"[{msgid}] DB 참조! ({fpath})")
+        if os.path.exists(fpath):
+            with open(fpath, "r", encoding="utf-8") as f:
+                return json.load(f)
+        return None
+    except Exception:
+        return None
 
-    return body
+def _to_dict_UAVMissionPlanID(obj):
+    d = {}
+    _v = _get(obj, 'uavMissionPlanID', 'UavMissionPlanID')
+    if _v is not None: d['uavMissionPlanID'] = int(_v)
+    return d
 
-# ────────── Receiver 클래스 ──────────
-class MissionPlanOptionReceiver_0701(
-    IFusionReceive[MissionPlanOptionInfo], IsLocal, IsSingletone
-):
+def _to_dict_LAHMissionPlanID(obj):
+    d = {}
+    _v = _get(obj, 'lahMissionPlanID', 'LahMissionPlanID')
+    if _v is not None: d['lahMissionPlanID'] = int(_v)
+    return d
+
+def _to_dict_Option(obj):
+    d = {}
+    _v = _get(obj, 'optionID', 'OptionID')
+    if _v is not None: d['optionID'] = int(_v)
+    _v = _get(obj, 'optionName', 'OptionName')
+    if _v is not None: d['optionName'] = int(_v)
+    _v = _get(obj, 'missionPlanID', 'MissionPlanID')
+    if _v is not None: d['missionPlanID'] = int(_v)
+    _v = _get(obj, 'survivalRate', 'SurvivalRate')
+    if _v is not None: d['survivalRate'] = int(_v)
+    _v = _get(obj, 'timeContraction', 'TimeContraction')
+    if _v is not None: d['timeContraction'] = int(_v)
+    _v = _get(obj, 'recogEffectiveness', 'RecogEffectiveness')
+    if _v is not None: d['recogEffectiveness'] = int(_v)
+    _v = _get(obj, 'distance', 'Distance')
+    if _v is not None: d['distance'] = int(_v)
+    _v = _get(obj, 'target', 'Target')
+    if _v is not None: d['target'] = int(_v)
+    _coll = _get(obj, 'uavMissionPlanIDList', 'UavMissionPlanIDList') or []
+    if _coll:
+        d['uavMissionPlanIDList'] = [_to_dict_UAVMissionPlanID(it) for it in _coll]
+    _coll = _get(obj, 'lahMissionPlanIDList', 'LahMissionPlanIDList') or []
+    if _coll:
+        d['lahMissionPlanIDList'] = [_to_dict_LAHMissionPlanID(it) for it in _coll]
+    return d
+
+def _to_dict_MissionPlanOptionInfo(obj):
+    d = {}
+    _v = _get(obj, 'timestamp', 'Timestamp')
+    if _v is not None: d['timestamp'] = int(_v)
+    _sval = _get(obj, 'source', 'Source', 'source','Source','sourceModuleName','SourceModuleName','requestModuleName','RequestModuleName')
+    if _sval is not None and _sval != '': d['source'] = str(_sval)
+    _v = _get(obj, 'autoExecution', 'AutoExecution')
+    if _v is not None: d['autoExecution'] = bool(_v)
+    _coll = _get(obj, 'optionList', 'OptionList') or []
+    if _coll:
+        d['optionList'] = [_to_dict_Option(it) for it in _coll]
+    return d
+
+class MissionPlanOptionInfoReceiver_0701(IFusionReceive[MissionPlanOptionInfo], IsLocal, IsSingletone):
     """0701 MissionPlanOptionInfo 메시지 수신 리시버"""
-    __namespace__ = "MissionPlanOptionReceiver_0701"
+    __namespace__ = "MissionPlanOptionInfoReceiver_0701"
 
     def Receive(self, data: MissionPlanOptionInfo, src):
         try:
-            # 1) DB 저장
-            received_db.set_received_0701(data)
+            _try_save_received('0701', data)
 
-            # 2) GUI 알림 (JSON 바디)
-            notify(
-                "0701",
-                json.dumps(_mpoi_to_dict(data), ensure_ascii=False).encode()
-            )
+            body = _try_read_db_body('0701', data)
+            if body is None:
+                body = _to_dict_MissionPlanOptionInfo(data)
+
+            notify("0701", json.dumps(body, ensure_ascii=False).encode("utf-8","ignore"))
+
         except Exception:
             print("[ERROR][Receive-0701] traceback ↓↓↓")
             traceback.print_exc(file=sys.stderr)

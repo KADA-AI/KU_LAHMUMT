@@ -62,8 +62,9 @@ def _validate_mission_packages(
     seen_pkg:   set[int] = set()
     seen_im_id: set[int] = set()
     seen_path:  set[int] = set()
+    seen_aircraft: set[int] = set()
 
-    for pkg in packages:                                   # ─ 패키지 루프
+    for pkg in packages:  # ─ 패키지 루프
         for key in ("timestamp", "individualMissionPackageID",
                     "aircraftID", "individualMissionList"):
             if key not in pkg:
@@ -73,7 +74,14 @@ def _validate_mission_packages(
         pkg_id   = pkg["individualMissionPackageID"]
         im_list  = pkg["individualMissionList"]
 
-        # 1) 0301 패키지-매핑 확인 ---------------------------
+        # ── aircraftID 검증 (1..6) & 패키지 중복 금지
+        if not (isinstance(aid, int) and 1 <= aid <= 6):
+            raise ValueError(f"[0302] invalid aircraftID: {aid} (must be 1..6)")
+        if aid in seen_aircraft:
+            raise ValueError(f"[0302] duplicate package for aircraftID {aid}")
+        seen_aircraft.add(aid)
+
+        # ① 0301 패키지-매핑 확인 ---------------------------
         if plan_pkg_map and plan_pkg_map.get(aid) != pkg_id:
             raise ValueError(f"[0302] aircraft {aid}: packageID {pkg_id} "
                              f"≠ 0301 map {plan_pkg_map.get(aid)}")
@@ -82,11 +90,14 @@ def _validate_mission_packages(
             raise ValueError(f"[0302] duplicate IMP ID {pkg_id}")
         seen_pkg.add(pkg_id)
 
+        if not isinstance(im_list, list) or not im_list:
+            raise ValueError(f"[0302] aircraft {aid}: empty individualMissionList")
+
         base_path = _path_base(aid)
         upper_path = base_path + 100_000_000
         last_im_id = last_path_id = None
 
-        # 2) 개별 IM 검증 ----------------------------------
+        # ② 개별 IM 검증 -----------------------------------
         for im in im_list:
             for key in ("individualMissionID", "isDone",
                         "relatedMission", "individualMissionInfo", "pathID"):
@@ -99,7 +110,7 @@ def _validate_mission_packages(
             path_id      = im["pathID"]
 
             # ── IM-ID 검증
-            if im_id < 900_000_001:
+            if not isinstance(im_id, int) or im_id < 900_000_001:
                 raise ValueError(f"[0302] IM ID {im_id} < 900,000,001")
             if im_id in seen_im_id:
                 raise ValueError(f"[0302] duplicate IM ID {im_id}")
@@ -146,17 +157,21 @@ def build_mission_packages(
     """
     missions: 0302 직전 단계(IM list, aircraftID 포함)
     ────────────────────────────────────────────────────────
-    • aircraftID별 IMP 묶기
+    • aircraftID별 IMP 묶기 (1..6만 허용, 중복 패키지 불가)
     • PathID / individualMissionID 새로 발급
     • isDone → bool 캐스팅
-    • altitude 숫자, isHole bool 강제 보정
+    • altitude(int), lat/lon(float), width(float), isHole(bool) 강제 보정
+    • patternType 기본값 보정
     """
     now_ms = now_ms_since_2000()
 
     # 1) aircraftID별 분류 ─────────────────────────────
     grouped: dict[int, list[dict]] = {}
     for m in missions:
-        grouped.setdefault(m["aircraftID"], []).append(m)
+        aid = m.get("aircraftID")
+        if not (isinstance(aid, int) and 1 <= aid <= 6):
+            raise ValueError(f"[0302] invalid aircraftID in missions: {aid} (must be 1..6)")
+        grouped.setdefault(aid, []).append(m)
 
     out: list[dict] = []
     for aid, im_raw in grouped.items():
@@ -170,10 +185,10 @@ def build_mission_packages(
         upper_path  = base_path + 100_000_000
         seen_path: set[int] = set()
 
-        # 3) PathID · autoZoomIn 부여 ──────────────────
+        # 3) PathID/필드 보정 ───────────────────────────
         fixed: list[dict] = []
         for im in im_raw:
-            im["individualMissionPlanPackageID"] = pkg_id
+            im["individualMissionPlanPackageID"] = pkg_id  # 내부 trace용(아래에서 출력 제외)
 
             # ▸ PathID 충돌/범위 확인
             pid = im.get("pathID", 0)
@@ -183,22 +198,62 @@ def build_mission_packages(
             seen_path.add(pid)
 
             # ▸ autoZoomIn (UAV ≥ 4)
-            im["individualMissionInfo"]["autoZoomIn"] = (aid >= 4)
+            info = im.setdefault("individualMissionInfo", {})
+            info["autoZoomIn"] = (aid >= 4)
+
+            # ▸ patternType 기본값 보정
+            try:
+                info["patternType"] = int(info.get("patternType", 0))
+            except Exception:
+                info["patternType"] = 0
 
             # ▸ isDone → bool 캐스팅
             im["isDone"] = bool(im.get("isDone", False))
 
-            # ▸ areaList.isHole / altitude 타입 강제
-            info = im["individualMissionInfo"]
-            for blk in info.get("areaList", []) + info.get("lineList", []):
+            # ▸ coordinate/line/area 타입 강제
+            # coordinateList (top-level in info)
+            for p in info.get("coordinateList", []) or []:
+                if "latitude" in p:
+                    try: p["latitude"] = float(p["latitude"])
+                    except Exception: p["latitude"] = 0.0
+                if "longitude" in p:
+                    try: p["longitude"] = float(p["longitude"])
+                    except Exception: p["longitude"] = 0.0
+                if "altitude" in p:
+                    try: p["altitude"] = int(float(p["altitude"]))
+                    except Exception: p["altitude"] = 0
+
+            # lineList
+            for blk in info.get("lineList", []) or []:
+                if "width" in blk:
+                    try: blk["width"] = float(blk["width"])
+                    except Exception: blk["width"] = 0.0
+                for p in blk.get("coordinateList", []) or []:
+                    if "latitude" in p:
+                        try: p["latitude"] = float(p["latitude"])
+                        except Exception: p["latitude"] = 0.0
+                    if "longitude" in p:
+                        try: p["longitude"] = float(p["longitude"])
+                        except Exception: p["longitude"] = 0.0
+                    if "altitude" in p:
+                        try: p["altitude"] = int(float(p["altitude"]))
+                        except Exception: p["altitude"] = 0
+
+            # areaList
+            for blk in info.get("areaList", []) or []:
                 if "isHole" in blk:
                     blk["isHole"] = bool(blk["isHole"])
-                for p in blk.get("coordinateList", []):
+                for p in blk.get("coordinateList", []) or []:
+                    if "latitude" in p:
+                        try: p["latitude"] = float(p["latitude"])
+                        except Exception: p["latitude"] = 0.0
+                    if "longitude" in p:
+                        try: p["longitude"] = float(p["longitude"])
+                        except Exception: p["longitude"] = 0.0
                     if "altitude" in p:
-                        try:
-                            p["altitude"] = int(float(p["altitude"]))
-                        except Exception:
-                            p["altitude"] = 0
+                        try: p["altitude"] = int(float(p["altitude"]))
+                        except Exception: p["altitude"] = 0
+
             fixed.append(im)
 
         # 4) PathID 기준 정렬 → IM-ID 재발급
@@ -206,13 +261,13 @@ def build_mission_packages(
         for im in fixed:
             im["individualMissionID"] = next_individual_mission_id()
 
-        # 5) 필드 순서/정리
+        # 5) 필드 순서/정리(불필요 키 제거)
         ordered_list: list[dict] = []
         for im in fixed:
-            im = _clean_individual_mission(im, cmpk_id)
+            im = _clean_individual_mission(im, cmpk_id)  # relatedMission 재설정 + 잡키 제거
             ordered_list.append(OrderedDict([
                 ("individualMissionID",   im["individualMissionID"]),
-                ("isDone",                im["isDone"]),   # ← bool 보장
+                ("isDone",                im["isDone"]),
                 ("relatedMission",        im["relatedMission"]),
                 ("individualMissionInfo", im["individualMissionInfo"]),
                 ("pathID",                im["pathID"]),
@@ -229,4 +284,3 @@ def build_mission_packages(
     # 7) 최종 스펙 검증
     _validate_mission_packages(out, plan_pkg_map, cmpk_id)
     return out
-

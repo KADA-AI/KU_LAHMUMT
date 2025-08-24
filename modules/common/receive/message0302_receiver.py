@@ -1,132 +1,178 @@
-# # receive/message0302_receiver.py
-# # ──────────────────────────────────────────────────────────────
-# from dll_files.nFusionImports import *            # IFusionReceive, IsLocal, IsSingletone
-# from nFusion.Model.msg_0302 import *              # IndividualMissionPlan, IndividualMission, etc.
-# from .database import received_db
-# from receive_center import notify
-# import json, traceback, sys
+# modules/common/receive/message0302_receiver.py
+# auto-generated at 2025-08-24T16:37:13.088600+00:00
 
-# # ────────── 대/소문자 안전 접근 헬퍼 ──────────
-# _get = lambda obj, *names: next((getattr(obj, n) for n in names if hasattr(obj, n)), None)
-
-# # ────────── CLR → dict 변환 ──────────
-# def _im_plan_to_dict(plan: IndividualMissionPlan) -> dict:
-#     def c2d(ct):
-#         return {
-#             "latitude":  _get(ct, "latitude",  "Latitude"),
-#             "longitude": _get(ct, "longitude", "Longitude"),
-#             "altitude":  _get(ct, "altitude",  "Altitude")
-#         }
-
-#     body = {
-#         "timestamp":                _get(plan, "timestamp",                "Timestamp"),
-#         "individualMissionPackageID": _get(plan, "individualMissionPackageID", "IndividualMissionPackageID"),
-#         "aircraftID":               _get(plan, "aircraftID",               "AircraftID"),
-#         "individualMissionList":    []
-#     }
-
-#     for im in _get(plan, "individualMissionList", "IndividualMissionList") or []:
-#         related = _get(im, "relatedMission", "RelatedMission")
-#         info    = _get(im, "individualMissionInfo", "IndividualMissionInfo")
-
-#         im_dict = {
-#             "individualMissionID": _get(im, "individualMissionID", "IndividualMissionID"),
-#             "isDone":             _get(im, "isDone",             "IsDone"),
-#             "relatedMission": {
-#                 "relatedMissionType": _get(related, "relatedMissionType", "RelatedMissionType"),
-#                 "inputMissionID":     _get(related, "inputMissionID",     "InputMissionID"),
-#                 "priorMissionID":     _get(related, "priorMissionID",     "PriorMissionID")
-#             },
-#             "individualMissionInfo": {
-#                 "individualMissionType": _get(info, "individualMissionType", "IndividualMissionType"),
-#                 "patternType":           _get(info, "patternType",           "PatternType"),
-#                 "autoZoomIn":            _get(info, "autoZoomIn",            "AutoZoomIn"),
-#                 "coordinateList":        [
-#                     c2d(c) for c in _get(info, "coordinateList", "CoordinateList") or []
-#                 ],
-#                 "lineList": [
-#                     {
-#                         "width":          _get(ln, "width", "Width"),
-#                         "coordinateList": [c2d(c) for c in _get(ln, "coordinateList", "CoordinateList") or []]
-#                     }
-#                     for ln in _get(info, "lineList", "LineList") or []
-#                 ],
-#                 "areaList": [
-#                     {
-#                         "isHole":         _get(ar, "isHole", "IsHole"),
-#                         "coordinateList": [c2d(c) for c in _get(ar, "coordinateList", "CoordinateList") or []]
-#                     }
-#                     for ar in _get(info, "areaList", "AreaList") or []
-#                 ],
-#                 "targetID": _get(info, "targetID", "TargetID"),
-#             },
-#             "pathID": _get(im, "pathID", "PathID")
-#         }
-#         body["individualMissionList"].append(im_dict)
-
-#     return body
-
-# # ────────── Receiver 클래스 ──────────
-# class IndividualMissionPlanReceiver_0302(
-#     IFusionReceive[IndividualMissionPlan], IsLocal, IsSingletone
-# ):
-#     """0302 IndividualMissionPlan 메시지 수신 리시버"""
-#     __namespace__ = "IndividualMissionPlanReceiver_0302"
-
-#     def Receive(self, data: IndividualMissionPlan, src):
-#         try:
-#             # DB 저장
-#             received_db.set_received_0302(data)
-
-#             # GUI 알림
-#             notify(
-#                 "0302",
-#                 json.dumps(_im_plan_to_dict(data), ensure_ascii=False).encode()
-#             )
-
-#         except Exception:
-#             print("[ERROR][Receive-0302] traceback ↓↓↓")
-#             traceback.print_exc(file=sys.stderr)
-
-
-# receive/message0302_receiver.py
-# ─────────────────────────────────────────────────────────────
 from dll_files.nFusionImports import *            # IFusionReceive, IsLocal, IsSingletone
-from nFusion.Model.msg_0302 import *              # IndividualMissionPlan
-from .database import received_db                 # DB 저장 모듈
-from receive_center import notify                 # GUI 알림 함수
+from nFusion.Model.msg_0302 import *            # C# 모델
+from nFusion.Model.CommonType import *             # 공통 타입
+from .database import received_db
+from receive_center import notify
+import json, traceback, sys, os, importlib
 
-import json
-import traceback
-import sys
-
-# ────────── 대/소문자 안전 접근 헬퍼 ──────────
+# 대/소문자 안전 접근
 _get = lambda obj, *names: next((getattr(obj, n) for n in names if hasattr(obj, n)), None)
 
-# ────────── IndividualMissionPlan → dict (필수 필드만) ──────────
-def _im_plan_to_dict(plan: IndividualMissionPlan) -> dict:
-    return {
-        "timestamp":                 _get(plan, "timestamp",                 "Timestamp"),
-        "individualMissionPackageID": _get(plan, "individualMissionPackageID", "IndividualMissionPackageID"),
-    }
+# ── Embedded rules (TX/DB 공용) ──────────────────────────────────────────
+TX_FIELD_WHITELIST = {'0201': ['timestamp', 'inputMissionPackageID'], '0203': ['timestamp', 'missionReferencePackageID'], '0301': ['timestamp', 'missionPlanID'], '0302': ['timestamp', 'individualMissionPackageID'], '0303': ['timestamp', 'pathID'], '0304': ['timestamp', 'pathID']}
+DB_DIR_RULES        = {'0201': 'InputMissionPlan', '0203': 'FlightReferenceInfo', '0301': 'MissionPlan', '0302': 'IndividualMissionPlan', '0303': 'UAVFlightPlan', '0304': 'FlightPath'}
+DB_FETCH_ON_RECEIVE = {'0201', '0203'}
+ID_FIELD_FOR        = {'0201': 'inputMissionPackageID', '0203': 'missionReferencePackageID', '0301': 'missionPlanID', '0302': 'individualMissionPackageID', '0303': 'pathID', '0304': 'pathID'}
 
-# ────────── Receiver 클래스 ──────────
-class IndividualMissionPlanReceiver_0302(
-    IFusionReceive[IndividualMissionPlan], IsLocal, IsSingletone
-):
-    """0302 IndividualMissionPlan 메시지 수신 리시버 (timestamp + individualMissionPackageID 전용)"""
+def _project_root_for_recv_file(__file_path: str):
+    from pathlib import Path
+    return Path(__file_path).resolve().parents[3]
+
+def _db_dir_for(msgid: str, __file_path: str) -> str:
+    from pathlib import Path
+    env_root = os.getenv("KU_MISSION_DB_ROOT")
+    name = DB_DIR_RULES.get(msgid)
+    if not name:
+        return str(_project_root_for_recv_file(__file_path))
+    if env_root:
+        return str(Path(env_root) / name)
+    return str(_project_root_for_recv_file(__file_path) / "database" / name)
+
+def _try_save_received(msgid: str, data_obj):
+    try:
+        fn = getattr(received_db, f"set_received_{msgid}")
+        fn(data_obj)
+    except Exception:
+        pass
+
+def _try_read_db_body(msgid: str, data_obj):
+    """DB_FETCH_ON_RECEIVE에 포함된 메시지는 ID 필드로 DB JSON을 찾아 반환(없으면 None)."""
+    try:
+        if msgid not in DB_FETCH_ON_RECEIVE:
+            return None
+        id_field = ID_FIELD_FOR.get(msgid)
+        if not id_field:
+            return None
+        # 객체에서 ID 값을 추출(대/소문자 안전)
+        _val = _get(data_obj, id_field, id_field[:1].upper()+id_field[1:])
+        if _val is None:
+            return None
+        vid = int(_val)
+        dbdir = _db_dir_for(msgid, __file__)
+        fpath = os.path.join(dbdir, f"{vid}.json")
+        print(f"[{msgid}] DB 참조! ({fpath})")
+        if os.path.exists(fpath):
+            with open(fpath, "r", encoding="utf-8") as f:
+                return json.load(f)
+        return None
+    except Exception:
+        return None
+
+def _to_dict_RelatedMission(obj):
+    d = {}
+    _v = _get(obj, 'relatedMissionType', 'RelatedMissionType')
+    if _v is not None: d['relatedMissionType'] = int(_v)
+    _v = _get(obj, 'inputMissionID', 'InputMissionID')
+    if _v is not None: d['inputMissionID'] = int(_v)
+    _v = _get(obj, 'priorMissionID', 'PriorMissionID')
+    if _v is not None: d['priorMissionID'] = int(_v)
+    return d
+
+def _to_dict_Coordinate(obj):
+    d = {}
+    _v = _get(obj, 'latitude', 'Latitude')
+    if _v is not None: d['latitude'] = float(_v)
+    _v = _get(obj, 'longitude', 'Longitude')
+    if _v is not None: d['longitude'] = float(_v)
+    _v = _get(obj, 'altitude', 'Altitude')
+    if _v is not None: d['altitude'] = int(_v)
+    return d
+
+def _to_dict_Line(obj):
+    d = {}
+    _v = _get(obj, 'width', 'Width')
+    if _v is not None: d['width'] = float(_v)
+    _coll = _get(obj, 'coordinateList', 'CoordinateList') or []
+    if _coll:
+        d['coordinateList'] = [_to_dict_Coordinate(it) for it in _coll]
+    return d
+
+def _to_dict_Area(obj):
+    d = {}
+    _v = _get(obj, 'isHole', 'IsHole')
+    if _v is not None: d['isHole'] = bool(_v)
+    _coll = _get(obj, 'coordinateList', 'CoordinateList') or []
+    if _coll:
+        d['coordinateList'] = [_to_dict_Coordinate(it) for it in _coll]
+    return d
+
+def _to_dict_IndividualMissionInfo(obj):
+    d = {}
+    _v = _get(obj, 'individualMissionType', 'IndividualMissionType')
+    if _v is not None: d['individualMissionType'] = int(_v)
+    _v = _get(obj, 'patternType', 'PatternType')
+    if _v is not None: d['patternType'] = int(_v)
+    _v = _get(obj, 'autoZoomIn', 'AutoZoomIn')
+    if _v is not None: d['autoZoomIn'] = bool(_v)
+    _coll = _get(obj, 'coordinateList', 'CoordinateList') or []
+    if _coll:
+        d['coordinateList'] = [_to_dict_Coordinate(it) for it in _coll]
+    _coll = _get(obj, 'lineList', 'LineList') or []
+    if _coll:
+        d['lineList'] = [_to_dict_Line(it) for it in _coll]
+    _coll = _get(obj, 'areaList', 'AreaList') or []
+    if _coll:
+        d['areaList'] = [_to_dict_Area(it) for it in _coll]
+    _v = _get(obj, 'targetID', 'TargetID')
+    if _v is not None: d['targetID'] = int(_v)
+    return d
+
+def _to_dict_IndividualMission(obj):
+    d = {}
+    _v = _get(obj, 'individualMissionID', 'IndividualMissionID')
+    if _v is not None: d['individualMissionID'] = int(_v)
+    _v = _get(obj, 'isDone', 'IsDone')
+    if _v is not None: d['isDone'] = bool(_v)
+    _sub = _get(obj, 'relatedMission', 'RelatedMission')
+    if _sub is not None: d['relatedMission'] = _to_dict_RelatedMission(_sub)
+    _sub = _get(obj, 'individualMissionInfo', 'IndividualMissionInfo')
+    if _sub is not None: d['individualMissionInfo'] = _to_dict_IndividualMissionInfo(_sub)
+    _v = _get(obj, 'pathID', 'PathID')
+    if _v is not None: d['pathID'] = int(_v)
+    return d
+
+def _to_dict_IndividualMissionPlanData(obj):
+    d = {}
+    _v = _get(obj, 'timestamp', 'Timestamp')
+    if _v is not None: d['timestamp'] = int(_v)
+    _v = _get(obj, 'individualMissionPackageID', 'IndividualMissionPackageID')
+    if _v is not None: d['individualMissionPackageID'] = int(_v)
+    _v = _get(obj, 'aircraftID', 'AircraftID')
+    if _v is not None: d['aircraftID'] = int(_v)
+    _coll = _get(obj, 'individualMissionList', 'IndividualMissionList') or []
+    if _coll:
+        d['individualMissionList'] = [_to_dict_IndividualMission(it) for it in _coll]
+    return d
+
+def _to_dict_IndividualMissionPlan(obj):
+    d = {}
+    _v = _get(obj, 'timestamp', 'Timestamp')
+    if _v is not None: d['timestamp'] = int(_v)
+    _v = _get(obj, 'individualMissionPackageID', 'IndividualMissionPackageID')
+    if _v is not None: d['individualMissionPackageID'] = int(_v)
+    _v = _get(obj, 'aircraftID', 'AircraftID')
+    if _v is not None: d['aircraftID'] = int(_v)
+    _coll = _get(obj, 'individualMissionList', 'IndividualMissionList') or []
+    if _coll:
+        d['individualMissionList'] = [_to_dict_IndividualMission(it) for it in _coll]
+    return d
+
+class IndividualMissionPlanReceiver_0302(IFusionReceive[IndividualMissionPlan], IsLocal, IsSingletone):
+    """0302 IndividualMissionPlan 메시지 수신 리시버"""
     __namespace__ = "IndividualMissionPlanReceiver_0302"
 
     def Receive(self, data: IndividualMissionPlan, src):
         try:
-            # 1) DB 저장
-            received_db.set_received_0302(data)
+            _try_save_received('0302', data)
 
-            # 2) GUI 알림
-            notify(
-                "0302",
-                json.dumps(_im_plan_to_dict(data), ensure_ascii=False).encode()
-            )
+            body = _try_read_db_body('0302', data)
+            if body is None:
+                body = _to_dict_IndividualMissionPlan(data)
+
+            notify("0302", json.dumps(body, ensure_ascii=False).encode("utf-8","ignore"))
 
         except Exception:
             print("[ERROR][Receive-0302] traceback ↓↓↓")

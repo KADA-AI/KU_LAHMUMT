@@ -41,6 +41,9 @@ class ModuleWithLog(Card):
         self.mode_line.setAlignment(Qt.AlignCenter)
         root.addWidget(self.mode_line)
 
+        # [추가] 초기 모드 텍스트를 '전원 OFF'로 고정
+        self.mode_line.setText("전원 OFF")
+
         # (2) 실행 버튼 + Auto 토글
         row_ctrl = QHBoxLayout()
         row_ctrl.setContentsMargins(0, 0, 0, 0)

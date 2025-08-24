@@ -1,22 +1,26 @@
+# 파일: /mnt/data/mission_planning_gui.py
 # -*- coding: utf-8 -*-
 # mission_planning_gui.py – 업무 할당·계획수립(AssignmentPlanning) 전용 GUI
 from __future__ import annotations
 
-import sys, os, threading
+import sys, os, threading, json, re, time, shutil
 os.environ["KU_ROLE"] = "mission"
 from pathlib import Path
 
-from PyQt5.QtCore import qInstallMessageHandler, QtMsgType, pyqtSignal, QTimer
-from PyQt5.QtWidgets import QApplication, QMainWindow, QTabWidget, QShortcut
+from PyQt5.QtCore import qInstallMessageHandler, QtMsgType, pyqtSignal, QTimer, Qt
+from PyQt5.QtWidgets import QApplication, QMainWindow, QTabWidget, QShortcut, QWidget, QLabel, QHBoxLayout, QVBoxLayout, QSlider
 from PyQt5.QtGui import QKeySequence
 
 # ───────── Qt 경고 필터 ─────────
 def _qt_silent_handler(mode: QtMsgType, context, message: str):
-    if "Cannot queue arguments of type" in message:
-        return
+    if "Cannot queue arguments of type" in message: return
     sys.stderr.write(message + "\n")
-
 qInstallMessageHandler(_qt_silent_handler)
+
+_EPOCH2000_MS = 946684800000
+def _now_ms_since_2000():
+    import time
+    return int(time.time() * 1000) - _EPOCH2000_MS
 
 # ───────── 경로 부트스트랩 ─────────
 def _bootstrap_paths():
@@ -28,12 +32,9 @@ def _bootstrap_paths():
         p_str = str(p)
         if p.exists() and p_str not in sys.path:
             sys.path.insert(0, p_str)
-    try:
-        os.chdir(root)
-    except Exception:
-        pass
+    try: os.chdir(root)
+    except Exception: pass
     return root, common_dir
-
 PROJECT_ROOT, COMMON_DIR = _bootstrap_paths()
 
 # ───────── 설정/라이선스 정규화 ─────────
@@ -52,7 +53,6 @@ def _ensure_fusion_configs():
     if src != dst:
         dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
 
-    # license (있으면 복사)
     lcands = [
         PROJECT_ROOT / "nFusionLicense.lic",
         COMMON_DIR   / "nFusionLicense.lic",
@@ -67,28 +67,22 @@ def _ensure_fusion_configs():
 
 # ───────── nFusion DLL/어셈블리 로드 ─────────
 from dll_files.nFusionImports import *  # FusionNodeIoc, NodeMessenger, clr 등
-
 def _load_msglib_and_deps():
     _clr = globals().get("clr", None)
     if _clr is None:
-        try:
-            from dll_files.nFusionImports import clr as _clr  # type: ignore
-        except Exception:
-            import clr as _clr  # type: ignore
+        try: from dll_files.nFusionImports import clr as _clr  # type: ignore
+        except Exception: import clr as _clr  # type: ignore
     msg_dir = COMMON_DIR / "msg_files"
     stem = msg_dir / "MessageLibrary"
-    try:
-        _clr.AddReference(str(stem))
-    except Exception:
-        _clr.AddReference(str(stem.with_suffix(".dll")))
+    try: _clr.AddReference(str(stem))
+    except Exception: _clr.AddReference(str(stem.with_suffix(".dll")))
     for s in ("K4586Model", "K4586Model.Assist", "MiscUtil"):
         dll = msg_dir / (s + ".dll")
         if dll.exists():
-            try:    _clr.AddReference(str(dll.with_suffix("")))
+            try: _clr.AddReference(str(dll.with_suffix("")))
             except Exception:
                 try: _clr.AddReference(str(dll))
                 except Exception: pass
-
 _settings_path = _ensure_fusion_configs()
 _ = _load_msglib_and_deps()
 
@@ -101,48 +95,90 @@ from Tabs.assignment_planning_tab import AssignmentPlanningTab
 
 # ───────── 메인 윈도우 ─────────
 class MainWindow(QMainWindow):
-    # 백그라운드 UDP → UI 스레드 안전 디스패치
-    ctrl_payload = pyqtSignal(dict)
+    ctrl_payload = pyqtSignal(dict)   # UDP 제어 → UI 스레드
+    log_sig      = pyqtSignal(str)    # 백스레드 로그 → UI 스레드
+    start_push_seq = pyqtSignal()     # ★ 푸시 시퀀스 시작(메인스레드)  ← 추가
 
     def __init__(self):
         super().__init__()
         self.setWindowTitle("업무 할당·계획수립 GUI")
         self.resize(1100, 700)
 
-        self._self_check_sent = False  # 단발성 발신 로그 중복 방지
-        self._last_ctrl_ts = {}        # 디듀프용
-        tabs = QTabWidget()
+        self._self_check_sent = False
+        self._last_ctrl_ts = {}     # 디듀프
+        self._initplan_running = False
+        self._last_mission_plan_id = None
 
-        # 탭 인스턴스를 보관(로그/버튼 접근 등)
+        tabs = QTabWidget()
         self._tab = AssignmentPlanningTab(messenger=NodeMessenger)
         tabs.addTab(self._tab, "업무 할당·계획수립 CSC")
-        self.setCentralWidget(tabs)
 
-        # UDP payload는 반드시 UI 스레드에서 처리
+        # ───── 상단 슬라이더 바 ─────
+        top = QWidget(); top_layout = QHBoxLayout(top)
+        top_layout.setContentsMargins(8,4,8,4); top_layout.addStretch(1)
+        self.mode_slider = QSlider(Qt.Horizontal); self.mode_slider.setRange(0,4)
+        self.mode_slider.setSingleStep(1); self.mode_slider.setTickInterval(1)
+        self.mode_slider.setTickPosition(QSlider.TicksBelow); self.mode_slider.setFixedWidth(420)
+        self.mode_slider.valueChanged.connect(self._on_mode_slider_changed)
+        self.mode_now = QLabel("대기모드"); self.mode_now.setStyleSheet("font-weight:600; padding-left:8px;")
+        lbl = QLabel("모드:"); lbl.setStyleSheet("color:#789; padding-right:6px;")
+        top_layout.addWidget(lbl); top_layout.addWidget(self.mode_slider); top_layout.addWidget(self.mode_now)
+
+        center = QWidget(); v = QVBoxLayout(center); v.setContentsMargins(0,0,0,0)
+        v.addWidget(top); v.addWidget(tabs)
+        self.setCentralWidget(center)
+        self._set_mode_slider_by_text("전원 OFF")
+
         self.ctrl_payload.connect(self._handle_ctrl_payload)
+        self.log_sig.connect(self._append_log_line)
+        self.start_push_seq.connect(self._start_push_sequence)
 
-        # 버스 초기화는 백그라운드에서
         threading.Thread(target=self._rx_setup, daemon=True).start()
-
-        # UDP 컨트롤 수신 시작
         self._start_control_udp()
-
-        # 테스트 단축키(1: ON, 0: OFF)
         self._install_test_shortcuts()
+
+    def _start_push_sequence(self):
+        # 메인 스레드에서만 호출됨
+        QTimer.singleShot(0,    lambda: self._click_tx_button_for("0304"))
+        QTimer.singleShot(200,  lambda: self._click_tx_button_for("0303"))
+        QTimer.singleShot(400,  lambda: self._click_tx_button_for("0302"))
+        QTimer.singleShot(1400, lambda: self._click_tx_button_for("0301"))
+
+        # ★ 버튼 푸시가 끝난 뒤(약간의 여유 후) 0305 완료 → 0901 전송
+        QTimer.singleShot(1600, lambda: self._push_0305(status=1, reason="초기임무재계획"))
+        QTimer.singleShot(1700, lambda: (
+            self._last_mission_plan_id is not None and
+            self._push_0901_options(int(self._last_mission_plan_id))
+        ))
 
     # ───────── 로깅 유틸 ─────────
     def _append_log_line(self, text: str):
-        # 탭 내부 로거가 있으면 우선 사용
         try:
             if getattr(self, "_tab", None) and hasattr(self._tab, "append_log"):
                 self._tab.append_log(text); return
         except Exception:
             pass
-        # 그 외 콘솔 폴백
+        try: print(text)
+        except Exception: pass
+
+    # ───────── 모드/슬라이더 ─────────
+    def _on_mode_slider_changed(self, val: int):
+        labels = ["전원 OFF", "전원 ON", "대기모드", "초기 임무 계획", "임무 수행"]
+        try: self.mode_now.setText(labels[int(val)])
+        except Exception: pass
+        self._append_log_line(f"[MODE] 슬라이더 변경 → {labels[int(val)] if 0 <= val < len(labels) else val}")
+
+    def _set_mode_slider_by_text(self, text: str):
+        labels = ["전원 OFF", "전원 ON", "대기모드", "초기 임무 계획", "임무 수행"]
+        norm = re.sub(r"\s+", "", str(text)).lower()
+        mapping = {"전원off":0,"off":0,"poweroff":0,"0":0,"전원on":1,"on":1,"poweron":1,"1":1,"대기모드":2,"대기":2,"standby":2,"2":2,"초기임무계획":3,"초기임무계획모드":3,"initplan":3,"initial":3,"3":3,"임무수행":4,"execution":4,"4":4}
+        val = mapping.get(norm, 2)
         try:
-            print(text)
-        except Exception:
-            pass
+            if getattr(self, "mode_slider", None):
+                if self.mode_slider.value() != val:
+                    self.mode_slider.blockSignals(True); self.mode_slider.setValue(val); self.mode_slider.blockSignals(False)
+            if getattr(self, "mode_now", None): self.mode_now.setText(labels[val])
+        except Exception: pass
 
     # ───────── 버스 초기화 ─────────
     def _rx_setup(self):
@@ -152,172 +188,302 @@ class MainWindow(QMainWindow):
         NodeMessenger.InitAllSubscriberFromAssembly()
         NodeMessenger.RegistAllProviderFromFusionNodeIoc()
 
-    # ───────── 단발 0102 송신(폴백용) ─────────
+    def _push_0305(self, status: int, reason: str = "초기임무재계획"):
+        try:
+            from push_center import push_message
+            body = {
+                "timestamp": _now_ms_since_2000(),
+                "source": "IDM",                    # ★ 요구사항 반영
+                "missionPlanningStatus": int(status),
+                "replanReason": reason,
+            }
+            push_message("0305", NodeMessenger, body_dict=body)
+            self.log_sig.emit(f"[0305] status={status}, reason={reason} 전송")
+        except Exception as e:
+            self.log_sig.emit(f"[ERR] 0305 전송 실패: {e}")
+
+    def _push_0901_options(self, mission_plan_id: int):
+        try:
+            from push_center import push_message
+            ts = _now_ms_since_2000()
+            body = {
+                "timestamp": ts,
+                "source": "DSC",                  # ★ 요구사항 반영
+                "requestTime": ts,                # ★ timestamp와 동일
+                "pendingOptionList": [
+                    {
+                        "optionID": 1,
+                        "optionName": "시스템추천",
+                        "missionPlanID": int(mission_plan_id),
+                    }
+                ],
+            }
+            push_message("0901", NodeMessenger, body_dict=body)
+            self.log_sig.emit(f"[0901] 옵션요청 1건(MPID={mission_plan_id}) 전송")
+        except Exception as e:
+            self.log_sig.emit(f"[ERR] 0901 전송 실패: {e}")
+
+    # ───────── 0102 폴백 송신 ─────────
     def _send_self_check_0102(self, status: int = 1, _retry: int = 0):
         try:
             from push_center import push_message
         except Exception as e:
-            self._append_log_line(f"0102 push import 실패: {e}")
-            return
-        body = {"Status": int(status), "SourceModuleName": "Multi-agent Mission Planner"}
+            self._append_log_line(f"0102 push import 실패: {e}"); return
+        try:
+            body = self._tab._build_overridden_body("0102") or {}
+        except Exception:
+            body = {}
+        if not body:
+            body = {"timestamp": _now_ms_since_2000(), "source": "MMR", "status": 1}
         try:
             push_message("0102", NodeMessenger, body_dict=body)
-            if not self._self_check_sent:
-                self._append_log_line("자체점검(0102) 발신")
-                self._self_check_sent = True
+            self._append_log_line("자체점검(0102) 발신")
+            self._self_check_sent = True
         except Exception as e:
-            if _retry < 5:
-                QTimer.singleShot(500, lambda: self._send_self_check_0102(status=status, _retry=_retry+1))
-            else:
-                self._append_log_line(f"자체점검(0102) 발신 실패: {e}")
-
-    # ───────── 최초 표시 ─────────
-    def showEvent(self, event):
-        try:
-            super().showEvent(event)
-        except Exception:
-            pass
-        if getattr(self, "_shown_once", False):
-            return
-        self._shown_once = True
-        self._append_log_line("SW 켜짐")
-        # 자동 자체점검 발신 없음 (요구사항)
+            if _retry < 5: QTimer.singleShot(500, lambda: self._send_self_check_0102(status=status, _retry=_retry+1))
+            else: self._append_log_line(f"자체점검(0102) 발신 실패: {e}")
 
     # ───────── UDP 컨트롤 수신 ─────────
     def _start_control_udp(self):
-        """
-        대시보드 제어 명령 수신 (기본 포트 45981)
-        - 백그라운드 스레드 → ctrl_payload 시그널 emit으로 UI 스레드 처리 보장
-        """
         import socket, json, threading, os
-
-        if getattr(self, "_ctrl_udp_started", False):
-            return
+        if getattr(self, "_ctrl_udp_started", False): return
         self._ctrl_udp_started = True
-
         port = int(os.getenv("KU_CTRL_PORT", "45981"))
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-
         try:
             sock.bind(("127.0.0.1", port))
             self._append_log_line(f"CTRL UDP 수신 대기 시작 (127.0.0.1:{port})")
         except Exception as e:
-            self._append_log_line(f"CTRL UDP 바인드 실패: {e}")
-            return
-
+            self._append_log_line(f"CTRL UDP 바인드 실패: {e}"); return
         def loop():
             while True:
                 try:
                     data, _ = sock.recvfrom(8192)
                     payload = json.loads(data.decode("utf-8", "ignore"))
-                    self.ctrl_payload.emit(payload)  # ← UI 스레드로 큐잉
-                except Exception:
-                    pass
-
+                    self.ctrl_payload.emit(payload)
+                except Exception: pass
         threading.Thread(target=loop, daemon=True).start()
 
-    # ───────── 0102 토글 보장(실제 버튼 클릭) ─────────
-    def _ensure_selfcheck_0102(self, on: bool) -> bool:
-        """
-        TX 테이블에서 msg_id == '0102' 행을 찾아 실제 '발신' 버튼을 클릭해 ON/OFF 보장.
-        우선순위: (A) 셀 위젯 버튼 click() → (B) 내부 토글 메서드 호출 → (C) push_center 폴백
-        """
-        try:
-            tab = getattr(self, "_tab", None)
-            if tab is None or not hasattr(tab, "tbl_tx"):
-                self._append_log_line("[CTRL] 0102 대상 탭/테이블을 찾지 못함")
-                return False
+    # ───────── 테스트 단축키 ─────────
+    def _install_test_shortcuts(self):
+        QShortcut(QKeySequence("1"), self, activated=lambda: self._ensure_0102(True))
+        QShortcut(QKeySequence("0"), self, activated=lambda: self._ensure_0102(False))
 
-            tbl = tab.tbl_tx
-            # 1) 0102 행 찾기
+    def _ensure_0102(self, on: bool) -> bool:
+        try:
+            tab = self._tab; tbl = tab.tbl_tx
             target_row = -1
             for r in range(tbl.rowCount()):
                 it = tbl.item(r, 0)
-                if it and it.text().strip() == "0102":
-                    target_row = r
-                    break
-            if target_row < 0:
-                self._append_log_line("[CTRL] TX 테이블에 0102 행이 없음")
-                return False
-
-            # 2) 현재 주기 전송 상태 확인
+                if it and it.text().strip() == "0102": target_row = r; break
+            if target_row < 0: self._append_log_line("[CTRL] TX 테이블에 0102 행이 없음"); return False
             running = "0102" in getattr(tab, "periodic_timers", {})
-
-            # 필요 상태와 다르면 실제 '발신' 버튼을 클릭해 토글
             if (on and not running) or ((not on) and running):
-                # (A) 셀 위젯 버튼 click() 시도
                 try:
-                    btn = tbl.cellWidget(target_row, 3)   # 3번 컬럼이 '발신' 버튼
-                    if btn is not None and hasattr(btn, "click"):
-                        btn.click()
-                        self._append_log_line(f"[CTRL] 0102 버튼 click() → {'ON' if on else 'OFF'} 요청")
-                        return True
-                except Exception:
-                    pass
-                # (B) 내부 토글 메서드 직접 호출(버튼과 동일 경로)
+                    btn = tbl.cellWidget(target_row, 3)
+                    if btn is not None and hasattr(btn, "click"): btn.click(); return True
+                except Exception: pass
                 try:
-                    if hasattr(tab, "_on_tx_button_clicked"):
-                        tab._on_tx_button_clicked(target_row)
-                        self._append_log_line(f"[CTRL] 0102 토글 메서드 호출 → {'ON' if on else 'OFF'} 요청")
-                        return True
-                except Exception:
-                    pass
-                # (C) 최후 폴백: 직접 1회 push (상태 토글은 못하지만 발신 보장)
-                self._send_self_check_0102(status=1 if on else 0)
-                return True
-
-            # 이미 원하는 상태면 유지
-            self._append_log_line(f"[CTRL] 0102 상태 유지: {'ON' if running else 'OFF'}")
+                    if hasattr(tab, "_on_tx_button_clicked"): tab._on_tx_button_clicked(target_row); return True
+                except Exception: pass
+                self._send_self_check_0102(status=1 if on else 0); return True
             return True
-
         except Exception as e:
-            self._append_log_line(f"[CTRL] 0102 토글 처리 실패: {e}")
-            return False
+            self._append_log_line(f"[CTRL] 0102 토글 처리 실패: {e}"); return False
 
-    # ───────── 테스트 단축키(포커스 무관) ─────────
-    def _install_test_shortcuts(self):
-        """
-        테스트용 단축키:
-          - '1'  → TX 테이블의 0102 주기발신 ON
-          - '0'  → TX 테이블의 0102 주기발신 OFF
-        """
-        QShortcut(QKeySequence("1"), self, activated=lambda: self._ensure_selfcheck_0102(True))
-        QShortcut(QKeySequence("0"), self, activated=lambda: self._ensure_selfcheck_0102(False))
-
-    # ───────── 대시보드 명령 처리(UI 스레드) ─────────
+    # ───────── 모드 명령 처리 ─────────
     def _handle_ctrl_payload(self, payload: dict):
-        """
-        - cmd == 'self_check': status(1/0)에 따라 0102 발신을 ON/OFF 보장
-        - cmd == 'mode'      : 텍스트 로그
-        - NOTE: 1.0s 디듀프(동일 cmd/status 연속 수신 방지)
-        """
         import time
-        try:
-            cmd = str(payload.get("cmd") or "").lower()
-        except Exception:
-            cmd = ""
-
-        # 1초 디듀프
-        key = f"{cmd}|{payload.get('status')}"
-        now = time.monotonic()
-        last = self._last_ctrl_ts.get(key, 0.0)
-        if (now - last) < 1.0:
-            return
+        try: cmd = str(payload.get("cmd") or "")
+        except Exception: return
+        key = f"{cmd}:{payload.get('text') or payload.get('status')}"
+        now = time.monotonic(); last = self._last_ctrl_ts.get(key, 0.0)
+        if (now - last) < 1.0: return
         self._last_ctrl_ts[key] = now
 
         if cmd == "self_check":
-            try:
-                status = int(payload.get("status", 1))
-            except Exception:
-                status = 1
-            ok = self._ensure_selfcheck_0102(on=(status == 1))
-            if not ok:
-                self._send_self_check_0102(status=status)
-        elif cmd == "mode":
-            text = str(payload.get("text") or "").strip() or "모드"
-            self._append_log_line(f"[CTRL] 모드 변경 요청 수신: {text}")
+            try: status = int(payload.get("status", 1))
+            except Exception: status = 1
+            ok = self._ensure_0102(on=(status == 1))
+            if not ok: self._send_self_check_0102(status=status)
 
+        elif cmd == "mode":
+            text = str(payload.get("text") or "").strip()
+            self._append_log_line(f"[CTRL] 모드 변경 요청 수신: {text}")
+            self._set_mode_slider_by_text(text)
+            # 초기임무계획이면 파이프라인 실행
+            norm = re.sub(r"\s+", "", text).lower()
+            if norm in ("초기임무계획", "초기임무계획모드", "initplan", "initial"):
+                self._run_initial_plan_async()
+
+    # ───────── 초기임무계획 파이프라인 ─────────
+    def _run_initial_plan_async(self):
+        if self._initplan_running:
+            self._append_log_line("[INFO] 초기임무계획 이미 실행 중")
+            return
+        self._initplan_running = True
+        threading.Thread(target=self._run_initial_plan_do, name="InitPlan-GUI", daemon=True).start()
+
+    def _run_initial_plan_do(self):
+        try:
+            # 0) 경로·모듈 import
+            mp_pkg_dir  = Path(PROJECT_ROOT) / "modules" / "mission_planning" / "MissionPlanner"
+            for p in (mp_pkg_dir, mp_pkg_dir.parent, Path(PROJECT_ROOT) / "modules"):
+                p_str = str(p)
+                if p.exists() and p_str not in sys.path: sys.path.insert(0, p_str)
+
+            from AnS import run_divide_and_pattern, build_mission_plan_0301
+            from data_def import d0301, d0302, d0303, d0304
+            from data_def.id_allocator import next_path_id
+            
+            # ★★★ 0) 재계획 수행 시작 알림(0305: 진행중=2)
+            self.log_sig.emit("[STEP 0] 재계획 수행 상태: 진행 중")
+            self._push_0305(status=2, reason="초기임무재계획")
+
+            # 1) 입력 경로
+            db_root = Path(os.environ.get("KU_MISSION_DB_ROOT") or (Path(PROJECT_ROOT) / "database"))
+            dir_0201 = db_root / "InputMissionPlan"
+            dir_0203 = db_root / "MissionReferenceInfo"
+            out_root = db_root / "mission_output"
+            out_root.mkdir(parents=True, exist_ok=True)
+            def _pick_json(d: Path) -> Path | None:
+                cands = sorted([p for p in d.glob("*.json") if p.is_file()])
+                return cands[0] if cands else None
+            cmpk_path = _pick_json(dir_0201); mrpk_path = _pick_json(dir_0203)
+            if not cmpk_path or not mrpk_path:
+                self.log_sig.emit("[ERR] 0201/0203 입력 JSON을 찾을 수 없습니다."); return
+
+            # 2) 0201+0203 → 0302(IMP) 생성
+            self.log_sig.emit("[STEP 1] Divide & Pattern 시작")
+            imp_paths = run_divide_and_pattern(str(cmpk_path), str(mrpk_path), str(out_root), log=lambda msg: self.log_sig.emit(str(msg)))
+            if not imp_paths: self.log_sig.emit("[ERR] IMP 생성 결과가 없습니다."); return
+            self.log_sig.emit(f"[OK] IMP {len(imp_paths)}개 생성")
+
+            # 3) 0301 MissionPlan 생성
+            mp_path = out_root / f"MissionPlan_{int(time.time()*1000)}.json"
+            build_mission_plan_0301(str(cmpk_path), str(mrpk_path), imp_paths, str(mp_path))
+            with mp_path.open(encoding="utf-8") as f:
+                mp_json = json.load(f)
+            imp_id_map = {a["aircraftID"]: a["individualMissionPackageID"] for a in mp_json.get("aircraftList", [])}
+            self.log_sig.emit(f"[OK] 0301 생성 → {mp_path.name}")
+
+            # 4) 메모리-상 missions 집계
+            missions = []; max_mid_num = 0
+            for imp in imp_paths:
+                with open(imp, encoding="utf-8") as f: pkg = json.load(f)
+                aid = int(pkg["aircraftID"])
+                for im in pkg.get("individualMissionList", []):
+                    im2 = dict(im); im2["aircraftID"] = aid
+                    if "individualMissionPlanPackageID" not in im2 and imp_id_map:
+                        im2["individualMissionPlanPackageID"] = imp_id_map.get(aid)
+                    missions.append(im2)
+                    try:
+                        num = int(im2.get("individualMissionID", 0)); max_mid_num = max(max_mid_num, num)
+                    except Exception: pass
+
+            # 5) 유/무인 분리 + 유인기 pathID 재할당
+            manned_ids = {1,2,3}; uav_ids = {4,5,6}
+            manned_missions = [im for im in missions if int(im.get("aircraftID", 0)) in manned_ids]
+            uav_missions    = [im for im in missions if int(im.get("aircraftID", 0)) in uav_ids]
+            fixed = []
+            for im in manned_missions:
+                im2 = dict(im); aid = int(im2.get("aircraftID", 0))
+                im2["pathID"] = next_path_id(aid)
+                fixed.append(im2)
+            manned_missions = fixed
+            self.log_sig.emit("[INFO] 0304용 유인기 pathID 재할당 완료")
+
+            # 6) 0303/0304 생성
+            self.log_sig.emit("[STEP 2] FlightPath 0303/0304 생성 시작")
+            wp_alloc = d0303._WPAllocator()
+            flight_plans_0303 = d0303.build_flight_plans(uav_missions, wp_alloc, 40.0, turn_step_deg=15.0) if uav_missions else []
+            flight_plans_0304 = d0304.build_lah_flight_plans_fixed(manned_missions, cruise_speed=40.0, wp_alloc=wp_alloc) if manned_missions else []
+            if not flight_plans_0303 and not flight_plans_0304:
+                self.log_sig.emit("[ERR] 0303/0304 모두 실패"); return
+            self.log_sig.emit(f"[OK] FP 요약 → 0303={len(flight_plans_0303)} / 0304={len(flight_plans_0304)}")
+
+            # 7) 디스크 저장 (0301/0302/0303/0304)
+            self.log_sig.emit("[STEP 3] 결과 저장")
+            dir_mp  = db_root / "MissionPlan"
+            dir_imp = db_root / "IndividualMissionPlan"
+            dir_fp  = db_root / "FlightPath"
+            for d in (dir_mp, dir_imp, dir_fp):
+                d.mkdir(parents=True, exist_ok=True)
+                for p in d.glob("*.json"):
+                    try: p.unlink()
+                    except Exception: pass
+
+            # 0301 저장
+            try: mp_id = str(mp_json.get("missionPlanID") or mp_json.get("MissionPlanID"))
+            except Exception: mp_id = str(int(time.time()))
+            (dir_mp / f"{mp_id}.json").write_text(json.dumps(mp_json, indent=2, ensure_ascii=False), encoding="utf-8")
+
+            # 0302 저장
+            imp_pkgs = d0302.build_mission_packages(missions, cmpk_id=int(cmpk_path.stem), plan_pkg_map=imp_id_map)
+            for pkg in imp_pkgs:
+                imp_id = str(pkg.get("individualMissionPackageID") or pkg.get("individualMissionPlanPackageID"))
+                (dir_imp / f"{imp_id}.json").write_text(json.dumps(pkg, indent=2, ensure_ascii=False), encoding="utf-8")
+
+            # 0303/0304 저장
+            def _dump_fps(lst):
+                cnt = 0
+                for fp in lst:
+                    pid = str(fp["pathID"])
+                    (dir_fp / f"{pid}.json").write_text(json.dumps(fp, indent=2, ensure_ascii=False), encoding="utf-8"); cnt += 1
+                return cnt
+            c3 = _dump_fps(flight_plans_0303); c4 = _dump_fps(flight_plans_0304)
+
+            # 임시 out 폴더 정리
+            try:
+                if out_root.exists(): shutil.rmtree(out_root)
+            except Exception: pass
+
+            self.log_sig.emit(f"✔ 저장 완료  →  MissionPlan 1, IndividualMission {len(imp_pkgs)}, FlightPath {c3 + c4}")
+
+            # ★ 방금 만든 MP ID를 보관해 뒤에서 0901에 사용
+            try:
+                self._last_mission_plan_id = int(mp_id)
+            except Exception:
+                self._last_mission_plan_id = None
+
+            # ★★★ (순서 변경) 버튼 순차 푸시부터 실행 → 끝난 뒤 0305완료/0901 전송
+            self.log_sig.emit("[STEP 4] 0304→0303→0302→0301 순차 푸시 (완료 후 0305→0901)")
+            self.start_push_seq.emit()
+
+        except Exception as e:
+            self.log_sig.emit(f"[ERR] 초기임무계획 파이프라인 실패: {e}")
+        finally:
+            self._initplan_running = False
+
+    # ───────── TX 버튼 실제 클릭 ─────────
+    def _click_tx_button_for(self, code: str):
+        try:
+            tbl = self._tab.tbl_tx
+            target_row = -1
+            for r in range(tbl.rowCount()):
+                it = tbl.item(r, 0)
+                if it and it.text().strip() == str(code):
+                    target_row = r; break
+            if target_row < 0:
+                self._append_log_line(f"[WARN] TX 테이블에 {code} 행이 없음"); return
+            # (A) 셀 위젯 버튼 click 우선
+            try:
+                btn = tbl.cellWidget(target_row, 3)
+                if btn is not None and hasattr(btn, "click"):
+                    btn.click()
+                    self._append_log_line(f"[PUSH] {code} 버튼 click()")
+                    return
+            except Exception: pass
+            # (B) 내부 핸들러 직접 호출
+            try:
+                if hasattr(self._tab, "_on_tx_button_clicked"):
+                    self._tab._on_tx_button_clicked(target_row)
+                    self._append_log_line(f"[PUSH] {code} 내부토글 호출")
+                    return
+            except Exception: pass
+        except Exception as e:
+            self._append_log_line(f"[ERR] {code} 푸시 실행 실패: {e}")
 
 # ───────── 엔트리 ─────────
 if __name__ == "__main__":

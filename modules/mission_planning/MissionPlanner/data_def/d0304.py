@@ -95,6 +95,139 @@ def _validate_lah_flight_plans(pkts: List[dict]) -> None:
             if not (0 <= tid <= 0xFFFFFFFF):
                 raise ValueError(f"[0304] pkt#{pidx}/wp#{widx}: targetID out of range")
 
+
+def build_lah_flight_plans_from_mrpk(
+    missions: List[dict],
+    mrpk: dict,
+    *,
+    cruise_speed: float = 40.0,
+    wp_interval_m: float = WP_INTERVAL_M,
+    wp_alloc: _WPAllocator | None = None,
+) -> List[dict]:
+    """
+    0302 → 0304(유인기) + 0203 고려
+    • takeOverInfoList: LAH 시작 배치(최남/최서단 앵커 → S(-150m), E(+150m) 간격)
+    • rtbCoordinateList: 각 LAH 의 RTB 최종 WP
+    • 기존 0304 경로 앞뒤에 start/RTB를 붙인 뒤 WaypointID·ECF·next 링크 재계산
+    """
+    def _offset(lat: float, lon: float, north_m: float = 0.0, east_m: float = 0.0) -> tuple[float, float]:
+        k = 111_132.92
+        dlat = north_m / k
+        dlon = east_m  / (k * math.cos(math.radians(lat)))
+        return (lat + dlat, lon + dlon)
+
+    def _dist_ms(a: dict, b: dict) -> int:
+        k = 111_132.92
+        lat1, lon1 = a["latitude"], a["longitude"]; lat2, lon2 = b["latitude"], b["longitude"]
+        cos = math.cos(math.radians((lat1 + lat2)/2))
+        dx = (lon2 - lon1) * k * cos; dy = (lat2 - lat1) * k
+        m  = math.hypot(dx, dy)
+        return int(round(1000 * m / max(1e-6, cruise_speed)))
+
+    def _mk_wp(lat: float, lon: float, alt: float, eta_ms: int) -> OrderedDict:
+        wp = OrderedDict([
+            ("waypointID", 0),
+            ("coordinate", {"latitude": round(lat,6), "longitude": round(lon,6), "altitude": int(round(alt))}),
+            ("speed", cruise_speed),
+            ("eta",   int(eta_ms)),
+            ("ecf",   0.0),
+            ("nextWaypointID", 0),
+        ])
+        wp.update(_DEFAULT_WP_EXT)
+        return wp
+
+    wp_alloc = wp_alloc or _WPAllocator()
+    now_ms   = now_ms_since_2000()
+
+    # 0) 기본 0304 (경로 본체) 먼저 생성
+    base_packets = build_lah_flight_plans_fixed(
+        missions,
+        cruise_speed = cruise_speed,
+        wp_interval_m = wp_interval_m,
+        wp_alloc = _WPAllocator(1),    # 임시 할당 → 아래에서 다시 붙임
+    )
+
+    # 1) 0203: 앵커/RTB 계산
+    tk_list = (mrpk or {}).get("takeOverInfoList") or []
+    rtb_list= (mrpk or {}).get("rtbCoordinateList") or []
+
+    # 앵커: 최남/최서단 (lat 최소, tie시 lon 최소)
+    if tk_list:
+        anchor = min(
+            [it.get("coordinate", {}) for it in tk_list if it.get("coordinate")],
+            key=lambda c: (c.get("latitude", 90), c.get("longitude", 180))
+        )
+        a_lat, a_lon = float(anchor["latitude"]), float(anchor["longitude"])
+    else:
+        # fallback: 첫 패킷 첫 WP 기준
+        if base_packets and base_packets[0]["waypointList"]:
+            c0 = base_packets[0]["waypointList"][0]["coordinate"]
+            a_lat, a_lon = float(c0["latitude"]), float(c0["longitude"])
+        else:
+            return base_packets  # 아무것도 할 수 없음
+
+    start_map = {
+        1: _offset(a_lat, a_lon, north_m=-150.0, east_m=  0.0),
+        2: _offset(a_lat, a_lon, north_m=-150.0, east_m=150.0),
+        3: _offset(a_lat, a_lon, north_m=-150.0, east_m=300.0),
+    }
+
+    # RTB: 경도(서→동) 정렬 기준 LAH1/2/3 매핑 (부족하면 끝점 유지)
+    rtb_sorted = sorted(
+        [p for p in rtb_list if "latitude" in p and "longitude" in p],
+        key=lambda p: p["longitude"]
+    )
+    rtb_map = {i+1: rtb_sorted[i] for i in range(min(3, len(rtb_sorted)))}
+
+    # 2) 패킷별로 start/RTB 삽입 후 재계산
+    out_packets: List[dict] = []
+    for pkt in base_packets:
+        aid = pkt["aircraftID"]
+        wplist = pkt.get("waypointList") or []
+        if not wplist:
+            continue
+
+        # start
+        st_lat, st_lon = start_map.get(aid, (wplist[0]["coordinate"]["latitude"], wplist[0]["coordinate"]["longitude"]))
+        start = {"latitude": st_lat, "longitude": st_lon, "altitude": 300}
+        eta_s = _dist_ms(start, wplist[0]["coordinate"])
+        wp_start = _mk_wp(st_lat, st_lon, start["altitude"], eta_s)
+
+        # rtb
+        rtb = rtb_map.get(aid)
+        if rtb:
+            end   = rtb
+            alt_e = int(rtb.get("altitude", 300))
+        else:
+            end   = wplist[-1]["coordinate"]
+            alt_e = int(end.get("altitude", 300))
+        eta_e = _dist_ms(wplist[-1]["coordinate"], end)
+        wp_rtb = _mk_wp(end["latitude"], end["longitude"], alt_e, eta_e)
+
+        new_list = [wp_start] + [dict(w) for w in wplist] + [wp_rtb]
+
+        # WaypointID 재할당 + next + ECF
+        for w in new_list:
+            w["waypointID"] = wp_alloc.alloc()
+        for i in range(len(new_list) - 1):
+            new_list[i]["nextWaypointID"] = new_list[i+1]["waypointID"]
+
+        tot = sum(max(0, int(w.get("eta", 0))) for w in new_list) or 1
+        acc = 0
+        for w in new_list:
+            acc += int(w.get("eta", 0))
+            w["ecf"] = round(acc / tot, 2)
+
+        out_packets.append(OrderedDict([
+            ("timestamp",  now_ms),
+            ("pathID",     pkt["pathID"]),
+            ("aircraftID", aid),
+            ("waypointList", new_list),
+        ]))
+
+    _validate_lah_flight_plans(out_packets)
+    return out_packets
+    
 # ── 메인 빌더 ────────────────────────────────────────────────────
 def build_lah_flight_plans_fixed(
     missions: List[dict],
