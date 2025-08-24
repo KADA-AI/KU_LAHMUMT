@@ -4,11 +4,12 @@ _DASH_PORT = int(os.getenv("KU_DASHBOARD_PORT", "45991"))
 
 # 필요시 동적으로 늘릴 수 있게 리스트로 관리
 SEARCH_PREFIXES = [
-    "push_info",                              # 공용 push_info
-    "push",                                   # 공용 push
-    "modules.common.push_info",               # 명시 common
+    "generator",                          # ✅ 새로 추가: 최우선으로 generator/ 를 탐색
+    "push_info",                          # 공용 push_info
+    "push",                               # 공용 push
+    "modules.common.push_info",           # 명시 common
     "modules.common.push",
-    "modules.decision_support.push_info",     # DS 쪽에 남아있을 수도 있으니 fallback
+    "modules.decision_support.push_info", # DS fallback
     "modules.decision_support.push",
 ]
 

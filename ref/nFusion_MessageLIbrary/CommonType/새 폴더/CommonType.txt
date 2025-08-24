@@ -1,0 +1,69 @@
+AircraftFixed
+float gimbalPitch
+float gimbalYaw
+
+Area
+bool isHole
+List<Coordinate> coordinateList
+
+AutoScan
+float gimbalPitch
+GimbalYawLimits gimbalYawLimits
+float gimbalYawAngularSpeed
+
+AutoTracking
+uint targetID
+
+Coordinate
+float latitude
+float longitude
+int altitude
+
+CoordinateOrientation
+Coordinate coordinate
+
+Formation
+int dX
+int dY
+int dZ
+
+FormationInfo
+uint leaderAircraftID
+Formation formation
+
+GimbalYawLimits
+float leftLimit
+float rightLimit
+
+LeaderAircraftID
+uint aircraftID
+
+Line
+float width
+List<Coordinate> coordinateList
+
+LineSearch
+List<Coordinate> coordinateList
+float searchSpeed
+
+PendingOption
+uint optionID
+string optionName
+uint missionPlanID
+
+PriorMission
+uint priorMissionID
+uint missionType
+CoordinateOrientation coordinateOrientation
+TargetOrientation targetOrientation
+
+TargetOrientation
+uint targetID
+
+
+
+
+
+
+
+
