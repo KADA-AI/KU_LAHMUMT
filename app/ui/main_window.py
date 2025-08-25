@@ -1,6 +1,8 @@
+# /mnt/data/main_window.py
 # -*- coding: utf-8 -*-
 from PyQt5.QtWidgets import (
-    QMainWindow, QWidget, QGridLayout, QPushButton, QLabel, QLineEdit, QFileDialog, QShortcut
+    QMainWindow, QWidget, QGridLayout, QPushButton, QLabel, QLineEdit, QFileDialog, QShortcut,
+    QHBoxLayout
 )
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QKeySequence
@@ -11,7 +13,7 @@ from ..widgets.mode_buttons_panel import ModeButtonsPanel
         # 제목 없는 카드
 from ..widgets.flow_visualizer import FlowVisualizer
 from ..widgets.operation_flow_panel import OperationFlowPanel
-import os, subprocess
+import os, subprocess, json
 from pathlib import Path
 
 class MainWindow(QMainWindow):
@@ -22,6 +24,13 @@ class MainWindow(QMainWindow):
         self.resize(1800, 900)
 
         self._db_path_line: QLineEdit = None
+
+        # 미들웨어 위젯 레퍼런스
+        self._mw_name: QLineEdit = None
+        self._mw_addr: QLineEdit = None
+        self._mw_local: QLineEdit = None
+        self._mw_external: QLineEdit = None
+
         self._build_ui()
 
     def _build_ui(self):
@@ -53,7 +62,17 @@ class MainWindow(QMainWindow):
         self._db_path_line.setObjectName("DbPathLine")
         self._db_path_line.setPlaceholderText("DB 폴더 경로")
         self._db_path_line.setReadOnly(True)
+
+        # ✅ 기본 경로 세팅 + 환경변수(KU_MISSION_DB_ROOT)도 함께 세팅
+        DEFAULT_DB_PATH = r"C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\database"
+        self._db_path_line.setText(DEFAULT_DB_PATH)
+        os.environ["KU_MISSION_DB_ROOT"] = DEFAULT_DB_PATH
+
         self._add_zone(grid, self._db_path_line, "DB_PATH")
+
+        # ✅ 미들웨어 설정 행
+        mw_row = self._make_middleware_row()
+        self._add_zone(grid, mw_row, "MIDDLEWARE")
 
         # 모듈 카드들
         self.module_mission  = ModuleWithLog("임무 할당 및 계획")
@@ -87,6 +106,110 @@ class MainWindow(QMainWindow):
         self._bind_module_buttons()
         self._init_msg_monitor()
 
+    # ---------- 미들웨어 행 ----------
+    def _make_middleware_row(self) -> QWidget:
+        """
+        [Middleware] Name / Network / LocalDomain / ExternalDomain  +  [적용]
+        - 기본값: AVS1 / 203. / 10 / 100
+        - 적용 시 위 4개만으로 JSON을 구성하여 3개 위치에 동시 저장
+        """
+        w = QWidget(self)
+        lay = QHBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(8)
+
+        # 라벨
+        lbl = QLabel("Middleware", self)
+        lbl.setStyleSheet("font-weight:600;")
+        lay.addWidget(lbl)
+
+        def _mk_line(ph: str, width: int = 120, default: str = "") -> QLineEdit:
+            le = QLineEdit(self)
+            le.setPlaceholderText(ph)
+            if default:
+                le.setText(default)
+            le.setMinimumWidth(width)
+            return le
+
+        # 필드들 (기본값 채움)
+        self._mw_name     = _mk_line("Name", 120, "AVS1")
+        self._mw_addr     = _mk_line("NetworkAddress (예: 203.)", 140, "203.")
+        self._mw_local    = _mk_line("LocalDomain", 100, "10")
+        self._mw_external = _mk_line("ExternalDomain", 110, "100")
+
+        lay.addWidget(QLabel("Name:", self));           lay.addWidget(self._mw_name)
+        lay.addWidget(QLabel("Network:", self));        lay.addWidget(self._mw_addr)
+        lay.addWidget(QLabel("Local:", self));          lay.addWidget(self._mw_local)
+        lay.addWidget(QLabel("External:", self));       lay.addWidget(self._mw_external)
+
+        # 적용 버튼
+        btn_apply = QPushButton("적용", self)
+        btn_apply.setMinimumWidth(80)
+        btn_apply.clicked.connect(self._apply_middleware)
+        lay.addWidget(btn_apply, 0, Qt.AlignRight)
+
+        return w
+
+    def _apply_middleware(self):
+        """
+        GUI 값으로 미들웨어 JSON을 구성하여
+        프로젝트 루트(run.py가 있는 곳)의 nFusionSettings.json 하나만 저장.
+        {"Middleware":{"Name":"..","NetworkAddress":"..","LocalDomain":..,"ExternalDomain":..}}
+        """
+        name  = (self._mw_name.text() or "").strip() or "AVS1"
+        net   = (self._mw_addr.text() or "").strip() or "203."
+        if not net.endswith("."):
+            net = net + "."
+        try:
+            local = int((self._mw_local.text() or "10").strip())
+        except Exception:
+            local = 10
+        try:
+            ext = int((self._mw_external.text() or "100").strip())
+        except Exception:
+            ext = 100
+
+        cfg = {
+            "Middleware": {
+                "Name": name,
+                "NetworkAddress": net,
+                "LocalDomain": local,
+                "ExternalDomain": ext,
+            }
+        }
+
+        # ⬇️ run.py가 있는 디렉터리를 프로젝트 루트로 간주
+        proj_root = self._find_project_root()
+        target = proj_root / "nFusionSettings.json"
+
+        data = json.dumps(cfg, ensure_ascii=False, separators=(",", ":"))
+        try:
+            target.write_text(data, encoding="utf-8")
+            msg = f'[CFG] nFusionSettings 적용 → {target} | Name={name}, Net="{net}", L={local}, E={ext}'
+        except Exception as e:
+            msg = f"[CFG ERR] {target.name}: {e}"
+
+        # 로그 표시
+        for mod in (getattr(self, "module_mission", None),
+                    getattr(self, "module_monitor", None),
+                    getattr(self, "module_decision", None)):
+            try:
+                mod.append_log(msg)
+            except Exception:
+                pass
+
+    def _find_project_root(self) -> Path:
+        """
+        이 파일 위치를 기준으로 상위 디렉터리들을 올라가며 run.py를 찾는다.
+        발견한 디렉터리를 프로젝트 루트로 사용.
+        """
+        here = Path(__file__).resolve().parent
+        for cand in [here, *here.parents]:
+            if (cand / "run.py").exists():
+                return cand
+        return here  # fallback
+    
+    # ---------- 이하 기존 코드 ----------
     def _launch_gui(self, script_name: str):
         """
         modules/decision_support 아래의 단일 GUI 스크립트를
@@ -130,7 +253,6 @@ class MainWindow(QMainWindow):
         self.module_decision.btn_run.clicked.connect(lambda: self._launch_role("decision"))
         self.module_mission.btn_run.clicked.connect( lambda: self._launch_role("mission"))
         self.module_monitor.btn_run.clicked.connect( lambda: self._launch_role("monitor"))
-
 
     def mark_received(self, msg_id: str, raw: bytes | None = None):
         mid = str(msg_id)
@@ -179,9 +301,9 @@ class MainWindow(QMainWindow):
             self._msg_maps[key] = {"tx": tx, "rx": rx}
             all_ids |= tx | rx
 
-        # 모든 msg_id를 메인 윈도우(self) 리스너로 등록
-        for mid in sorted(all_ids):
-            register_listener(mid, self)
+        # # 모든 msg_id를 메인 윈도우(self) 리스너로 등록
+        # for mid in sorted(all_ids):
+        #     register_listener(mid, self)
 
     def _launch_role(self, role: str):
         import sys, subprocess
@@ -239,7 +361,6 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
 
-
     def _install_flow_test_shortcuts(self):
         """데이터 흐름 애니메이션 테스트용 단축키 설치"""
         # 1/2: 모니터링 in/out
@@ -290,12 +411,9 @@ class MainWindow(QMainWindow):
         """D 키로 데모 on/off"""
         if self._demo_timer.isActive():
             self._demo_timer.stop()
-            # 로그에 남기고 싶으면 주석 해제
-            # self.module_monitor.append_log("[DEMO] stop")
         else:
             self._demo_idx = 0
             self._demo_timer.start()
-            # self.module_monitor.append_log("[DEMO] start")
 
     def _demo_step(self):
         """데모 시퀀스 한 스텝"""

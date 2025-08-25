@@ -21,14 +21,42 @@ BASE = {
     "waypoint": 1,             # 필요한 경우
 }
 
-def _load():
-    if _STORE.exists():
-        with _STORE.open() as f:
-            return json.load(f)
-    return {}
+def _load() -> dict:
+    """
+    디스크의 ID 상태를 읽어온다.
+    - 파일 없음: {} 반환
+    - 파일이 비었거나(JSONDecodeError) 손상: .bak로 1회 백업 후 {} 반환
+    """
+    try:
+        if not _STORE.exists():
+            return {}
+        # 빈 파일(사이즈 0) 처리
+        if _STORE.stat().st_size == 0:
+            return {}
+        with _STORE.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data if isinstance(data, dict) else {}
+    except json.JSONDecodeError:
+        # 손상된 경우 자동 백업(기존 .bak 없을 때만)
+        try:
+            bak = _STORE.with_suffix(_STORE.suffix + ".bak")
+            if not bak.exists():
+                _STORE.replace(bak)
+        except Exception:
+            pass
+        return {}
+    except Exception:
+        return {}
 
-def _save(data):
-    _STORE.write_text(json.dumps(data, indent=2))
+def _save(state: dict) -> None:
+    """
+    ID 상태를 원자적으로 저장한다(임시파일→교체).
+    """
+    _STORE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = _STORE.with_suffix(_STORE.suffix + ".tmp")
+    with tmp.open("w", encoding="utf-8") as f:
+        json.dump(state, f, ensure_ascii=False, separators=(",", ":"))
+    tmp.replace(_STORE)
 
 _state = _load()              # {key: last_used}
 

@@ -1,55 +1,203 @@
-# receive/message0203_receiver.py
-# ─────────────────────────────────────────────────────────────
-from dll_files.nFusionImports import *            # IFusionReceive, IsLocal, IsSingletone
-from nFusion.Model.msg_0203 import FlightReferenceInfo
-from .database import received_db                 # DB 저장 모듈
-from receive_center import notify                 # GUI 알림 함수
+# modules/common/receive/message0203_receiver.py
+# auto-generated at 2025-08-24T16:37:13.085601+00:00
 
-import json, traceback, sys, os
+from dll_files.nFusionImports import *            # IFusionReceive, IsLocal, IsSingletone
+from nFusion.Model.msg_0203 import *            # C# 모델
+from nFusion.Model.CommonType import *             # 공통 타입
+from .database import received_db
+from receive_center import notify
+import json, traceback, sys, os, importlib
 
 # 대/소문자 안전 접근
-def _get(obj, *names):
-    for n in names:
-        if hasattr(obj, n):
-            return getattr(obj, n)
-    return None
+_get = lambda obj, *names: next((getattr(obj, n) for n in names if hasattr(obj, n)), None)
 
-# FlightReferenceInfo → dict (필수 필드만)
-def _flight_reference_info_to_dict(info: FlightReferenceInfo) -> dict:
-    return {
-        "timestamp":                 _get(info, "timestamp", "Timestamp"),
-        "missionReferencePackageID": _get(info, "missionReferencePackageID", "MissionReferencePackageID"),
-    }
+# ── Embedded rules (TX/DB 공용) ──────────────────────────────────────────
+TX_FIELD_WHITELIST = {'0201': ['timestamp', 'inputMissionPackageID'], '0203': ['timestamp', 'missionReferencePackageID'], '0301': ['timestamp', 'missionPlanID'], '0302': ['timestamp', 'individualMissionPackageID'], '0303': ['timestamp', 'pathID'], '0304': ['timestamp', 'pathID']}
+DB_DIR_RULES        = {'0201': 'InputMissionPlan', '0203': 'FlightReferenceInfo', '0301': 'MissionPlan', '0302': 'IndividualMissionPlan', '0303': 'UAVFlightPlan', '0304': 'FlightPath'}
+DB_FETCH_ON_RECEIVE = {'0201', '0203'}
+ID_FIELD_FOR        = {'0201': 'inputMissionPackageID', '0203': 'missionReferencePackageID', '0301': 'missionPlanID', '0302': 'individualMissionPackageID', '0303': 'pathID', '0304': 'pathID'}
 
-# ★ MissionReferenceInfo JSON 저장 경로 (파일명=missionReferencePackageID.json)
-PLAN_DIR = r"C:\Users\LAHMUMT_2\Desktop\nFusion\missionPlanner\plannedMission\MissionReferenceInfo"
+def _project_root_for_recv_file(__file_path: str):
+    from pathlib import Path
+    return Path(__file_path).resolve().parents[3]
 
-class FlightReferenceInfoReceiver_0203(
-    IFusionReceive[FlightReferenceInfo], IsLocal, IsSingletone
-):
-    """0203 FlightReferenceInfo 메시지 수신 리시버 (timestamp + missionReferencePackageID 전용)"""
+def _db_dir_for(msgid: str, __file_path: str) -> str:
+    from pathlib import Path
+    env_root = os.getenv("KU_MISSION_DB_ROOT")
+    name = DB_DIR_RULES.get(msgid)
+    if not name:
+        return str(_project_root_for_recv_file(__file_path))
+    if env_root:
+        return str(Path(env_root) / name)
+    return str(_project_root_for_recv_file(__file_path) / "database" / name)
+
+def _try_save_received(msgid: str, data_obj):
+    try:
+        fn = getattr(received_db, f"set_received_{msgid}")
+        fn(data_obj)
+    except Exception:
+        pass
+
+def _try_read_db_body(msgid: str, data_obj):
+    """DB_FETCH_ON_RECEIVE에 포함된 메시지는 ID 필드로 DB JSON을 찾아 반환(없으면 None)."""
+    try:
+        if msgid not in DB_FETCH_ON_RECEIVE:
+            return None
+        id_field = ID_FIELD_FOR.get(msgid)
+        if not id_field:
+            return None
+        # 객체에서 ID 값을 추출(대/소문자 안전)
+        _val = _get(data_obj, id_field, id_field[:1].upper()+id_field[1:])
+        if _val is None:
+            return None
+        vid = int(_val)
+        dbdir = _db_dir_for(msgid, __file__)
+        fpath = os.path.join(dbdir, f"{vid}.json")
+        print(f"[{msgid}] DB 참조! ({fpath})")
+        if os.path.exists(fpath):
+            with open(fpath, "r", encoding="utf-8") as f:
+                return json.load(f)
+        return None
+    except Exception:
+        return None
+
+def _to_dict_Coordinate(obj):
+    d = {}
+    _v = _get(obj, 'latitude', 'Latitude')
+    if _v is not None: d['latitude'] = float(_v)
+    _v = _get(obj, 'longitude', 'Longitude')
+    if _v is not None: d['longitude'] = float(_v)
+    _v = _get(obj, 'altitude', 'Altitude')
+    if _v is not None: d['altitude'] = int(_v)
+    return d
+
+def _to_dict_TakeOverInfo(obj):
+    d = {}
+    _v = _get(obj, 'aircraftID', 'AircraftID')
+    if _v is not None: d['aircraftID'] = int(_v)
+    _sub = _get(obj, 'coordinate', 'Coordinate')
+    if _sub is not None: d['coordinate'] = _to_dict_Coordinate(_sub)
+    return d
+
+def _to_dict_HandOverInfo(obj):
+    d = {}
+    _v = _get(obj, 'aircraftID', 'AircraftID')
+    if _v is not None: d['aircraftID'] = int(_v)
+    _sub = _get(obj, 'coordinate', 'Coordinate')
+    if _sub is not None: d['coordinate'] = _to_dict_Coordinate(_sub)
+    return d
+
+def _to_dict_RTBCoordinate(obj):
+    d = {}
+    _v = _get(obj, 'latitude', 'Latitude')
+    if _v is not None: d['latitude'] = float(_v)
+    _v = _get(obj, 'longitude', 'Longitude')
+    if _v is not None: d['longitude'] = float(_v)
+    _v = _get(obj, 'altitude', 'Altitude')
+    if _v is not None: d['altitude'] = int(_v)
+    return d
+
+def _to_dict_AreaLatLon(obj):
+    d = {}
+    _v = _get(obj, 'latitude', 'Latitude')
+    if _v is not None: d['latitude'] = float(_v)
+    _v = _get(obj, 'longitude', 'Longitude')
+    if _v is not None: d['longitude'] = float(_v)
+    return d
+
+def _to_dict_AltitudeLimits(obj):
+    d = {}
+    _v = _get(obj, 'lowerLimit', 'LowerLimit')
+    if _v is not None: d['lowerLimit'] = float(_v)
+    _v = _get(obj, 'upperLimit', 'UpperLimit')
+    if _v is not None: d['upperLimit'] = float(_v)
+    return d
+
+def _to_dict_FlightArea(obj):
+    d = {}
+    _v = _get(obj, 'flightAreaID', 'FlightAreaID')
+    if _v is not None: d['flightAreaID'] = int(_v)
+    _coll = _get(obj, 'areaLatLonList', 'AreaLatLonList') or []
+    if _coll:
+        d['areaLatLonList'] = [_to_dict_AreaLatLon(it) for it in _coll]
+    _sub = _get(obj, 'altitudeLimits', 'AltitudeLimits')
+    if _sub is not None: d['altitudeLimits'] = _to_dict_AltitudeLimits(_sub)
+    return d
+
+def _to_dict_ProhibitedArea(obj):
+    d = {}
+    _v = _get(obj, 'prohibitedAreaID', 'ProhibitedAreaID')
+    if _v is not None: d['prohibitedAreaID'] = int(_v)
+    _coll = _get(obj, 'areaLatLonList', 'AreaLatLonList') or []
+    if _coll:
+        d['areaLatLonList'] = [_to_dict_AreaLatLon(it) for it in _coll]
+    _sub = _get(obj, 'altitudeLimits', 'AltitudeLimits')
+    if _sub is not None: d['altitudeLimits'] = _to_dict_AltitudeLimits(_sub)
+    return d
+
+def _to_dict_FlightReferenceInfoData(obj):
+    d = {}
+    _v = _get(obj, 'timestamp', 'Timestamp')
+    if _v is not None: d['timestamp'] = int(_v)
+    _v = _get(obj, 'missionReferencePackageID', 'MissionReferencePackageID')
+    if _v is not None: d['missionReferencePackageID'] = int(_v)
+    _v = _get(obj, 'inputTimestamp', 'InputTimestamp')
+    if _v is not None: d['inputTimestamp'] = int(_v)
+    _coll = _get(obj, 'takeOverInfoList', 'TakeOverInfoList') or []
+    if _coll:
+        d['takeOverInfoList'] = [_to_dict_TakeOverInfo(it) for it in _coll]
+    _coll = _get(obj, 'handOverInfoList', 'HandOverInfoList') or []
+    if _coll:
+        d['handOverInfoList'] = [_to_dict_HandOverInfo(it) for it in _coll]
+    _coll = _get(obj, 'rtbCoordinateList', 'RtbCoordinateList') or []
+    if _coll:
+        d['rtbCoordinateList'] = [_to_dict_RTBCoordinate(it) for it in _coll]
+    _coll = _get(obj, 'flightAreaList', 'FlightAreaList') or []
+    if _coll:
+        d['flightAreaList'] = [_to_dict_FlightArea(it) for it in _coll]
+    _coll = _get(obj, 'prohibitedAreaList', 'ProhibitedAreaList') or []
+    if _coll:
+        d['prohibitedAreaList'] = [_to_dict_ProhibitedArea(it) for it in _coll]
+    return d
+
+def _to_dict_FlightReferenceInfo(obj):
+    d = {}
+    _v = _get(obj, 'timestamp', 'Timestamp')
+    if _v is not None: d['timestamp'] = int(_v)
+    _v = _get(obj, 'missionReferencePackageID', 'MissionReferencePackageID')
+    if _v is not None: d['missionReferencePackageID'] = int(_v)
+    _v = _get(obj, 'inputTimestamp', 'InputTimestamp')
+    if _v is not None: d['inputTimestamp'] = int(_v)
+    _coll = _get(obj, 'takeOverInfoList', 'TakeOverInfoList') or []
+    if _coll:
+        d['takeOverInfoList'] = [_to_dict_TakeOverInfo(it) for it in _coll]
+    _coll = _get(obj, 'handOverInfoList', 'HandOverInfoList') or []
+    if _coll:
+        d['handOverInfoList'] = [_to_dict_HandOverInfo(it) for it in _coll]
+    _coll = _get(obj, 'rtbCoordinateList', 'RtbCoordinateList') or []
+    if _coll:
+        d['rtbCoordinateList'] = [_to_dict_RTBCoordinate(it) for it in _coll]
+    _coll = _get(obj, 'flightAreaList', 'FlightAreaList') or []
+    if _coll:
+        d['flightAreaList'] = [_to_dict_FlightArea(it) for it in _coll]
+    _coll = _get(obj, 'prohibitedAreaList', 'ProhibitedAreaList') or []
+    if _coll:
+        d['prohibitedAreaList'] = [_to_dict_ProhibitedArea(it) for it in _coll]
+    return d
+
+class FlightReferenceInfoReceiver_0203(IFusionReceive[FlightReferenceInfo], IsLocal, IsSingletone):
+    """0203 FlightReferenceInfo 메시지 수신 리시버"""
     __namespace__ = "FlightReferenceInfoReceiver_0203"
 
     def Receive(self, data: FlightReferenceInfo, src):
         try:
-            # 1) DB 저장
-            received_db.set_received_0203(data)
+            _try_save_received('0203', data)
 
-            # 2) DB 파일 로드
-            body_min = _flight_reference_info_to_dict(data)
-            pkg_id   = body_min["missionReferencePackageID"]
-            json_path = os.path.join(PLAN_DIR, f"{pkg_id}.json")
+            body = _try_read_db_body('0203', data)
+            if body is None:
+                body = _to_dict_FlightReferenceInfo(data)
 
-            print(f"[0203] DB 참조! ({json_path})")
-
-            if os.path.exists(json_path):
-                with open(json_path, "r", encoding="utf-8") as f:
-                    file_data = json.load(f)
-                # 3) GUI 알림: 파일 내용 전체 전달
-                notify("0203", json.dumps(file_data, ensure_ascii=False).encode("utf-8", "ignore"))
-            else:
-                # 파일 없음 → 최소 바디 + 오류 메시지 전달
-                notify("0203", json.dumps({"error": "DB 파일 없음", **(body_min or {})}, ensure_ascii=False).encode("utf-8", "ignore"))
+            notify("0203", json.dumps(body, ensure_ascii=False).encode("utf-8","ignore"))
 
         except Exception:
             print("[ERROR][Receive-0203] traceback ↓↓↓")

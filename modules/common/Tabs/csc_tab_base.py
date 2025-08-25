@@ -15,6 +15,10 @@ from PyQt5.QtCore import Qt, QTimer
 from push_center import push_message
 from receive_center import register_listener
 
+_EPOCH2000_MS = 946684800000
+def _now_ms_since_2000():
+    import time
+    return int(time.time() * 1000) - _EPOCH2000_MS
 
 class CSCTabBase(QWidget):
     """
@@ -85,6 +89,17 @@ class CSCTabBase(QWidget):
         for msg_id, _ in getattr(self, "RECEIVE_MESSAGES", []):
             register_listener(msg_id, self)
 
+        # ── [추가] 자체점검 간이모드(2초 후 정상 보고) ────────────────────
+        self._selfcheck_simple = True   # 지금은 간단 모드: 2초 후 → status=1
+        self._selfcheck_ready  = False  # 초기엔 0(Unknown)
+        QTimer.singleShot(2000, self._mark_selfcheck_ready)
+        # ─────────────────────────────────────────────────────────────
+
+    # ── [추가] 2초 후 Ready 마킹 ───────────────────────────────────────
+    def _mark_selfcheck_ready(self):
+        self._selfcheck_ready = True
+    # ────────────────────────────────────────────────────────────────
+
     # ──────────────── UI 빌드 ───────────────────────
     def _init_ui(self):
         # 테이블 생성
@@ -136,14 +151,56 @@ class CSCTabBase(QWidget):
             "mission":    "Multi-agent Mission Planner",
             "decision":   "Mission Option Builder",
         }.get(role, "Multi-agent Mission Planner")
-    
-    def _build_overridden_body(self, msg_id: str):
-        """
-        0102 바디는 generator/message0102_push.py가 표준 규칙으로 생성한다.
-        여기서는 개입하지 않고, 0102에 대해서만 빈 dict를 넘겨 '기본값 사용'을 의미하도록 한다.
-        """
-        return {} if str(msg_id).strip() == "0102" else None
 
+    # ── [교체] SW 코드(MMR/MSM/MOB) 반환 ─────────────────────────────
+    def _sw_code(self) -> str:
+        import os
+        role = (os.environ.get("KU_ROLE") or "").lower()
+        return {"mission": "MMR", "monitoring": "MSM", "decision": "MOB"}.get(role, "MMR")
+    # ────────────────────────────────────────────────────────────────
+
+    # ── [교체] 자체 진단 결과(0/1/2) ──────────────────────────────────
+    def _self_diag_status(self) -> int:
+        """
+        0: Unknown(초기 2초)
+        1: 정상(간이모드: 2초 경과)
+        2: 비정상(간이모드 해제 시에만 실제 점검 실패 시 보고)
+        """
+        # 2초 전에는 무조건 0
+        if not self._selfcheck_ready:
+            return 0
+
+        # 간이모드면 2초 경과 후 바로 정상(=1)
+        if self._selfcheck_simple:
+            return 1
+
+        # ── 아래는 '간이모드 해제'했을 때만 쓰는 실제 점검(지금은 사용 안 함)
+        try:
+            import importlib.util as _iu
+            try:
+                from push_center import SEARCH_PREFIXES as _PFX
+            except Exception:
+                _PFX = ["generator", "push_info", "push", "modules.common.push_info", "modules.common.push"]
+            found_push = any(_iu.find_spec(f"{pref}.message0102_push") is not None for pref in _PFX)
+
+            import receive_center as _rc
+            reg = getattr(_rc, "_listener_registry", {})
+            def z4(mid): 
+                s = str(mid)
+                return s.zfill(4) if s.isdigit() and len(s) < 4 else s
+            rx_ok = True
+            for mid, _ in getattr(self, "RECEIVE_MESSAGES", []):
+                key = z4(mid)
+                lst = reg.get(key) or []
+                if self not in lst:
+                    rx_ok = False
+                    break
+
+            messenger_ok = hasattr(self, "messenger") and (self.messenger is not None)
+            return 1 if (found_push and rx_ok and messenger_ok) else 2
+        except Exception:
+            return 2
+    # ────────────────────────────────────────────────────────────────
 
     def _make_rx_table(self) -> QTableWidget:
         """
@@ -448,6 +505,19 @@ class CSCTabBase(QWidget):
                 recv_item.setForeground(QColor("blue"))
                 break
 
+    def _build_overridden_body(self, msg_id: str):
+        """
+        0102 전송 시 바디를 표준 스키마로 생성:
+        { "timestamp": ms_since_2000, "source": "MMR|MSM|MOB", "status": 0|1|2 }
+        """
+        if str(msg_id).strip() != "0102":
+            return None
+        return {
+            "timestamp": _now_ms_since_2000(),
+            "source": self._sw_code(),
+            "status": self._self_diag_status(),
+        }
+    
     def _periodic_timeout(self, msg_id: str, row: int):
         """
         주기 타이머 만료 시 호출. 상태는 '전송중' 유지, 로그만 기록.

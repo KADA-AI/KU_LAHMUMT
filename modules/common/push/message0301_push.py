@@ -1,82 +1,245 @@
-# 파일: modules\common\push\message0301_push.py
-# 모듈-레벨 헬퍼 추가
-import os, glob, json
-from pathlib import Path
+# modules/common/push/message0301_push.py
+# auto-generated at 2025-08-24T20:13:14.009940+00:00
+
+
+import json, importlib
 from datetime import datetime, timezone
 from System.Collections.Generic import List
-from nFusion.Model.msg_0301 import *
-
+from nFusion.Model.msg_0301 import *    # C# 모델(우선)
+from nFusion.Model.CommonType import *     # 공통 타입(항상)
+from System import Single, UInt32, UInt64
+from generator.message0301_generator import make_msg0301_body
 _EPOCH_2000 = datetime(2000, 1, 1, tzinfo=timezone.utc)
 _now_ms = lambda: int((datetime.utcnow().replace(tzinfo=timezone.utc) - _EPOCH_2000).total_seconds() * 1000)
+MSG_ID = "0301"
+def _try_set(obj, name: str, value) -> bool:
+    # lowerCamel 또는 PascalCase 둘 다 시도
+    for k in (name, name[:1].upper()+name[1:] if name else name):
+        try:
+            if hasattr(obj, k):
+                setattr(obj, k, value)
+                return True
+        except Exception:
+            pass
+    return False
+def _cs(name: str):
+    # 현재 전역 → msg_ID 모듈 → CommonType → 루트 순으로 검색
+    t = globals().get(name)
+    if t is not None: return t
+    for modname in (f'nFusion.Model.msg_{MSG_ID}', 'nFusion.Model.CommonType', 'nFusion.Model'):
+        try:
+            mod = importlib.import_module(modname)
+            t = getattr(mod, name, None)
+            if t is not None: return t
+        except Exception:
+            pass
+    return None
+def _new(name: str):
+    t = _cs(name)
+    if t is None:
+        raise NameError(f'type not found: {name}')
+    return t()
 
-# ★ 추가: ENV → MissionPlan 폴더 경로 도출
-def _get_plan_dir() -> str:
-    r"""
-    KU_MISSION_DB_ROOT가 있으면 <root>\MissionPlan
-    없으면 '프로젝트 루트\database\MissionPlan' 로 폴백
-    (이 파일 경로: ...\modules\common\push\message0301_push.py)
-      └ parents[1] = common
-      └ parents[2] = modules
-      └ parents[3] = 프로젝트 루트
-    """
+# ── Embedded TX/DB rules (self-contained) ──────────────────────────────────
+TX_FIELD_WHITELIST = {
+    "0201": ["timestamp", "inputMissionPackageID"],
+    "0203": ["timestamp", "missionReferencePackageID"],
+    "0301": ["timestamp", "missionPlanID"],
+    "0302": ["timestamp", "individualMissionPackageID"],
+    "0303": ["timestamp", "pathID"],
+    "0304": ["timestamp", "pathID"],
+}
+
+DB_DIR_RULES = {
+    "0201": "InputMissionPlan",
+    "0203": "FlightReferenceInfo",
+    "0301": "MissionPlan",
+    "0302": "IndividualMissionPlan",
+    "0303": "FlightPath",
+    "0304": "FlightPath",
+}
+
+def _select_tx_fields(body: dict, fields: list) -> dict:
+    """화이트리스트로 선별: timestamp / source 계열 폴백 / 나머지 ID류만 남김"""
+    out = {}
+    low = {k.lower(): k for k in body.keys()}
+
+    def _get(key: str):
+        kl = key.lower()
+        if kl in low:
+            return body[low[kl]]
+        return None
+
+    ts = _get("timestamp")
+    if ts is not None:
+        out["timestamp"] = int(ts)
+
+    s  = _get("source")
+    sm = _get("sourceModuleName") or _get("sourcemodulename")
+    rq = _get("requestModuleName") or _get("requestmodulename")
+    src_val = s or sm or rq
+    if src_val:
+        out["sourceModuleName"] = str(src_val)
+
+    for f in fields:
+        if f in ("timestamp","source","sourceModuleName","requestModuleName"):
+            continue
+        v = _get(f)
+        if v is not None:
+            try:
+                out[f] = int(v)
+            except Exception:
+                out[f] = v
+    return out
+
+def _project_root_for_push_file(__file_path: str):
+    from pathlib import Path
+    return Path(__file_path).resolve().parents[3]
+
+def _db_dir_for(msgid: str, __file_path: str) -> str:
+    import os
+    from pathlib import Path
     env_root = os.getenv("KU_MISSION_DB_ROOT")
-    # print(env_root)
+    name = DB_DIR_RULES.get(msgid, f"msg_{msgid}")
     if env_root:
-        return str(Path(env_root) / "MissionPlan")
+        return str(Path(env_root) / name)
+    return str(_project_root_for_push_file(__file_path) / "database" / name)
 
-    proj_root = Path(__file__).resolve().parents[3]   # ← 프로젝트 루트
-    return str(proj_root / "database" / "MissionPlan")
+def _list_numeric_ids(dirname: str, prefix_first_char: str | None = None) -> list[int]:
+    import os, glob
+    ids = []
+    for p in glob.glob(os.path.join(dirname, "*.json")):
+        stem = os.path.splitext(os.path.basename(p))[0]
+        if stem.isdigit():
+            if prefix_first_char and stem[0] not in prefix_first_char:
+                continue
+            ids.append(int(stem))
+    ids.sort()
+    return ids
+
+def _dict_to_Aircraft(data: dict):
+    obj = _new('Aircraft')
+    if "aircraftID" in data: _try_set(obj, "aircraftID", int(data["aircraftID"]))
+    if "individualMissionPackageID" in data: _try_set(obj, "individualMissionPackageID", int(data["individualMissionPackageID"]))
+    return obj
+
+def _dict_to_MissionPlanData(data: dict):
+    obj = _new('MissionPlanData')
+    if "timestamp" in data: _try_set(obj, "timestamp", int(data["timestamp"]))
+    if "missionPlanID" in data: _try_set(obj, "missionPlanID", int(data["missionPlanID"]))
+    if "missionPlanTimestamp" in data: _try_set(obj, "missionPlanTimestamp", int(data["missionPlanTimestamp"]))
+    if "planningTime" in data: _try_set(obj, "planningTime", float(data["planningTime"]))
+    if "plannerID" in data: _try_set(obj, "plannerID", int(data["plannerID"]))
+    if "inputMissionPackageID" in data: _try_set(obj, "inputMissionPackageID", int(data["inputMissionPackageID"]))
+    if "missionReferencePackageID" in data: _try_set(obj, "missionReferencePackageID", int(data["missionReferencePackageID"]))
+    if "aircraftList" in data and isinstance(data["aircraftList"], list):
+        T = _cs('Aircraft') or object
+        lst = List[T]()
+        for item in data["aircraftList"]: lst.Add(_dict_to_Aircraft(item if isinstance(item, dict) else {}))
+        _try_set(obj, "aircraftList", lst)
+    return obj
+
+def _dict_to_MissionPlan(data: dict):
+    obj = _new('MissionPlan')
+    if "timestamp" in data: _try_set(obj, "timestamp", int(data["timestamp"]))
+    if "missionPlanID" in data: _try_set(obj, "missionPlanID", int(data["missionPlanID"]))
+    if "missionPlanTimestamp" in data: _try_set(obj, "missionPlanTimestamp", int(data["missionPlanTimestamp"]))
+    if "planningTime" in data: _try_set(obj, "planningTime", float(data["planningTime"]))
+    if "plannerID" in data: _try_set(obj, "plannerID", int(data["plannerID"]))
+    if "inputMissionPackageID" in data: _try_set(obj, "inputMissionPackageID", int(data["inputMissionPackageID"]))
+    if "missionReferencePackageID" in data: _try_set(obj, "missionReferencePackageID", int(data["missionReferencePackageID"]))
+    if "aircraftList" in data and isinstance(data["aircraftList"], list):
+        T = _cs('Aircraft') or object
+        lst = List[T]()
+        for item in data["aircraftList"]: lst.Add(_dict_to_Aircraft(item if isinstance(item, dict) else {}))
+        _try_set(obj, "aircraftList", lst)
+    return obj
+
+
 
 
 def _dict_to_obj(body_dict: dict):
-    """
-    dict → MissionPlan(C# 객체)
-    • 요구사항에 따라 timestamp / missionPlanID 두 필드만 설정
-    """
-    mp = MissionPlan()
-    mp.timestamp     = body_dict["timestamp"]
-    mp.missionPlanID = body_dict["missionPlanID"]
-    return mp
+    return _dict_to_MissionPlan(body_dict)
 
-
-def _list_plan_ids() -> list[int]:
-    """ENV 기반 MissionPlan 디렉터리의 *.json 파일명을 숫자 missionPlanID 목록으로 반환"""
-    ids: list[int] = []
-    plan_dir = _get_plan_dir()
-    for path in glob.glob(os.path.join(plan_dir, "*.json")):
-        stem = os.path.splitext(os.path.basename(path))[0]
-        if stem.isdigit():  # ex) "700000"
-            ids.append(int(stem))
-    return sorted(ids)
-
-
-def make_and_push(body_dict: dict, node_messenger) -> bytes | None:
-    """
-    dict → MissionPlan(C#) 변환 후 Push · GUI 로그용 bytes 반환
-    • 0301 규격: timestamp / missionPlanID 두 필드만 전송
-    """
+def make_and_push(body_dict: dict, node_messenger) -> bytes:
+    # TX 화이트리스트가 있으면 최종 전송 전 선별(제너레이터가 풍부하게 만들어도 최소필드만 보냄)
+    wl = TX_FIELD_WHITELIST.get(MSG_ID)
+    if wl and isinstance(body_dict, dict):
+        body_dict = _select_tx_fields(body_dict, wl)
     msg = _dict_to_obj(body_dict)
     node_messenger.Push(msg)
-
     log_line = (
         f"[0301] BODY  : {json.dumps(body_dict, ensure_ascii=False)}\n"
         f"[0301] PUSH 완료"
     )
-    return log_line.encode()
+    return log_line.encode("utf-8", "ignore")
+
+def make_random_and_push(node_messenger) -> bytes:
+    # DB 기반 메시지는 DB의 파일명(숫자).json을 ID로 사용하여 최소 필드만 전송
+    if MSG_ID in DB_DIR_RULES:
+        dbdir = _db_dir_for(MSG_ID, __file__)
+        # 0304(유인기 pathID)는 1/2/3 시작만 전송(기존 규칙 유지)
+        needs_prefix = "123" if MSG_ID == "0304" else None
+        ids = _list_numeric_ids(dbdir, needs_prefix)
+        logs = []
+        for vid in ids:
+            wl = TX_FIELD_WHITELIST.get(MSG_ID, [])
+            body = {
+                "timestamp": int((datetime.utcnow().replace(tzinfo=timezone.utc) - _EPOCH_2000).total_seconds() * 1000),
+                "sourceModuleName": "DSC",
+            }
+            # ID 필드 결정
+            if "inputMissionPackageID" in wl:          body["inputMissionPackageID"] = vid
+            if "missionReferencePackageID" in wl:      body["missionReferencePackageID"] = vid
+            if "missionPlanID" in wl:                  body["missionPlanID"] = vid
+            if "individualMissionPackageID" in wl:     body["individualMissionPackageID"] = vid
+            if "pathID" in wl:                         body["pathID"] = vid
+            logs.append(make_and_push(body, node_messenger))
+        return b"\n".join(logs) if logs else b""
+    else:
+        # 비 DB 메시지는 제너레이터 → 필요 시 화이트리스트로 선별
+        body = make_msg0301_body()
+        # ★ 0102 방어: body가 비거나 dict가 아니면 최소 세트로 채움
+        if MSG_ID == "0102":
+            if not isinstance(body, dict) or not body:
+                body = {
+                    "timestamp": int((datetime.utcnow().replace(tzinfo=timezone.utc) - _EPOCH_2000).total_seconds() * 1000),
+                    "status": 1,  # 정상
+                    "sourceModuleName": "DSC",
+                }
+        wl = TX_FIELD_WHITELIST.get(MSG_ID)
+        if wl and isinstance(body, dict):
+            body = _select_tx_fields(body, wl)
+        return make_and_push(body, node_messenger)
 
 
-def make_random_and_push(node_messenger) -> bytes | None:
-    """
-    • (ENV) KU_MISSION_DB_ROOT/MissionPlan 의 *.json → missionPlanID 추출
-    • 2000-01-01 UTC 기준 ms 단위 timestamp 로 전송
-    """
-    logs: list[bytes] = []
-    for mid in _list_plan_ids():
-        body = {
-            "timestamp": _now_ms(),
-            "missionPlanID": mid,
-        }
-        log = make_and_push(body, node_messenger)
-        if log:
-            logs.append(log)
+
+
+import os, glob
+from pathlib import Path
+
+def _project_root() -> Path:
+    return Path(__file__).resolve().parents[3]
+
+def _now_ms_2000() -> int:
+    return _now_ms()
+
+
+def _get_dir_0301() -> str:
+    env_root = os.getenv("KU_MISSION_DB_ROOT")
+    if env_root: return str(Path(env_root) / "MissionPlan")
+    return str(_project_root() / "database" / "MissionPlan")
+
+def _list_ids_0301() -> list:
+    ids = []
+    for path in glob.glob(os.path.join(_get_dir_0301(), "*.json")):
+        stem = os.path.splitext(os.path.basename(path))[0]
+        if stem.isdigit(): ids.append(int(stem))
+    return sorted(ids)
+
+def make_from_db_and_push(node_messenger) -> bytes | None:
+    logs = []
+    for mid in _list_ids_0301():
+        body = {"timestamp": _now_ms_2000(), "missionPlanID": mid}
+        logs.append(make_and_push(body, node_messenger))
     return b"\n".join(logs) if logs else None

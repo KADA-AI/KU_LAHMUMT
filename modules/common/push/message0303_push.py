@@ -1,264 +1,308 @@
-# from System.Collections.Generic import List
-# from nFusion.Model.msg_0303 import *
-# from generator.message0303_generator import make_msg0303_body
+# modules/common/push/message0303_push.py
+# auto-generated at 2025-08-24T20:13:14.013940+00:00
 
 
-# def _dict_to_obj(body_dict: dict):
-#     plan = UAVFlightPlan()
-#     plan.timestamp         = body_dict["timestamp"]
-#     plan.pathID            = body_dict["pathID"]
-#     plan.aircraftID        = body_dict["aircraftID"]
-#     plan.isFormationFlight = body_dict["isFormationFlight"]
-
-#     # ───────── Formation ─────────
-#     form_dict  = body_dict.get("formation", {})
-#     formation  = Formation()
-
-#     # 실제 JSON은 readerAircraftID 로 저장돼 있으므로 둘 다 체크
-#     leader_block = form_dict.get("leaderAircraftID") or form_dict.get("readerAircraftID") or {}
-#     leader = LeaderAircraftID()
-#     leader.aircraftID = leader_block.get("aircraftID", 0)
-#     formation.leaderAircraftID = leader
-
-#     fd_list = List[FormationDistance]()
-#     for fd in form_dict.get("formationDistanceList", []):
-#         fd_obj = FormationDistance()
-#         fd_obj.dX = fd.get("dX", 0.0)
-#         fd_obj.dY = fd.get("dY", 0.0)
-#         fd_obj.dZ = fd.get("dZ", 0.0)
-#         fd_list.Add(fd_obj)
-#     formation.formationDistanceList = fd_list
-#     plan.formation = formation
-
-#     # ───────── Waypoints ─────────
-#     wp_list = List[Waypoint]()
-#     for wp in body_dict.get("waypointList", []):
-#         wp_obj = Waypoint()
-#         wp_obj.waypointID        = wp["waypointID"]
-
-#         coord = Coordinate()
-#         coord.latitude  = wp["coordinate"]["latitude"]
-#         coord.longitude = wp["coordinate"]["longitude"]
-#         coord.altitude  = wp["coordinate"]["altitude"]
-#         wp_obj.coordinate = coord
-
-#         wp_obj.speed            = wp.get("speed", 0.0)
-#         wp_obj.eta              = wp.get("eta", 0)
-#         wp_obj.ecf              = wp.get("ecf", 0.0)
-#         wp_obj.nextWaypointID   = wp.get("nextWaypointID", 0)
-#         wp_obj.waypointPassType = wp.get("waypointPassType", 0)
-
-#         # ── LoiterProperty (optional) ─────────────────────
-#         lp_dict = wp.get("loiterProperty")
-#         if lp_dict:
-#             loiter  = LoiterProperty()
-#             loiter.radius    = lp_dict.get("radius", 0)
-#             loiter.direction = lp_dict.get("direction", 0)
-#             loiter.time      = lp_dict.get("time", 0)
-#             loiter.speed     = lp_dict.get("speed", 0.0)
-#             wp_obj.loiterProperty = loiter
-
-#         # ── FilmingProperty (optional) ────────────────────
-#         fp_dict = wp.get("filmingProperty")
-#         if fp_dict:
-#             film    = FilmingProperty()
-#             film.fieldOfView  = fp_dict.get("fieldOfView", 0.0)
-#             film.sensorType   = fp_dict.get("sensorType", 0)
-#             film.operationMode = fp_dict.get("operationMode", 0)
-
-#             # CoordinateOrientation
-#             if "coordinateOrientation" in fp_dict:
-#                 co = CoordinateOrientation()
-#                 co_coord = Coordinate()
-#                 cdict = fp_dict["coordinateOrientation"]["coordinate"]
-#                 co_coord.latitude  = cdict.get("latitude", 0.0)
-#                 co_coord.longitude = cdict.get("longitude", 0.0)
-#                 co_coord.altitude  = cdict.get("altitude", 0.0)
-#                 co.coordinate = co_coord
-#                 film.coordinateOrientation = co
-
-#             # LineSearch
-#             if "lineSearch" in fp_dict:
-#                 ls = LineSearch()
-#                 ls.searchSpeed = fp_dict["lineSearch"].get("searchSpeed", 0.0)
-#                 ls_coords = List[Coordinate]()
-#                 for lc in fp_dict["lineSearch"].get("coordinateList", []):
-#                     c = Coordinate()
-#                     c.latitude  = lc.get("latitude", 0.0)
-#                     c.longitude = lc.get("longitude", 0.0)
-#                     c.altitude  = lc.get("altitude", 0.0)
-#                     ls_coords.Add(c)
-#                 ls.coordinateList = ls_coords
-#                 film.lineSearch = ls
-
-#             # AutoTracking
-#             if "autoTracking" in fp_dict:
-#                 at = AutoTracking()
-#                 at.targetID = fp_dict["autoTracking"].get("targetID", 0)
-#                 film.autoTracking = at
-
-#             # AircraftFixed
-#             if "aircraftFixed" in fp_dict:
-#                 af = AircraftFixed()
-#                 af.gimbalPitch = fp_dict["aircraftFixed"].get("gimbalPitch", 0.0)
-#                 af.gimbalYaw   = fp_dict["aircraftFixed"].get("gimbalYaw", 0.0)
-#                 film.aircraftFixed = af
-
-#             # AutoScan
-#             if "autoScan" in fp_dict:
-#                 asc = AutoScan()
-#                 asc.gimbalPitch            = fp_dict["autoScan"].get("gimbalPitch", 0.0)
-#                 asc.gimbalYawAngularSpeed  = fp_dict["autoScan"].get("gimbalYawAngularSpeed", 0.0)
-#                 gyl = GimbalYawLimits()
-#                 gyl.leftLimit  = fp_dict["autoScan"]["gimbalYawLimits"].get("leftLimit", 0.0)
-#                 gyl.rightLimit = fp_dict["autoScan"]["gimbalYawLimits"].get("rightLimit", 0.0)
-#                 asc.gimbalYawLimits = gyl
-#                 film.autoScan = asc
-
-#             wp_obj.filmingProperty = film
-
-#         wp_list.Add(wp_obj)
-
-#     plan.waypointList = wp_list
-#     return plan
-# import json 
-# def make_and_push(body, node_messenger) -> bytes:
-#     """
-#     body: dict 1개 -or- dict 의 list
-#     반환: GUI 로그용 bytes
-#     """
-#     logs = []
-
-#     # ── 여러 항공기(list)인 경우 ─────────────────────────
-#     if isinstance(body, list):
-#         for item in body:
-#             msg = _dict_to_obj(item)
-#             node_messenger.Push(msg)
-#             logs.append(
-#                 f"[0303] BODY  : {json.dumps(item, ensure_ascii=False)}\n"
-#                 f"[0303] PUSH 완료"
-#             )
-#     # ── 단일 항공기(dict)인 경우 ─────────────────────────
-#     else:
-#         msg = _dict_to_obj(body)
-#         node_messenger.Push(msg)
-#         logs.append(
-#             f"[0303] BODY  : {json.dumps(body, ensure_ascii=False)}\n"
-#             f"[0303] PUSH 완료"
-#         )
-
-#     return "\n".join(logs).encode()
-
-# def make_random_and_push(node_messenger) -> None:
-#     return make_and_push(make_msg0303_body(), node_messenger)
-
-
-
-# ─────────────────────────────────────────────────────────────
-# push/message0303_push.py – 0303 UAVFlightPlan 발신 스텁
-#   • FlightPath 폴더의 *.json 중 파일명 첫글자 4‧5‧6 → 무인기
-#   • {timestamp, pathID} 두 필드만 채워 Push
-#   • timestamp: 2000-01-01 UTC 기준 ms
-# ─────────────────────────────────────────────────────────────
-# 파일: modules\common\push\message0303_push.py
-# 목적: 0303 (UAVFlightPlan) PUSH
-# 동작:
-#   • (ENV) KU_MISSION_DB_ROOT/FlightPath 또는 상대경로 FlightPath 의 *.json 스캔
-#   • 파일명 숫자이며 첫 글자가 4/5/6인 경우 → 무인기로 간주, 그 숫자를 pathID로 사용
-#   • {timestamp(ms since 2000-01-01 UTC), pathID} 최소 필드만 채워 Push
-# 반환:
-#   • make_and_push(...) → bytes (GUI 로그용)
-#   • make_random_and_push(...) → bytes (여러 건이면 \n로 합침), 없으면 None
-
-from __future__ import annotations
-import os
-import glob
-import json
-from pathlib import Path
+import json, importlib
 from datetime import datetime, timezone
-from typing import List as PyList, Optional
-
-from nFusion.Model.msg_0303 import UAVFlightPlan  # 메시지 타입
-
-# ─────────────────────────────────────────────────────────────
-# 타임스탬프: 2000-01-01 00:00:00 UTC 기준 ms
+from System.Collections.Generic import List
+from nFusion.Model.msg_0303 import *    # C# 모델(우선)
+from nFusion.Model.CommonType import *     # 공통 타입(항상)
+from System import Boolean, Int32, Single, UInt32, UInt64
+from generator.message0303_generator import make_msg0303_body
 _EPOCH_2000 = datetime(2000, 1, 1, tzinfo=timezone.utc)
 _now_ms = lambda: int((datetime.utcnow().replace(tzinfo=timezone.utc) - _EPOCH_2000).total_seconds() * 1000)
+MSG_ID = "0303"
+def _try_set(obj, name: str, value) -> bool:
+    # lowerCamel 또는 PascalCase 둘 다 시도
+    for k in (name, name[:1].upper()+name[1:] if name else name):
+        try:
+            if hasattr(obj, k):
+                setattr(obj, k, value)
+                return True
+        except Exception:
+            pass
+    return False
+def _cs(name: str):
+    # 현재 전역 → msg_ID 모듈 → CommonType → 루트 순으로 검색
+    t = globals().get(name)
+    if t is not None: return t
+    for modname in (f'nFusion.Model.msg_{MSG_ID}', 'nFusion.Model.CommonType', 'nFusion.Model'):
+        try:
+            mod = importlib.import_module(modname)
+            t = getattr(mod, name, None)
+            if t is not None: return t
+        except Exception:
+            pass
+    return None
+def _new(name: str):
+    t = _cs(name)
+    if t is None:
+        raise NameError(f'type not found: {name}')
+    return t()
 
+# ── Embedded TX/DB rules (self-contained) ──────────────────────────────────
+TX_FIELD_WHITELIST = {
+    "0201": ["timestamp", "inputMissionPackageID"],
+    "0203": ["timestamp", "missionReferencePackageID"],
+    "0301": ["timestamp", "missionPlanID"],
+    "0302": ["timestamp", "individualMissionPackageID"],
+    "0303": ["timestamp", "pathID"],
+    "0304": ["timestamp", "pathID"],
+}
 
-def _get_fp_dir() -> str:
-    r"""
-    KU_MISSION_DB_ROOT가 있으면 <root>\MissionPlan
-    없으면 '프로젝트 루트\database\MissionPlan' 로 폴백
-    (이 파일 경로: ...\modules\common\push\message0301_push.py)
-      └ parents[1] = common
-      └ parents[2] = modules
-      └ parents[3] = 프로젝트 루트
-    """
+DB_DIR_RULES = {
+    "0201": "InputMissionPlan",
+    "0203": "FlightReferenceInfo",
+    "0301": "MissionPlan",
+    "0302": "IndividualMissionPlan",
+    "0303": "FlightPath",
+    "0304": "FlightPath",
+}
+
+def _select_tx_fields(body: dict, fields: list) -> dict:
+    """화이트리스트로 선별: timestamp / source 계열 폴백 / 나머지 ID류만 남김"""
+    out = {}
+    low = {k.lower(): k for k in body.keys()}
+
+    def _get(key: str):
+        kl = key.lower()
+        if kl in low:
+            return body[low[kl]]
+        return None
+
+    ts = _get("timestamp")
+    if ts is not None:
+        out["timestamp"] = int(ts)
+
+    s  = _get("source")
+    sm = _get("sourceModuleName") or _get("sourcemodulename")
+    rq = _get("requestModuleName") or _get("requestmodulename")
+    src_val = s or sm or rq
+    if src_val:
+        out["sourceModuleName"] = str(src_val)
+
+    for f in fields:
+        if f in ("timestamp","source","sourceModuleName","requestModuleName"):
+            continue
+        v = _get(f)
+        if v is not None:
+            try:
+                out[f] = int(v)
+            except Exception:
+                out[f] = v
+    return out
+
+def _project_root_for_push_file(__file_path: str):
+    from pathlib import Path
+    return Path(__file_path).resolve().parents[3]
+
+def _db_dir_for(msgid: str, __file_path: str) -> str:
+    import os
+    from pathlib import Path
     env_root = os.getenv("KU_MISSION_DB_ROOT")
-    print(env_root)
+    name = DB_DIR_RULES.get(msgid, f"msg_{msgid}")
     if env_root:
-        return str(Path(env_root) / "FlightPath")
+        return str(Path(env_root) / name)
+    return str(_project_root_for_push_file(__file_path) / "database" / name)
 
-    proj_root = Path(__file__).resolve().parents[3]   # ← 프로젝트 루트
-    return str(proj_root / "database" / "FlightPath")
-
-
-def _list_path_ids() -> PyList[int]:
-    """
-    FlightPath 디렉터리의 *.json 중
-    - 파일명이 전부 숫자이고
-    - 첫 글자가 4/5/6 (무인기)
-    인 파일들의 숫자 부분을 pathID로 반환
-    """
-    fp_dir = _get_fp_dir()
-    ids: PyList[int] = []
-    for path in glob.glob(os.path.join(fp_dir, "*.json")):
-        stem = os.path.splitext(os.path.basename(path))[0]
-        if stem.isdigit() and stem[0] in "456":
+def _list_numeric_ids(dirname: str, prefix_first_char: str | None = None) -> list[int]:
+    import os, glob
+    ids = []
+    for p in glob.glob(os.path.join(dirname, "*.json")):
+        stem = os.path.splitext(os.path.basename(p))[0]
+        if stem.isdigit():
+            if prefix_first_char and stem[0] not in prefix_first_char:
+                continue
             ids.append(int(stem))
-    return sorted(ids)
+    ids.sort()
+    return ids
+
+def _dict_to_Formation(data: dict):
+    obj = _new('Formation')
+    if "dX" in data: _try_set(obj, "dX", int(data["dX"]))
+    if "dY" in data: _try_set(obj, "dY", int(data["dY"]))
+    if "dZ" in data: _try_set(obj, "dZ", int(data["dZ"]))
+    return obj
+
+def _dict_to_FormationInfo(data: dict):
+    obj = _new('FormationInfo')
+    if "leaderAircraftID" in data: _try_set(obj, "leaderAircraftID", int(data["leaderAircraftID"]))
+    if "formation" in data and isinstance(data["formation"], dict):
+        _try_set(obj, "formation", _dict_to_Formation(data["formation"]))
+    return obj
+
+def _dict_to_Coordinate(data: dict):
+    obj = _new('Coordinate')
+    if "latitude" in data: _try_set(obj, "latitude", float(data["latitude"]))
+    if "longitude" in data: _try_set(obj, "longitude", float(data["longitude"]))
+    if "altitude" in data: _try_set(obj, "altitude", int(data["altitude"]))
+    return obj
+
+def _dict_to_LoiterProperty(data: dict):
+    obj = _new('LoiterProperty')
+    if "radius" in data: _try_set(obj, "radius", int(data["radius"]))
+    if "direction" in data: _try_set(obj, "direction", int(data["direction"]))
+    if "time" in data: _try_set(obj, "time", int(data["time"]))
+    if "speed" in data: _try_set(obj, "speed", float(data["speed"]))
+    return obj
+
+def _dict_to_CoordinateOrientation(data: dict):
+    obj = _new('CoordinateOrientation')
+    if "coordinate" in data and isinstance(data["coordinate"], dict):
+        _try_set(obj, "coordinate", _dict_to_Coordinate(data["coordinate"]))
+    return obj
+
+def _dict_to_LineSearch(data: dict):
+    obj = _new('LineSearch')
+    if "coordinateList" in data and isinstance(data["coordinateList"], list):
+        T = _cs('Coordinate') or object
+        lst = List[T]()
+        for item in data["coordinateList"]: lst.Add(_dict_to_Coordinate(item if isinstance(item, dict) else {}))
+        _try_set(obj, "coordinateList", lst)
+    if "searchSpeed" in data: _try_set(obj, "searchSpeed", float(data["searchSpeed"]))
+    return obj
+
+def _dict_to_AutoTracking(data: dict):
+    obj = _new('AutoTracking')
+    if "targetID" in data: _try_set(obj, "targetID", int(data["targetID"]))
+    return obj
+
+def _dict_to_AircraftFixed(data: dict):
+    obj = _new('AircraftFixed')
+    if "gimbalPitch" in data: _try_set(obj, "gimbalPitch", float(data["gimbalPitch"]))
+    if "gimbalYaw" in data: _try_set(obj, "gimbalYaw", float(data["gimbalYaw"]))
+    return obj
+
+def _dict_to_GimbalYawLimits(data: dict):
+    obj = _new('GimbalYawLimits')
+    if "leftLimit" in data: _try_set(obj, "leftLimit", float(data["leftLimit"]))
+    if "rightLimit" in data: _try_set(obj, "rightLimit", float(data["rightLimit"]))
+    return obj
+
+def _dict_to_AutoScan(data: dict):
+    obj = _new('AutoScan')
+    if "gimbalPitch" in data: _try_set(obj, "gimbalPitch", float(data["gimbalPitch"]))
+    if "gimbalYawLimits" in data and isinstance(data["gimbalYawLimits"], dict):
+        _try_set(obj, "gimbalYawLimits", _dict_to_GimbalYawLimits(data["gimbalYawLimits"]))
+    if "gimbalYawAngularSpeed" in data: _try_set(obj, "gimbalYawAngularSpeed", float(data["gimbalYawAngularSpeed"]))
+    return obj
+
+def _dict_to_FilmingProperty(data: dict):
+    obj = _new('FilmingProperty')
+    if "fieldOfView" in data: _try_set(obj, "fieldOfView", float(data["fieldOfView"]))
+    if "sensorType" in data: _try_set(obj, "sensorType", int(data["sensorType"]))
+    if "operationMode" in data: _try_set(obj, "operationMode", int(data["operationMode"]))
+    if "coordinateOrientation" in data and isinstance(data["coordinateOrientation"], dict):
+        _try_set(obj, "coordinateOrientation", _dict_to_CoordinateOrientation(data["coordinateOrientation"]))
+    if "lineSearch" in data and isinstance(data["lineSearch"], dict):
+        _try_set(obj, "lineSearch", _dict_to_LineSearch(data["lineSearch"]))
+    if "autoTracking" in data and isinstance(data["autoTracking"], dict):
+        _try_set(obj, "autoTracking", _dict_to_AutoTracking(data["autoTracking"]))
+    if "aircraftFixed" in data and isinstance(data["aircraftFixed"], dict):
+        _try_set(obj, "aircraftFixed", _dict_to_AircraftFixed(data["aircraftFixed"]))
+    if "autoScan" in data and isinstance(data["autoScan"], dict):
+        _try_set(obj, "autoScan", _dict_to_AutoScan(data["autoScan"]))
+    return obj
+
+def _dict_to_Waypoint(data: dict):
+    obj = _new('Waypoint')
+    if "waypointID" in data: _try_set(obj, "waypointID", int(data["waypointID"]))
+    if "coordinate" in data and isinstance(data["coordinate"], dict):
+        _try_set(obj, "coordinate", _dict_to_Coordinate(data["coordinate"]))
+    if "speed" in data: _try_set(obj, "speed", float(data["speed"]))
+    if "eta" in data: _try_set(obj, "eta", int(data["eta"]))
+    if "ecf" in data: _try_set(obj, "ecf", float(data["ecf"]))
+    if "nextWaypointID" in data: _try_set(obj, "nextWaypointID", int(data["nextWaypointID"]))
+    if "waypointPassType" in data: _try_set(obj, "waypointPassType", int(data["waypointPassType"]))
+    if "loiterProperty" in data and isinstance(data["loiterProperty"], dict):
+        _try_set(obj, "loiterProperty", _dict_to_LoiterProperty(data["loiterProperty"]))
+    if "filmingProperty" in data and isinstance(data["filmingProperty"], dict):
+        _try_set(obj, "filmingProperty", _dict_to_FilmingProperty(data["filmingProperty"]))
+    return obj
+
+def _dict_to_UAVFlightPlanData(data: dict):
+    obj = _new('UAVFlightPlanData')
+    if "timestamp" in data: _try_set(obj, "timestamp", int(data["timestamp"]))
+    if "pathID" in data: _try_set(obj, "pathID", int(data["pathID"]))
+    if "aircraftID" in data: _try_set(obj, "aircraftID", int(data["aircraftID"]))
+    if "isFormationFlight" in data: _try_set(obj, "isFormationFlight", bool(data["isFormationFlight"]))
+    if "formationInfo" in data and isinstance(data["formationInfo"], dict):
+        _try_set(obj, "formationInfo", _dict_to_FormationInfo(data["formationInfo"]))
+    if "waypointList" in data and isinstance(data["waypointList"], list):
+        T = _cs('Waypoint') or object
+        lst = List[T]()
+        for item in data["waypointList"]: lst.Add(_dict_to_Waypoint(item if isinstance(item, dict) else {}))
+        _try_set(obj, "waypointList", lst)
+    return obj
+
+def _dict_to_UAVFlightPlan(data: dict):
+    obj = _new('UAVFlightPlan')
+    if "timestamp" in data: _try_set(obj, "timestamp", int(data["timestamp"]))
+    if "pathID" in data: _try_set(obj, "pathID", int(data["pathID"]))
+    if "aircraftID" in data: _try_set(obj, "aircraftID", int(data["aircraftID"]))
+    if "isFormationFlight" in data: _try_set(obj, "isFormationFlight", bool(data["isFormationFlight"]))
+    if "formationInfo" in data and isinstance(data["formationInfo"], dict):
+        _try_set(obj, "formationInfo", _dict_to_FormationInfo(data["formationInfo"]))
+    if "waypointList" in data and isinstance(data["waypointList"], list):
+        T = _cs('Waypoint') or object
+        lst = List[T]()
+        for item in data["waypointList"]: lst.Add(_dict_to_Waypoint(item if isinstance(item, dict) else {}))
+        _try_set(obj, "waypointList", lst)
+    return obj
 
 
-def _dict_to_obj(body_dict: dict) -> UAVFlightPlan:
-    """
-    dict → UAVFlightPlan(C# 객체)
-    • 요구사항: timestamp / pathID 두 필드만 세팅
-    """
-    fp = UAVFlightPlan()
-    fp.timestamp = int(body_dict["timestamp"])
-    fp.pathID    = int(body_dict["pathID"])
-    # aircraftID / waypointList 등 나머지는 기본값 유지
-    return fp
 
 
-def make_and_push(body_dict: dict, node_messenger) -> Optional[bytes]:
-    """
-    단건 생성·전송 + GUI 로그 생성
-    """
+def _dict_to_obj(body_dict: dict):
+    return _dict_to_UAVFlightPlan(body_dict)
+
+def make_and_push(body_dict: dict, node_messenger) -> bytes:
+    # TX 화이트리스트가 있으면 최종 전송 전 선별(제너레이터가 풍부하게 만들어도 최소필드만 보냄)
+    wl = TX_FIELD_WHITELIST.get(MSG_ID)
+    if wl and isinstance(body_dict, dict):
+        body_dict = _select_tx_fields(body_dict, wl)
     msg = _dict_to_obj(body_dict)
     node_messenger.Push(msg)
-
     log_line = (
         f"[0303] BODY  : {json.dumps(body_dict, ensure_ascii=False)}\n"
         f"[0303] PUSH 완료"
     )
-    return log_line.encode()
+    return log_line.encode("utf-8", "ignore")
 
-
-def make_random_and_push(node_messenger) -> Optional[bytes]:
-    """
-    • (ENV/상대) FlightPath의 무인기(4~6***) JSON 이름을 pathID로 사용
-    • {timestamp, pathID} 메시지를 차례로 Push
-    """
-    logs: PyList[bytes] = []
-    for pid in _list_path_ids():
-        body = {
-            "timestamp": _now_ms(),
-            "pathID":    pid,
-        }
-        log = make_and_push(body, node_messenger)
-        if log:
-            logs.append(log)
-
-    return b"\n".join(logs) if logs else None
+def make_random_and_push(node_messenger) -> bytes:
+    # DB 기반 메시지는 DB의 파일명(숫자).json을 ID로 사용하여 최소 필드만 전송
+    if MSG_ID in DB_DIR_RULES:
+        dbdir = _db_dir_for(MSG_ID, __file__)
+        # 0304(유인기 pathID)는 1/2/3 시작만 전송(기존 규칙 유지)
+        needs_prefix = "123" if MSG_ID == "0304" else None
+        ids = _list_numeric_ids(dbdir, needs_prefix)
+        logs = []
+        for vid in ids:
+            wl = TX_FIELD_WHITELIST.get(MSG_ID, [])
+            body = {
+                "timestamp": int((datetime.utcnow().replace(tzinfo=timezone.utc) - _EPOCH_2000).total_seconds() * 1000),
+                "sourceModuleName": "DSC",
+            }
+            # ID 필드 결정
+            if "inputMissionPackageID" in wl:          body["inputMissionPackageID"] = vid
+            if "missionReferencePackageID" in wl:      body["missionReferencePackageID"] = vid
+            if "missionPlanID" in wl:                  body["missionPlanID"] = vid
+            if "individualMissionPackageID" in wl:     body["individualMissionPackageID"] = vid
+            if "pathID" in wl:                         body["pathID"] = vid
+            logs.append(make_and_push(body, node_messenger))
+        return b"\n".join(logs) if logs else b""
+    else:
+        # 비 DB 메시지는 제너레이터 → 필요 시 화이트리스트로 선별
+        body = make_msg0303_body()
+        # ★ 0102 방어: body가 비거나 dict가 아니면 최소 세트로 채움
+        if MSG_ID == "0102":
+            if not isinstance(body, dict) or not body:
+                body = {
+                    "timestamp": int((datetime.utcnow().replace(tzinfo=timezone.utc) - _EPOCH_2000).total_seconds() * 1000),
+                    "status": 1,  # 정상
+                    "sourceModuleName": "DSC",
+                }
+        wl = TX_FIELD_WHITELIST.get(MSG_ID)
+        if wl and isinstance(body, dict):
+            body = _select_tx_fields(body, wl)
+        return make_and_push(body, node_messenger)

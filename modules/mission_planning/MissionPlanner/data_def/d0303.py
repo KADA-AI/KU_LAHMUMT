@@ -182,6 +182,54 @@ class _WPAllocator:
         self._next += 1
         return wid
 
+def _index_refpoints(ref0203: dict | None):
+    """
+    0203에서 기체ID→좌표 맵 구성.
+    return: (to_map, ho_map)  각 값은 {aid: {"latitude":..,"longitude":..,"altitude":..}}
+    """
+    if not ref0203:
+        return {}, {}
+    to_map = {}
+    for it in ref0203.get("takeOverInfoList", []) or []:
+        aid = it.get("aircraftID")
+        c   = it.get("coordinate") or {}
+        if isinstance(aid, int) and 1 <= aid <= 6 and "latitude" in c and "longitude" in c:
+            to_map[aid] = {
+                "latitude": float(c.get("latitude", 0.0)),
+                "longitude": float(c.get("longitude", 0.0)),
+                "altitude": int(float(c.get("altitude", 1200))),
+            }
+    ho_map = {}
+    for it in ref0203.get("handOverInfoList", []) or []:
+        aid = it.get("aircraftID")
+        c   = it.get("coordinate") or {}
+        if isinstance(aid, int) and 1 <= aid <= 6 and "latitude" in c and "longitude" in c:
+            ho_map[aid] = {
+                "latitude": float(c.get("latitude", 0.0)),
+                "longitude": float(c.get("longitude", 0.0)),
+                "altitude": int(float(c.get("altitude", 1200))),
+            }
+    return to_map, ho_map
+
+
+def _eta_ms_llh(c1: dict, c2: dict, speed_mps: float) -> int:
+    """
+    간단한 구면 근사로 거리→ETA(ms) 계산. speed_mps<=0이면 0.
+    c* = {"latitude": float, "longitude": float}
+    """
+    try:
+        lat1, lon1 = float(c1["latitude"]), float(c1["longitude"])
+        lat2, lon2 = float(c2["latitude"]), float(c2["longitude"])
+    except Exception:
+        return 0
+    DEG_M = 111_132.0
+    dx = (lon2 - lon1) * DEG_M * math.cos(math.radians((lat1 + lat2) / 2.0))
+    dy = (lat2 - lat1) * DEG_M
+    dist_m = math.hypot(dx, dy)
+    if speed_mps and speed_mps > 0.0:
+        return int(round(dist_m / speed_mps * 1000.0))
+    return 0
+
 def build_flight_plans(
     missions: list[dict],
     wp_alloc: _WPAllocator | None = None,
