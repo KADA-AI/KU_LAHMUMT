@@ -187,29 +187,41 @@ def _dict_to_IndividualMission(data: dict):
 
 def _dict_to_IndividualMissionPlanData(data: dict):
     obj = _new('IndividualMissionPlanData')
+
+    # ★ source 계열 매핑 (있으면 모두 시도)
+    for k in ("sourceModuleName", "source", "requestModuleName"):
+        if k in data:
+            _try_set(obj, k, str(data[k]))
+
     if "timestamp" in data: _try_set(obj, "timestamp", int(data["timestamp"]))
     if "individualMissionPackageID" in data: _try_set(obj, "individualMissionPackageID", int(data["individualMissionPackageID"]))
     if "aircraftID" in data: _try_set(obj, "aircraftID", int(data["aircraftID"]))
     if "individualMissionList" in data and isinstance(data["individualMissionList"], list):
         T = _cs('IndividualMission') or object
         lst = List[T]()
-        for item in data["individualMissionList"]: lst.Add(_dict_to_IndividualMission(item if isinstance(item, dict) else {}))
+        for item in data["individualMissionList"]:
+            lst.Add(_dict_to_IndividualMission(item if isinstance(item, dict) else {}))
         _try_set(obj, "individualMissionList", lst)
     return obj
 
 def _dict_to_IndividualMissionPlan(data: dict):
     obj = _new('IndividualMissionPlan')
+
+    # ★ source 계열 매핑 (있으면 모두 시도)
+    for k in ("sourceModuleName", "source", "requestModuleName"):
+        if k in data:
+            _try_set(obj, k, str(data[k]))
+
     if "timestamp" in data: _try_set(obj, "timestamp", int(data["timestamp"]))
     if "individualMissionPackageID" in data: _try_set(obj, "individualMissionPackageID", int(data["individualMissionPackageID"]))
     if "aircraftID" in data: _try_set(obj, "aircraftID", int(data["aircraftID"]))
     if "individualMissionList" in data and isinstance(data["individualMissionList"], list):
         T = _cs('IndividualMission') or object
         lst = List[T]()
-        for item in data["individualMissionList"]: lst.Add(_dict_to_IndividualMission(item if isinstance(item, dict) else {}))
+        for item in data["individualMissionList"]:
+            lst.Add(_dict_to_IndividualMission(item if isinstance(item, dict) else {}))
         _try_set(obj, "individualMissionList", lst)
     return obj
-
-
 
 
 def _dict_to_obj(body_dict: dict):

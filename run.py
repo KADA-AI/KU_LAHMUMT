@@ -491,8 +491,7 @@ class DashboardOrchestrator(QObject):
 
             wid = id(mod)
             last = last_map.get(wid)
-            if last and last[0] == text and (t - last[1]) < 0.8:
-                # 같은 카드에 같은 문구가 0.8s 내 중복이면 skip
+            if last and last[0] == text and (t - last[1]) < 0.2:
                 continue
 
             try:
@@ -591,13 +590,12 @@ class DashboardOrchestrator(QObject):
         main_MP GUI 없이 동일한 파이프라인을 수행:
         - 입력: database/InputMissionPlan, database/MissionReferenceInfo 의 첫 번째 *.json
         - 처리: 0201+0203→IMP(0302), 0301 MissionPlan, 0303/0304 FlightPath
-        - 저장: database/MissionPlan, IndividualMissionPlan, FlightPath (기존 *.json 정리 후 저장)
+        - 저장: database/MissionPlan, IndividualMissionPlan, FlightPath
         """
         import os, sys, json, time, shutil
         from pathlib import Path
 
         # 0) 경로 세팅
-        print("경로세팅 시작")
         root = Path(__file__).resolve().parent
         modules_dir = root / "modules"
         mp_pkg_dir  = modules_dir / "mission_planning" / "MissionPlanner"
@@ -606,18 +604,52 @@ class DashboardOrchestrator(QObject):
             if p.exists() and p_str not in sys.path:
                 sys.path.insert(0, p_str)
 
-        print("data_def / AnS import")
         # 1) data_def / AnS import
         try:
             from AnS import run_divide_and_pattern, build_mission_plan_0301
             from data_def import d0301, d0302, d0303, d0304
-            from data_def.mission_helpers import now_ms_since_2000
+            from data_def.id_allocator import next_path_id
         except Exception as e:
             self._post_log_assignment(f"[ERR] pipeline import 실패: {e}")
             return
 
-        # 2) 입력 파일 자동 선택 (0201 / 0203)
-        print("입력 파일 자동 선택")
+        # 유틸
+        def _imp_path_id(im: dict) -> int | None:
+            for k in ("pathID","pathId","individualMissionPathID","missionPathID"):
+                v = im.get(k)
+                try:
+                    if v is not None:
+                        return int(v)
+                except Exception:
+                    pass
+            mi = im.get("missionInfo")
+            if isinstance(mi, dict):
+                for k in ("pathID","pathId"):
+                    v = mi.get(k)
+                    try:
+                        if v is not None:
+                            return int(v)
+                    except Exception:
+                        pass
+            return None
+
+        def _enforce_fp_path_ids(fps: list[dict], pid_map: dict[tuple[int,int], int]) -> int:
+            fixed = 0
+            for fp in fps or []:
+                try:
+                    aid = int(fp.get("aircraftID", 0))
+                    mid = int(fp.get("individualMissionID", 0))
+                    key = (aid, mid)
+                    if key in pid_map:
+                        desired = int(pid_map[key])
+                        if str(fp.get("pathID")) != str(desired):
+                            fp["pathID"] = desired
+                            fixed += 1
+                except Exception:
+                    pass
+            return fixed
+
+        # 2) 입력 파일 자동 선택
         db_root = Path(os.environ.get("KU_MISSION_DB_ROOT") or (root / "database"))
         dir_0201 = db_root / "InputMissionPlan"
         dir_0203 = db_root / "MissionReferenceInfo"
@@ -634,27 +666,9 @@ class DashboardOrchestrator(QObject):
             self._post_log_assignment("[ERR] 0201/0203 입력 JSON을 찾을 수 없습니다.")
             return
 
-        # 파일명에서 ID 추출 (예: '123.json' → 123)
-        def _stem_int(p: Path) -> int | None:
-            try:
-                return int(p.stem)
-            except Exception:
-                return None
-        pkg0201_id = _stem_int(cmpk_path)
-        if pkg0201_id is None:
-            self._post_log_assignment("[ERR] 0201 파일 이름은 '정수.json' 이어야 합니다.")
-            return
-
-        pkg0203_id = _stem_int(mrpk_path)
-        if pkg0203_id is None:
-            self._post_log_assignment("[ERR] 0203 파일 이름은 '정수.json' 이어야 합니다.")
-            return
-
+        # 3) 0201+0203 → IMP(0302)
         out_root = db_root / "mission_output"
         out_root.mkdir(parents=True, exist_ok=True)
-        
-        print("0201+0203 → IMP(0302)")
-        # 3) 0201+0203 → IMP(0302)
         try:
             imp_paths = run_divide_and_pattern(
                 cmpk_path=str(cmpk_path),
@@ -669,100 +683,68 @@ class DashboardOrchestrator(QObject):
             self._post_log_assignment(f"[ERR] divide/pattern 실패: {e}")
             return
 
-        # 4) 0301 MissionPlan 생성 & 저장(임시 파일)
-        print("0301 MissionPlan 생성 & 저장(임시 파일)")
+        # 4) 0301 MissionPlan 생성 & 적재
         mp_path = out_root / f"MissionPlan_{int(time.time()*1000)}.json"
         try:
             build_mission_plan_0301(str(cmpk_path), str(mrpk_path), imp_paths, str(mp_path))
             with mp_path.open(encoding="utf-8") as f:
                 mp_json = json.load(f)
-            imp_id_map = {a["aircraftID"]: a["individualMissionPackageID"]
-                        for a in mp_json.get("aircraftList", [])}
+            imp_id_map = {a["aircraftID"]: a["individualMissionPackageID"] for a in mp_json.get("aircraftList", [])}
             self._post_log_assignment(f"[OK] 0301 생성 → {mp_path.name}")
         except Exception as e:
             self._post_log_assignment(f"[ERR] 0301 생성 실패: {e}")
             return
 
-        # 5) 메모리-상 missions 집계 (0302 원소)  — 기존 블록 전체 교체
-        print("메모리-상 missions 집계")
-        missions = []
-        max_mid_num = 0
+        # 5) missions 집계 + pathID 매핑(0302/0303/0304 일치 보장)
+        missions = []; pid_map = {}
         try:
             for imp in imp_paths:
                 with open(imp, encoding="utf-8") as f:
                     pkg = json.load(f)
                 aid = int(pkg["aircraftID"])
                 for im in pkg.get("individualMissionList", []):
-                    im_cp = dict(im)
-                    im_cp["aircraftID"] = aid
+                    im2 = dict(im); im2["aircraftID"] = aid
+                    if "individualMissionPlanPackageID" not in im2 and imp_id_map:
+                        im2["individualMissionPlanPackageID"] = imp_id_map.get(aid)
 
-                    # 0304에서 필요할 수 있으므로 IMP ID 주입(안전)
-                    if "individualMissionPlanPackageID" not in im_cp and imp_id_map:
-                        im_cp["individualMissionPlanPackageID"] = imp_id_map.get(aid)
+                    mid = int(im2.get("individualMissionID", 0))
+                    if aid in (1,2,3):
+                        pid = int(next_path_id(aid))  # LAH: 합법 ID 재발급
+                        im2["pathID"] = pid
+                        pid_map[(aid, mid)] = pid
+                    else:
+                        imp_pid = _imp_path_id(im2)
+                        if imp_pid is not None:
+                            im2["pathID"] = int(imp_pid)
+                            pid_map[(aid, mid)] = int(imp_pid)
 
-                    missions.append(im_cp)
-                    try:
-                        num = int(im_cp.get("individualMissionID", 0))
-                        max_mid_num = max(max_mid_num, num)
-                    except Exception:
-                        pass
-            next_im = max_mid_num + 1
+                    missions.append(im2)
         except Exception as e:
             self._post_log_assignment(f"[ERR] IMP 집계 실패: {e}")
             return
 
-        # 유/무인 분리
-        manned_ids = {1, 2, 3}
-        uav_ids    = {4, 5, 6}
-        manned_missions = [im for im in missions if int(im.get("aircraftID", 0)) in manned_ids]
-        uav_missions    = [im for im in missions if int(im.get("aircraftID", 0)) in uav_ids]
-
-        # ▶ pathID 재할당: 0304가 요구하는 범위로 유인기 pathID를 안전하게 생성
-        try:
-            from data_def.id_allocator import next_path_id
-            fixed = []
-            for im in manned_missions:
-                im2 = dict(im)
-                aid = int(im2.get("aircraftID", 0))
-                im2["pathID"] = next_path_id(aid)   # ★ 유인기용 합법 pathID 부여
-                fixed.append(im2)
-            manned_missions = fixed
-            self._post_log_assignment("[INFO] 0304용 유인기 pathID 재할당 완료")
-        except Exception as e:
-            self._post_log_assignment(f"[WARN] pathID 재할당 실패: {e}")
-
-        # 분포 로그
-        try:
-            from collections import Counter
-            dist = Counter(int(im.get("aircraftID", 0)) for im in missions)
-            self._post_log_assignment(f"[INFO] missions 분포: {dict(sorted(dist.items()))}")
-        except Exception:
-            pass
-        if not manned_missions:
-            self._post_log_assignment("[WARN] 0304(유인기)용 임무가 없습니다.")
-
-        # 6) 0303 / 0304 생성 — 기존 블록 전체 교체
-        print("0303 / 0304 생성")
+        # 6) 0303 / 0304 생성
         self._post_log_assignment("[STEP 5] FlightPath 0303/0304 생성 시작")
-
-        import os
         to3 = int(os.getenv("KU_FP3_TIMEOUT_S", "60"))
         to4 = int(os.getenv("KU_FP4_TIMEOUT_S", "60"))
 
-        flight_plans_0303, flight_plans_0304 = [], []
+        manned_missions = [im for im in missions if int(im.get("aircraftID", 0)) in (1,2,3)]
+        uav_missions    = [im for im in missions if int(im.get("aircraftID", 0)) in (4,5,6)]
 
-        # 0303: UAV(4‧5‧6)
+        flight_plans_0303, flight_plans_0304 = [], []
         try:
             if hasattr(self, "_call_fp_with_timeout"):
                 flight_plans_0303 = self._call_fp_with_timeout("0303", uav_missions, 40.0, timeout_s=to3)
             else:
                 wp_alloc_3 = d0303._WPAllocator()
                 flight_plans_0303 = d0303.build_flight_plans(uav_missions, wp_alloc_3, 40.0, turn_step_deg=15.0)
+            fixed3 = _enforce_fp_path_ids(flight_plans_0303, pid_map)
+            if fixed3:
+                self._post_log_assignment(f"[INFO] 0303 FP pathID 강제 적용: fixed={fixed3}")
             self._post_log_assignment(f"[OK] 0303 생성: {len(flight_plans_0303)}개")
         except Exception as e:
             self._post_log_assignment(f"[ERR] 0303 생성 실패/타임아웃: {e}")
 
-        # 0304: 유인기(1‧2‧3) — 위에서 재할당한 pathID 사용
         try:
             if not manned_missions:
                 self._post_log_assignment("[ERR] 0304 생성 불가: 유인기 임무 없음")
@@ -773,6 +755,9 @@ class DashboardOrchestrator(QObject):
                 else:
                     wp_alloc_4 = d0303._WPAllocator()
                     flight_plans_0304 = d0304.build_lah_flight_plans_fixed(manned_missions, cruise_speed=40.0, wp_alloc=wp_alloc_4)
+                fixed4 = _enforce_fp_path_ids(flight_plans_0304, pid_map)
+                if fixed4:
+                    self._post_log_assignment(f"[INFO] 0304 FP pathID 강제 적용: fixed={fixed4}")
                 if not flight_plans_0304:
                     self._post_log_assignment("[ERR] 0304 생성 결과가 비어있습니다.")
                 else:
@@ -786,17 +771,13 @@ class DashboardOrchestrator(QObject):
 
         self._post_log_assignment(f"[OK] FP 생성 요약 → 0303={len(flight_plans_0303)} / 0304={len(flight_plans_0304)}")
 
-
-
-        # 7) 디스크 저장 (0301/0302/0303/0304)  ← 0304 탭 'Save Missions'에 해당
-        print("Save Missions")
+        # 7) 디스크 저장 (0301/0302/0303/0304)
         try:
             dir_mp  = db_root / "MissionPlan"
             dir_imp = db_root / "IndividualMissionPlan"
             dir_fp  = db_root / "FlightPath"
             for d in (dir_mp, dir_imp, dir_fp):
                 d.mkdir(parents=True, exist_ok=True)
-                # 기존 파일 정리
                 removed = 0
                 for p in d.glob("*.json"):
                     try:
@@ -806,36 +787,27 @@ class DashboardOrchestrator(QObject):
                 if removed:
                     self._post_log_assignment(f"[INFO] 기존 임무 정리: {d.name} ({removed}개 삭제)")
 
-            # 0301 저장
             try:
                 mp_id = str(mp_json.get("missionPlanID") or mp_json.get("MissionPlanID"))
             except Exception:
                 mp_id = str(int(time.time()))
             (dir_mp / f"{mp_id}.json").write_text(json.dumps(mp_json, indent=2, ensure_ascii=False), encoding="utf-8")
 
-            # 0302 패키지 구성 + 저장
-            imp_pkgs = d0302.build_mission_packages(
-                missions,
-                cmpk_id=pkg0201_id,
-                plan_pkg_map=imp_id_map
-            )
+            # 0302: pathID가 이미 주입된 missions 사용
+            imp_pkgs = d0302.build_mission_packages(missions, cmpk_id=int(cmpk_path.stem), plan_pkg_map=imp_id_map)
             for pkg in imp_pkgs:
                 imp_id = str(pkg.get("individualMissionPackageID") or pkg.get("individualMissionPlanPackageID"))
                 (dir_imp / f"{imp_id}.json").write_text(json.dumps(pkg, indent=2, ensure_ascii=False), encoding="utf-8")
 
-            # 0303/0304 저장
             def _dump_fps(lst):
                 cnt = 0
                 for fp in lst:
                     pid = str(fp["pathID"])
-                    (dir_fp / f"{pid}.json").write_text(json.dumps(fp, indent=2, ensure_ascii=False), encoding="utf-8")
-                    cnt += 1
+                    (dir_fp / f"{pid}.json").write_text(json.dumps(fp, indent=2, ensure_ascii=False), encoding="utf-8"); cnt += 1
                 return cnt
-
             c3 = _dump_fps(flight_plans_0303)
             c4 = _dump_fps(flight_plans_0304)
 
-            # 임시 out 폴더 제거
             try:
                 if out_root.exists():
                     shutil.rmtree(out_root)
@@ -848,8 +820,9 @@ class DashboardOrchestrator(QObject):
             self._post_log_assignment(f"[ERR] 저장 실패: {e}")
             return
 
-        # 8) 저장 완료 후 코드 펄스(0304→0303→0302, 0.2초 간격 / 1초 후 0301) + 완료 로그
+        # 8) 코드 펄스
         self._after_save_sequence()
+
 
 
     def _log_assignment(self, text: str):
@@ -1065,6 +1038,17 @@ class DashboardOrchestrator(QObject):
         env = os.environ.copy()
         env.setdefault("KU_LAUNCHED_BY_DASHBOARD", "1")
         env["KU_MISSION_DB_ROOT"] = db_root   # ★ 여기!
+        
+        port_map = {
+            "monitoring_gui.py" : "45981",
+            "mission_planning_gui.py" : "45982",
+            "decision_support_gui.py" : "45983"
+        }
+        try:
+            script_basename = script.name
+        except Exception :
+            script_basename = script_name
+        env["KU_CTRL_PORT"] = port_map.get(script_basename, port_map.get(script_name, ""))
 
         try:
             subprocess.Popen(
@@ -1271,6 +1255,7 @@ class DashboardOrchestrator(QObject):
                 ed.append(text)
         except Exception:
             pass
+
 
 
 # ─────────────────────────────────────────────────────────────

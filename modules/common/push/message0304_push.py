@@ -162,28 +162,37 @@ def _dict_to_LAHWaypoint(data: dict):
 
 def _dict_to_LAHFlightPlanData(data: dict):
     obj = _new('LAHFlightPlanData')
+    # ★ source 계열 매핑
+    for k in ("sourceModuleName", "source", "requestModuleName"):
+        if k in data: _try_set(obj, k, str(data[k]))
+
     if "timestamp" in data: _try_set(obj, "timestamp", int(data["timestamp"]))
     if "pathID" in data: _try_set(obj, "pathID", int(data["pathID"]))
     if "aircraftID" in data: _try_set(obj, "aircraftID", int(data["aircraftID"]))
     if "lahWaypointList" in data and isinstance(data["lahWaypointList"], list):
         T = _cs('LAHWaypoint') or object
         lst = List[T]()
-        for item in data["lahWaypointList"]: lst.Add(_dict_to_LAHWaypoint(item if isinstance(item, dict) else {}))
+        for item in data["lahWaypointList"]:
+            lst.Add(_dict_to_LAHWaypoint(item if isinstance(item, dict) else {}))
         _try_set(obj, "lahWaypointList", lst)
     return obj
 
 def _dict_to_LAHFlightPlan(data: dict):
     obj = _new('LAHFlightPlan')
+    # ★ source 계열 매핑
+    for k in ("sourceModuleName", "source", "requestModuleName"):
+        if k in data: _try_set(obj, k, str(data[k]))
+
     if "timestamp" in data: _try_set(obj, "timestamp", int(data["timestamp"]))
     if "pathID" in data: _try_set(obj, "pathID", int(data["pathID"]))
     if "aircraftID" in data: _try_set(obj, "aircraftID", int(data["aircraftID"]))
     if "lahWaypointList" in data and isinstance(data["lahWaypointList"], list):
         T = _cs('LAHWaypoint') or object
         lst = List[T]()
-        for item in data["lahWaypointList"]: lst.Add(_dict_to_LAHWaypoint(item if isinstance(item, dict) else {}))
+        for item in data["lahWaypointList"]:
+            lst.Add(_dict_to_LAHWaypoint(item if isinstance(item, dict) else {}))
         _try_set(obj, "lahWaypointList", lst)
     return obj
-
 
 
 

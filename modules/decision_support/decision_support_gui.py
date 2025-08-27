@@ -1,3 +1,4 @@
+# 파일: /mnt/data/decision_support_gui.py
 # -*- coding: utf-8 -*-
 # decision_support_gui.py – 의사결정 지원 전용 GUI
 from __future__ import annotations
@@ -95,6 +96,7 @@ _ = _load_msglib_and_deps()
 
 from receive import *  # modules/common/receive
 from Tabs.decision_support_tab import DecisionSupportTab
+from receive_center import register_listener  # ← 추가
 
 
 # ───────── 메인 윈도우 ─────────
@@ -112,9 +114,8 @@ class MainWindow(QMainWindow):
         self._tab = DecisionSupportTab(messenger=NodeMessenger)
         tabs.addTab(self._tab, "의사결정지원 CSC")
 
-        from receive_center import register_listener  # ← 추가
-
-        register_listener("0901", self)   # ★ MainWindow도 0901 수신 콜백 받게 등록
+        # 0901 수신 콜백: MainWindow도 리스너 등록
+        register_listener("0901", self)
 
         # ───── 상단 슬라이더 바 ─────
         top = QWidget()
@@ -135,10 +136,55 @@ class MainWindow(QMainWindow):
 
         self.ctrl_payload.connect(self._handle_ctrl_payload)
         threading.Thread(target=self._rx_setup, daemon=True).start()
-        # UDP 컨트롤 수신 시작(포커스/최소화 무관)
         self._start_control_udp()
         self._install_test_shortcuts()
-        
+
+    # ───────── TX 버튼 실제 클릭(030x와 동일 패턴) ─────────
+    def _click_tx_button_for(self, code: str):
+        """
+        TX 테이블에서 메시지 코드 행을 찾아 버튼 click()을 우선 시도.
+        버튼 위젯이 없으면 내부 핸들러 호출로 폴백.
+        """
+        try:
+            tab = getattr(self, "_tab", None)
+            if tab is None or not hasattr(tab, "tbl_tx"):
+                self._append_log_line(f"[WARN] TX 테이블을 찾을 수 없음 → code={code}")
+                return
+
+            tbl = tab.tbl_tx
+            target_row = -1
+            for r in range(tbl.rowCount()):
+                it = tbl.item(r, 0)
+                if it and it.text().strip() == str(code):
+                    target_row = r
+                    break
+
+            if target_row < 0:
+                self._append_log_line(f"[WARN] TX 테이블에 {code} 행이 없음")
+                return
+
+            # (A) 셀 위젯 버튼 클릭
+            try:
+                btn = tbl.cellWidget(target_row, 3)
+                if btn is not None and hasattr(btn, "click"):
+                    btn.click()
+                    self._append_log_line(f"[PUSH] {code} 버튼 click()")
+                    return
+            except Exception:
+                pass
+
+            # (B) 내부 핸들러 직접 호출
+            try:
+                if hasattr(tab, "_on_tx_button_clicked"):
+                    tab._on_tx_button_clicked(target_row)
+                    self._append_log_line(f"[PUSH] {code} 내부 핸들러 호출")
+                    return
+            except Exception:
+                pass
+
+            self._append_log_line(f"[ERR] {code} 푸시 실행 실패: 버튼/핸들러 접근 불가")
+        except Exception as e:
+            self._append_log_line(f"[ERR] {code} 푸시 실행 실패: {e}")
 
     def _append_log_line(self, text: str):
         try:
@@ -150,8 +196,6 @@ class MainWindow(QMainWindow):
             print(text)
         except Exception:
             pass
-
-
 
     # ───────── 모드/슬라이더 유틸 ─────────
     def _sw_code(self) -> str:
@@ -165,9 +209,8 @@ class MainWindow(QMainWindow):
         self._append_log_line(f"[MODE] 슬라이더 변경 → {labels[int(val)] if 0 <= val < len(labels) else val}")
 
     def _set_mode_slider_by_text(self, text: str):
-        import re
         labels = ["전원 OFF", "전원 ON", "대기모드", "초기 임무 계획", "임무 수행"]
-        norm = re.sub(r"\s+", "", str(text)).lower()  # "전원 OFF" → "전원off"
+        norm = re.sub(r"\s+", "", str(text)).lower()
         mapping = {
             "전원off": 0, "off": 0, "poweroff": 0, "0": 0,
             "전원on":  1, "on": 1,  "poweron": 1,  "1": 1,
@@ -203,16 +246,12 @@ class MainWindow(QMainWindow):
             self._append_log_line(f"0102 push import 실패: {e}")
             return
 
-        # 탭에서 표준 바디 생성 시도
         try:
             body = self._tab._build_overridden_body("0102") or {}
         except Exception:
             body = {}
-        # 실패 시 폴백: 2000 epoch + 내부 점검 결과 사용
         if not body:
-            import os
-            role = (os.environ.get("KU_ROLE") or "").lower()
-            src = {"mission": "MMR", "monitoring": "MSM", "decision": "MOB"}.get(role, "MMR")
+            src = self._sw_code()
             try:
                 st = self._tab._self_diag_status()
             except Exception:
@@ -267,7 +306,6 @@ class MainWindow(QMainWindow):
         threading.Thread(target=loop, daemon=True).start()
 
     def _ensure_selfcheck_0102(self, on: bool) -> bool:
-        # (동일: 0102 행 찾아 버튼 click / 내부 토글 / 폴백 push)
         try:
             tab = getattr(self, "_tab", None)
             if tab is None or not hasattr(tab, "tbl_tx"):
@@ -301,7 +339,6 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("0"), self, activated=lambda: self._ensure_selfcheck_0102(False))
 
     def _handle_ctrl_payload(self, payload: dict):
-        import time
         try: cmd = str(payload.get("cmd") or "")
         except Exception: return
         key = f"{cmd}:{payload.get('text') or payload.get('status')}"
@@ -319,9 +356,9 @@ class MainWindow(QMainWindow):
             self._append_log_line(f"[CTRL] 모드 변경 요청 수신: {text}")
             self._set_mode_slider_by_text(text)
 
+    # ───────── 0901 수신 → 0701 클릭 전송 ─────────
     def mark_received(self, msg_id: str, raw: bytes | None = None):
         if str(msg_id).zfill(4) == "0901":
-            # 0901 본문에서 missionPlanID 파싱 (첫 항목 사용)
             mpid = None
             try:
                 if raw:
@@ -335,39 +372,12 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
             if mpid:
-                self._last_mission_plan_id = mpid  # ★ 0701에 넘길 MPID 저장
-            self._append_log_line(f"[AUTO] 0901 옵션요청 수신 → 0701 푸시 시작 (MPID={getattr(self,'_last_mission_plan_id', None)})")
-            QTimer.singleShot(200, self._push_0701_from_option)   # 0.2s 후 전송
+                # MainWindow와 탭에 모두 저장(탭에서 0701 바디를 오버라이드하여 사용)
+                self._last_mission_plan_id = mpid
+                setattr(self._tab, "_last_mission_plan_id", mpid)
 
-    def _push_0701_from_option(self):
-        try:
-            from push_center import push_message
-            ts = _now_ms_since_2000()
-            mpid = int(getattr(self, "_last_mission_plan_id", 0) or 0)
-
-            body = {
-                "timestamp": ts,
-                "source": "MOB",
-                "autoExecution": False,
-                "optionList": [
-                    {
-                        "optionID": 1,
-                        "optionName": 1,
-                        "missionPlanID": mpid,        # ★ 방금 받은/저장한 MPID 사용
-                        "survivalRate": 1,
-                        "timeContraction": -1,
-                        "recogEffectiveness": 1,
-                        "distance": 30000,
-                        "target": 0,
-                        "uavMissionPlanIDList": [{"uavMissionPlanID": 866}, {"uavMissionPlanID": 649}],
-                        "lahMissionPlanIDList": [{"lahMissionPlanID": 167}, {"lahMissionPlanID": 198}],
-                    }
-                ],
-            }
-            push_message("0701", NodeMessenger, body_dict=body)
-            self._append_log_line("[AUTO] 0701 옵션정보 전송 완료")
-        except Exception as e:
-            self._append_log_line(f"[ERR] 0701 전송 실패: {e}")
+            self._append_log_line(f"[AUTO] 0901 옵션요청 수신 → 0701 클릭 전송 (MPID={getattr(self,'_last_mission_plan_id', None)})")
+            QTimer.singleShot(200, lambda: self._click_tx_button_for("0701"))
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

@@ -1,0 +1,90 @@
+{
+  "presenceVector": 0,
+  "timestamp": null,
+  "inputMissionPackageID": 1,
+  "missionType": 1,
+  "dateAndNight": 1,
+  "aircraftIDsN": 1,
+  "aircraftIDs": [
+    {
+      "aircraftID": 1
+    }
+  ],
+  "inputMissionListN": 3,
+  "inputMissionList": [
+    {
+      "inputMissionID": 700000000,
+      "sequenceNumber": 0,
+      "inputMissionType": 1,
+      "isDone": false,
+      "shapeType": 1,
+      "coordinate": {
+        "latitude": 34.56789,
+        "longitude": 123.45679,
+        "altitude": 1
+      },
+      "polyline": null,
+      "polygons": null
+    },
+    {
+      "inputMissionID": 700000001,
+      "sequenceNumber": 1,
+      "inputMissionType": 2,
+      "isDone": false,
+      "shapeType": 2,
+      "coordinate": null,
+      "polyline": {
+        "width": 2,
+        "coordinateListN": 2,
+        "coordinateList": [
+          {
+            "latitude": 34.56789,
+            "longitude": 123.45679,
+            "altitude": 1
+          },
+          {
+            "latitude": 35.678913,
+            "longitude": 124.567894,
+            "altitude": 2
+          }
+        ]
+      },
+      "polygons": null
+    },
+    {
+      "inputMissionID": 700000002,
+      "sequenceNumber": 2,
+      "inputMissionType": 3,
+      "isDone": false,
+      "shapeType": 3,
+      "coordinate": null,
+      "polyline": null,
+      "polygons": {
+        "areaListN": 1,
+        "areaList": [
+          {
+            "isHole": false,
+            "coordinateListN": 3,
+            "coordinateList": [
+              {
+                "latitude": 34.56789,
+                "longitude": 123.45679,
+                "altitude": 1
+              },
+              {
+                "latitude": 35.678913,
+                "longitude": 124.567894,
+                "altitude": 2
+              },
+              {
+                "latitude": 36.789124,
+                "longitude": 125.67891,
+                "altitude": 3
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

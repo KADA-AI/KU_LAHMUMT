@@ -138,18 +138,63 @@ class MainWindow(QMainWindow):
         self._install_test_shortcuts()
 
     def _start_push_sequence(self):
-        # 메인 스레드에서만 호출됨
         QTimer.singleShot(0,    lambda: self._click_tx_button_for("0304"))
         QTimer.singleShot(200,  lambda: self._click_tx_button_for("0303"))
         QTimer.singleShot(400,  lambda: self._click_tx_button_for("0302"))
         QTimer.singleShot(1400, lambda: self._click_tx_button_for("0301"))
 
-        # ★ 버튼 푸시가 끝난 뒤(약간의 여유 후) 0305 완료 → 0901 전송
         QTimer.singleShot(1600, lambda: self._push_0305(status=1, reason="초기임무재계획"))
         QTimer.singleShot(1700, lambda: (
             self._last_mission_plan_id is not None and
             self._push_0901_options(int(self._last_mission_plan_id))
         ))
+
+    # ───────── TX 버튼 실제 클릭 (추가) ─────────
+    def _click_tx_button_for(self, code: str):
+        """
+        TX 테이블에서 메시지 코드 행을 찾아 버튼 click()을 우선 시도.
+        버튼 위젯이 없으면 내부 핸들러 호출로 폴백.
+        """
+        try:
+            tab = getattr(self, "_tab", None)
+            if tab is None or not hasattr(tab, "tbl_tx"):
+                self._append_log_line(f"[WARN] TX 테이블을 찾을 수 없음 → code={code}")
+                return
+
+            tbl = tab.tbl_tx
+            target_row = -1
+            for r in range(tbl.rowCount()):
+                it = tbl.item(r, 0)
+                if it and it.text().strip() == str(code):
+                    target_row = r
+                    break
+
+            if target_row < 0:
+                self._append_log_line(f"[WARN] TX 테이블에 {code} 행이 없음")
+                return
+
+            # (A) 셀 위젯 버튼 클릭
+            try:
+                btn = tbl.cellWidget(target_row, 3)
+                if btn is not None and hasattr(btn, "click"):
+                    btn.click()
+                    self._append_log_line(f"[PUSH] {code} 버튼 click()")
+                    return
+            except Exception:
+                pass
+
+            # (B) 내부 핸들러 직접 호출
+            try:
+                if hasattr(tab, "_on_tx_button_clicked"):
+                    tab._on_tx_button_clicked(target_row)
+                    self._append_log_line(f"[PUSH] {code} 내부 핸들러 호출")
+                    return
+            except Exception:
+                pass
+
+            self._append_log_line(f"[ERR] {code} 푸시 실행 실패: 버튼/핸들러 접근 불가")
+        except Exception as e:
+            self._append_log_line(f"[ERR] {code} 푸시 실행 실패: {e}")
 
     # ───────── 로깅 유틸 ─────────
     def _append_log_line(self, text: str):
@@ -328,16 +373,56 @@ class MainWindow(QMainWindow):
     def _run_initial_plan_do(self):
         try:
             # 0) 경로·모듈 import
+            from pathlib import Path
+            import os, sys, json, time, shutil
             mp_pkg_dir  = Path(PROJECT_ROOT) / "modules" / "mission_planning" / "MissionPlanner"
             for p in (mp_pkg_dir, mp_pkg_dir.parent, Path(PROJECT_ROOT) / "modules"):
                 p_str = str(p)
-                if p.exists() and p_str not in sys.path: sys.path.insert(0, p_str)
+                if p.exists() and p_str not in sys.path:
+                    sys.path.insert(0, p_str)
 
             from AnS import run_divide_and_pattern, build_mission_plan_0301
             from data_def import d0301, d0302, d0303, d0304
             from data_def.id_allocator import next_path_id
-            
-            # ★★★ 0) 재계획 수행 시작 알림(0305: 진행중=2)
+
+            # IMP에서 pathID 우선 추출(없으면 None)
+            def _imp_path_id(im: dict) -> int | None:
+                for k in ("pathID","pathId","individualMissionPathID","missionPathID"):
+                    v = im.get(k)
+                    try:
+                        if v is not None:
+                            return int(v)
+                    except Exception:
+                        pass
+                mi = im.get("missionInfo")
+                if isinstance(mi, dict):
+                    for k in ("pathID","pathId"):
+                        v = mi.get(k)
+                        try:
+                            if v is not None:
+                                return int(v)
+                        except Exception:
+                            pass
+                return None
+
+            # FP 생성 후 pathID 강제 일치(안전망)
+            def _enforce_fp_path_ids(fps: list[dict], pid_map: dict[tuple[int,int], int]) -> int:
+                fixed = 0
+                for fp in fps or []:
+                    try:
+                        aid = int(fp.get("aircraftID", 0))
+                        mid = int(fp.get("individualMissionID", 0))
+                        key = (aid, mid)
+                        if key in pid_map:
+                            desired = int(pid_map[key])
+                            if str(fp.get("pathID")) != str(desired):
+                                fp["pathID"] = desired
+                                fixed += 1
+                    except Exception:
+                        pass
+                return fixed
+
+            # ★ 0305: 진행 중
             self.log_sig.emit("[STEP 0] 재계획 수행 상태: 진행 중")
             self._push_0305(status=2, reason="초기임무재계획")
 
@@ -352,15 +437,18 @@ class MainWindow(QMainWindow):
                 return cands[0] if cands else None
             cmpk_path = _pick_json(dir_0201); mrpk_path = _pick_json(dir_0203)
             if not cmpk_path or not mrpk_path:
-                self.log_sig.emit("[ERR] 0201/0203 입력 JSON을 찾을 수 없습니다."); return
+                self.log_sig.emit("[ERR] 0201/0203 입력 JSON을 찾을 수 없습니다."); 
+                return
 
-            # 2) 0201+0203 → 0302(IMP) 생성
+            # 2) 0201+0203 → 0302(IMP)
             self.log_sig.emit("[STEP 1] Divide & Pattern 시작")
             imp_paths = run_divide_and_pattern(str(cmpk_path), str(mrpk_path), str(out_root), log=lambda msg: self.log_sig.emit(str(msg)))
-            if not imp_paths: self.log_sig.emit("[ERR] IMP 생성 결과가 없습니다."); return
+            if not imp_paths:
+                self.log_sig.emit("[ERR] IMP 생성 결과가 없습니다."); 
+                return
             self.log_sig.emit(f"[OK] IMP {len(imp_paths)}개 생성")
 
-            # 3) 0301 MissionPlan 생성
+            # 3) 0301 생성
             mp_path = out_root / f"MissionPlan_{int(time.time()*1000)}.json"
             build_mission_plan_0301(str(cmpk_path), str(mrpk_path), imp_paths, str(mp_path))
             with mp_path.open(encoding="utf-8") as f:
@@ -368,39 +456,53 @@ class MainWindow(QMainWindow):
             imp_id_map = {a["aircraftID"]: a["individualMissionPackageID"] for a in mp_json.get("aircraftList", [])}
             self.log_sig.emit(f"[OK] 0301 생성 → {mp_path.name}")
 
-            # 4) 메모리-상 missions 집계
-            missions = []; max_mid_num = 0
+            # 4) missions 집계(0302 원소들 메모리로)
+            missions = []
             for imp in imp_paths:
-                with open(imp, encoding="utf-8") as f: pkg = json.load(f)
+                with open(imp, encoding="utf-8") as f:
+                    pkg = json.load(f)
                 aid = int(pkg["aircraftID"])
                 for im in pkg.get("individualMissionList", []):
                     im2 = dict(im); im2["aircraftID"] = aid
                     if "individualMissionPlanPackageID" not in im2 and imp_id_map:
                         im2["individualMissionPlanPackageID"] = imp_id_map.get(aid)
                     missions.append(im2)
-                    try:
-                        num = int(im2.get("individualMissionID", 0)); max_mid_num = max(max_mid_num, num)
-                    except Exception: pass
 
-            # 5) 유/무인 분리 + 유인기 pathID 재할당
-            manned_ids = {1,2,3}; uav_ids = {4,5,6}
-            manned_missions = [im for im in missions if int(im.get("aircraftID", 0)) in manned_ids]
-            uav_missions    = [im for im in missions if int(im.get("aircraftID", 0)) in uav_ids]
-            fixed = []
-            for im in manned_missions:
-                im2 = dict(im); aid = int(im2.get("aircraftID", 0))
-                im2["pathID"] = next_path_id(aid)
-                fixed.append(im2)
-            manned_missions = fixed
-            self.log_sig.emit("[INFO] 0304용 유인기 pathID 재할당 완료")
+            # 5) pathID 매핑: LAH(1~3)는 합법 ID 재발급, UAV(4~6)는 IMP 값 유지(있으면)
+            pid_map: dict[tuple[int,int], int] = {}
+            for im in missions:
+                aid = int(im.get("aircraftID", 0))
+                mid = int(im.get("individualMissionID", 0))
+                if aid in (1,2,3):  # LAH
+                    pid = int(next_path_id(aid))     # ← d0304의 허용구간 보장
+                    im["pathID"] = pid
+                    pid_map[(aid, mid)] = pid
+                else:               # UAV
+                    imp_pid = _imp_path_id(im)
+                    if imp_pid is not None:
+                        im["pathID"] = int(imp_pid)
+                        pid_map[(aid, mid)] = int(imp_pid)
 
-            # 6) 0303/0304 생성
+            self.log_sig.emit("[INFO] pathID 매핑 완료(0302·0303·0304 일치 보장)")
+
+            # 6) 0303/0304 FP 생성
             self.log_sig.emit("[STEP 2] FlightPath 0303/0304 생성 시작")
             wp_alloc = d0303._WPAllocator()
+            manned_missions = [im for im in missions if int(im.get("aircraftID", 0)) in (1,2,3)]
+            uav_missions    = [im for im in missions if int(im.get("aircraftID", 0)) in (4,5,6)]
+
             flight_plans_0303 = d0303.build_flight_plans(uav_missions, wp_alloc, 40.0, turn_step_deg=15.0) if uav_missions else []
             flight_plans_0304 = d0304.build_lah_flight_plans_fixed(manned_missions, cruise_speed=40.0, wp_alloc=wp_alloc) if manned_missions else []
+
+            # 안전망: pathID 강제 동기화
+            fixed3 = _enforce_fp_path_ids(flight_plans_0303, pid_map)
+            fixed4 = _enforce_fp_path_ids(flight_plans_0304, pid_map)
+            if fixed3 or fixed4:
+                self.log_sig.emit(f"[INFO] FP pathID 강제 적용: 0303 fixed={fixed3}, 0304 fixed={fixed4}")
+
             if not flight_plans_0303 and not flight_plans_0304:
-                self.log_sig.emit("[ERR] 0303/0304 모두 실패"); return
+                self.log_sig.emit("[ERR] 0303/0304 모두 실패"); 
+                return
             self.log_sig.emit(f"[OK] FP 요약 → 0303={len(flight_plans_0303)} / 0304={len(flight_plans_0304)}")
 
             # 7) 디스크 저장 (0301/0302/0303/0304)
@@ -414,18 +516,17 @@ class MainWindow(QMainWindow):
                     try: p.unlink()
                     except Exception: pass
 
-            # 0301 저장
-            try: mp_id = str(mp_json.get("missionPlanID") or mp_json.get("MissionPlanID"))
-            except Exception: mp_id = str(int(time.time()))
+            try:
+                mp_id = str(mp_json.get("missionPlanID") or mp_json.get("MissionPlanID"))
+            except Exception:
+                mp_id = str(int(time.time()))
             (dir_mp / f"{mp_id}.json").write_text(json.dumps(mp_json, indent=2, ensure_ascii=False), encoding="utf-8")
 
-            # 0302 저장
             imp_pkgs = d0302.build_mission_packages(missions, cmpk_id=int(cmpk_path.stem), plan_pkg_map=imp_id_map)
             for pkg in imp_pkgs:
                 imp_id = str(pkg.get("individualMissionPackageID") or pkg.get("individualMissionPlanPackageID"))
                 (dir_imp / f"{imp_id}.json").write_text(json.dumps(pkg, indent=2, ensure_ascii=False), encoding="utf-8")
 
-            # 0303/0304 저장
             def _dump_fps(lst):
                 cnt = 0
                 for fp in lst:
@@ -437,17 +538,18 @@ class MainWindow(QMainWindow):
             # 임시 out 폴더 정리
             try:
                 if out_root.exists(): shutil.rmtree(out_root)
-            except Exception: pass
+            except Exception:
+                pass
 
             self.log_sig.emit(f"✔ 저장 완료  →  MissionPlan 1, IndividualMission {len(imp_pkgs)}, FlightPath {c3 + c4}")
 
-            # ★ 방금 만든 MP ID를 보관해 뒤에서 0901에 사용
+            # 방금 만든 MP ID (0901용)
             try:
                 self._last_mission_plan_id = int(mp_id)
             except Exception:
                 self._last_mission_plan_id = None
 
-            # ★★★ (순서 변경) 버튼 순차 푸시부터 실행 → 끝난 뒤 0305완료/0901 전송
+            # 8) 순차 푸시(0304→0303→0302→0301) 이후 0305완료/0901
             self.log_sig.emit("[STEP 4] 0304→0303→0302→0301 순차 푸시 (완료 후 0305→0901)")
             self.start_push_seq.emit()
 
@@ -455,35 +557,6 @@ class MainWindow(QMainWindow):
             self.log_sig.emit(f"[ERR] 초기임무계획 파이프라인 실패: {e}")
         finally:
             self._initplan_running = False
-
-    # ───────── TX 버튼 실제 클릭 ─────────
-    def _click_tx_button_for(self, code: str):
-        try:
-            tbl = self._tab.tbl_tx
-            target_row = -1
-            for r in range(tbl.rowCount()):
-                it = tbl.item(r, 0)
-                if it and it.text().strip() == str(code):
-                    target_row = r; break
-            if target_row < 0:
-                self._append_log_line(f"[WARN] TX 테이블에 {code} 행이 없음"); return
-            # (A) 셀 위젯 버튼 click 우선
-            try:
-                btn = tbl.cellWidget(target_row, 3)
-                if btn is not None and hasattr(btn, "click"):
-                    btn.click()
-                    self._append_log_line(f"[PUSH] {code} 버튼 click()")
-                    return
-            except Exception: pass
-            # (B) 내부 핸들러 직접 호출
-            try:
-                if hasattr(self._tab, "_on_tx_button_clicked"):
-                    self._tab._on_tx_button_clicked(target_row)
-                    self._append_log_line(f"[PUSH] {code} 내부토글 호출")
-                    return
-            except Exception: pass
-        except Exception as e:
-            self._append_log_line(f"[ERR] {code} 푸시 실행 실패: {e}")
 
 # ───────── 엔트리 ─────────
 if __name__ == "__main__":

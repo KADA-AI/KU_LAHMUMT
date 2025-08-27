@@ -85,7 +85,7 @@ def _validate_lah_flight_plans(pkts: List[dict]) -> None:
         if not (lo <= path_id < lo+100_000_000):
             raise ValueError(f"[0304] aircraft {aid}: pathID {path_id} out of range")
 
-        for widx, wp in enumerate(pkt["waypointList"], 1):
+        for widx, wp in enumerate(pkt["lahWaypointList"], 1):
             atk = wp.get("attack")
             if atk is None:
                 raise ValueError(f"[0304] pkt#{pidx}/wp#{widx}: 'attack' 필드 없음")
@@ -160,8 +160,8 @@ def build_lah_flight_plans_from_mrpk(
         a_lat, a_lon = float(anchor["latitude"]), float(anchor["longitude"])
     else:
         # fallback: 첫 패킷 첫 WP 기준
-        if base_packets and base_packets[0]["waypointList"]:
-            c0 = base_packets[0]["waypointList"][0]["coordinate"]
+        if base_packets and base_packets[0]["lahWaypointList"]:
+            c0 = base_packets[0]["lahWaypointList"][0]["coordinate"]
             a_lat, a_lon = float(c0["latitude"]), float(c0["longitude"])
         else:
             return base_packets  # 아무것도 할 수 없음
@@ -183,7 +183,7 @@ def build_lah_flight_plans_from_mrpk(
     out_packets: List[dict] = []
     for pkt in base_packets:
         aid = pkt["aircraftID"]
-        wplist = pkt.get("waypointList") or []
+        wplist = pkt.get("lahWaypointList") or []
         if not wplist:
             continue
 
@@ -222,7 +222,7 @@ def build_lah_flight_plans_from_mrpk(
             ("timestamp",  now_ms),
             ("pathID",     pkt["pathID"]),
             ("aircraftID", aid),
-            ("waypointList", new_list),
+            ("lahWaypointList", new_list),
         ]))
 
     _validate_lah_flight_plans(out_packets)
@@ -310,7 +310,7 @@ def build_lah_flight_plans_fixed(
             ("timestamp",   now_ms),
             ("pathID",      path_id),
             ("aircraftID",  aid),
-            ("waypointList", wplist),
+            ("lahWaypointList", wplist),
         ]))
 
     _validate_lah_flight_plans(packets)

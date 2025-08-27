@@ -64,7 +64,7 @@ class MainWindow(QMainWindow):
         self._db_path_line.setReadOnly(True)
 
         # ✅ 기본 경로 세팅 + 환경변수(KU_MISSION_DB_ROOT)도 함께 세팅
-        DEFAULT_DB_PATH = r"C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\database"
+        DEFAULT_DB_PATH = r"C:\Users\TRL98\Desktop\KU_LAHMUMT\database"
         self._db_path_line.setText(DEFAULT_DB_PATH)
         os.environ["KU_MISSION_DB_ROOT"] = DEFAULT_DB_PATH
 
@@ -133,7 +133,7 @@ class MainWindow(QMainWindow):
 
         # 필드들 (기본값 채움)
         self._mw_name     = _mk_line("Name", 120, "AVS1")
-        self._mw_addr     = _mk_line("NetworkAddress (예: 203.)", 140, "203.")
+        self._mw_addr     = _mk_line("NetworkAddress (예: 203.)", 140, "192.")
         self._mw_local    = _mk_line("LocalDomain", 100, "10")
         self._mw_external = _mk_line("ExternalDomain", 110, "100")
 

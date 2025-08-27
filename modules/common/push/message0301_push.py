@@ -125,6 +125,10 @@ def _dict_to_Aircraft(data: dict):
 
 def _dict_to_MissionPlanData(data: dict):
     obj = _new('MissionPlanData')
+    # ★ source 계열 매핑 (있으면 모두 시도)
+    for k in ("sourceModuleName", "source", "requestModuleName"):
+        if k in data: _try_set(obj, k, str(data[k]))
+
     if "timestamp" in data: _try_set(obj, "timestamp", int(data["timestamp"]))
     if "missionPlanID" in data: _try_set(obj, "missionPlanID", int(data["missionPlanID"]))
     if "missionPlanTimestamp" in data: _try_set(obj, "missionPlanTimestamp", int(data["missionPlanTimestamp"]))
@@ -135,12 +139,17 @@ def _dict_to_MissionPlanData(data: dict):
     if "aircraftList" in data and isinstance(data["aircraftList"], list):
         T = _cs('Aircraft') or object
         lst = List[T]()
-        for item in data["aircraftList"]: lst.Add(_dict_to_Aircraft(item if isinstance(item, dict) else {}))
+        for item in data["aircraftList"]:
+            lst.Add(_dict_to_Aircraft(item if isinstance(item, dict) else {}))
         _try_set(obj, "aircraftList", lst)
     return obj
 
 def _dict_to_MissionPlan(data: dict):
     obj = _new('MissionPlan')
+    # ★ source 계열 매핑 (있으면 모두 시도)
+    for k in ("sourceModuleName", "source", "requestModuleName"):
+        if k in data: _try_set(obj, k, str(data[k]))
+
     if "timestamp" in data: _try_set(obj, "timestamp", int(data["timestamp"]))
     if "missionPlanID" in data: _try_set(obj, "missionPlanID", int(data["missionPlanID"]))
     if "missionPlanTimestamp" in data: _try_set(obj, "missionPlanTimestamp", int(data["missionPlanTimestamp"]))
@@ -151,10 +160,10 @@ def _dict_to_MissionPlan(data: dict):
     if "aircraftList" in data and isinstance(data["aircraftList"], list):
         T = _cs('Aircraft') or object
         lst = List[T]()
-        for item in data["aircraftList"]: lst.Add(_dict_to_Aircraft(item if isinstance(item, dict) else {}))
+        for item in data["aircraftList"]:
+            lst.Add(_dict_to_Aircraft(item if isinstance(item, dict) else {}))
         _try_set(obj, "aircraftList", lst)
     return obj
-
 
 
 
