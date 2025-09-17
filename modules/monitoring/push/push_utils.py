@@ -1,7 +1,5 @@
 # push/push_utils.py
 import os
-import glob
-import json
 import importlib
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,7 +28,10 @@ DB_DIR_RULES = {
 
 # ── Helper Functions ───────────────────────────────────────────────────────
 
-now_ms = lambda: int((datetime.utcnow().replace(tzinfo=timezone.utc) - EPOCH_2000).total_seconds() * 1000)
+now_ms = lambda: int(
+    (datetime.utcnow().replace(tzinfo=timezone.utc) - EPOCH_2000).total_seconds() * 1000
+)
+
 
 def try_set(obj, name: str, value) -> bool:
     """Set attribute on a C# object, trying both lowerCamel and PascalCase."""
@@ -43,15 +44,20 @@ def try_set(obj, name: str, value) -> bool:
             pass
     return False
 
+
 def cs_new(name: str, msg_id: str):
     """Create a new instance of a C# type by searching in relevant namespaces."""
     t = None
     # Search order: global -> msg_ID module -> CommonType -> root
     if name in globals():
         t = globals()[name]
-    
+
     if t is None:
-        for modname in (f'nFusion.Model.msg_{msg_id}', 'nFusion.Model.CommonType', 'nFusion.Model'):
+        for modname in (
+            f"nFusion.Model.msg_{msg_id}",
+            "nFusion.Model.CommonType",
+            "nFusion.Model",
+        ):
             try:
                 mod = importlib.import_module(modname)
                 t = getattr(mod, name, None)
@@ -61,8 +67,9 @@ def cs_new(name: str, msg_id: str):
                 pass
 
     if t is None:
-        raise NameError(f'C# type not found: {name}')
+        raise NameError(f"C# type not found: {name}")
     return t()
+
 
 def select_tx_fields(body: dict, fields: list) -> dict:
     """Filter a dictionary based on a whitelist of fields."""
@@ -97,8 +104,10 @@ def select_tx_fields(body: dict, fields: list) -> dict:
                 out[f] = v
     return out
 
+
 def project_root_for_push_file(__file_path: str):
     return Path(__file_path).resolve().parents[3]
+
 
 def db_dir_for(msgid: str, __file_path: str) -> str:
     env_root = os.getenv("KU_MISSION_DB_ROOT")
@@ -107,7 +116,10 @@ def db_dir_for(msgid: str, __file_path: str) -> str:
         return str(Path(env_root) / name)
     return str(project_root_for_push_file(__file_path) / "database" / name)
 
-def make_and_push_based_on_rules(msg_id: str, file_path: str, body_generator, make_and_push_func, node_messenger):
+
+def make_and_push_based_on_rules(
+    msg_id: str, file_path: str, body_generator, make_and_push_func, node_messenger
+):
     """
     Generic function to create and push a message based on DB rules or a generator.
     """
@@ -145,9 +157,9 @@ def make_and_push_based_on_rules(msg_id: str, file_path: str, body_generator, ma
                     "status": 1,  # Normal
                     "sourceModuleName": "DSC",
                 }
-        
+
         wl = TX_FIELD_WHITELIST.get(msg_id)
         if wl and isinstance(body, dict):
             body = select_tx_fields(body, wl)
-            
+
         return make_and_push_func(body, node_messenger)

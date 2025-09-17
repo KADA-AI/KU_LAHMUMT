@@ -10,7 +10,7 @@ from dll_files.nFusionImports import IFusionReceive, IsLocal, IsSingletone
 from nFusion.Model.msg_0601 import BasicAction
 
 # 로컬 이벤트 버스
-from .receive_center import notify
+from .receive_center import notify_to_manager
 
 # 데이터 저장소 및 Python 데이터 모델
 from data.receive_storage import ReceiveStorage
@@ -42,7 +42,7 @@ class BasicActionReceiver_0601(IFusionReceive[BasicAction], IsLocal, IsSingleton
             ReceiveStorage().set_data("0601", python_data)
 
             # Manager 및 다른 모듈에 데이터 수신 알림
-            notify("0601", python_data)
+            notify_to_manager("0601", python_data)
 
         except Exception as e:
             print(f"[ERROR][Receive-0601] traceback ↓↓↓")

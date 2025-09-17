@@ -1,3 +1,5 @@
+# data/receive_storage.py: 외부로부터 수신(Receive)한 메시지를 저장하고 관리하는 싱글톤 클래스를 정의합니다.
+
 # data/receive_storage.py
 from typing import Dict, Union, Optional
 

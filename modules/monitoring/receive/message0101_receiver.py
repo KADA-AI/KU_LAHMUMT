@@ -1,5 +1,3 @@
-# modules/common/receive/message0101_receiver.py
-# auto-generated at 2025-08-24T16:37:13.077601+00:00
 import traceback
 
 # C# 연동 관련 클래스
@@ -9,7 +7,7 @@ from dll_files.nFusionImports import IFusionReceive, IsLocal, IsSingletone
 from nFusion.Model.msg_0101 import SystemOperationMode
 
 # 로컬 이벤트 버스
-from .receive_center import notify
+from .receive_center import notify_to_manager
 
 # 데이터 저장소 및 Python 데이터 모델
 from data.receive_storage import ReceiveStorage
@@ -28,22 +26,27 @@ class SystemOperationModeReceiver_0101(
 
     __namespace__ = "SystemOperationModeReceiver_0101"
 
-    def Receive(self, data: SystemOperationMode, src):
+    def Receive(self, data, src):
         try:
             # .NET 객체를 Python 데이터 모델 객체로 변환
+            timestamp_val = data.timestamp
+            # source_val = data.Source
+            systemMode_val = data.systemMode
+
             python_data = SystemOperationModeModel(
-                timestamp=_get(data, "timestamp", "Timestamp"),
-                source=_get(data, "source", "Source"),
-                systemMode=_get(data, "systemMode", "SystemMode"),
+                timestamp=timestamp_val,
+                systemMode=systemMode_val,
             )
 
             # 데이터를 중앙 저장소에 저장
             ReceiveStorage().set_data("0101", python_data)
 
             # Manager 및 다른 모듈에 데이터 수신 알림 (객체 그대로 전달)
-            notify("0101", python_data)
+            notify_to_manager("0101", python_data)
 
         except Exception as e:
+            # 에러 발생 시 로그 기록
+            # self.manager._log(...) 와 같은 형태로 로거를 사용할 수 있다면 더 좋습니다.
             print("[ERROR][Receive-0101] traceback ↓↓↓")
             traceback.print_exc()
             print(f"[ERROR][Receive-0101] Exception: {e}")

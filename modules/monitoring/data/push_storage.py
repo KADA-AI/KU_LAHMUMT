@@ -1,3 +1,5 @@
+# data/push_storage.py: 외부로 전송(Push)한 메시지의 이력을 저장하고 관리하는 클래스를 정의합니다.
+
 # data/push_storage.py
 from typing import Dict, List, Union
 

@@ -1,3 +1,5 @@
+# data/logic_storage.py: 내부 로직에 의해 처리/생성된 결과 데이터를 인메모리에 저장하고 관리하는 클래스를 정의합니다.
+
 # data/logic_storage.py
 from typing import Any, Dict
 

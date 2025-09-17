@@ -1,12 +1,15 @@
-# -*- coding: utf-8 -*-
-# monitoring_gui.py – 메인 윈도우와 탭 관리를 담당
-import sys
+# gui/monitoring_gui.py: 애플리케이션의 메인 윈도우(QMainWindow)를 생성하고, 여러 탭들을 관리합니다.
 
-from PyQt5.QtCore import pyqtSignal
+# -*- coding: utf-8 -*-
+# MonitoringTab.py
+
+from PyQt5.QtCore import pyqtSignal, Qt, pyqtSlot
 from PyQt5.QtWidgets import (
     QApplication,
     QMainWindow,
     QTabWidget,
+    QTextEdit,
+    QDockWidget,
 )
 
 # os.environ["KU_ROLE"] = "monitoring"
@@ -15,16 +18,18 @@ from PyQt5.QtWidgets import (
 from .tabs.MonitoringTab import MonitoringTab
 from .tabs.ReplanTab import ReplanTab
 from .tabs.DummyTab import DummyTab
+from .tabs.SystemModeControlTab import SystemModeControlTab
 
 
 # ───────── 메인 윈도우 ─────────
 class MainWindow(QMainWindow):
     ctrl_payload = pyqtSignal(dict)
+    log_received = pyqtSignal(str)  # 스레드 안전 로깅을 위한 시그널
 
     def __init__(self, manager):
         super().__init__()
         self.setWindowTitle("임무 모니터링·판단 GUI (Refactored)")
-        self.resize(800, 600)
+        self.resize(800, 800)  # 높이 늘림
         self.manager = manager
 
         # 탭 위젯 생성 및 설정
@@ -33,7 +38,7 @@ class MainWindow(QMainWindow):
 
         # 각 탭 인스턴스 생성
         self.monitoring_tab = MonitoringTab(manager=self.manager)
-        self.replan_tab = ReplanTab()
+        self.replan_tab = ReplanTab(manager=self.manager)
         self.dummy_tab = DummyTab()
 
         # 탭 위젯에 탭 추가
@@ -41,62 +46,40 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.replan_tab, "재계획 판단")
         self.tabs.addTab(self.dummy_tab, "더미")
 
-        # 업데이트 유형에 따라 처리할 탭을 매핑합니다.
-        # 이렇게 하면 향후 로직이 추가되어도 이 딕셔너리만 수정하면 됩니다.
+        # --- 로그 창 추가 ---
+        self.log_dock = QDockWidget("로그", self)
+        self.log_widget = QTextEdit()
+        self.log_widget.setReadOnly(True)
+        self.log_dock.setWidget(self.log_widget)
+        self.addDockWidget(Qt.BottomDockWidgetArea, self.log_dock)
+
+        # 업데이트 유형에 따라 처리할 탭들을 리스트로 매핑합니다.
         self.update_handlers = {
-            "receive": self.monitoring_tab,
-            "logic": self.monitoring_tab,
-            # 예: "replan": self.replan_tab
+            "receive": [self.monitoring_tab, self.replan_tab],
+            "logic": [self.monitoring_tab, self.replan_tab],
         }
+
+        # 시그널-슬롯 연결
+        self.log_received.connect(self._append_log_to_widget)
+
+    @pyqtSlot(str)
+    def _append_log_to_widget(self, message):
+        """GUI 스레드에서 로그 위젯에 메시지를 추가하는 슬롯"""
+        self.log_widget.append(message)
 
     def add_log_message(
         self, tag: str, log_type: str, message: str, raw_data: bytes | None
     ):
-        # GUI에 복잡한 로그 위젯 대신 콘솔에 출력하도록 단순화
+        """다른 스레드에서 호출 가능한 메서드. 시그널을 발생시켜 GUI 스레드에서 처리하도록 함."""
         log_entry = f"[{tag}] [{log_type}] {message}"
-        print(f"LOG: {log_entry}")
+        self.log_received.emit(log_entry)
 
-    def update_view(self, update_type: str, key: str):
+    def update_view(self, update_type: str, key: str, data_object: object = None):
         """Manager가 데이터 변경을 알리기 위해 호출하는 콜백 메소드."""
-        update_info = {"type": update_type, "key": key}  # 탭에 전달할 정보 구조
+        update_info = (update_type, key)
 
-        # 매핑된 핸들러(탭)를 찾아 업데이트 메소드를 호출합니다.
-        handler_tab = self.update_handlers.get(update_type)
-        if handler_tab and hasattr(handler_tab, "refresh_display"):
-            handler_tab.refresh_display(update_info)
-        else:
-            print(f"LOG (GUI): No handler found for update type '{update_type}'")
-
-
-# 이 파일이 직접 실행될 경우 (테스트용)
-if __name__ == "__main__":
-    print("WARNING: Running GUI directly. This is for testing only.")
-    app = QApplication(sys.argv)
-
-    class MockManager:
-        def __init__(self):
-            self.log_callback = None
-            self.gui_update_callback = None
-            self.received = {"0101": {"raw": b"mock receive data"}}
-            self.logic = {"res1": {"status": "mock logic ok"}}
-            self.push = {"0102": [{"body": {"status": 1}}]}
-
-        def get_received_data(self, key):
-            return self.received.get(key)
-
-        def get_logic_result(self, key):
-            return self.logic.get(key)
-
-        def get_push_history(self, key):
-            return self.push.get(key, [])
-
-        def trigger_logic(self):
-            print("MockManager: trigger_logic called")
-
-    mock_manager = MockManager()
-    win = MainWindow(manager=mock_manager)
-    mock_manager.log_callback = win.add_log_message
-    mock_manager.gui_update_callback = win.update_view
-
-    win.show()
-    sys.exit(app.exec_())
+        # 매핑된 모든 핸들러(탭)에 업데이트를 전달합니다.
+        handlers = self.update_handlers.get(update_type, [])
+        for handler_tab in handlers:
+            if hasattr(handler_tab, "refresh_display"):
+                handler_tab.refresh_display(update_info, data_object)

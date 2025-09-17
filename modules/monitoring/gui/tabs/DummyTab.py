@@ -1,3 +1,5 @@
+# gui/tabs/DummyTab.py: 메인 GUI의 '더미' 탭에 해당하는 UI와 기능을 정의합니다.
+
 from PyQt5.QtWidgets import QWidget, QLabel, QVBoxLayout
 
 class DummyTab(QWidget):

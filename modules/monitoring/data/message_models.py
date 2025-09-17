@@ -1,3 +1,5 @@
+# data/message_models.py: 외부와 주고받는 메시지의 데이터 구조를 정의하는 데이터클래스(dataclass)들을 포함합니다.
+
 # data/message_models.py
 # 이 파일은 nFusion 메시지의 내용을 담는 데이터 클래스를 정의합니다.
 
@@ -52,7 +54,6 @@ class SystemOperationModeModel:
     """0101 SystemOperationMode 메시지"""
 
     timestamp: int
-    source: str
     systemMode: int
 
 
@@ -70,11 +71,11 @@ class ModuleStatusModelModel:
 @dataclass
 class SWStatusModel:
     """0103 SWStatus 메시지"""
+
     timestamp: int
     source: str
     status: int
     mode: int
-
 
 
 # ----------------- Message 0201 (InputMissionPlan) ----------------- #
@@ -150,11 +151,11 @@ class FlightReferenceInfoModel:
     timestamp: int
     missionReferencePackageID: int
     inputTimestamp: int
-    takeOverInfoList: List['TakeOverInfoModel']
-    handOverInfoList: List['HandOverInfoModel']
-    rtbCoordinateList: List['RTBCoordinateModel']
-    flightAreaList: List['FlightAreaModel']
-    prohibitedAreaList: List['ProhibitedAreaModel']
+    takeOverInfoList: List["TakeOverInfoModel"]
+    handOverInfoList: List["HandOverInfoModel"]
+    rtbCoordinateList: List["RTBCoordinateModel"]
+    flightAreaList: List["FlightAreaModel"]
+    prohibitedAreaList: List["ProhibitedAreaModel"]
 
 
 @dataclass
@@ -202,11 +203,11 @@ class ProhibitedAreaModel:
     altitudeLimits: AltitudeLimitsModel
 
 
-
 # ----------------- Message 0301 (MissionPlan) ----------------- #
 @dataclass
 class MissionPlanModel:
     """0301 MissionPlan 메시지"""
+
     timestamp: int
     missionPlanID: int
     missionPlanTimestamp: int
@@ -214,7 +215,7 @@ class MissionPlanModel:
     plannerID: int
     inputMissionPackageID: int
     missionReferencePackageID: int
-    aircraftList: List['AircraftModel']
+    aircraftList: List["AircraftModel"]
 
 
 @dataclass
@@ -223,23 +224,23 @@ class AircraftModel:
     individualMissionPackageID: int
 
 
-
 # ----------------- Message 0302 (IndividualMissionPlan) ----------------- #
 @dataclass
 class IndividualMissionPlanModel:
     """0302 IndividualMissionPlan 메시지"""
+
     timestamp: int
     individualMissionPackageID: int
     aircraftID: int
-    individualMissionList: List['IndividualMissionModel']
+    individualMissionList: List["IndividualMissionModel"]
 
 
 @dataclass
 class IndividualMissionModel:
     individualMissionID: int
     isDone: bool
-    relatedMission: 'RelatedMissionModel'
-    individualMissionInfo: 'IndividualMissionInfoModel'
+    relatedMission: "RelatedMissionModel"
+    individualMissionInfo: "IndividualMissionInfoModel"
     pathID: int
 
 
@@ -261,17 +262,17 @@ class IndividualMissionInfoModel:
     targetID: int
 
 
-
 # ----------------- Message 0303 (UAVFlightPlan) ----------------- #
 @dataclass
 class UAVFlightPlanModel:
     """0303 UAVFlightPlan 메시지"""
+
     timestamp: int
     pathID: int
     aircraftID: int
     isFormationFlight: bool
-    formationInfo: 'FormationInfoModel'
-    waypointList: List['WaypointModel']
+    formationInfo: "FormationInfoModel"
+    waypointList: List["WaypointModel"]
 
 
 @dataclass
@@ -283,8 +284,8 @@ class WaypointModel:
     ecf: float
     nextWaypointID: int
     waypointPassType: int
-    loiterProperty: 'LoiterPropertyModel'
-    filmingProperty: 'FilmingPropertyModel'
+    loiterProperty: "LoiterPropertyModel"
+    filmingProperty: "FilmingPropertyModel"
 
 
 @dataclass
@@ -293,16 +294,16 @@ class FilmingPropertyModel:
     sensorType: int
     operationMode: int
     coordinateOrientation: CoordinateOrientationModel
-    lineSearch: 'LineSearchModel'
-    autoTracking: 'AutoTrackingModel'
-    aircraftFixed: 'AircraftFixedModel'
-    autoScan: 'AutoScanModel'
+    lineSearch: "LineSearchModel"
+    autoTracking: "AutoTrackingModel"
+    aircraftFixed: "AircraftFixedModel"
+    autoScan: "AutoScanModel"
 
 
 @dataclass
 class AutoScanModel:
     gimbalPitch: float
-    gimbalYawLimits: 'GimbalYawLimitsModel'
+    gimbalYawLimits: "GimbalYawLimitsModel"
     gimbalYawAngularSpeed: float
 
 
@@ -340,7 +341,7 @@ class LoiterPropertyModel:
 @dataclass
 class FormationInfoModel:
     leaderAircraftID: int
-    formation: 'FormationModel'
+    formation: "FormationModel"
 
 
 @dataclass
@@ -350,15 +351,15 @@ class FormationModel:
     dZ: int
 
 
-
 # ----------------- Message 0304 (LAHFlightPlan) ----------------- #
 @dataclass
 class LAHFlightPlanModel:
     """0304 LAHFlightPlan 메시지"""
+
     timestamp: int
     pathID: int
     aircraftID: int
-    lahWaypointList: List['LAHWaypointModel']
+    lahWaypointList: List["LAHWaypointModel"]
 
 
 @dataclass
@@ -369,9 +370,9 @@ class LAHWaypointModel:
     eta: int
     ecf: float
     nextWaypointID: int
-    hovering: 'HoveringModel'
-    loiter: 'LoiterModel'
-    attack: 'AttackModel'
+    hovering: "HoveringModel"
+    loiter: "LoiterModel"
+    attack: "AttackModel"
 
 
 @dataclass
@@ -391,7 +392,6 @@ class LoiterModel:
 class AttackModel:
     targetID: int
     weaponType: int
-
 
 
 # ----------------- Message 0401 (AgentStatus) ----------------- #
@@ -491,10 +491,11 @@ class AgentStatusModel:
 @dataclass
 class BattlefieldSituationAwarenessInfoModel:
     """0402 BattlefieldSituationAwarenessInfo 메시지"""
+
     timestamp: int
     source: str
-    roiInfoList: List['ROIInfoModel']
-    situationAwarenessInfoList: List['SituationAwarenessInfoModel']
+    roiInfoList: List["ROIInfoModel"]
+    situationAwarenessInfoList: List["SituationAwarenessInfoModel"]
 
 
 @dataclass
@@ -511,11 +512,11 @@ class SituationAwarenessInfoModel:
     fov: float
 
 
-
 # ----------------- Message 0601 (BaseBehavior) ----------------- #
 @dataclass
 class BaseBehaviorModel:
     """0601 BaseBehavior 메시지"""
+
     timestamp: int
     source: str
     aircraft: int
@@ -523,28 +524,27 @@ class BaseBehaviorModel:
     filmingMode: int
 
 
-
 # ----------------- Message 0702 (DecisionResult) ----------------- #
 @dataclass
 class DecisionResultModel:
     """0702 DecisionResult 메시지"""
+
     timestamp: int
     source: str
     ignore: int
     missionPlanID: int
 
 
-
 # ----------------- Message 0801 (OperatorMissionReplanCommand) ----------------- #
 @dataclass
 class OperatorMissionReplanCommandModel:
     """0801 OperatorMissionReplanCommand 메시지"""
+
     timestamp: int
     source: str
     operatorReplanRequestTime: int
     inputMissionPackageID: int
     missionReferencePackageID: int
-
 
 
 # ----------------- Message 0802 (ForcedCommand) ----------------- #
@@ -554,7 +554,8 @@ class ForcedCommandModel:
 
     timestamp: int
     source: str
-    # TODO: Add specific fields for ForcedCommand
+    aircraftID: int
+    mandatoryType: int
 
 
 # ----------------- Message 0803 (NextCollaborativeBaseMissionCommand) ----------------- #
@@ -574,7 +575,6 @@ class MissionRestartCommandModel:
 
     timestamp: int
     inputMissionID: int
-
 
 
 # ----------------- Message 0805 (OperationEvent) ----------------- #
@@ -604,9 +604,11 @@ class PendingOptionModel:
     optionName: str
     missionPlanID: int
 
+
 @dataclass
 class RequestOptionInfoModel:
     """0901 RequestOptionInfo 메시지"""
+
     timestamp: int
     source: str
     requestTime: int
@@ -618,17 +620,21 @@ class RequestOptionInfoModel:
 class ReplanRequestTimeModel:
     replanRequestTimestamp: int
 
+
 @dataclass
 class InputMissionIDModel:
     inputMissionID: int
+
 
 @dataclass
 class IndividualMissionIDModel:
     individualMissionID: int
 
+
 @dataclass
 class ReplanRequestModel:
     """0902 ReplanRequest 메시지"""
+
     timestamp: int
     source: str
     replanRequestTime: ReplanRequestTimeModel
@@ -693,6 +699,7 @@ class CollaborativeMissionCompleteModel:
 @dataclass
 class RequestBehaviorTreeModel:
     """0904 RequestBehaviorTree 메시지"""
+
     timestamp: int
     source: str
     BehaviorTreeFileID: int

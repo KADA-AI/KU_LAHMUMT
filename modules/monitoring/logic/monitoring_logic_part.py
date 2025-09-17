@@ -1,3 +1,5 @@
+# logic/monitoring_logic_part.py: '모니터링' 도메인에 대한 세부 비즈니스 로직을 구현합니다.
+
 # logic/monitoring_logic_part.py
 from datetime import datetime
 from typing import Union
@@ -22,11 +24,11 @@ class MonitoringLogic:
     def __init__(self, manager):
         self.manager = manager
 
-    def execute(self):
+    def execute(self, mode_override=None):
         """시스템 모드를 확인하고, 'monitoring'일 경우에만 로직을 실행합니다."""
-        system_mode = self.manager.logic_store.get_data("system_mode")
+        system_mode = mode_override if mode_override is not None else self.manager.logic_store.get_data("SystemMode")
         
-        if system_mode == "monitoring":
+        if system_mode == 3:
             # 향후 실제 모니터링 로직 추가
             self.manager._log("MON_LOGIC", "EXEC", "모니터링 로직 실행됨.")
 
