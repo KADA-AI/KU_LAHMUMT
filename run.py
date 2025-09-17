@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 # run.py – KU_LAHMUMT 대시보드 실행 & 모듈 연동
 from __future__ import annotations
 
@@ -249,6 +249,7 @@ class DashboardOrchestrator(QObject):
         self.win = window
         self.widgets = self._resolve_widgets(window)
         self.msg_map = _load_tab_defs()
+        self._wire_operation_panel()
 
         self.dashEvent.connect(self._handle_dash_event)
         self.uiLog.connect(self._log_assignment)
@@ -306,6 +307,15 @@ class DashboardOrchestrator(QObject):
                     pass
 
         threading.Thread(target=loop, daemon=True).start()
+    def _wire_operation_panel(self):
+        panel = self.widgets.get("operation_panel") if hasattr(self, "widgets") else None
+        if panel is None:
+            return
+        try:
+            panel.stateTriggered.connect(self._handle_operation_state)
+        except Exception:
+            pass
+
 
     def _call_fp_with_timeout(self, kind: str, missions: list, speed: float, timeout_s: int = 60):
         """
@@ -362,77 +372,56 @@ class DashboardOrchestrator(QObject):
 
     # --------- UI 위젯 해결 ---------
     def _resolve_widgets(self, win):
-        # FlowVisualizer: 인스턴스 직접 참조
         flow = getattr(win, "flow", None)
         if flow is None:
             try:
-                for fv in win.findChildren(FlowVisualizer):
-                    flow = fv
-                    break
+                from app.ui.widgets.flow_visualizer import FlowVisualizer  # type: ignore
             except Exception:
-                pass
+                FlowVisualizer = None
+            if FlowVisualizer:
+                try:
+                    candidates = win.findChildren(FlowVisualizer)
+                    if candidates:
+                        flow = candidates[0]
+                except Exception:
+                    flow = None
 
-        # 전역 로그 위젯(있으면) - ModuleWithLog 내부(LogBox)는 제외
         log_edit = None
         try:
-            from PyQt5.QtWidgets import QTextEdit, QPlainTextEdit
-            def _inside_module_with_log(w):
-                p = w.parent()
-                while p is not None:
-                    # 타입 미스매치 방지: 이름 기반으로 회피
-                    if getattr(p, "objectName", None) and "ModuleWithLog" in str(type(p)):
-                        return True
-                    p = p.parent()
-                return False
-
-            for ed in win.findChildren((QPlainTextEdit, QTextEdit)):
-                name = (ed.objectName() or "").lower()
-                if ("log" in name or "logger" in name) and not _inside_module_with_log(ed):
-                    log_edit = ed
+            from PyQt5.QtWidgets import QPlainTextEdit, QTextEdit
+            for widget in win.findChildren((QPlainTextEdit, QTextEdit)):
+                name = (widget.objectName() or "").lower()
+                if "log" in name:
+                    log_edit = widget
                     break
             if log_edit is None:
-                for ed in win.findChildren((QPlainTextEdit, QTextEdit)):
-                    if not _inside_module_with_log(ed):
-                        log_edit = ed
-                        break
+                widgets = win.findChildren((QPlainTextEdit, QTextEdit))
+                if widgets:
+                    log_edit = widgets[0]
         except Exception:
             pass
 
-        # 모듈 카드: MainWindow 속성 직접 사용(타입 의존 X)
         modules = {
-            "assignment": getattr(win, "module_mission",  None),
-            "monitoring": getattr(win, "module_monitor",  None),
-            "decision":   getattr(win, "module_decision", None),
+            "assignment": getattr(win, "module_mission", None),
+            "monitoring": getattr(win, "module_monitor", None),
+            "decision": getattr(win, "module_decision", None),
         }
 
-        # 부족하면 최후의 보정: 순서대로 채우기
-        if not all(modules.values()):
+        ops_panel = getattr(win, "operation_panel", None)
+        if ops_panel is None:
             try:
-                # 타입 매칭 실패 대비: 모든 위젯 중 title/text로 추정
-                candidates = []
-                for w in win.findChildren(object):
-                    t = ""
-                    for attr in ("title", "title_text", "titleLabel", "title_label"):
-                        if hasattr(w, attr):
-                            obj = getattr(w, attr)
-                            try:
-                                t = obj if isinstance(obj, str) else obj.text()
-                            except Exception:
-                                pass
-                            if t:
-                                break
-                    if t:
-                        tl = t.lower()
-                        if any(k in tl for k in ("할당", "assignment", "계획")) and modules["assignment"] is None:
-                            modules["assignment"] = w
-                        elif any(k in tl for k in ("모니터", "monitor", "상태")) and modules["monitoring"] is None:
-                            modules["monitoring"] = w
-                        elif any(k in tl for k in ("의사", "decision", "option", "옵션")) and modules["decision"] is None:
-                            modules["decision"] = w
+                from app.ui.widgets.operation_flow_panel import OperationFlowPanel  # type: ignore
             except Exception:
-                pass
+                OperationFlowPanel = None
+            if OperationFlowPanel:
+                try:
+                    panels = win.findChildren(OperationFlowPanel)
+                    if panels:
+                        ops_panel = panels[0]
+                except Exception:
+                    ops_panel = None
 
-        return {"flow": flow, "log_edit": log_edit, **modules}
+        return {"flow": flow, "log_edit": log_edit, "operation_panel": ops_panel, **modules}
 
 
     def _recently_seen(self, tag: str, mid: str, window: float = 0.3) -> bool:
@@ -504,6 +493,24 @@ class DashboardOrchestrator(QObject):
         self._last_card_log = last_map
 
     # --------- 버튼 → 서브프로세스 실행 ---------
+    # --------- operation state shortcuts ---------
+    def _handle_operation_state(self, code: str):
+        handlers = {
+            "S100": self._handle_state_s100,
+        }
+        handler = handlers.get(code)
+        if handler:
+            handler()
+        else:
+            self._log_everywhere(f"[OPS] {code} 상태는 아직 연결되지 않았습니다.")
+
+    def _handle_state_s100(self):
+        self._log_everywhere("[OPS] S100 초기화 모드 실행")
+        self._set_mode_text_all("초기화")
+        self._launch_all_guis()
+        QTimer.singleShot(2000, lambda: self._self_check_all(True))
+
+
     def _connect_launch_buttons(self):
         """
         - 'SW 실행' 버튼 → 세 모듈 GUI를 한 번에 실행

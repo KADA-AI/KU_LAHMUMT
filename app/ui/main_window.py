@@ -10,22 +10,21 @@ from .zones import GRID_ROWS, GRID_COLS, ZONES
 from ..widgets.cards import Card
 from ..widgets.module_with_log import ModuleWithLog
 from ..widgets.mode_buttons_panel import ModeButtonsPanel
-        # 제목 없는 카드
 from ..widgets.flow_visualizer import FlowVisualizer
 from ..widgets.operation_flow_panel import OperationFlowPanel
 import os, subprocess, json
 from pathlib import Path
 
 class MainWindow(QMainWindow):
-    """메인 화면: 35x50 가상 그리드에 구역 배치"""
+    """Main dashboard window arranged on a 35x50 grid."""
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("건국대 의사결정 지원 모듈 통합 관리 프로그램")
+        self.setWindowTitle("KU Mission Decision Support Dashboard")
         self.resize(1800, 900)
 
         self._db_path_line: QLineEdit = None
 
-        # 미들웨어 위젯 레퍼런스
+        # Middleware widget references
         self._mw_name: QLineEdit = None
         self._mw_addr: QLineEdit = None
         self._mw_local: QLineEdit = None
@@ -45,80 +44,81 @@ class MainWindow(QMainWindow):
         for c in range(GRID_COLS):
             grid.setColumnStretch(c, 1)
 
-        # 타이틀
-        title_lbl = QLabel("건국대 의사결정 지원 모듈 통합 관리 SW", self)
+        # Title label
+        title_lbl = QLabel("KU Mission Decision Support Dashboard", self)
         title_lbl.setObjectName("MainTitle")
         title_lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self._add_zone(grid, title_lbl, "TITLE")
 
-        # 찾아보기 버튼
-        btn_browse = QPushButton("찾아보기")
+        btn_browse = QPushButton("Browse...")
         btn_browse.setMinimumHeight(28)
         btn_browse.clicked.connect(self._browse_db)
         self._add_zone(grid, btn_browse, "ROUTE_BUTTON")
 
-        # DB 경로(읽기전용)
+        # Database path entry
         self._db_path_line = QLineEdit(self)
         self._db_path_line.setObjectName("DbPathLine")
-        self._db_path_line.setPlaceholderText("DB 폴더 경로")
+        self._db_path_line.setPlaceholderText("Database directory")
         self._db_path_line.setReadOnly(True)
 
-        # ✅ 기본 경로 세팅 + 환경변수(KU_MISSION_DB_ROOT)도 함께 세팅
-        DEFAULT_DB_PATH = r"C:\Users\TRL98\Desktop\KU_LAHMUMT\database"
-        self._db_path_line.setText(DEFAULT_DB_PATH)
-        os.environ["KU_MISSION_DB_ROOT"] = DEFAULT_DB_PATH
+        # Apply default path and sync KU_MISSION_DB_ROOT
+        default_db_path = self._find_project_root() / "database"
+        try:
+            default_db_path.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+
+        default_db_path_str = str(default_db_path)
+        self._db_path_line.setText(default_db_path_str)
+        os.environ["KU_MISSION_DB_ROOT"] = default_db_path_str
 
         self._add_zone(grid, self._db_path_line, "DB_PATH")
 
-        # ✅ 미들웨어 설정 행
+        # Middleware configuration row
         mw_row = self._make_middleware_row()
         self._add_zone(grid, mw_row, "MIDDLEWARE")
 
-        # 모듈 카드들
-        self.module_mission  = ModuleWithLog("임무 할당 및 계획")
+        # Module cards
+        self.module_mission  = ModuleWithLog("Assignment Planning Module")
         self._add_zone(grid, self.module_mission, "MODULE_MISSION_COMBO")
-        self.module_monitor  = ModuleWithLog("모니터링 및 판단 모듈")
+        self.module_monitor  = ModuleWithLog("Mission Monitoring Module")
         self._add_zone(grid, self.module_monitor, "MODULE_MONITOR_COMBO")
-        self.module_decision = ModuleWithLog("의사결정 지원 모듈")
+        self.module_decision = ModuleWithLog("Decision Support Module")
         self._add_zone(grid, self.module_decision, "MODULE_DECISION_COMBO")
 
-        # 데이터 흐름 다이어그램(외부 카드 없이)
-        self.flow = FlowVisualizer()          # ← 참조 보관
+        # Flow visualizer card
+        self.flow = FlowVisualizer()
         self._add_zone(grid, self.flow, "FLOW_VIS")
 
-        # 좌측 모드 버튼
+        # Mode buttons panel
         self._add_zone(grid, ModeButtonsPanel(), "MODE_BUTTONS")
 
-        # 운용 흐름
-        self._add_zone(grid, OperationFlowPanel(), "OPS_FLOW")
-
-        # 하단 검정 바
-        footer = QLabel("건국대 의사결정 지원 모듈 통합 관리 프로그램", self)
+        # Operation flow panel
+        self.operation_panel = OperationFlowPanel()
+        self._add_zone(grid, self.operation_panel, "OPS_FLOW")
+        # Operation flow panel
+        footer = QLabel("KU Mission Decision Support Dashboard", self)
         footer.setObjectName("FooterFull")
         footer.setAlignment(Qt.AlignCenter)
         self._add_zone(grid, footer, "FOOTER")
 
         self.setCentralWidget(root)
 
-        # ✅ 테스트 단축키/데모 설치
+        # Install flow test shortcuts
         self._install_flow_test_shortcuts()
 
         self._bind_module_buttons()
         self._init_msg_monitor()
+        self._apply_middleware()
 
-    # ---------- 미들웨어 행 ----------
+    # ---------- Middleware helpers ----------
     def _make_middleware_row(self) -> QWidget:
-        """
-        [Middleware] Name / Network / LocalDomain / ExternalDomain  +  [적용]
-        - 기본값: AVS1 / 203. / 10 / 100
-        - 적용 시 위 4개만으로 JSON을 구성하여 3개 위치에 동시 저장
-        """
+        """Build the inline middleware configuration row."""
         w = QWidget(self)
         lay = QHBoxLayout(w)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(8)
 
-        # 라벨
         lbl = QLabel("Middleware", self)
         lbl.setStyleSheet("font-weight:600;")
         lay.addWidget(lbl)
@@ -131,9 +131,8 @@ class MainWindow(QMainWindow):
             le.setMinimumWidth(width)
             return le
 
-        # 필드들 (기본값 채움)
         self._mw_name     = _mk_line("Name", 120, "AVS1")
-        self._mw_addr     = _mk_line("NetworkAddress (예: 203.)", 140, "192.")
+        self._mw_addr     = _mk_line("NetworkAddress (e.g. 203.)", 140, "192.")
         self._mw_local    = _mk_line("LocalDomain", 100, "10")
         self._mw_external = _mk_line("ExternalDomain", 110, "100")
 
@@ -142,24 +141,22 @@ class MainWindow(QMainWindow):
         lay.addWidget(QLabel("Local:", self));          lay.addWidget(self._mw_local)
         lay.addWidget(QLabel("External:", self));       lay.addWidget(self._mw_external)
 
-        # 적용 버튼
-        btn_apply = QPushButton("적용", self)
+        btn_apply = QPushButton("Apply", self)
         btn_apply.setMinimumWidth(80)
         btn_apply.clicked.connect(self._apply_middleware)
         lay.addWidget(btn_apply, 0, Qt.AlignRight)
 
+        self._load_middleware_config()
+
         return w
 
-    def _apply_middleware(self):
-        """
-        GUI 값으로 미들웨어 JSON을 구성하여
-        프로젝트 루트(run.py가 있는 곳)의 nFusionSettings.json 하나만 저장.
-        {"Middleware":{"Name":"..","NetworkAddress":"..","LocalDomain":..,"ExternalDomain":..}}
-        """
-        name  = (self._mw_name.text() or "").strip() or "AVS1"
-        net   = (self._mw_addr.text() or "").strip() or "203."
+
+    def _apply_middleware(self) -> None:
+        """Persist middleware settings to nFusionSettings.json."""
+        name = (self._mw_name.text() or "").strip() or "AVS1"
+        net = (self._mw_addr.text() or "").strip() or "192."
         if not net.endswith("."):
-            net = net + "."
+            net += "."
         try:
             local = int((self._mw_local.text() or "10").strip())
         except Exception:
@@ -178,18 +175,17 @@ class MainWindow(QMainWindow):
             }
         }
 
-        # ⬇️ run.py가 있는 디렉터리를 프로젝트 루트로 간주
         proj_root = self._find_project_root()
         target = proj_root / "nFusionSettings.json"
 
         data = json.dumps(cfg, ensure_ascii=False, separators=(",", ":"))
         try:
             target.write_text(data, encoding="utf-8")
-            msg = f'[CFG] nFusionSettings 적용 → {target} | Name={name}, Net="{net}", L={local}, E={ext}'
+            msg = (f"[CFG] nFusionSettings updated {target} | "
+                   f"Name={name}, Net={net}, Local={local}, External={ext}")
         except Exception as e:
             msg = f"[CFG ERR] {target.name}: {e}"
 
-        # 로그 표시
         for mod in (getattr(self, "module_mission", None),
                     getattr(self, "module_monitor", None),
                     getattr(self, "module_decision", None)):
@@ -198,32 +194,53 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
 
+
+    def _load_middleware_config(self) -> None:
+        """Load existing middleware configuration if available."""
+        proj_root = self._find_project_root()
+        cfg_path = proj_root / "nFusionSettings.json"
+        if not cfg_path.exists():
+            return
+
+        try:
+            data = json.loads(cfg_path.read_text(encoding="utf-8"))
+        except Exception:
+            return
+
+        mw = data.get("Middleware") if isinstance(data, dict) else None
+        if not isinstance(mw, dict):
+            return
+
+        if self._mw_name is not None and mw.get("Name") is not None:
+            self._mw_name.setText(str(mw["Name"]))
+        if self._mw_addr is not None and mw.get("NetworkAddress") is not None:
+            self._mw_addr.setText(str(mw["NetworkAddress"]))
+        if self._mw_local is not None and mw.get("LocalDomain") is not None:
+            self._mw_local.setText(str(mw["LocalDomain"]))
+        if self._mw_external is not None and mw.get("ExternalDomain") is not None:
+            self._mw_external.setText(str(mw["ExternalDomain"]))
+
+
     def _find_project_root(self) -> Path:
-        """
-        이 파일 위치를 기준으로 상위 디렉터리들을 올라가며 run.py를 찾는다.
-        발견한 디렉터리를 프로젝트 루트로 사용.
-        """
+        """Locate the project root by searching for run.py upward."""
         here = Path(__file__).resolve().parent
-        for cand in [here, *here.parents]:
-            if (cand / "run.py").exists():
-                return cand
-        return here  # fallback
-    
-    # ---------- 이하 기존 코드 ----------
+        for candidate in [here, *here.parents]:
+            if (candidate / "run.py").exists():
+                return candidate
+        return here
+
+
+    # ---------- Existing behaviour ----------
     def _launch_gui(self, script_name: str):
-        """
-        modules/decision_support 아래의 단일 GUI 스크립트를
-        프로젝트 루트 기준 절대경로로 찾아 실행한다.
-        """
+        """Launch a GUI script located under the decision_support module."""
         import sys
 
-        # main_window.py 위치: <root>/app/ui/main_window.py
-        root = Path(__file__).resolve().parents[2]   # 프로젝트 루트
+        # main_window.py location: <root>/app/ui/main_window.py
+        root = Path(__file__).resolve().parents[2]
         ds_dir = root / "modules" / "decision_support"
         script = ds_dir / script_name
 
         if not script.exists():
-            # 공용 로그 박스가 있으면 의사결정 카드 로그에 남김
             try:
                 self.module_decision.append_log(f"[RUN ERR] not found: {script}")
             except Exception:
@@ -233,7 +250,7 @@ class MainWindow(QMainWindow):
         try:
             subprocess.Popen(
                 [sys.executable, str(script)],
-                cwd=str(root),                         # 항상 루트에서 실행
+                cwd=str(root),
                 shell=False,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
@@ -242,6 +259,7 @@ class MainWindow(QMainWindow):
                 self.module_decision.append_log(f"[RUN ERR] {e}")
             except Exception:
                 pass
+
 
     def _bind_module_buttons(self):
         for btn in (getattr(self.module_decision, "btn_run", None),
@@ -258,18 +276,18 @@ class MainWindow(QMainWindow):
         mid = str(msg_id)
 
         def handle(module_key: str, kind: str):
-            # kind: "tx" → out, "rx" → in
+            # kind: "tx" means out, "rx" means in
             mod = {"mission": self.module_mission,
                 "monitor": self.module_monitor,
                 "decision": self.module_decision}[module_key]
             if kind == "tx":
                 if hasattr(mod, "bump_tx"): mod.bump_tx(mid)
                 if hasattr(self, "flow"):   self.flow.trigger(module_key, "out")
-                if hasattr(mod, "append_log"): mod.append_log(f"[{mid}] PUSH 완료")
+                if hasattr(mod, "append_log"): mod.append_log(f"[{mid}] PUSH sent")
             else:
                 if hasattr(mod, "bump_rx"): mod.bump_rx(mid)
                 if hasattr(self, "flow"):   self.flow.trigger(module_key, "in")
-                if hasattr(mod, "append_log"): mod.append_log(f"[{mid}] RX 수신")
+                if hasattr(mod, "append_log"): mod.append_log(f"[{mid}] RX received")
 
         maps = getattr(self, "_msg_maps", {})
         for key in ("mission", "monitor", "decision"):
@@ -281,9 +299,9 @@ class MainWindow(QMainWindow):
 
     def _init_msg_monitor(self):
         from importlib import import_module
-        from receive_center import register_listener  # GUI 스레드 안전 큐잉으로 호출됨
+        from receive_center import register_listener  # relay incoming messages to GUI
 
-        # 탭 정의에서 (msg_id 리스트) 가져오기
+        # Map of message definitions
         mods = {
             "mission":  ("Tabs.assignment_planning_tab", "AssignmentPlanningTab"),
             "monitor":  ("Tabs.mission_monitoring_tab", "MissionMonitoringTab"),
@@ -301,9 +319,7 @@ class MainWindow(QMainWindow):
             self._msg_maps[key] = {"tx": tx, "rx": rx}
             all_ids |= tx | rx
 
-        # # 모든 msg_id를 메인 윈도우(self) 리스너로 등록
-        # for mid in sorted(all_ids):
-        #     register_listener(mid, self)
+        # Optional: register_listener(mid, self) for all IDs if needed
 
     def _launch_role(self, role: str):
         import sys, subprocess
@@ -322,7 +338,7 @@ class MainWindow(QMainWindow):
             candidates = [
                 root / "modules" / "mission_planning" / "mission_planning_gui.py",
                 root / "app"     / "modules" / "mission_planning" / "mission_planning_gui.py",
-                # fallback (옛 파일명)
+                # fallback (legacy)
                 root / "modules" / "decision_support" / "assignment_planning_gui.py",
                 root / "app"     / "modules" / "decision_support" / "assignment_planning_gui.py",
             ]
@@ -332,7 +348,7 @@ class MainWindow(QMainWindow):
             candidates = [
                 root / "modules" / "monitoring" / "monitoring_gui.py",
                 root / "app"     / "modules" / "monitoring" / "monitoring_gui.py",
-                # fallback (DS 폴더에 둘 경우)
+                # fallback (decision support directory)
                 root / "modules" / "decision_support" / "monitoring_gui.py",
                 root / "modules" / "decision_support" / "monitoritng_gui.py",
                 root / "app"     / "modules" / "decision_support" / "monitoring_gui.py",
@@ -362,23 +378,23 @@ class MainWindow(QMainWindow):
                 pass
 
     def _install_flow_test_shortcuts(self):
-        """데이터 흐름 애니메이션 테스트용 단축키 설치"""
-        # 1/2: 모니터링 in/out
+        """Setup demo shortcuts for flow visualizer."""
+        # 1/2: Monitoring in/out
         QShortcut(QKeySequence("1"), self, activated=lambda: self._pulse("monitor", "in"))
         QShortcut(QKeySequence("2"), self, activated=lambda: self._pulse("monitor", "out"))
-        # 3/4: 임무 할당 in/out
+        # 3/4: Assignment in/out
         QShortcut(QKeySequence("3"), self, activated=lambda: self._pulse("mission", "in"))
         QShortcut(QKeySequence("4"), self, activated=lambda: self._pulse("mission", "out"))
-        # 5/6: 의사결정 in/out
+        # 5/6: Decision in/out
         QShortcut(QKeySequence("5"), self, activated=lambda: self._pulse("decision", "in"))
         QShortcut(QKeySequence("6"), self, activated=lambda: self._pulse("decision", "out"))
 
-        # D: 데모 토글
+        # D: Toggle demo flow
         QShortcut(QKeySequence("D"), self, activated=self._toggle_demo_flow)
 
-        # 데모 타이머 준비
+        # Demo timer configuration
         self._demo_timer = QTimer(self)
-        self._demo_timer.setInterval(100)  # 0.6s 간격으로 다음 이벤트
+        self._demo_timer.setInterval(100)  # 0.6 s interval
         self._demo_timer.timeout.connect(self._demo_step)
         self._demo_seq = [
             ("monitor", "in"), ("monitor", "out"),
@@ -388,27 +404,28 @@ class MainWindow(QMainWindow):
         self._demo_idx = 0
 
     def _pulse(self, module: str, direction: str):
-        """단축키에서 호출되는 단발 트리거"""
+        """Trigger flow animation helpers."""
         if hasattr(self, "flow") and self.flow:
             self.flow.trigger(module, direction)
 
     def _add_zone(self, grid: QGridLayout, w: QWidget, key: str):
-        """ZONES의 (r0,c0,rs,cs)로 그리드 배치"""
+        """Add widget to the grid using ZONES metadata."""
         z = ZONES[key]
         grid.addWidget(w, z["r0"], z["c0"], z["rs"], z["cs"])
 
-    # ---------- 동작 ----------
+    # ---------- Actions ----------
     def _browse_db(self):
-        path = QFileDialog.getExistingDirectory(self, "DB 폴더 선택")
+        path = QFileDialog.getExistingDirectory(self, "Select database directory")
         if path:
             self._db_path_line.setText(path)
-            # 필요 시: 모듈 로그에 기록
+            os.environ["KU_MISSION_DB_ROOT"] = path
+            # Record path selection in module logs
             self.module_mission.append_log(f"[PATH] {path}")
             self.module_monitor.append_log(f"[PATH] {path}")
             self.module_decision.append_log(f"[PATH] {path}")
 
     def _toggle_demo_flow(self):
-        """D 키로 데모 on/off"""
+        """Toggle demo animation with the D shortcut."""
         if self._demo_timer.isActive():
             self._demo_timer.stop()
         else:
@@ -416,7 +433,8 @@ class MainWindow(QMainWindow):
             self._demo_timer.start()
 
     def _demo_step(self):
-        """데모 시퀀스 한 스텝"""
+        """Advance demo animation step."""
         mod, direc = self._demo_seq[self._demo_idx]
         self._pulse(mod, direc)
         self._demo_idx = (self._demo_idx + 1) % len(self._demo_seq)
+

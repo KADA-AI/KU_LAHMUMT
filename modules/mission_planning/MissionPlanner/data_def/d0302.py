@@ -1,4 +1,5 @@
 from __future__ import annotations
+import os
 from collections import OrderedDict
 from typing import List, Dict, Set, Tuple
 
@@ -6,6 +7,19 @@ from .mission_helpers import now_ms_since_2000
 from data_def.id_allocator import (
     next_imp_id, next_individual_mission_id, next_path_id,
 )
+
+
+
+
+def _sw_code(default: str = "MMR") -> str:
+    """Return SW code (MMR/MSM/MOB) based on KU_ROLE."""
+    role = (os.environ.get("KU_ROLE") or "").lower()
+    return {
+        "mission": "MMR",
+        "monitoring": "MSM",
+        "decision": "MOB",
+    }.get(role, default)
+
 
 # ─────────────────────────────────────────────────────────────
 # 0302 – 패키지/미션 검증 (리팩터)
@@ -33,10 +47,33 @@ def _clean_individual_mission(miss: dict,
         im.pop(k, None)
 
     # ── 2) relatedMission 재설정 ───────────────────────────
+    rel_src = miss.get("relatedMission") if isinstance(miss.get("relatedMission"), dict) else {}
+    try:
+        rel_type = int(rel_src.get("relatedMissionType", 1))
+    except Exception:
+        rel_type = 1
+    try:
+        prior_id = int(rel_src.get("priorMissionID", 0))
+    except Exception:
+        prior_id = 0
+
+    input_mid = rel_src.get("inputMissionID") if isinstance(rel_src, dict) else None
+    if input_mid is None:
+        input_mid = miss.get("inputMissionID")
+    try:
+        input_mid = int(input_mid)
+    except Exception:
+        input_mid = 0
+
+    if rel_type not in (0, 1, 2):
+        rel_type = 1
+    if prior_id < 0:
+        prior_id = 0
+
     im["relatedMission"] = {
-        "relatedMissionType": 1,      # 0=None, 1=CMPK, 2=PriorMission
-        "inputMissionID":    cmpk_id, # 0301 inputMissionPackageID
-        "priorMissionID":    0,
+        "relatedMissionType": rel_type,
+        "inputMissionID":    input_mid if input_mid > 0 else 0,
+        "priorMissionID":    prior_id,
     }
 
     # ── 3) IM-Info 내부 불필요 필드 제거 ────────────────────
@@ -131,11 +168,16 @@ def _validate_mission_packages(
 
             # ── RelatedMission 검증
             rel = im["relatedMission"]
-            if rel["relatedMissionType"] != 1 or rel["inputMissionID"] != cmpk_id:
+            if rel.get("relatedMissionType") != 1:
                 raise ValueError(
-                    f"[0302] IM {im_id}: relatedMission must type=1 & inputID={cmpk_id}"
+                    f"[0302] IM {im_id}: relatedMissionType must be 1"
                 )
-            if rel["priorMissionID"] != 0:
+            im_input_id = rel.get("inputMissionID")
+            if not isinstance(im_input_id, int) or im_input_id <= 0:
+                raise ValueError(
+                    f"[0302] IM {im_id}: inputMissionID must be a positive integer"
+                )
+            if rel.get("priorMissionID", 0) not in (0,):
                 raise ValueError(f"[0302] IM {im_id}: priorMissionID must be 0")
 
             # ── Mission-Type별 필수 데이터 검증 --------------
@@ -276,6 +318,7 @@ def build_mission_packages(
         # 6) IMP 패키지 작성
         out.append(OrderedDict([
             ("timestamp",                  now_ms),
+            ("sourceModuleName",          _sw_code()),
             ("individualMissionPackageID", pkg_id),
             ("aircraftID",                 aid),
             ("individualMissionList",      ordered_list),

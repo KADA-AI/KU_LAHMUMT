@@ -1,0 +1,95 @@
+# rules/field_profiles.txt
+
+# ── Common basics ───────────────────────────────────────────────────────────────
+PROFILE timestamp_2000ms              = TYPE=uint64, UNIT=ms, EPOCH=2000ms, MIN=0, MAX=18446744073709551615
+PROFILE source_node3                  = TYPE=string, SIZE=3,   ENUM=DSC,IDM,MSM,MMR,UCC,MOB,CSP
+
+PROFILE latitude_deg                  = TYPE=float32, UNIT=deg, MIN=-90,  MAX=90
+PROFILE longitude_deg                 = TYPE=float32, UNIT=deg, MIN=-180, MAX=180
+PROFILE altitude_m_0_50000            = TYPE=int32,   UNIT=m,   MIN=0,    MAX=50000
+PROFILE width_m_0_50000               = TYPE=float32, UNIT=m,   MIN=0,    MAX=50000
+
+# ── 0101 / 0102 / 0103 etc. Enumerations ───────────────────────────────────────
+PROFILE systemMode_v1                 = TYPE=uint32,  MIN=0, MAX=3, ENUM=0:초기화 모드,1:대기 모드,2:초기임무계획 모드,3:임무수행 모드
+PROFILE status_v1                     = TYPE=uint32,  MIN=0, MAX=2, ENUM=0:Unknown,1:정상,2:비정상
+PROFILE mode_sw_v1                    = TYPE=uint32,  MIN=0, MAX=4, ENUM=0:Not used,1:초기모드,2:대기모드,3:운용모드,4:Reserved
+
+# ── Sensors / Packages / Types ─────────────────────────────────────────────────
+PROFILE inputMissionPackageType_v1    = TYPE=uint32,  MIN=1, MAX=5, ENUM=1:대기갑항공타격작전,2:지상작전부대 기동여건 보장 작전,3:공중강습작전부대 엄호 작전,4:항공지원작전-중요시설 방호,5:도시지역 작전
+PROFILE mainSensor_v1                 = TYPE=uint32,  MIN=0, MAX=2, ENUM=0:Not used,1:EO,2:IR
+
+# ── Aircraft IDs (general / UAV / manned / message-specific) ───────────────────
+PROFILE aircraft_id_any_v1            = TYPE=uint32,  MIN=0, MAX=6, ENUM=0:Not Used,1:지휘기,2:편대기1,3:편대기2,4:UAV#1,5:UAV#2,6:UAV#3
+PROFILE aircraft_id_uav0303_v1        = TYPE=uint32,  MIN=4, MAX=6, ENUM=4:UAV#1,5:UAV#2,6:UAV#3
+PROFILE aircraft_id_manned0304_v1     = TYPE=uint32,  MIN=1, MAX=3, ENUM=1:지휘기,2:편대기1,3:편대기2
+
+# ── Mission / Input Types ──────────────────────────────────────────────────────
+PROFILE inputMissionType_v1           = TYPE=uint32,  MIN=0, MAX=7, ENUM=0:Not used,1:협업기동임무,2:협업수색공격임무,3:협업경계임무,4:협업공중부대엄호임무,5:협업지상부대엄호임무,6:협업도심수색공격임무,7:편대비행모드
+PROFILE missionType_v1                = TYPE=uint32,  MIN=1, MAX=2, ENUM=1:좌표지향,2:표적추적
+PROFILE relatedMissionType_v1         = TYPE=uint32,  MIN=0, MAX=2, ENUM=0:None,1:협업기저임무,2:선행임무
+
+# ── IndividualMissionInfo / Pattern / Flags ────────────────────────────────────
+PROFILE individualMissionType_v1      = TYPE=uint32,  MIN=0, MAX=9,  ENUM=0:None,1:표적추적,2:표적공격,3:영역수색,4:영역경계,5:좌표점정찰,6:통로정찰,7:이동,8:엄호,9:은엄폐
+PROFILE patternType_v1                = TYPE=uint32,  MIN=0, MAX=12, ENUM=0:None,1:표적중심선회추적,2:은엄폐후공격,3:직하방-BF촬영,4:이격-BF촬영,5:구간왕복-BF촬영,6:선형반복주사BF촬영,7:직상공순회촬영,8:구간중심종단-선형반복주사촬영,9:구간중심종단-자동반복주사촬영,10:목적지이동,11:대상엄호,12:은엄폐
+PROFILE autoZoomIn_flag               = TYPE=uint32,  MIN=0, MAX=1,  ENUM=0:식별 미수행,1:식별 수행
+
+# ── 0303 (UAV 전용) / Formation / Waypoint / Sensor / OpMode ──────────────────
+PROFILE isFormationFlight_flag        = TYPE=uint32,  MIN=0, MAX=1,  ENUM=0:개별,1:그룹
+PROFILE leaderAircraftID_uav_v1       = TYPE=uint32,  MIN=4, MAX=6,  ENUM=4:UAV#1,5:UAV#2,6:UAV#3
+
+PROFILE waypointPassType_v1           = TYPE=uint32,  MIN=0, MAX=2,  ENUM=0:None,1:Fly-by,2:Loiter
+PROFILE direction_v1                  = TYPE=uint32,  MIN=0, MAX=2,  ENUM=0:None,1:CW,2:CCW
+PROFILE sensorType_v1                 = TYPE=uint32,  MIN=0, MAX=2,  ENUM=0:촬영하지 않음,1:EO,2:IR
+
+PROFILE operationMode_v1              = TYPE=uint32,  MIN=0, MAX=5,  ENUM=0:None,1:좌표지향모드,2:구간탐색모드,3:자동추적모드,4:기체고정모드,5:자동주사모드
+
+PROFILE gimbalPitch_deg               = TYPE=float32, UNIT=deg,   MIN=-90,  MAX=90
+PROFILE gimbalYaw_deg                 = TYPE=float32, UNIT=deg,   MIN=-180, MAX=180
+PROFILE gimbalYawLeftLimit_deg        = TYPE=float32, UNIT=deg,   MIN=0,    MAX=90
+PROFILE gimbalYawRightLimit_deg       = TYPE=float32, UNIT=deg,   MIN=0,    MAX=90
+PROFILE gimbalYawAngularSpeed_degps   = TYPE=float32, UNIT=deg/s, MIN=-180, MAX=180
+
+# ── 0304 (Manned 전용) / Weapon ────────────────────────────────────────────────
+PROFILE weaponType_v1                 = TYPE=uint32,  MIN=0, MAX=3,  ENUM=0:Unknown,1:Type1,2:Type2,3:Type3
+
+# ── Planning / Health / Link / FlightMode ──────────────────────────────────────
+PROFILE missionPlanningStatus_v1      = TYPE=uint32,  MIN=0, MAX=2,  ENUM=0:Unknown,1:재계획 수행 중이지 않음,2:재계획 수행 중
+PROFILE health_v1                     = TYPE=uint32,  MIN=0, MAX=2,  ENUM=0:알 수없음,1:정상,2:비정상
+PROFILE datalinkStatus_flag           = TYPE=uint32,  MIN=0, MAX=1,  ENUM=0:비활성,1:활성
+PROFILE flightMode_v1                 = TYPE=uint32,  MIN=0, MAX=9,  ENUM=0:NotUsed,1:자동이륙,2:자동착륙,3:통제권이양지 이동,4:전술집결지이동,5:RTB,6:편대비행,7:경로이동비행,8:점항법비행,9:표적추적비행
+
+PROFILE payloadHealth_v1              = TYPE=uint32,  MIN=0, MAX=3,  ENUM=0:None,1:알 수없음,2:정상,3:비정상
+PROFILE fuelWarning_v1                = TYPE=uint32,  MIN=0, MAX=3,  ENUM=0:None,1:양호,2:경고,3:위험
+
+# ── Target / Effect / Recommend ────────────────────────────────────────────────
+PROFILE targetType_v1                 = TYPE=uint32,  MIN=0, MAX=7,  ENUM=0:None,1:전차,2:장갑차,3:방사포,4:곡사포,5:고정고사포,6:군인,7:Reserved
+PROFILE targetInFrame_flag            = TYPE=uint32,  MIN=0, MAX=1,  ENUM=0:영상 내 없음,1:영상 내 존재
+PROFILE isDestroyed_flag              = TYPE=uint32,  MIN=0, MAX=1,  ENUM=0:완파 아님,1:완파
+PROFILE systemRecommend_v1            = TYPE=uint32,  MIN=1, MAX=2,  ENUM=1:다음 협업기저임무 추천,2:현재 협업기저임무 재수행 추천
+
+# ── 0601 / 0602 Commands / Modes ───────────────────────────────────────────────
+PROFILE filmingMode_v1                = TYPE=uint32,  MIN=0, MAX=6,  ENUM=0:Not used,1:좌표지향모드,2:구간탐색모드,3:자동추적모드,4:구역감시모드,5:기체고정모드,6:자동주사모드
+PROFILE uavCommandModeType_v1         = TYPE=uint32,  MIN=1, MAX=3,  ENUM=1:비행모드 통제,2:임무장비 모드 통제,3:비행 및 임무장비 모드 동시 통제
+PROFILE flightModeCommand_v1          = TYPE=uint32,  MIN=0, MAX=9,  ENUM=0:NotUsed,1:자동이륙,2:자동착륙,3:통제권이양지 이동,4:전술집결지 이동,5:RTB,6:편대비행,7:경로이동비행,8:점항법비행,9:표적추적비행
+PROFILE filmingModeCommand_v1         = TYPE=uint32,  MIN=0, MAX=5,  ENUM=0:None,1:좌표지향모드,2:구간탐색모드,3:자동추적모드,4:기체고정모드,5:자동주사모드
+
+# ── 0701 Options / Effects ─────────────────────────────────────────────────────
+PROFILE autoExecution_bool            = TYPE=bool
+PROFILE optionName_v1                 = TYPE=uint32,  MIN=1, MAX=5,  ENUM=1:시스템 추천,2:공격특화,3:공격배제,4:정찰특화,5:최소시간
+PROFILE survivalRate_v1               = TYPE=int32,   MIN=-1, MAX=1,  ENUM=-1:생존확률 감소,0:변화없음,1:생존확률 증가
+PROFILE timeContraction_v1            = TYPE=int32,   MIN=-1, MAX=1,  ENUM=-1:시간증가,0:변화 없음,1:시간감소효과
+PROFILE recogEffectiveness_v1         = TYPE=int32,   MIN=-1, MAX=1,  ENUM=-1:촬영효과 감소,0:변화없음,1:촬영효과 증가
+
+# ── 0702 진행 ──────────────────────────────────────────────────────────────────
+PROFILE ignore_v1                     = TYPE=uint32,  MIN=0, MAX=2,  ENUM=0:None,1:기존임무수행,2:MissionPlanID로 선택
+
+# ── 0802 강제명령 / 0803 다음 협업기저임무 / 0805 이벤트 / 0806 명령 ──────────
+PROFILE aircraft_id_uav_only_v1       = TYPE=uint32,  MIN=4, MAX=6,  ENUM=4:UAV#1,5:UAV#2,6:UAV#3
+PROFILE mandatoryType_v1              = TYPE=uint32,  MIN=1, MAX=3,  ENUM=1:강제 대기,2:강제 귀환,3:강제 임무복귀
+PROFILE execute_v1                    = TYPE=uint32,  MIN=1, MAX=2,  ENUM=1:Next,2:Redo
+PROFILE eventType_v1                  = TYPE=uint32,  MIN=1, MAX=4,  ENUM=1:모의시작,2:모의종료,3:임무시작,4:임무종료
+PROFILE command_v1                    = TYPE=uint32,  MIN=1, MAX=2,  ENUM=1:시스템 종료,2:시스템 재부팅
+
+# ── 0902 재계획 ────────────────────────────────────────────────────────────────
+PROFILE replanLevel_v1                = TYPE=uint32,  MIN=0, MAX=4,  ENUM=0:None,1:전체 임무 재계획,2:협업기저임무 재계획,3:비행/촬영 재계획,4:선행임무 반영
+# (0902) MissionType은 missionType_v1 사용

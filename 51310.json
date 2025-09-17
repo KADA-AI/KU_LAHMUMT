@@ -1,0 +1,88 @@
+{
+  "presenceVector": 0,
+  "timestamp": null,
+  "inputMissionPackageID": 1,
+  "missionType": 1,
+  "dateAndNight": 1,
+  "aircraftIDsN": 4,
+  "aircraftIDs": [
+    {
+      "aircraftID": 1
+    },
+    {
+      "aircraftID": 2
+    },
+    {
+      "aircraftID": 4
+    },
+    {
+      "aircraftID": 5
+    },
+    {
+      "aircraftID": 6
+    }
+  ],
+  "inputMissionListN": 2,
+  "inputMissionList": [
+    {
+      "inputMissionID": 1,
+      "sequenceNumber": 0,
+      "inputMissionType": 1,
+      "isDone": false,
+      "shapeType": 2,
+      "coordinate": null,
+      "polyline": {
+        "width": 1000,
+        "coordinateListN": 3,
+        "coordinateList": [
+          {
+            "latitude": 38.13123151066354,
+            "longitude": 127.2992481066705,
+            "altitude": 100
+          },
+          {
+            "latitude": 38.14085454887168,
+            "longitude": 127.3058948999298,
+            "altitude": 100
+          },
+          {
+            "latitude": 38.14142286150955,
+            "longitude": 127.3205301269697,
+            "altitude": 100
+          }
+        ]
+      },
+      "polygons": null
+    },
+    {
+      "inputMissionID": 2,
+      "sequenceNumber": 1,
+      "inputMissionType": 1,
+      "isDone": false,
+      "shapeType": 2,
+      "coordinate": null,
+      "polyline": {
+        "width": 1000,
+        "coordinateListN": 3,
+        "coordinateList": [
+          {
+            "latitude": 38.13255942092372,
+            "longitude": 127.3324171346928,
+            "altitude": 100
+          },
+          {
+            "latitude": 38.12405336110697,
+            "longitude": 127.3340272635773,
+            "altitude": 100
+          },
+          {
+            "latitude": 38.11765333628537,
+            "longitude": 127.3230677582768,
+            "altitude": 100
+          }
+        ]
+      },
+      "polygons": null
+    }
+  ]
+}

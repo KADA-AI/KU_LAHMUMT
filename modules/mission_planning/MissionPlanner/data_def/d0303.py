@@ -1,4 +1,5 @@
 from __future__ import annotations
+import os
 import math
 from collections import OrderedDict
 from typing import List, Tuple                       # ★ 추가
@@ -6,6 +7,17 @@ from .mission_helpers import now_ms_since_2000
 from UAV_missionPlanning import UAVMissionPlanner
 from Aisle_Sweep_CPP_shoot_plan import RectanglePath
 from .coord_transform import llh_to_xy, xy_to_llh
+
+
+
+def _sw_code(default: str = "MMR") -> str:
+    role = (os.environ.get("KU_ROLE") or "").lower()
+    return {
+        "mission": "MMR",
+        "monitoring": "MSM",
+        "decision": "MOB",
+    }.get(role, default)
+
 
 # ── 타입 alias (가독용) ─────────────────────────────
 Point = Tuple[float, float]
@@ -570,6 +582,7 @@ def build_flight_plans(
     for pkt in packets:
         result.append(OrderedDict([
             ("timestamp", now_ms),
+            ("sourceModuleName", _sw_code()),
             ("pathID", pkt["pathID"]),
             ("aircraftID", pkt["aircraftID"]),
             ("isFormationFlight", False),

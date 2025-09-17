@@ -1,0 +1,92 @@
+{
+  "inputMissionPackageType": 1,
+  "mainSensor": 1,
+  "availableAircraftList": [
+    {
+      "aircraftID": 1
+    },
+    {
+      "aircraftID": 2
+    },
+    {
+      "aircraftID": 3
+    },
+    {
+      "aircraftID": 4
+    },
+    {
+      "aircraftID": 5
+    },
+    {
+      "aircraftID": 6
+    }
+  ],
+  "inputMissionList": [
+    {
+      "inputMissionID": 1,
+      "inputMissionType": 3,
+      "isDone": false,
+      "missionDetail": {
+        "areaList": [
+          {
+            "isHole": false,
+            "coordinateList": [
+              {
+                "latitude": 37.55165453753514,
+                "longitude": 127.00572967529298,
+                "altitude": 120.0
+              },
+              {
+                "latitude": 37.552743280459694,
+                "longitude": 127.03834533691408,
+                "altitude": 120.0
+              },
+              {
+                "latitude": 37.575603207605845,
+                "longitude": 127.04898834228517,
+                "altitude": 120.0
+              },
+              {
+                "latitude": 37.59192743186128,
+                "longitude": 127.0228958129883,
+                "altitude": 120.0
+              },
+              {
+                "latitude": 37.57832416022909,
+                "longitude": 126.99371337890626,
+                "altitude": 120.0
+              }
+            ]
+          },
+          {
+            "isHole": false,
+            "coordinateList": [
+              {
+                "latitude": 37.557370260448536,
+                "longitude": 127.07302093505861,
+                "altitude": 120.0
+              },
+              {
+                "latitude": 37.58213332686043,
+                "longitude": 127.08847045898439,
+                "altitude": 120.0
+              },
+              {
+                "latitude": 37.58403783709371,
+                "longitude": 127.12589263916017,
+                "altitude": 120.0
+              },
+              {
+                "latitude": 37.567984011320256,
+                "longitude": 127.13413238525392,
+                "altitude": 120.0
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "timestamp": 809889489039,
+  "inputMissionPackageID": 2
+}
