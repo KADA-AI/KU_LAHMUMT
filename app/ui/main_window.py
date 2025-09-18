@@ -152,11 +152,11 @@ class MainWindow(QMainWindow):
 
 
     def _apply_middleware(self) -> None:
-        """Persist middleware settings to nFusionSettings.json."""
+        """Persist middleware settings to every nFusionSettings.json in the project."""
         name = (self._mw_name.text() or "").strip() or "AVS1"
         net = (self._mw_addr.text() or "").strip() or "192."
-        if not net.endswith("."):
-            net += "."
+        if not net.endswith('.'):
+            net += '.'
         try:
             local = int((self._mw_local.text() or "10").strip())
         except Exception:
@@ -176,24 +176,33 @@ class MainWindow(QMainWindow):
         }
 
         proj_root = self._find_project_root()
-        target = proj_root / "nFusionSettings.json"
+        cfg_json = json.dumps(cfg, ensure_ascii=False, separators=(",", ":"))
 
-        data = json.dumps(cfg, ensure_ascii=False, separators=(",", ":"))
-        try:
-            target.write_text(data, encoding="utf-8")
-            msg = (f"[CFG] nFusionSettings updated {target} | "
-                   f"Name={name}, Net={net}, Local={local}, External={ext}")
-        except Exception as e:
-            msg = f"[CFG ERR] {target.name}: {e}"
+        updated_paths = []
+        errors = []
+        for cfg_path in proj_root.rglob('nFusionSettings.json'):
+            try:
+                cfg_path.write_text(cfg_json, encoding='utf-8')
+                updated_paths.append(cfg_path)
+            except Exception as exc:
+                errors.append((cfg_path, exc))
 
-        for mod in (getattr(self, "module_mission", None),
-                    getattr(self, "module_monitor", None),
-                    getattr(self, "module_decision", None)):
+        ip_prefix = net.split('.', 1)[0] if '.' in net else net
+        msg = (f"[CFG] nFusionSettings updated ({len(updated_paths)} files) | "
+               f"Name={name}, Net={net}, Prefix={ip_prefix}, Local={local}, External={ext}")
+        if errors:
+            err_txt = '; '.join(f"{p.name}:{e}" for p, e in errors[:3])
+            msg = f"[CFG WARN] middleware update partial: {err_txt}"
+
+        for mod in (getattr(self, 'module_mission', None),
+                    getattr(self, 'module_monitor', None),
+                    getattr(self, 'module_decision', None)):
             try:
                 mod.append_log(msg)
             except Exception:
                 pass
 
+        self._last_middleware_prefix = ip_prefix
 
     def _load_middleware_config(self) -> None:
         """Load existing middleware configuration if available."""

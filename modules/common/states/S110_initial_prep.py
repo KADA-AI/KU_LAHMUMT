@@ -34,3 +34,11 @@ def run(orch):
         orch._safe_log(f"[WARN] Info system_mode 지시 실패: {e}")
     if not ok:
         orch._safe_log("[WARN] Info 모듈 0101 전송 지시 실패")
+    # 4) Kick off the initial mission-planning pipeline
+    try:
+        orch.trigger_initial_plan_pipeline(reason="초기임무재계획")
+    except AttributeError:
+        orch._safe_log('[WARN] trigger_initial_plan_pipeline not available on orchestrator')
+    except Exception as exc:
+        orch._safe_log(f'[WARN] initial mission planning pipeline failed: {exc}')
+

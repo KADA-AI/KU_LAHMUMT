@@ -41,23 +41,46 @@ class DecisionSupportTab(CSCTabBase):
             return {}  # 기본 생성 규칙 사용
         if mid == "0701":
             ts = _now_ms_since_2000()
-            mpid = int(getattr(self, "_last_mission_plan_id", 0) or 0)
-            # 필요 시 optionName 등 필드 스펙 맞춰 조정
+            stored_entries = getattr(self, "_last_option_entries", None) or []
+            patterns = [(0, 0, 0), (-1, -1, 1), (1, 1, -1)]
+            option_list = []
+            for idx, entry in enumerate(stored_entries):
+                try:
+                    plan_id = int(entry.get("missionPlanID"))
+                except Exception:
+                    continue
+                try:
+                    option_id = int(entry.get("optionID", idx + 1))
+                except Exception:
+                    option_id = idx + 1
+                sr, tc, reff = patterns[idx] if idx < len(patterns) else (0, 0, 0)
+                option_list.append({
+                    "optionID": option_id,
+                    "missionPlanID": plan_id,
+                    "survivalRate": sr,
+                    "timeContraction": tc,
+                    "recogEffectiveness": reff,
+                    "distance": 0,
+                    "target": 0,
+                })
+
+            if not option_list:
+                fallback_plan = int(getattr(self, "_last_mission_plan_id", 0) or 0)
+                option_list.append({
+                    "optionID": 1,
+                    "missionPlanID": fallback_plan,
+                    "survivalRate": 0,
+                    "timeContraction": 0,
+                    "recogEffectiveness": 0,
+                    "distance": 0,
+                    "target": 0,
+                })
+
             return {
                 "timestamp": ts,
                 "source": "MOB",
                 "autoExecution": False,
-                "optionList": [
-                    {
-                        "optionID": 1,
-                        "optionName": 1,
-                        "missionPlanID": mpid,
-                        "survivalRate": 1,
-                        "timeContraction": -1,
-                        "recogEffectiveness": 1,
-                        "distance": 30000,
-                        "target": 0,
-                    }
-                ],
+                "optionList": option_list,
             }
+
         return None  # 그 외는 기본(제네레이터) 사용

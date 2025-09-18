@@ -892,6 +892,41 @@ class DashboardOrchestrator(QObject):
             except Exception: pass
             return False
 
+    def trigger_initial_plan_pipeline(self, reason: str = "초기임무재계획") -> None:
+        """Send control commands that drive the initial mission-planning pipeline."""
+        normalized_reason = str(reason or "초기임무재계획")
+        context = {"reason": normalized_reason, "replan_level": 1}
+
+        self._safe_log(f"[OPS] S110: preparing initial mission planning (reason={normalized_reason})")
+
+        try:
+            ok_assign = self._send_ctrl_single("assignment", {"cmd": "init_plan_context", "context": context, "trigger": "S110"})
+            if not ok_assign:
+                self._safe_log('[WARN] init_plan_context dispatch to assignment failed')
+        except Exception as exc:
+            self._safe_log(f'[WARN] init_plan_context dispatch error: {exc}')
+
+        try:
+            ok_stage = self._send_ctrl_single("monitoring", {"cmd": "stage_replan", "context": context})
+            if not ok_stage:
+                self._safe_log('[WARN] stage_replan dispatch to monitoring failed')
+        except Exception as exc:
+            self._safe_log(f'[WARN] stage_replan dispatch error: {exc}')
+
+        def _fire_replan():
+            payload = {"cmd": "replan", "reason": normalized_reason, "replanLevel": context.get("replan_level", 1)}
+            try:
+                ok = self._send_ctrl_single("monitoring", payload)
+                if ok:
+                    self._safe_log('[OPS] 0902 replan request sent to monitoring')
+                else:
+                    self._safe_log('[WARN] 0902 replan request dispatch failed')
+            except Exception as exc:
+                self._safe_log(f'[WARN] replan dispatch error: {exc}')
+
+        QTimer.singleShot(300, _fire_replan)
+
+
     def _launch_all_guis(self):
         for sn in ("mission_planning_gui.py", "monitoring_gui.py", "decision_support_gui.py", "info_manage.py"):
             self._launch_gui(sn)

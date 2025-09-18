@@ -675,23 +675,42 @@ class MainWindow(QMainWindow):
         if not self._power_on:
             return
         if str(msg_id).zfill(4) == "0901":
-            mpid = None
+            option_entries = []
             try:
                 if raw:
                     txt = raw.decode("utf-8", "ignore")
-                    m = re.search(r"\{.*\}", txt, flags=re.S)
-                    if m:
-                        obj = json.loads(m.group(0))
-                        lst = obj.get("pendingOptionList") or []
-                        if lst:
-                            mpid = int(lst[0].get("missionPlanID") or 0)
+                    match = re.search(r"\{.*\}", txt, flags=re.S)
+                    if match:
+                        obj = json.loads(match.group(0))
+                        for item in obj.get("pendingOptionList") or []:
+                            try:
+                                plan_id = int(item.get("missionPlanID"))
+                            except Exception:
+                                continue
+                            try:
+                                option_id = int(item.get("optionID", len(option_entries) + 1))
+                            except Exception:
+                                option_id = len(option_entries) + 1
+                            option_entries.append({"optionID": option_id, "missionPlanID": plan_id})
             except Exception:
-                pass
-            if mpid:
-                self._last_mission_plan_id = mpid
-                setattr(self._tab, "_last_mission_plan_id", mpid)
-            self._append_log_line(f"[AUTO] 0901 옵션요청 수신 → 0701 클릭 전송 (MPID={getattr(self,'_last_mission_plan_id', None)})")
+                option_entries = option_entries or []
+
+            if option_entries:
+                first_plan = int(option_entries[0]["missionPlanID"])
+                self._last_mission_plan_id = first_plan
+                setattr(self._tab, "_last_mission_plan_id", first_plan)
+            plan_id_list = [entry.get("missionPlanID") for entry in option_entries]
+            setattr(self, "_last_option_entries", option_entries)
+            setattr(self._tab, "_last_option_entries", option_entries)
+
+            if plan_id_list:
+                summary = ", ".join(str(pid) for pid in plan_id_list if pid is not None)
+            else:
+                summary = str(getattr(self, "_last_mission_plan_id", "-"))
+
+            self._append_log_line(f"[AUTO] 0901 option request received -> 0701 auto-dispatch (MPIDs={summary})")
             QTimer.singleShot(200, lambda: self._click_tx_button_for("0701"))
+
 
     # ───────── TX 클릭 유틸 ─────────
     def _click_tx_button_for(self, code: str):
