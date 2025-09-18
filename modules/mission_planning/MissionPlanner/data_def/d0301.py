@@ -18,6 +18,17 @@ from typing import List, Dict
 
 from .mission_helpers import now_ms_since_2000
 
+
+
+def _sw_code(default: str = "MMR") -> str:
+    role = (os.environ.get("KU_ROLE") or "").lower()
+    return {
+        "mission": "MMR",
+        "monitoring": "MSM",
+        "decision": "MOB",
+    }.get(role, default)
+
+
 # ════════════════════════════════════════════════════════════════
 # 1. Persistent ID 카운터
 # ----------------------------------------------------------------
@@ -176,6 +187,7 @@ def build_mission_plan(
     # ── 메시지 생성 -------------------------------------------------------
     mp = {
         "timestamp":                 ts_now,
+        "Source":         _sw_code(),
         "missionPlanID":             mission_plan_id,
         "missionPlanTimestamp":      ts_now,
         "planningTime":              float(planning_time_s),  # float(초)

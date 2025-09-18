@@ -65,7 +65,7 @@ def _to_dict_ExecutionCommand(obj):
     d = {}
     _v = _get(obj, 'timestamp', 'Timestamp')
     if _v is not None: d['timestamp'] = int(_v)
-    _sval = _get(obj, 'source', 'Source', 'source','Source','sourceModuleName','SourceModuleName','requestModuleName','RequestModuleName')
+    _sval = _get(obj, 'source', 'Source', 'source','Source','Source','Source','requestModuleName','RequestModuleName')
     if _sval is not None and _sval != '': d['source'] = str(_sval)
     _v = _get(obj, 'execute', 'Execute')
     if _v is not None: d['execute'] = int(_v)

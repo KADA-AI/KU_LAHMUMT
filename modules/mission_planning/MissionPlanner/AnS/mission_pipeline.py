@@ -1028,7 +1028,7 @@ def _as_uint32(val) -> int:
 # ──────────────────────────────────────────────────────────────
 # 3.  MissionPlan(0301) 생성
 # ──────────────────────────────────────────────────────────────
-def build_mission_plan_0301(cmpk_path, mrpk_path, imp_paths, mp_out_path):
+def build_mission_plan_0301(cmpk_path, mrpk_path, imp_paths, mp_out_path, mission_plan_id=None):
     start_time = time.time()
     # CMPK 로드
     with open(cmpk_path, "r", encoding="utf-8") as f:
@@ -1050,9 +1050,10 @@ def build_mission_plan_0301(cmpk_path, mrpk_path, imp_paths, mp_out_path):
         })
 
     # ── MissionPlan(0301) 빌드 ───────────────────────────
+    plan_id = _as_uint32(mission_plan_id) if mission_plan_id is not None else _next_counter("missionPlanID", 700_000_001)
     mission_plan = {
         # ✅ 700 000 001 부터 1씩 증가
-        "missionPlanID":            _next_counter("missionPlanID", 700_000_001),
+        "missionPlanID":            plan_id,
         "timestamp":                now_ms_since_2000(),
         "missionPlanTimestamp":     now_ms_since_2000(),
         "planningTime":             (time.time() - start_time) * 1000,

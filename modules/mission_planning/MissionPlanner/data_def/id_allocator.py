@@ -3,7 +3,7 @@ ID allocator – 0301/0302/0303 공통
 임무 재계획 시에도 중복을 막기 위해 마지막 번호를 json 파일에 저장해 둔다.
 """
 from pathlib import Path
-import json, threading
+import json, threading, time
 
 _LOCK = threading.Lock()
 _STORE = Path(__file__).resolve().parent / "id_tracker.json"
@@ -50,14 +50,29 @@ def _load() -> dict:
 
 def _save(state: dict) -> None:
     """
-    ID 상태를 원자적으로 저장한다(임시파일→교체).
+    ID 상태를 안전하게 덮어쓰다.
     """
     _STORE.parent.mkdir(parents=True, exist_ok=True)
     tmp = _STORE.with_suffix(_STORE.suffix + ".tmp")
     with tmp.open("w", encoding="utf-8") as f:
         json.dump(state, f, ensure_ascii=False, separators=(",", ":"))
-    tmp.replace(_STORE)
-
+    for attempt in range(5):
+        try:
+            tmp.replace(_STORE)
+            return
+        except PermissionError:
+            time.sleep(0.1 * (attempt + 1))
+        except Exception:
+            try:
+                tmp.unlink()
+            except Exception:
+                pass
+            raise
+    try:
+        tmp.unlink()
+    except Exception:
+        pass
+    raise PermissionError(f"id_tracker write failed after retries: {_STORE}")
 _state = _load()              # {key: last_used}
 
 def _next(key: str, inc: int = 1, subkey=None) -> int:

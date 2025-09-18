@@ -1,4 +1,5 @@
 # assignment_planning_tab.py
+from typing import Callable, Optional
 from Tabs.csc_tab_base import CSCTabBase
 
 
@@ -29,3 +30,19 @@ class AssignmentPlanningTab(CSCTabBase):
         ("0901", "옵션 정보 생성 요청"),
         ("0903", "수행임무갱신요청"),
     ]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._replan_callback: Optional[Callable[[str, Optional[bytes]], None]] = None
+
+    def set_replan_callback(self, callback: Optional[Callable[[str, Optional[bytes]], None]]) -> None:
+        self._replan_callback = callback
+
+    def mark_received(self, msg_id: str, raw: Optional[bytes] = None):
+        super().mark_received(msg_id, raw)
+        if str(msg_id).zfill(4) == "0902" and callable(self._replan_callback):
+            try:
+                self._replan_callback(msg_id, raw)
+            except Exception:
+                pass
+

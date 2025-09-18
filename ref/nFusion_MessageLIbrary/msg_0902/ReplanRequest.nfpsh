@@ -1,0 +1,11 @@
+# MessageID 0902 재계획 요청
+
+ulong timestamp
+string source
+ReplanRequestTime replanRequestTime
+uint replanLevel
+List<InputMissionID> inputMissionIDList
+List<IndividualMissionID> individualMissionIDList
+List<CommonType.PriorMission> priorMissionList
+string replanReason
+List<CommonType.PendingOption> pendingOptionList

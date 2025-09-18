@@ -75,14 +75,14 @@ def _select_tx_fields(body: dict, fields: list) -> dict:
         out["timestamp"] = int(ts)
 
     s  = _get("source")
-    sm = _get("sourceModuleName") or _get("sourcemodulename")
+    sm = _get("Source") or _get("Source")
     rq = _get("requestModuleName") or _get("requestmodulename")
     src_val = s or sm or rq
     if src_val:
-        out["sourceModuleName"] = str(src_val)
+        out["Source"] = str(src_val)
 
     for f in fields:
-        if f in ("timestamp","source","sourceModuleName","requestModuleName"):
+        if f in ("timestamp","source","Source","requestModuleName"):
             continue
         v = _get(f)
         if v is not None:
@@ -187,29 +187,41 @@ def _dict_to_IndividualMission(data: dict):
 
 def _dict_to_IndividualMissionPlanData(data: dict):
     obj = _new('IndividualMissionPlanData')
+
+    # ★ source 계열 매핑 (있으면 모두 시도)
+    for k in ("Source", "source", "requestModuleName"):
+        if k in data:
+            _try_set(obj, k, str(data[k]))
+
     if "timestamp" in data: _try_set(obj, "timestamp", int(data["timestamp"]))
     if "individualMissionPackageID" in data: _try_set(obj, "individualMissionPackageID", int(data["individualMissionPackageID"]))
     if "aircraftID" in data: _try_set(obj, "aircraftID", int(data["aircraftID"]))
     if "individualMissionList" in data and isinstance(data["individualMissionList"], list):
         T = _cs('IndividualMission') or object
         lst = List[T]()
-        for item in data["individualMissionList"]: lst.Add(_dict_to_IndividualMission(item if isinstance(item, dict) else {}))
+        for item in data["individualMissionList"]:
+            lst.Add(_dict_to_IndividualMission(item if isinstance(item, dict) else {}))
         _try_set(obj, "individualMissionList", lst)
     return obj
 
 def _dict_to_IndividualMissionPlan(data: dict):
     obj = _new('IndividualMissionPlan')
+
+    # ★ source 계열 매핑 (있으면 모두 시도)
+    for k in ("Source", "source", "requestModuleName"):
+        if k in data:
+            _try_set(obj, k, str(data[k]))
+
     if "timestamp" in data: _try_set(obj, "timestamp", int(data["timestamp"]))
     if "individualMissionPackageID" in data: _try_set(obj, "individualMissionPackageID", int(data["individualMissionPackageID"]))
     if "aircraftID" in data: _try_set(obj, "aircraftID", int(data["aircraftID"]))
     if "individualMissionList" in data and isinstance(data["individualMissionList"], list):
         T = _cs('IndividualMission') or object
         lst = List[T]()
-        for item in data["individualMissionList"]: lst.Add(_dict_to_IndividualMission(item if isinstance(item, dict) else {}))
+        for item in data["individualMissionList"]:
+            lst.Add(_dict_to_IndividualMission(item if isinstance(item, dict) else {}))
         _try_set(obj, "individualMissionList", lst)
     return obj
-
-
 
 
 def _dict_to_obj(body_dict: dict):
@@ -240,7 +252,7 @@ def make_random_and_push(node_messenger) -> bytes:
             wl = TX_FIELD_WHITELIST.get(MSG_ID, [])
             body = {
                 "timestamp": int((datetime.utcnow().replace(tzinfo=timezone.utc) - _EPOCH_2000).total_seconds() * 1000),
-                "sourceModuleName": "DSC",
+                "Source": "DSC",
             }
             # ID 필드 결정
             if "inputMissionPackageID" in wl:          body["inputMissionPackageID"] = vid
@@ -259,7 +271,7 @@ def make_random_and_push(node_messenger) -> bytes:
                 body = {
                     "timestamp": int((datetime.utcnow().replace(tzinfo=timezone.utc) - _EPOCH_2000).total_seconds() * 1000),
                     "status": 1,  # 정상
-                    "sourceModuleName": "DSC",
+                    "Source": "DSC",
                 }
         wl = TX_FIELD_WHITELIST.get(MSG_ID)
         if wl and isinstance(body, dict):

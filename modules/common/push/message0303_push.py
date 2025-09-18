@@ -75,14 +75,14 @@ def _select_tx_fields(body: dict, fields: list) -> dict:
         out["timestamp"] = int(ts)
 
     s  = _get("source")
-    sm = _get("sourceModuleName") or _get("sourcemodulename")
+    sm = _get("Source") or _get("Source")
     rq = _get("requestModuleName") or _get("requestmodulename")
     src_val = s or sm or rq
     if src_val:
-        out["sourceModuleName"] = str(src_val)
+        out["Source"] = str(src_val)
 
     for f in fields:
-        if f in ("timestamp","source","sourceModuleName","requestModuleName"):
+        if f in ("timestamp","source","Source","requestModuleName"):
             continue
         v = _get(f)
         if v is not None:
@@ -222,6 +222,10 @@ def _dict_to_Waypoint(data: dict):
 
 def _dict_to_UAVFlightPlanData(data: dict):
     obj = _new('UAVFlightPlanData')
+    # ★ source 계열 매핑
+    for k in ("Source", "source", "requestModuleName"):
+        if k in data: _try_set(obj, k, str(data[k]))
+
     if "timestamp" in data: _try_set(obj, "timestamp", int(data["timestamp"]))
     if "pathID" in data: _try_set(obj, "pathID", int(data["pathID"]))
     if "aircraftID" in data: _try_set(obj, "aircraftID", int(data["aircraftID"]))
@@ -231,12 +235,17 @@ def _dict_to_UAVFlightPlanData(data: dict):
     if "waypointList" in data and isinstance(data["waypointList"], list):
         T = _cs('Waypoint') or object
         lst = List[T]()
-        for item in data["waypointList"]: lst.Add(_dict_to_Waypoint(item if isinstance(item, dict) else {}))
+        for item in data["waypointList"]:
+            lst.Add(_dict_to_Waypoint(item if isinstance(item, dict) else {}))
         _try_set(obj, "waypointList", lst)
     return obj
 
 def _dict_to_UAVFlightPlan(data: dict):
     obj = _new('UAVFlightPlan')
+    # ★ source 계열 매핑
+    for k in ("Source", "source", "requestModuleName"):
+        if k in data: _try_set(obj, k, str(data[k]))
+
     if "timestamp" in data: _try_set(obj, "timestamp", int(data["timestamp"]))
     if "pathID" in data: _try_set(obj, "pathID", int(data["pathID"]))
     if "aircraftID" in data: _try_set(obj, "aircraftID", int(data["aircraftID"]))
@@ -246,9 +255,11 @@ def _dict_to_UAVFlightPlan(data: dict):
     if "waypointList" in data and isinstance(data["waypointList"], list):
         T = _cs('Waypoint') or object
         lst = List[T]()
-        for item in data["waypointList"]: lst.Add(_dict_to_Waypoint(item if isinstance(item, dict) else {}))
+        for item in data["waypointList"]:
+            lst.Add(_dict_to_Waypoint(item if isinstance(item, dict) else {}))
         _try_set(obj, "waypointList", lst)
     return obj
+
 
 
 
@@ -273,22 +284,18 @@ def make_random_and_push(node_messenger) -> bytes:
     # DB 기반 메시지는 DB의 파일명(숫자).json을 ID로 사용하여 최소 필드만 전송
     if MSG_ID in DB_DIR_RULES:
         dbdir = _db_dir_for(MSG_ID, __file__)
-        # 0304(유인기 pathID)는 1/2/3 시작만 전송(기존 규칙 유지)
-        needs_prefix = "123" if MSG_ID == "0304" else None
+        # ★ UAV(0303)는 4/5/6 시작만 전송
+        needs_prefix = "456" if MSG_ID == "0303" else None
         ids = _list_numeric_ids(dbdir, needs_prefix)
         logs = []
         for vid in ids:
             wl = TX_FIELD_WHITELIST.get(MSG_ID, [])
             body = {
                 "timestamp": int((datetime.utcnow().replace(tzinfo=timezone.utc) - _EPOCH_2000).total_seconds() * 1000),
-                "sourceModuleName": "DSC",
+                "Source": "DSC",
             }
-            # ID 필드 결정
-            if "inputMissionPackageID" in wl:          body["inputMissionPackageID"] = vid
-            if "missionReferencePackageID" in wl:      body["missionReferencePackageID"] = vid
-            if "missionPlanID" in wl:                  body["missionPlanID"] = vid
-            if "individualMissionPackageID" in wl:     body["individualMissionPackageID"] = vid
-            if "pathID" in wl:                         body["pathID"] = vid
+            if "pathID" in wl:
+                body["pathID"] = vid
             logs.append(make_and_push(body, node_messenger))
         return b"\n".join(logs) if logs else b""
     else:
@@ -300,7 +307,7 @@ def make_random_and_push(node_messenger) -> bytes:
                 body = {
                     "timestamp": int((datetime.utcnow().replace(tzinfo=timezone.utc) - _EPOCH_2000).total_seconds() * 1000),
                     "status": 1,  # 정상
-                    "sourceModuleName": "DSC",
+                    "Source": "DSC",
                 }
         wl = TX_FIELD_WHITELIST.get(MSG_ID)
         if wl and isinstance(body, dict):

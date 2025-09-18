@@ -322,12 +322,12 @@ class MainGUI(QWidget):
             c   = COLOR4.get(aid, "green")
 
             pts      = [(w["coordinate"]["latitude"], w["coordinate"]["longitude"])
-                        for w in fp["waypointList"]]
+                        for w in fp["lahWaypointList"]]
             line_cls = f"path4_{aid}_{fp['pathID']}"
             folium.PolyLine(pts, color=c, weight=2,
                             **{"className": line_cls}).add_to(fmap)
 
-            for w in fp["waypointList"]:
+            for w in fp["lahWaypointList"]:
                 wp_id = w["waypointID"]
                 popup = folium.Popup(_html_kv(f"WP {wp_id}", {
                             "ETA(ms)": w["eta"],

@@ -1,0 +1,8 @@
+# MessageID 0602 무인기 통제 명령
+
+ulong timestamp
+string source
+uint uavCommandModeType
+uint aircraftID
+FlightModeCommand flightModeCommand
+FilmingModeCommand filmingModeCommand

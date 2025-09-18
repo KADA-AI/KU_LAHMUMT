@@ -75,14 +75,14 @@ def _select_tx_fields(body: dict, fields: list) -> dict:
         out["timestamp"] = int(ts)
 
     s  = _get("source")
-    sm = _get("sourceModuleName") or _get("sourcemodulename")
+    sm = _get("Source") or _get("Source")
     rq = _get("requestModuleName") or _get("requestmodulename")
     src_val = s or sm or rq
     if src_val:
-        out["sourceModuleName"] = str(src_val)
+        out["Source"] = str(src_val)
 
     for f in fields:
-        if f in ("timestamp","source","sourceModuleName","requestModuleName"):
+        if f in ("timestamp","source","Source","requestModuleName"):
             continue
         v = _get(f)
         if v is not None:
@@ -244,7 +244,7 @@ def make_random_and_push(node_messenger) -> bytes:
             wl = TX_FIELD_WHITELIST.get(MSG_ID, [])
             body = {
                 "timestamp": int((datetime.utcnow().replace(tzinfo=timezone.utc) - _EPOCH_2000).total_seconds() * 1000),
-                "sourceModuleName": "DSC",
+                "Source": "DSC",
             }
             # ID 필드 결정
             if "inputMissionPackageID" in wl:          body["inputMissionPackageID"] = vid
@@ -263,7 +263,7 @@ def make_random_and_push(node_messenger) -> bytes:
                 body = {
                     "timestamp": int((datetime.utcnow().replace(tzinfo=timezone.utc) - _EPOCH_2000).total_seconds() * 1000),
                     "status": 1,  # 정상
-                    "sourceModuleName": "DSC",
+                    "Source": "DSC",
                 }
         wl = TX_FIELD_WHITELIST.get(MSG_ID)
         if wl and isinstance(body, dict):

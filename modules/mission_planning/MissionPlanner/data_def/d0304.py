@@ -3,11 +3,22 @@
 #           · 2번: +100 m north, 3번: –100 m north offset
 # ──────────────────────────────────────────────────────────────────
 from __future__ import annotations
+import os
 import math
 from collections import OrderedDict
 from typing import List, Tuple
 
+from UAV_missionPlanning import UAVMissionPlanner
 from .mission_helpers import now_ms_since_2000
+
+def _sw_code(default: str = "MMR") -> str:
+    """Resolve module code from KU_ROLE."""
+    role = (os.environ.get("KU_ROLE") or "").lower()
+    return {
+        "mission": "MMR",
+        "monitoring": "MSM",
+        "decision": "MOB",
+    }.get(role, default)
 
 WP_INTERVAL_M = 500.0        # Waypoint 간격(m) ─ 기본값
 
@@ -85,7 +96,7 @@ def _validate_lah_flight_plans(pkts: List[dict]) -> None:
         if not (lo <= path_id < lo+100_000_000):
             raise ValueError(f"[0304] aircraft {aid}: pathID {path_id} out of range")
 
-        for widx, wp in enumerate(pkt["waypointList"], 1):
+        for widx, wp in enumerate(pkt["lahWaypointList"], 1):
             atk = wp.get("attack")
             if atk is None:
                 raise ValueError(f"[0304] pkt#{pidx}/wp#{widx}: 'attack' 필드 없음")
@@ -160,8 +171,8 @@ def build_lah_flight_plans_from_mrpk(
         a_lat, a_lon = float(anchor["latitude"]), float(anchor["longitude"])
     else:
         # fallback: 첫 패킷 첫 WP 기준
-        if base_packets and base_packets[0]["waypointList"]:
-            c0 = base_packets[0]["waypointList"][0]["coordinate"]
+        if base_packets and base_packets[0]["lahWaypointList"]:
+            c0 = base_packets[0]["lahWaypointList"][0]["coordinate"]
             a_lat, a_lon = float(c0["latitude"]), float(c0["longitude"])
         else:
             return base_packets  # 아무것도 할 수 없음
@@ -183,7 +194,7 @@ def build_lah_flight_plans_from_mrpk(
     out_packets: List[dict] = []
     for pkt in base_packets:
         aid = pkt["aircraftID"]
-        wplist = pkt.get("waypointList") or []
+        wplist = pkt.get("lahWaypointList") or []
         if not wplist:
             continue
 
@@ -222,7 +233,7 @@ def build_lah_flight_plans_from_mrpk(
             ("timestamp",  now_ms),
             ("pathID",     pkt["pathID"]),
             ("aircraftID", aid),
-            ("waypointList", new_list),
+            ("lahWaypointList", new_list),
         ]))
 
     _validate_lah_flight_plans(out_packets)
@@ -237,10 +248,10 @@ def build_lah_flight_plans_fixed(
     wp_alloc: _WPAllocator | None = None,
 ) -> List[dict]:
     """
-    0302 → 0304 FlightPlan 변환.
-    · LAH-1 은 원본 좌표 그대로 사용
-    · LAH-2 → 경로 전체를 +100 m 북쪽(offset = +100 m north)
-    · LAH-3 → 경로 전체를 –100 m 북쪽(offset = -100 m north)
+    0302 -> 0304 FlightPlan 변환
+    · LAH-1 은 기본 좌표 그대로 사용
+    · LAH-2 는 경로 전체에 +100 m 북쪽(offset = +100 m north)
+    · LAH-3 는 경로 전체에 -100 m 북쪽(offset = -100 m north)
     """
     wp_alloc = wp_alloc or _WPAllocator()
     now_ms   = now_ms_since_2000()
@@ -261,57 +272,95 @@ def build_lah_flight_plans_fixed(
         if not coords:
             continue
 
-        # ── 100 m 오프셋 적용 ─────────────────────────
+        # --- 100 m offset 적용 (LAH-2/3) ---
         offset_north = 0.0
         if aid == 2:
             offset_north = 100.0      # +100 m north
         elif aid == 3:
-            offset_north = -100.0     # –100 m north
+            offset_north = -100.0     # -100 m north
         if offset_north:
             coords = [_offset_coord(lat, lon, north_m=offset_north)
                       for lat, lon in coords]
-        # ─────────────────────────────────────────────
 
-        is_move = len(coords) > 1
-        path: List[Tuple[float, float]] = [coords[0]]
-        if is_move:
-            for p, q in zip(coords, coords[1:]):
-                path.extend(_split_line(p, q, step_m=wp_interval_m))
+        wplist: List[OrderedDict] = []
 
-        total_len = max((len(path) - 1) * wp_interval_m, 1.0)
-        cum_len   = 0.0
-        wplist    = []
+        # --- 동역학 기반 궤적 샘플링 ---
+        if len(coords) >= 2:
+            try:
+                samples = UAVMissionPlanner.plan_route_only(
+                    coords,
+                    cruise_speed=cruise_speed,
+                    heading_tol_deg=15.0,
+                )
+            except Exception:
+                samples = []
+            if samples:
+                total_ms = sum(max(0, int(s.get("eta_ms", 0))) for s in samples) or 1
+                cum_ms = 0
+                for idx, sample in enumerate(samples):
+                    if idx > 0:
+                        prev = max(0, int(samples[idx - 1].get("eta_ms", 0)))
+                        cum_ms += prev
+                    eta_ms = int(cum_ms)
+                    ecf = 1.0 if idx == len(samples) - 1 else round(cum_ms / total_ms, 2)
+                    wp = OrderedDict([
+                        ("waypointID", wp_alloc.alloc()),
+                        ("coordinate", {
+                            "latitude":  round(float(sample.get("lat", 0.0)), 6),
+                            "longitude": round(float(sample.get("lon", 0.0)), 6),
+                            "altitude":  300,
+                        }),
+                        ("speed", cruise_speed),
+                        ("eta",   eta_ms),
+                        ("ecf",   ecf),
+                        ("nextWaypointID", 0),
+                    ])
+                    wp.update(_DEFAULT_WP_EXT)
+                    wplist.append(wp)
 
-        for idx, (lat, lon) in enumerate(path):
-            if idx:
-                cum_len += wp_interval_m
-            eta_ms = int(cum_len / cruise_speed * 1000) if idx else 0
-            ecf    = 1.0 if len(path) == 1 else round(cum_len / total_len, 2)
+        # --- fallback: 기존 직선 분할 ---
+        if not wplist:
+            path: List[Tuple[float, float]] = [coords[0]]
+            if len(coords) > 1:
+                for p, q in zip(coords, coords[1:]):
+                    path.extend(_split_line(p, q, step_m=wp_interval_m))
 
-            wp = OrderedDict([
-                ("waypointID", wp_alloc.alloc()),
-                ("coordinate", {
-                    "latitude":  round(lat, 6),
-                    "longitude": round(lon, 6),
-                    "altitude":  300,
-                }),
-                ("speed", cruise_speed),
-                ("eta",   eta_ms),
-                ("ecf",   ecf),
-                ("nextWaypointID", 0),
-            ])
-            wp.update(_DEFAULT_WP_EXT)
-            wplist.append(wp)
+            total_len = max((len(path) - 1) * wp_interval_m, 1.0)
+            cum_len   = 0.0
+            for idx, (lat, lon) in enumerate(path):
+                if idx:
+                    cum_len += wp_interval_m
+                eta_ms = int(cum_len / cruise_speed * 1000) if idx else 0
+                ecf    = 1.0 if len(path) == 1 else round(cum_len / total_len, 2)
+
+                wp = OrderedDict([
+                    ("waypointID", wp_alloc.alloc()),
+                    ("coordinate", {
+                        "latitude":  round(lat, 6),
+                        "longitude": round(lon, 6),
+                        "altitude":  300,
+                    }),
+                    ("speed", cruise_speed),
+                    ("eta",   eta_ms),
+                    ("ecf",   ecf),
+                    ("nextWaypointID", 0),
+                ])
+                wp.update(_DEFAULT_WP_EXT)
+                wplist.append(wp)
 
         for i in range(len(wplist) - 1):
             wplist[i]["nextWaypointID"] = wplist[i + 1]["waypointID"]
+        if wplist:
+            wplist[-1]["ecf"] = 1.0
 
         packets.append(OrderedDict([
             ("timestamp",   now_ms),
+            ("Source", _sw_code()),
             ("pathID",      path_id),
             ("aircraftID",  aid),
-            ("waypointList", wplist),
+            ("lahWaypointList", wplist),
         ]))
 
     _validate_lah_flight_plans(packets)
     return packets
+
