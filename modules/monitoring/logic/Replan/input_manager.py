@@ -4,7 +4,6 @@ import random
 import string
 import time
 from datetime import datetime, timezone
-, timezone
 from typing import Callable, Dict, Union
 
 
