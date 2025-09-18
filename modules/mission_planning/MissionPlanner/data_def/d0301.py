@@ -187,7 +187,7 @@ def build_mission_plan(
     # ── 메시지 생성 -------------------------------------------------------
     mp = {
         "timestamp":                 ts_now,
-        "sourceModuleName":         _sw_code(),
+        "Source":         _sw_code(),
         "missionPlanID":             mission_plan_id,
         "missionPlanTimestamp":      ts_now,
         "planningTime":              float(planning_time_s),  # float(초)

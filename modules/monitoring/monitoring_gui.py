@@ -129,7 +129,7 @@ class MainWindow(QMainWindow):
 
         # 0102 바디 고정(전원 ON 스트림용): MSM, Status=1, Timestamp=ms(2000 epoch)
         self._tab._build_overridden_body = (
-            lambda mid: {"Timestamp": _now_ms_since_2000(), "Status": 1, "SourceModuleName": "MSM"}
+            lambda mid: {"Timestamp": _now_ms_since_2000(), "Status": 1, "Source": "MSM"}
             if str(mid).strip() == "0102" else None
         )
 

@@ -88,9 +88,9 @@ def _dict_to_obj(body: dict):
     # timestamp
     _try_set(obj, "timestamp", int(body.get("timestamp", _now_ms())))
     # source 호환
-    src = body.get("source") or body.get("sourceModuleName") or body.get("requestModuleName") or "MMR"
+    src = body.get("source") or body.get("Source") or body.get("requestModuleName") or "MMR"
     if not _try_set(obj, "source", str(src)):
-        _try_set(obj, "sourceModuleName", str(src))
+        _try_set(obj, "Source", str(src))
     # status 계열(최우선: missionPlanningStatus)
     st = int(body.get("missionPlanningStatus", body.get("status", 0)))
     if not (_try_set(obj, "missionPlanningStatus", st) or _try_set(obj, "status", st)):

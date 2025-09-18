@@ -318,7 +318,7 @@ def build_mission_packages(
         # 6) IMP 패키지 작성
         out.append(OrderedDict([
             ("timestamp",                  now_ms),
-            ("sourceModuleName",          _sw_code()),
+            ("Source",          _sw_code()),
             ("individualMissionPackageID", pkg_id),
             ("aircraftID",                 aid),
             ("individualMissionList",      ordered_list),

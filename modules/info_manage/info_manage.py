@@ -127,9 +127,9 @@ class MainWindow(QMainWindow):
         tabs = QTabWidget()
         self._tab = ManageInfo(messenger=NodeMessenger)
 
-        # 0102 바디 고정 오버라이드: Timestamp/Status/SourceModuleName(INF)
+        # 0102 바디 고정 오버라이드: Timestamp/Status/Source(INF)
         self._tab._build_overridden_body = lambda mid: (
-            {"Timestamp": _now_ms_since_2000(), "Status": 1, "SourceModuleName": "INF"}
+            {"Timestamp": _now_ms_since_2000(), "Status": 1, "Source": "INF"}
             if str(mid).strip() == "0102" else None
         )
 
@@ -375,7 +375,7 @@ class MainWindow(QMainWindow):
             self._append_log_line(f"0102 push import 실패: {e}")
             return
         # 오버라이드가 실패한 경우 대비 폴백(대소문자 고정)
-        body = {"Timestamp": _now_ms_since_2000(), "Status": int(status), "SourceModuleName": "INF"}
+        body = {"Timestamp": _now_ms_since_2000(), "Status": int(status), "Source": "INF"}
         try:
             push_message("0102", NodeMessenger, body_dict=body)
             self._append_log_line("자체점검(0102) 발신")

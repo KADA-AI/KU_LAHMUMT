@@ -118,7 +118,7 @@ def _push_0102_fixed(status: int = 1):
     body = {
         "Timestamp": _now_ms_since_2000(),
         "Status": int(status),           # 0/1/2
-        "SourceModuleName": "MOB",       # 의사결정 모듈명
+        "Source": "MOB",       # 의사결정 모듈명
     }
     try:
         return bool(push_message("0102", NodeMessenger, body_dict=body))
@@ -149,7 +149,7 @@ class MainWindow(QMainWindow):
 
         # 0102 바디 오버라이드: 항상 MOB 고정형 생성
         self._tab._build_overridden_body = lambda mid: (
-            {"Timestamp": _now_ms_since_2000(), "Status": 1, "SourceModuleName": "MOB"}
+            {"Timestamp": _now_ms_since_2000(), "Status": 1, "Source": "MOB"}
             if str(mid).strip() == "0102" else None
         )
 

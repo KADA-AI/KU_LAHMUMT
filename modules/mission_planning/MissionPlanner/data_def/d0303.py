@@ -582,7 +582,7 @@ def build_flight_plans(
     for pkt in packets:
         result.append(OrderedDict([
             ("timestamp", now_ms),
-            ("sourceModuleName", _sw_code()),
+            ("Source", _sw_code()),
             ("pathID", pkt["pathID"]),
             ("aircraftID", pkt["aircraftID"]),
             ("isFormationFlight", False),

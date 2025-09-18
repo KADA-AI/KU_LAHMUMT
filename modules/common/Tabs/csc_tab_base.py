@@ -554,7 +554,7 @@ class CSCTabBase(QWidget):
                 raw: bytes | None):
         """
         로그 출력:
-        - 0102일 때만 BODY JSON을 'Timestamp, Status, SourceModuleName' 순서로 재정렬해서 보기 좋게 표시
+        - 0102일 때만 BODY JSON을 'Timestamp, Status, Source' 순서로 재정렬해서 보기 좋게 표시
         - 값은 변경하지 않음(재계산/추가 금지), 'sent' 같은 내부 키는 제거
         """
         ts = datetime.now().strftime("%H:%M:%S")
@@ -580,12 +580,12 @@ class CSCTabBase(QWidget):
                                 payload["Status"] = obj["Status"]
                             elif "status" in obj:
                                 payload["Status"] = obj["status"]
-                            if "SourceModuleName" in obj:
-                                payload["SourceModuleName"] = obj["SourceModuleName"]
+                            if "Source" in obj:
+                                payload["Source"] = obj["Source"]
                             elif "source" in obj:
-                                payload["SourceModuleName"] = obj["source"]
+                                payload["Source"] = obj["source"]
                             elif "requestModuleName" in obj:
-                                payload["SourceModuleName"] = obj["requestModuleName"]
+                                payload["Source"] = obj["requestModuleName"]
                             # 불필요한 내부 키 제거
                             for k in ("sent", ):
                                 payload.pop(k, None)

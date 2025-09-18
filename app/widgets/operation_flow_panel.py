@@ -76,16 +76,25 @@ class OperationFlowPanel(Card):
         ]
 
         columns = 9
+        buttons = []
         for idx, (code, label) in enumerate(button_specs):
             row = idx // columns
             col = idx % columns
             btn = OperationButton(code, label, container)
             btn.setObjectName(f"btn_state_{code.lower()}")
             btn.setMinimumHeight(34)
-            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             btn.clicked.connect(lambda checked=False, c=code: self.stateTriggered.emit(c))
             btn.rightClicked.connect(self._show_operation_image)
             grid.addWidget(btn, row, col)
+            buttons.append(btn)
+
+        if buttons:
+            target_width = max(btn.sizeHint().width() for btn in buttons)
+            for btn in buttons:
+                btn.setMinimumWidth(target_width)
+            for col in range(columns):
+                grid.setColumnStretch(col, 1)
 
         self.body_layout.addWidget(container, 1)
         self.body_layout.addStretch(1)

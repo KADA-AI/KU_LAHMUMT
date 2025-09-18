@@ -464,7 +464,7 @@ class DashboardOrchestrator(QObject):
         # 소스 추정(로깅/디듀프용)
         src_key = None
         if isinstance(payload_obj, dict):
-            src = payload_obj.get("SourceModuleName") or payload_obj.get("source") or payload_obj.get("requestModuleName")
+            src = payload_obj.get("Source") or payload_obj.get("source") or payload_obj.get("requestModuleName")
             if src:
                 s = str(src).upper()
                 if "MMR" in s or "MULTI-AGENT MISSION PLANNER" in s:

@@ -140,7 +140,7 @@ class MainWindow(QMainWindow):
         self._tab.set_replan_callback(self._handle_replan_received)
 
         self._tab._build_overridden_body = lambda mid: (
-            {"Timestamp": _now_ms_since_2000(), "Status": 1, "SourceModuleName": "MMR"}
+            {"Timestamp": _now_ms_since_2000(), "Status": 1, "Source": "MMR"}
             if str(mid).strip() == "0102" else None
         )
 

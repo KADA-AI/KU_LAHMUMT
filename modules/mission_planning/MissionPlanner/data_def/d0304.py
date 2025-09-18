@@ -355,7 +355,7 @@ def build_lah_flight_plans_fixed(
 
         packets.append(OrderedDict([
             ("timestamp",   now_ms),
-            ("sourceModuleName", _sw_code()),
+            ("Source", _sw_code()),
             ("pathID",      path_id),
             ("aircraftID",  aid),
             ("lahWaypointList", wplist),
