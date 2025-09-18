@@ -1,4 +1,3 @@
-# 파일: /mnt/data/monitoring_gui.py
 # -*- coding: utf-8 -*- 
 # monitoring_gui.py – 임무 모니터링·판단 전용 GUI
 from __future__ import annotations
@@ -24,6 +23,7 @@ for _p in (_ROOT, _ROOT / "modules", _ROOT / "modules" / "common"):
 
 from modules.common.status_reporter import send_status_ok
 from modules.common.ctrl_listener import start_ctrl_listener, env_ctrl_port
+from receive_center import register_listener   # ★ 0101 리스너 등록용
 
 # ───────── Qt 경고 필터 ─────────
 def _qt_silent_handler(mode: QtMsgType, context, message: str):
@@ -121,29 +121,6 @@ def _z4(s: str) -> str:
     s = str(s).strip()
     return s.zfill(4) if s.isdigit() and len(s) < 4 else s
 
-def _extract_json_from_raw(raw: bytes | None):
-    if not raw:
-        return None
-    try:
-        txt = raw.decode("utf-8", "ignore")
-        import re, json
-        m = re.search(r"\{.*\}", txt, flags=re.S)
-        if not m:  # 전체가 JSON일 수도 있음
-            return json.loads(txt)
-        return json.loads(m.group(0))
-    except Exception:
-        return None
-
-def _pretty(obj, limit=800):
-    try:
-        import json
-        s = json.dumps(obj, ensure_ascii=False, indent=2)
-    except Exception:
-        s = str(obj)
-    if len(s) > limit:
-        return s[:limit] + " ... (truncated)"
-    return s
-
 # ───────── 메인 윈도우 ─────────
 class MainWindow(QMainWindow):
     ctrl_payload = pyqtSignal(dict)
@@ -158,19 +135,27 @@ class MainWindow(QMainWindow):
         self._self_check_sent = False
         self._last_ctrl_ts = {}   # 디듀프용
         self._staged_replan_context = None
-        self._rx_counts = {}      # ★ msg_id별 RX 누적 카운트 (UDP 알림용)
 
         tabs = QTabWidget()
         self._tab = MissionMonitoringTab(messenger=NodeMessenger)
+        self._install_mode_parsefail_log_filter()
 
-        # 0102 바디 고정(전원 ON 스트림용): MSM, Status=1, Timestamp=ms(2000 epoch)
-        self._tab._build_overridden_body = (
-            lambda mid: {"Timestamp": _now_ms_since_2000(), "Status": 1, "Source": "MSM"}
-            if str(mid).strip() == "0102" else None
-        )
+        def _override_body(mid: str):
+            code = str(mid).strip()
+            if code == "0102":
+                return {"Timestamp": _now_ms_since_2000(), "Status": 1, "Source": "MSM"}
+            if code == "0902":
+                try:
+                    return self._build_0902_body()   # ← 아래 2)에서 추가
+                except Exception as e:
+                    self._append_log_line(f"[0902] 바디 생성 실패: {e}")
+                    return None
+            return None
 
-        self._install_power_gate_hooks()  # TX/RX 차단 가드
-        self._install_mon_wires()         # ★ 모니터링 전송 훅
+        self._tab._build_overridden_body = _override_body
+
+        self._install_power_gate_hooks()  # TX 차단 가드
+        self._install_mon_wires()         # ★ 모니터링 전송 훅 (TX/MODE)
         tabs.addTab(self._tab, "임무 모니터링·판단 CSC")
 
         # ───── 상단 슬라이더 바 ─────
@@ -208,192 +193,382 @@ class MainWindow(QMainWindow):
                 pass
         start_ctrl_listener(env_ctrl_port(45982), _on_ctrl)
 
+        # ★★★ 0101 수신 → 모드 반영 리스너 (기존 유지)
+        self._install_0101_mode_listener()
+        # ★★★ RX 테이블 폴링으로도 0101을 잡아 모드 반영(리시버 경로 불안정 대비, 기존 동작 불변)
+        self._start_0101_rx_poller()
+
+    def _collect_input_mission_ids(self) -> list:
+        """
+        database/InputMissionPlan/ 아래 모든 *.json에서 inputMissionList[].inputMissionID 수집.
+        없으면 (예시값) [107,108] 폴백.
+        """
+        ids = []
+        try:
+            base = PROJECT_ROOT / "database" / "InputMissionPlan"
+            cand_files = []
+            if base.exists() and base.is_dir():
+                cand_files.extend([p for p in base.glob("*.json") if p.is_file()])
+            single = PROJECT_ROOT / "database" / "InputMissionPlan.json"
+            if single.exists():
+                cand_files.append(single)
+
+            import json
+            for fp in cand_files:
+                try:
+                    obj = json.loads(fp.read_text(encoding="utf-8"))
+                    for it in (obj.get("inputMissionList") or []):
+                        try:
+                            ids.append(int(it.get("inputMissionID")))
+                        except Exception:
+                            continue
+                except Exception:
+                    continue
+            ids = sorted(set(ids))
+        except Exception:
+            ids = []
+        if not ids:
+            # 폴백(요청 예시)
+            ids = [107, 108]
+        return ids
+
+    # ───────── 0902: missionPlanID 시퀀스 ─────────
+    def _next_mission_plan_ids(self, count: int) -> list:
+        """
+        database/mission_plan_seq.txt 에서 연속 missionPlanID 지급.
+        - 최초: 700000001 시작
+        - 호출마다 오름차순, 중복 방지
+        """
+        seq_file = PROJECT_ROOT / "database" / "mission_plan_seq.txt"
+        start = 700000001
+        try:
+            if seq_file.exists():
+                txt = seq_file.read_text(encoding="utf-8").strip()
+                if txt:
+                    start = max(start, int(txt))
+        except Exception:
+            start = 700000001
+        out = list(range(start, start + int(count)))
+        try:
+            seq_file.parent.mkdir(parents=True, exist_ok=True)
+            seq_file.write_text(str(start + int(count)), encoding="utf-8")
+        except Exception:
+            pass
+        return out
+
+    # ───────── 0902: 하드코딩 바디 생성 ─────────
+    def _build_0902_body(self) -> dict:
+        """
+        요청 사양에 맞춰 0902 재계획요청 생성 (다른 필드는 고정, ID 규칙만 준수).
+        - source      : 'MMR' (요청대로 고정)
+        - replanLevel : 1
+        - replanReason: '초기임무재계획'
+        - inputMissionIDList: database/InputMissionPlan 의 모든 inputMissionID
+        - pendingOptionList : option 1~3, missionPlanID 700000001~ 오름차순, 중복X
+        """
+        now = _now_ms_since_2000()
+        input_ids = self._collect_input_mission_ids()
+        mpids = self._next_mission_plan_ids(3)
+
+        body = {
+            "timestamp": now,
+            "source": "MMR",  # ← 요청대로 고정
+            "replanRequestTime": {
+                "replanRequestTimestamp": now
+            },
+            "replanLevel": 1,
+            "inputMissionIDList": [{"inputMissionID": i} for i in input_ids],
+            "replanReason": "초기임무재계획",
+            "pendingOptionList": [
+                {"optionID": 1, "optionName": "시스템추천",   "missionPlanID": mpids[0]},
+                {"optionID": 2, "optionName": "임무시간최소화", "missionPlanID": mpids[1]},
+                {"optionID": 3, "optionName": "촬영효과최대",  "missionPlanID": mpids[2]},
+            ],
+        }
+        # 로깅(선택)
+        self._append_log_line(f"[0902] 하드코딩 생성 완료 (inputMissionIDs={len(input_ids)}, mpid@{mpids[0]}~)")
+        return body
+
+    def _install_mode_parsefail_log_filter(self):
+        """탭의 append_log를 래핑해 '[MODE] … 모드 파싱 실패' 로그를 숨긴다."""
+        tab = getattr(self, "_tab", None)
+        if not tab or not hasattr(tab, "append_log"):
+            return
+        self._orig_append_log = tab.append_log
+
+        def _filtered_append_log(text: str):
+            t = str(text)
+            if "[MODE]" in t and "수신은 했으나 모드 파싱 실패" in t:
+                return  # ← 해당 라인만 무시
+            return self._orig_append_log(text)
+
+        tab.append_log = _filtered_append_log
+        
+    # ───────── 0101 모드 수신 리스너 ─────────
+    def _install_0101_mode_listener(self):
+        """
+        receive_center.notify("0101", raw)를 직접 수신해
+        systemMode 숫자코드를 슬라이더로 바로 반영.
+        """
+        class _Rx0101:
+            def __init__(self, host): self.host = host
+            def mark_received(self, msg_id: str, raw: bytes | None = None):
+                try:
+                    self.host._on_rx_0101(raw)
+                except Exception:
+                    pass
+
+        try:
+            self._rx0101 = _Rx0101(self)
+            register_listener("0101", self._rx0101)
+            self._append_log_line("[0101] 모드 수신 리스너 등록 완료")
+        except Exception as e:
+            self._append_log_line(f"[0101] 리스너 등록 실패: {e}")
+
+    def _on_rx_0101(self, raw: bytes | None):
+        # 1) RAW → 텍스트
+        txt = (raw or b"").decode("utf-8", "ignore")
+        # 2) JSON 추출 시도(원문이 JSON만 올 때와, 프리텍스트가 붙을 때 모두 대응)
+        m = re.search(r"\{.*\}", txt, flags=re.S)
+        jtxt = m.group(0) if m else txt.strip()
+        # 3) 딕셔너리 파싱(안되면 빈 dict)
+        try:
+            body = json.loads(jtxt) if jtxt.startswith("{") else {}
+        except Exception:
+            body = {}
+
+        # 4) 코드 추출(대/소문자·자료형·문자열·불리언 모두 흡수)
+        code = self._extract_mode_code(body)
+        if code is None:
+            # 마지막 폴백: RAW에서 정규식으로 직접 찾기
+            mm = re.search(r'"systemMode"\s*:\s*([0-9]+)', txt)
+            if mm:
+                try: code = int(mm.group(1))
+                except Exception: code = None
+
+        # ▼▼▼ 여기만 변경: 더 이상 "파싱 실패" 로그를 찍지 않고 조용히 반환
+        if code is None:
+            return
+        # ▲▲▲
+
+        ok = self._apply_system_mode_code(code)
+        if not ok:
+            self._append_log_line(f"[MODE] 미지원 코드({code})")
+        else:
+            self._append_log_line(f"[0101] 시스템 운용 모드 수신 → code={code}")
+
+    def _extract_mode_code(self, body: dict) -> int | None:
+        """
+        dict의 다양한 키에서 모드코드를 견고하게 추출.
+        - 키 대/소문자 무시
+        - 값이 str/bool/float 모두 허용
+        """
+        if not isinstance(body, dict):
+            return None
+        low = {str(k).lower(): body[k] for k in body.keys() if k is not None}
+        for key in ("systemmode", "mode", "modecode", "state"):
+            if key in low:
+                v = low[key]
+                # bool → 0/1
+                if isinstance(v, bool):
+                    return 1 if v else 0
+                # 숫자/문자 모두 int로
+                try:
+                    return int(v)
+                except Exception:
+                    try:
+                        return int(float(str(v).strip()))
+                    except Exception:
+                        return None
+        return None
+
+    def _apply_system_mode_code(self, code: int) -> bool:
+        """
+        외부 0101 systemMode 매핑 (요청 정의)
+          0 : 초기화 모드
+          1 : 대기 모드
+          2 : 초기임무계획 모드
+          3 : 임무수행 모드
+        내부 슬라이더(0~4): [0=전원 OFF, 1=전원 ON, 2=대기모드, 3=초기 임무 계획, 4=임무 수행]
+        → 교차 매핑: 0→1, 1→2, 2→3, 3→4
+        """
+        code_to_slider = {0: 1, 1: 2, 2: 3, 3: 4}
+        if code not in code_to_slider:
+            return False
+        val = code_to_slider[code]
+        try:
+            # 슬라이더 값 세팅 + 부수효과 실행
+            self.mode_slider.blockSignals(True)
+            self.mode_slider.setValue(val)
+            self.mode_slider.blockSignals(False)
+            self._on_mode_slider_changed(val)
+        except Exception:
+            return False
+        return True
+
+    # ───────── RX 테이블 폴링 기반 0101 모드 반영(비침투, 안전) ─────────
+    def _start_0101_rx_poller(self):
+        """탭의 RX 테이블에 저장된 0101 RAW(UserRole)를 주기적으로 확인해 모드 반영."""
+        self._last_0101_raw = None
+        self._poll_0101_timer = QTimer(self)
+        self._poll_0101_timer.setInterval(250)  # 4Hz
+        self._poll_0101_timer.timeout.connect(self._poll_0101_in_rx_table)
+        self._poll_0101_timer.start()
+
+    def _poll_0101_in_rx_table(self):
+        try:
+            tab = getattr(self, "_tab", None)
+            tbl = getattr(tab, "tbl_rx", None) if tab else None
+            if tbl is None:
+                return
+            target_row = -1
+            for r in range(tbl.rowCount()):
+                it = tbl.item(r, 0)
+                if it and it.text().strip() == "0101":
+                    target_row = r
+                    break
+            if target_row < 0:
+                return
+            raw = tbl.item(target_row, 0).data(Qt.UserRole)
+            if not raw or (self._last_0101_raw is not None and raw == self._last_0101_raw):
+                return
+
+            txt = (raw or b"").decode("utf-8", "ignore")
+            m = re.search(r"\{.*\}", txt, flags=re.S)
+            jtxt = m.group(0) if m else txt.strip()
+            body = {}
+            try:
+                if jtxt.startswith("{"):
+                    body = json.loads(jtxt)
+            except Exception:
+                body = {}
+
+            code = self._extract_mode_code(body)
+            if code is None:
+                mm = re.search(r'"systemMode"\s*:\s*([0-9]+)', txt)
+                if mm:
+                    try: code = int(mm.group(1))
+                    except Exception: code = None
+
+            if code is not None:
+                if self._apply_system_mode_code(code):
+                    # 새 RAW에 대해서만 로그
+                    self._append_log_line(f"[0101/POLL] 모드 반영 → code={code}")
+                self._last_0101_raw = raw
+        except Exception:
+            pass
+
+    # ───────── 모드/슬라이더 유틸 ─────────
+    def _sw_code(self) -> str:
+        role = (os.environ.get("KU_ROLE") or "").lower()
+        return {"mission":"MMR","monitoring":"MSM","decision":"MOB"}.get(role, "MMR")
+
+    def _on_mode_slider_changed(self, val: int):
+        labels = ["전원 OFF", "전원 ON", "대기모드", "초기 임무 계획", "임무 수행"]
+        try: self.mode_now.setText(labels[int(val)])
+        except Exception: pass
+        self._power_on = (int(val) != 0)
+        self._append_log_line(f"[MODE] 슬라이더 변경 → {labels[int(val)] if 0 <= val < len(labels) else val}")
+        # ★ 모드 변경도 대시보드로 통지
+        try: self._send_mon("mode", text=labels[int(val)], role="MSM")
+        except Exception: pass
+        self._apply_power_state()
+        if self._power_on:
+            QTimer.singleShot(500, self._start_0102_stream)
+
+    def _set_mode_slider_by_text(self, text: str):
+        # 텍스트 별칭 확장 (공백/‘모드’ 접미 허용)
+        labels = ["전원 OFF", "전원 ON", "대기모드", "초기 임무 계획", "임무 수행"]
+        norm = re.sub(r"\s+", "", str(text)).lower()
+
+        mapping = {
+            "전원off": 0, "off": 0, "poweroff": 0, "0": 0,
+            "전원on":  1, "on": 1,  "poweron": 1,  "1": 1,
+            "대기모드": 2, "대기": 2, "standby": 2, "2": 2,
+            "초기임무계획": 3, "초기임무계획모드": 3, "initplan": 3, "initial": 3, "3": 3,
+            "임무수행": 4, "임무수행모드": 4, "execution": 4, "4": 4,
+
+            # 요청 정의와 표현 일치
+            "초기화모드": 1,  # 초기화 모드 → 전원 ON 단계로 표시
+            "초기임무계획모드": 3,
+        }
+
+        val = mapping.get(norm, 2)
+        try:
+            if getattr(self, "mode_slider", None) is not None:
+                if self.mode_slider.value() != val:
+                    self.mode_slider.blockSignals(True)
+                    self.mode_slider.setValue(val)
+                    self.mode_slider.blockSignals(False)
+            if getattr(self, "mode_now", None) is not None:
+                self.mode_now.setText(labels[val])
+            self._send_mon("mode", text=labels[val], role="MSM")
+        except Exception:
+            pass
+
+        self._power_on = (int(val) != 0)
+        self._apply_power_state()
+        if self._power_on:
+            QTimer.singleShot(500, self._start_0102_stream)
+
+    # ───────── 모니터링(대시보드) 전송 훅 ─────────
     def _install_mon_wires(self):
         """
         - TX 완료(mark_sent) 시 → {"kind":"tx","msg_id":"XXXX"} UDP 전송
         - 주기 TX(_log_only)도 동일 처리
         - 버튼 클릭 경로에서도 선제 통지(실패해도 무해)
-        - (RX) 실제 수신은 탭 내부 로직이 처리하고, 그 '후'에 bump_rx 래핑으로 UDP 알림만 추가
         """
         tab = self._tab
 
-        # (1) mark_sent 래핑 (TX 전송 알림) — 그대로
+        # (1) mark_sent 래핑 (TX 전송 알림)
         if hasattr(tab, "mark_sent"):
             self._orig_mark_sent = tab.mark_sent
             def _wrapped_mark_sent(msg_id: str, raw: bytes = None):
-                try: self._send_mon("tx", msg_id=_z4(str(msg_id)))
-                except Exception: pass
+                try:
+                    self._send_mon("tx", msg_id=_z4(str(msg_id)))
+                except Exception:
+                    pass
                 return self._orig_mark_sent(msg_id, raw)
             tab.mark_sent = _wrapped_mark_sent  # type: ignore
 
-        # (2) _log_only 래핑 — 그대로
+        # (2) _log_only 래핑(주기 TX 로그 경로)
         if hasattr(tab, "_log_only"):
             self._orig_log_only = tab._log_only
             def _wrapped_log_only(row: int, msg_id: str, raw: bytes = None):
-                try: self._send_mon("tx", msg_id=_z4(str(msg_id)))
-                except Exception: pass
+                try:
+                    self._send_mon("tx", msg_id=_z4(str(msg_id)))
+                except Exception:
+                    pass
                 return self._orig_log_only(row, msg_id, raw)
             tab._log_only = _wrapped_log_only  # type: ignore
 
-        # (3) 버튼 클릭 래핑 — 그대로
+        # (3) 버튼 클릭 경로에서도 선제 통지
         if hasattr(tab, "tbl_tx") and hasattr(tab, "_on_tx_button_clicked"):
             self._orig_tx_click_for_mon = tab._on_tx_button_clicked
             def _wrapped_click_for_mon(row: int):
                 try:
                     it = getattr(tab, "tbl_tx").item(row, 0)
-                    if it: self._send_mon("tx", msg_id=_z4(it.text()))
-                except Exception: pass
+                    if it:
+                        self._send_mon("tx", msg_id=_z4(it.text()))
+                except Exception:
+                    pass
                 return self._orig_tx_click_for_mon(row)
             tab._on_tx_button_clicked = _wrapped_click_for_mon  # type: ignore
 
-        # (4) bump_rx 래핑 — 수신 직후 카운트 & UDP, 그리고 msg_id만 간단 출력
-        if hasattr(tab, "bump_rx") and not hasattr(self, "_rx_bump_wrapped"):
-            _orig_bump_rx = tab.bump_rx
-            def _wrapped_bump_rx(msg_id: str):
-                _orig_bump_rx(msg_id)
-                try:
-                    print(f"[MSM RX] bump_rx mid={_z4(msg_id)}")
-                    if hasattr(self._tab, "append_log"):
-                        self._tab.append_log(f"[MSM RX] { _z4(msg_id) } 수신")
-                except Exception:
-                    pass
-                mid = _z4(str(msg_id))
-                def _pulse():
-                    cnt = self._rx_counts.get(mid, 0) + 1
-                    self._rx_counts[mid] = cnt
-                    self._send_mon("rx", msg_id=mid, count=cnt)
-                QTimer.singleShot(0, _pulse)
-            tab.bump_rx = _wrapped_bump_rx  # type: ignore
-            self._rx_bump_wrapped = True
-
-        if not getattr(self, "_rx_shadow_installed", False):
-            try:
-                # ✅ receive_center 모듈 객체를 '실사용 중인 동일 인스턴스'로 강제 통일
-                import sys
-                _rc = None
-                for k in (
-                    "modules.common.receive_center",  # 우선 공용 경로
-                    "receive_center",                 # 루트 경로 (프로젝트에 따라 이쪽을 씀)
-                ):
-                    if k in sys.modules:
-                        _rc = sys.modules[k]
-                        break
-                if _rc is None:
-                    try:
-                        from modules.common import receive_center as _rc  # type: ignore
-                    except Exception:
-                        import receive_center as _rc  # type: ignore
-
-                register_listener = getattr(_rc, "register_listener")
-
-                # ---- 프린트 유틸 ----
-                def _extract_json_from_raw(raw: bytes | None):
-                    if not raw:
-                        return None
-                    try:
-                        txt = raw.decode("utf-8", "ignore")
-                        import re, json
-                        m = re.search(r"\{.*\}", txt, flags=re.S)
-                        if not m:
-                            return json.loads(txt)
-                        return json.loads(m.group(0))
-                    except Exception:
-                        return None
-
-                def _pretty(obj, limit=1200):
-                    try:
-                        import json
-                        s = json.dumps(obj, ensure_ascii=False, indent=2)
-                    except Exception:
-                        s = str(obj)
-                    return s if len(s) <= limit else s[:limit] + " ... (truncated)"
-
-                class _RxMonTap:
-                    def __init__(self, send_fn, z4_fn, log_fn):
-                        self._send = send_fn; self._z4 = z4_fn; self._log = log_fn
-                    def mark_received(self, msg_id: str, raw: bytes | None = None):
-                        mid = self._z4(msg_id)
-                        obj = _extract_json_from_raw(raw)
-                        # ★ 여기서 '무엇을 받았는지' 즉시 출력
-                        if obj is not None:
-                            txt = _pretty(obj)
-                            print(f"[MSM RX] mid={mid} payload=\n{txt}")
-                            self._log(f"[MSM RX] {mid} payload\n{txt}")
-                        else:
-                            ln = 0 if raw is None else len(raw)
-                            print(f"[MSM RX] mid={mid} (non-JSON raw, {ln} bytes)")
-                            self._log(f"[MSM RX] {mid} (non-JSON raw, {ln} bytes)")
-                        # rx UDP 통지
-                        try:
-                            self._send("rx", msg_id=mid)
-                        except Exception:
-                            pass
-
-                def _safe_log(text: str):
-                    try:
-                        if hasattr(self._tab, "append_log"):
-                            self._tab.append_log(text)
-                        else:
-                            print(text)
-                    except Exception:
-                        pass
-
-                tap = _RxMonTap(self._send_mon, _z4, _safe_log)
-
-                # 현재 탭이 선언한 수신 코드들에만 ‘추가’ 등록 (덮어쓰기 아님)
-                recv_list = getattr(self._tab, "RECEIVE_MESSAGES", None)
-                if recv_list:
-                    for mid, _desc in recv_list:
-                        try: register_listener(str(mid), tap)
-                        except Exception: pass
-                else:
-                    # 안전 기본값
-                    for mid in ("0000","0101","0102","0201","0202","0203","0301","0302","0303","0304",
-                                "0401","0402","0601","0702","0802","0803","0902"):
-                        try: register_listener(mid, tap)
-                        except Exception: pass
-
-                self._rx_shadow_installed = True
-                self._append_log_line("[MON] RX shadow listener installed (bound to active receive_center)")
-            except Exception as e:
-                self._append_log_line(f"[MON] RX shadow listener failed: {e}")
-                
-
     def _send_mon(self, kind: str, **payload):
         """
         대시보드(run.py)가 수신하는 모듈별 모니터링 UDP(JSON).
         포트: KU_MON_MONITORING_PORT(기본 46982)
+        kind: "tx" | "mode"
         """
-        data = {"kind": str(kind), "role": "monitoring", **payload}
-
-        try:
-            # ★ 보내는 JSON을 터미널에 그대로 출력
-            text = json.dumps(data, ensure_ascii=False)
-            print(f"[MSM→RUN UDP SEND] {text}")
-
-            # 실제 송신
-            buf = text.encode("utf-8", "ignore")
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.sendto(buf, ("127.0.0.1", _mon_port()))
-            s.close()
-        except Exception as e:
-            # 송신 실패도 확인 가능하게 출력
-            print(f"[MSM→RUN UDP ERROR] {e}  data={data}")
-
-
-    def _send_mon(self, kind: str, **payload):
-        """
-        대시보드(run.py)가 수신하는 모듈별 모니터링 UDP(JSON).
-        포트: KU_MON_MONITORING_PORT(기본 46982)
-        """
-        data = {"kind": str(kind), "role": "monitoring", **payload}  # ← role 명시
+        data = {"kind": str(kind), **payload}
         try:
             buf = json.dumps(data, ensure_ascii=False).encode("utf-8", "ignore")
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.sendto(buf, ("127.0.0.1", _mon_port()))
             s.close()
         except Exception:
-            pass
+            pass  # 모니터링용이므로 실패해도 동작에는 영향 없음
 
     # ───────── Power ON 시 0.5s 뒤 0102 5Hz 자동 시작 ─────────
     def _start_0102_stream(self):
@@ -405,7 +580,7 @@ class MainWindow(QMainWindow):
             pass
         self._ensure_selfcheck_0102(True)
 
-    # ───────── Power OFF 가드 설치(발신/수신/카운트/우회 클릭 차단) ─────────
+    # ───────── Power OFF 가드 설치(발신/우회 클릭 차단) ─────────
     def _install_power_gate_hooks(self):
         try:
             tab = self._tab
@@ -447,7 +622,7 @@ class MainWindow(QMainWindow):
         on = bool(self._power_on)
         try:
             self._update_tx_table_enabled(on)
-            self._update_rx_table_enabled(True)  # ★ 항상 활성
+            self._update_rx_table_enabled(True)  # ★ RX 테이블은 항상 활성 (UDP 미사용)
             if not on:
                 self._stop_all_periodic()
         except Exception:
@@ -498,60 +673,20 @@ class MainWindow(QMainWindow):
 
     def _append_log_line(self, text: str):
         try:
+            # ⚠️ 불필요한 0101 파싱 실패 로그는 무시
+            t = str(text)
+            if "[MODE]" in t and "수신은 했으나 모드 파싱 실패" in t:
+                return
+
             if getattr(self, "_tab", None) and hasattr(self._tab, "append_log"):
-                self._tab.append_log(text); return
+                self._tab.append_log(text)
+                return
         except Exception:
             pass
         try:
             print(text)
         except Exception:
             pass
-
-    # ───────── 모드/슬라이더 유틸 ─────────
-    def _sw_code(self) -> str:
-        role = (os.environ.get("KU_ROLE") or "").lower()
-        return {"mission":"MMR","monitoring":"MSM","decision":"MOB"}.get(role, "MMR")
-
-    def _on_mode_slider_changed(self, val: int):
-        labels = ["전원 OFF", "전원 ON", "대기모드", "초기 임무 계획", "임무 수행"]
-        try: self.mode_now.setText(labels[int(val)])
-        except Exception: pass
-        self._power_on = (int(val) != 0)
-        self._append_log_line(f"[MODE] 슬라이더 변경 → {labels[int(val)] if 0 <= val < len(labels) else val}")
-        # ★ 모드 변경도 대시보드로 통지
-        try: self._send_mon("mode", text=labels[int(val)], role="MSM")
-        except Exception: pass
-        self._apply_power_state()
-        if self._power_on:
-            QTimer.singleShot(500, self._start_0102_stream)
-
-    def _set_mode_slider_by_text(self, text: str):
-        labels = ["전원 OFF", "전원 ON", "대기모드", "초기 임무 계획", "임무 수행"]
-        norm = re.sub(r"\s+", "", str(text)).lower()
-        mapping = {
-            "전원off": 0, "off": 0, "poweroff": 0, "0": 0,
-            "전원on":  1, "on": 1,  "poweron": 1,  "1": 1,
-            "대기모드": 2, "대기": 2, "standby": 2, "2": 2,
-            "초기임무계획": 3, "초기임무계획모드": 3, "initplan": 3, "initial": 3, "3": 3,
-            "임무수행": 4, "execution": 4, "4": 4,
-        }
-        val = mapping.get(norm, 2)
-        try:
-            if getattr(self, "mode_slider", None) is not None:
-                if self.mode_slider.value() != val:
-                    self.mode_slider.blockSignals(True)
-                    self.mode_slider.setValue(val)
-                    self.mode_slider.blockSignals(False)
-            if getattr(self, "mode_now", None) is not None:
-                self.mode_now.setText(labels[val])
-            # ★ 텍스트 기반 모드 변경도 통지
-            self._send_mon("mode", text=labels[val], role="MSM")
-        except Exception:
-            pass
-        self._power_on = (int(val) != 0)
-        self._apply_power_state()
-        if self._power_on:
-            QTimer.singleShot(500, self._start_0102_stream)
 
     # ───────── 버스 초기화 ─────────
     def _rx_setup(self):
@@ -800,7 +935,6 @@ class MainWindow(QMainWindow):
         if getattr(self, "_shown_once", False): return
         self._shown_once = True
         self._append_log_line("SW 켜짐")
-
 
 # ───────── 엔트리 ─────────
 if __name__ == "__main__":

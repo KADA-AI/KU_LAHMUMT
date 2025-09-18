@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sys, os, threading, json, re, time, socket
-os.environ["KU_ROLE"] = "info_management"  # INF
+os.environ["KU_ROLE"] = "info"  # INF
 from pathlib import Path
 
 from PyQt5.QtCore import (
@@ -527,11 +527,45 @@ class MainWindow(QMainWindow):
             ok = self._ensure_0102(on=(status == 1))
             if not ok:
                 self._send_self_check_0102(status=status)
+
+        elif cmd == "system_mode":
+            try:
+                mode = int(payload.get("mode", 2))
+            except Exception:
+                mode = 2
+            self._append_log_line(f"[CTRL] 시스템모드(0101) 전송 요청 수신: {mode}")
+
+            # 0101 실제 발신
+            self._send_system_mode_0101(mode)
+
+            # UI도 함께 맞춰주기(대시보드 모드 표시/펄스를 위해)
+            label_map = {0:"전원 OFF", 1:"전원 ON", 2:"대기모드", 3:"초기 임무 계획", 4:"임무 수행"}
+            self._set_mode_slider_by_text(label_map.get(mode, "대기모드"))
+            return
+        
         elif cmd == "mode":
             text = str(payload.get("text") or "").strip() or "모드"
             self._append_log_line(f"[CTRL] 모드 변경 요청 수신: {text}")
             self._set_mode_slider_by_text(text)
 
+    def _send_system_mode_0101(self, mode: int = 2):
+        """
+        SystemMode(0101) 메시지 발신:
+        - Timestamp: ms since 2000
+        - SystemMode: int (0~4)
+        - Source: 'INF'
+        """
+        try:
+            from push_center import push_message
+            body = {
+                "Timestamp": _now_ms_since_2000(),
+                "SystemMode": int(mode),
+                "Source": "INF",
+            }
+            push_message("0101", NodeMessenger, body_dict=body)
+            self._append_log_line(f"시스템운용모드(0101) 발신: {mode}")
+        except Exception as e:
+            self._append_log_line(f"[ERR] 0101 push 실패: {e}")
 
 # ───────── 엔트리 ─────────
 if __name__ == "__main__":

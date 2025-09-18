@@ -218,6 +218,10 @@ def _load_tab_defs() -> Dict[str, Dict[str, List[Tuple[str, str]]]]:
         result[key] = {"tx": tx_defs, "rx": rx_defs}
     return result
 
+
+_env_safe = os.getenv("KU_SAFE_STATES_WHEN_APPS_RUNNING", "")
+SAFE_STATES_WHEN_APPS_RUNNING = set([s.strip() for s in _env_safe.split(",") if s.strip()]) or {"S110"}
+
 # ─────────────────────────────────────────────────────────────
 # 대시보드 오케스트레이터 (모니터링/관리 전용)
 class DashboardOrchestrator(QObject):
@@ -485,10 +489,6 @@ class DashboardOrchestrator(QObject):
 
                 # ── ★ 디버그 프린트: UDP 수신 패킷 원본/핵심 필드 ──
                 try:
-                    print(f"[UDP RECV] role={role} src_role={src_role} kind={kind} mid={mid} payload={payload}")
-                except Exception:
-                    pass
-                try:
                     self.uiLog2.emit(role, f"[UDP RECV] {role}/{src_role}  kind={kind}  mid={mid}")
                 except Exception:
                     pass
@@ -740,7 +740,7 @@ class DashboardOrchestrator(QObject):
         # 소스 모듈 추정 → role 정규화
         src_key = None
         if isinstance(payload_obj, dict):
-            src = (payload_obj.get("SourceModuleName")
+            src = (payload_obj.get("source")
                    or payload_obj.get("source")
                    or payload_obj.get("requestModuleName"))
             if src:

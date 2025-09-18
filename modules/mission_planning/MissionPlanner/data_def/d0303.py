@@ -256,7 +256,26 @@ def build_flight_plans(
     SEARCH_SPEED = round(cruise_speed * 2.8955, 2)
     ALT_M = 850.0
     DEG_M = 111_132
-    GROUP_K = 5
+    GROUP_K_BASE = 7
+    GROUP_K_MIN = 5
+    GROUP_K_MAX = 9
+
+    def _angle_diff_deg(a: float, b: float) -> float:
+        diff = (b - a + 180.0) % 360.0 - 180.0
+        return abs(diff)
+
+    def _pick_group_span(headings: list[float]) -> int:
+        if len(headings) <= 1:
+            return GROUP_K_BASE
+        diffs = [_angle_diff_deg(h1, h2) for h1, h2 in zip(headings, headings[1:])]
+        max_turn = max(diffs)
+        avg_turn = sum(diffs) / len(diffs)
+        if max_turn <= 6.0 and avg_turn <= 3.0:
+            return min(GROUP_K_MAX, GROUP_K_BASE * 2)
+        if max_turn >= 22.5 or avg_turn >= 12.0:
+            return GROUP_K_MIN
+        return GROUP_K_BASE
+
 
     # ── 마지막점용 POINT 촬영 블록 생성기 ─────────────────
     def _mk_point_filming_for_coord(coord: dict) -> OrderedDict:
@@ -342,22 +361,31 @@ def build_flight_plans(
                 lat0, lon0 = lines[0][0]["latitude"], lines[0][0]["longitude"]
 
                 # ➊ 그룹화
+                lines_xy: list[tuple[tuple[float, float], tuple[float, float]]] = []
+                headings: list[float] = []
+                for ln in lines:
+                    s_lat, s_lon = ln[0]["latitude"], ln[0]["longitude"]
+                    e_lat, e_lon = ln[1]["latitude"], ln[1]["longitude"]
+                    s_xy = llh_to_xy(s_lat, s_lon, lat0, lon0)
+                    e_xy = llh_to_xy(e_lat, e_lon, lat0, lon0)
+                    lines_xy.append((s_xy, e_xy))
+                    headings.append(math.degrees(math.atan2(e_xy[1] - s_xy[1], e_xy[0] - s_xy[0])))
+
+                group_span = max(1, _pick_group_span(headings))
                 groups: list[dict] = []
                 for idx, ln in enumerate(lines):
-                    gidx = idx // GROUP_K
-                    if len(groups) <= gidx:
-                        groups.append({"segments": []})
-                    groups[gidx]["segments"].append(ln)
+                    if idx % group_span == 0:
+                        groups.append({"segments": [], "segments_xy": []})
+                    groups[-1]["segments"].append(ln)
+                    groups[-1]["segments_xy"].append(lines_xy[idx])
 
-                # ➋ 그룹별 앵커 + lineSearch
+                # ??그룹??
                 last_off_xy: tuple[float, float] | None = None
                 for g in groups:
                     segs = g["segments"]
+                    segs_xy = g["segments_xy"]
 
-                    s_lat, s_lon = segs[0][0]["latitude"], segs[0][0]["longitude"]
-                    e_lat, e_lon = segs[0][1]["latitude"], segs[0][1]["longitude"]
-                    s_xy = llh_to_xy(s_lat, s_lon, lat0, lon0)
-                    e_xy = llh_to_xy(e_lat, e_lon, lat0, lon0)
+                    s_xy, e_xy = segs_xy[0]
                     mid_xy = ((s_xy[0] + e_xy[0]) / 2, (s_xy[1] + e_xy[1]) / 2)
                     off_xy = (mid_xy[0] - ux_b * ALT_M, mid_xy[1] + uy_b * ALT_M)
                     last_off_xy = off_xy
@@ -432,12 +460,17 @@ def build_flight_plans(
                     fov_deg=10, cruise_speed=cruise_speed, crs="lla",
                 )
 
+                headings: list[float] = []
+                for sw in planner.sweeps:
+                    s_xy, e_xy = sw
+                    headings.append(math.degrees(math.atan2(e_xy[1] - s_xy[1], e_xy[0] - s_xy[0])))
+
+                group_span = max(1, _pick_group_span(headings))
                 groups: list[dict] = []
                 for idx, (pt, sw) in enumerate(zip(planner.orange_pts, planner.sweeps)):
-                    gidx = idx // GROUP_K
-                    if len(groups) <= gidx:
+                    if idx % group_span == 0:
                         groups.append({"anchor": pt, "segments": []})
-                    groups[gidx]["segments"].append(sw)
+                    groups[-1]["segments"].append(sw)
 
                 last_anchor_xy: tuple[float, float] | None = None
                 first_line_xy: tuple[float, float] | None = None

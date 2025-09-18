@@ -1,5 +1,6 @@
-﻿# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-  # /mnt/data/mission_monitoring_tab.py
 from typing import Any, Dict, List, Optional
+import json, re
 
 from Tabs.csc_tab_base import CSCTabBase, _now_ms_since_2000
 
@@ -35,10 +36,151 @@ class MissionMonitoringTab(CSCTabBase):
         ("0903", "비행임무갱신요청"),
     )
 
+    # ─────────────────────────────────────────────────────────────
+    # 0101 모드 정규화 도우미
+    _MODE_NAME_MAP = {
+        "S100": "초기화",
+        "S101": "일괄기동",
+        "S102": "자가점검ON",
+        "S110": "초기준비",
+        "S200": "대기모드",
+        "S300": "임무모드",
+    }
+    _MODE_NUM_TO_S = {
+        100: "S100",
+        101: "S101",
+        102: "S102",
+        110: "S110",
+        200: "S200",
+        300: "S300",
+    }
+    _MODE_KEY_CANDIDATES = (
+        "systemOperationMode", "SystemOperationMode",
+        "operationMode", "OperationMode",
+        "opMode", "OpMode",
+        "mode", "Mode",
+        "modeCode", "ModeCode",
+        "modeID", "ModeID",
+        "state", "State",
+    )
+    _SUBKEYS = ("mode","Mode","code","Code","value","Value","id","Id","modeCode","ModeCode")
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._replan_context: Optional[Dict[str, Any]] = None
+        self._current_mode_s: Optional[str] = None  # e.g., "S200"
 
+    # ── 0101 수신 가로채기 → 모드 반영 ─────────────────────────────
+    def mark_received(self, msg_id: str, raw: bytes | None = None):
+        super().mark_received(msg_id, raw)
+        if str(msg_id).strip() != "0101" or not raw:
+            return
+
+        body = self._extract_json(raw)
+        mode_s, mode_name = self._extract_mode(body)
+        if not mode_s:
+            # 못 알아들었으면 로그만 남김
+            self._append_mode_log(f"수신은 했으나 모드 파싱 실패: {body!r}")
+            return
+
+        self._apply_system_mode(mode_s, mode_name, body)
+
+    # ── 내부: JSON 추출(원문에서 첫 중괄호 블록) ─────────────────────
+    def _extract_json(self, raw: bytes) -> Dict[str, Any]:
+        try:
+            txt = raw.decode(errors="ignore")
+            m = re.search(r"\{.*\}", txt, flags=re.S)
+            if m:
+                return json.loads(m.group(0))
+            return json.loads(txt)
+        except Exception:
+            return {}
+
+    # ── 내부: 모드 코드/이름 정규화 (S100/S200 등으로 통일) ───────────
+    def _extract_mode(self, obj: Dict[str, Any]) -> (Optional[str], str):
+        val = None
+        # 1) 후보 키에서 값 찾기
+        for k in self._MODE_KEY_CANDIDATES:
+            if k in obj:
+                val = obj[k]
+                break
+        # 2) 중첩 dict면 하위 키에서 다시 추출
+        if isinstance(val, dict):
+            for sk in self._SUBKEYS:
+                if sk in val:
+                    val = val[sk]
+                    break
+
+        # 3) 문자열이면 바로 처리
+        if isinstance(val, str):
+            s = val.strip().upper()
+            # "S200", "STANDBY", "대기" 등 처리
+            if s.startswith("S") and s[1:].isdigit():
+                mode_s = "S" + str(int(s[1:]))  # 정규화
+            else:
+                # 한글/영문 명칭에서 추정
+                if "대기" in s or "STANDBY" in s:
+                    mode_s = "S200"
+                elif "임무" in s or "MISSION" in s:
+                    mode_s = "S300"
+                elif "초기준비" in s or "INIT" in s and "PREP" in s:
+                    mode_s = "S110"
+                elif "자가점검" in s or "SELF" in s:
+                    mode_s = "S102"
+                elif "일괄" in s or "RUN_ALL" in s or "RUNALL" in s:
+                    mode_s = "S101"
+                elif "초기" in s or s == "INIT":
+                    mode_s = "S100"
+                else:
+                    mode_s = None
+            name = self._MODE_NAME_MAP.get(mode_s or "", "")
+            return mode_s, name
+
+        # 4) 숫자면 매핑
+        if isinstance(val, int):
+            mode_s = self._MODE_NUM_TO_S.get(val)
+            name = self._MODE_NAME_MAP.get(mode_s or "", "")
+            return mode_s, name
+
+        # 5) 못 찾음
+        return None, ""
+
+    # ── 내부: 모드 적용(타이틀/로그/자동동작) ───────────────────────
+    def _apply_system_mode(self, mode_s: str, mode_name: str, payload: Dict[str, Any]):
+        self._current_mode_s = mode_s
+        tag = f"{mode_s} {mode_name}".strip()
+
+        # 제목 갱신(베이스에서 _title_label 보관 중일 때만)
+        try:
+            if hasattr(self, "_title_label") and self._title_label:
+                self._title_label.setText(f"{self.TITLE} [{tag}]")
+        except Exception:
+            pass
+
+        # 로그 한 줄 남김
+        self._append_mode_log(f"→ 시스템 운용 모드 변경: {tag}")
+
+        # (선택) 모드에 따라 0102 주기 송신 자동 토글 예시
+        try:
+            row_0102 = self._find_tx_row("0102")
+            if row_0102 >= 0:
+                freq = self.periodic_config.get("0102")
+                if mode_s in ("S102", "S200", "S300") and freq:
+                    if "0102" not in self.periodic_timers:
+                        self._start_periodic_send("0102", row_0102, freq)
+                if mode_s in ("S100",) and "0102" in self.periodic_timers:
+                    self._stop_periodic_send("0102", row_0102)
+        except Exception:
+            pass
+
+    def _append_mode_log(self, msg: str):
+        try:
+            # RECV 로그 창에 간단히 남김
+            self.log_rx.append(f"[MODE] {msg}")
+        except Exception:
+            pass
+
+    # ─────────────────────────────────────────────────────────────
+    # 이하 기존 구현 (재계획 요청 관련) ------------------------------
     def set_replan_context(self, context: Optional[Dict[str, Any]]) -> None:
         self._replan_context = context
 

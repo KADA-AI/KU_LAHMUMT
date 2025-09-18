@@ -1,20 +1,36 @@
-# /modules/common/states/S110_initial_prep.py
+# 파일: /modules/common/states/S110_initial_prep.py
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 from . import register_state
+try:
+    # S110 체크리스트가 있다면 함께 띄움(없어도 동작)
+    from ..ops_checklist import ensure_s110_checklist
+except Exception:
+    ensure_s110_checklist = lambda _orch: None
 
 @register_state("S110")
 def run(orch):
-    """
-    새 S110 플로우:
-      1) Info 모듈이 0101(SystemMode=2) 전송 → 각 모듈 초기임무계획 모드로.
-      ※ run.py는 '요청'만, 실제 0101 전송은 Info 모듈이 수행.
-    """
-    orch._safe_log("[OPS] S110: Info 모듈에 SystemMode=2 전송 요청")
-    # CTRL 채널로 Info 모듈에 system_mode 지시 (Info가 0101을 '전송'함)
-    ok = orch._send_ctrl_single("info", {"cmd": "system_mode", "mode": 2, "reason": "S110"})
+    orch._safe_log("[OPS] S110: 초기임무계획 진입 요청")
+
+    # 1) 체크리스트 시작(있으면)
+    try:
+        ensure_s110_checklist(orch)
+    except Exception:
+        pass
+
+    # 2) UI/모듈 모드 즉시 싱크(다른 프로그램 켜져 있어도 무관)
+    #    → 각 모듈에 CTRL 'mode=초기임무계획' 브로드캐스트
+    try:
+        orch._enter_initial_plan()
+    except Exception:
+        pass
+
+    # 3) Info 모듈에 실제 0101(SystemMode=2) 생성 지시
+    #    (아래 패치된 info_manage.py가 이를 받아 0101을 버스로 push)
+    ok = False
+    try:
+        ok = orch._send_ctrl_single("info", {"cmd": "system_mode", "mode": 2, "reason": "S110"})
+    except Exception as e:
+        orch._safe_log(f"[WARN] Info system_mode 지시 실패: {e}")
     if not ok:
-        orch._safe_log("[WARN] Info 모듈에 SystemMode=2 지시 실패")
-    # 이후 흐름:
-    # - run.py는 버스의 0101 수신을 모니터링해 _enter_initial_plan() (모드 전파/표시) 수행
-    # - 0902/0305/0301/0901/0701/0702 등은 각 모듈 버튼/로직이 전담 (run.py 미전송)
+        orch._safe_log("[WARN] Info 모듈 0101 전송 지시 실패")

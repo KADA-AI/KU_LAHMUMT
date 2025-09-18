@@ -1,74 +1,65 @@
 # modules/common/receive/message0102_receiver.py
-# auto-generated at 2025-08-24T16:37:13.079600+00:00
+# auto-fixed at 2025-09-19
 
 from dll_files.nFusionImports import *            # IFusionReceive, IsLocal, IsSingletone
-from nFusion.Model.msg_0102 import *            # C# 모델
-from nFusion.Model.CommonType import *             # 공통 타입
+from nFusion.Model.msg_0102 import *              # C# 모델
+from nFusion.Model.CommonType import *            # 공통 타입
 from .database import received_db
 from receive_center import notify
-import json, traceback, sys, os, importlib
+import json, traceback, sys, os
 
 # 대/소문자 안전 접근
 _get = lambda obj, *names: next((getattr(obj, n) for n in names if hasattr(obj, n)), None)
 
-# ── Embedded rules (TX/DB 공용) ──────────────────────────────────────────
-TX_FIELD_WHITELIST = {'0201': ['timestamp', 'inputMissionPackageID'], '0203': ['timestamp', 'missionReferencePackageID'], '0301': ['timestamp', 'missionPlanID'], '0302': ['timestamp', 'individualMissionPackageID'], '0303': ['timestamp', 'pathID'], '0304': ['timestamp', 'pathID']}
-DB_DIR_RULES        = {'0201': 'InputMissionPlan', '0203': 'FlightReferenceInfo', '0301': 'MissionPlan', '0302': 'IndividualMissionPlan', '0303': 'UAVFlightPlan', '0304': 'FlightPath'}
-DB_FETCH_ON_RECEIVE = {'0201', '0203'}
-ID_FIELD_FOR        = {'0201': 'inputMissionPackageID', '0203': 'missionReferencePackageID', '0301': 'missionPlanID', '0302': 'individualMissionPackageID', '0303': 'pathID', '0304': 'pathID'}
-
-def _project_root_for_recv_file(__file_path: str):
-    from pathlib import Path
-    return Path(__file_path).resolve().parents[3]
-
-def _db_dir_for(msgid: str, __file_path: str) -> str:
-    from pathlib import Path
-    env_root = os.getenv("KU_MISSION_DB_ROOT")
-    name = DB_DIR_RULES.get(msgid)
-    if not name:
-        return str(_project_root_for_recv_file(__file_path))
-    if env_root:
-        return str(Path(env_root) / name)
-    return str(_project_root_for_recv_file(__file_path) / "database" / name)
-
-def _try_save_received(msgid: str, data_obj):
+def _coerce_int(v):
     try:
-        fn = getattr(received_db, f"set_received_{msgid}")
-        fn(data_obj)
+        return int(v)
     except Exception:
-        pass
-
-def _try_read_db_body(msgid: str, data_obj):
-    """DB_FETCH_ON_RECEIVE에 포함된 메시지는 ID 필드로 DB JSON을 찾아 반환(없으면 None)."""
-    try:
-        if msgid not in DB_FETCH_ON_RECEIVE:
-            return None
-        id_field = ID_FIELD_FOR.get(msgid)
-        if not id_field:
-            return None
-        # 객체에서 ID 값을 추출(대/소문자 안전)
-        _val = _get(data_obj, id_field, id_field[:1].upper()+id_field[1:])
-        if _val is None:
-            return None
-        vid = int(_val)
-        dbdir = _db_dir_for(msgid, __file__)
-        fpath = os.path.join(dbdir, f"{vid}.json")
-        print(f"[{msgid}] DB 참조! ({fpath})")
-        if os.path.exists(fpath):
-            with open(fpath, "r", encoding="utf-8") as f:
-                return json.load(f)
-        return None
-    except Exception:
-        return None
+        try:
+            return int(getattr(v, "value"))
+        except Exception:
+            try:
+                return int(str(v))
+            except Exception:
+                return None
 
 def _to_dict_ModuleStatus(obj):
+    """
+    0102 수신 → 표준 바디(dict):
+      { "timestamp": int(ms_2000), "status": int(0|1|2), "source": "MMR|MSM|MOB|..." }
+    - 다양한 대/소문자·별칭을 모두 흡수하여 위 3키로 통일
+    - 값 생성/가공 없음(있을 때만 추출)
+    """
     d = {}
-    _v = _get(obj, 'timestamp', 'Timestamp')
-    if _v is not None: d['timestamp'] = int(_v)
-    _sval = _get(obj, 'source', 'Source', 'source','Source','Source','Source','requestModuleName','RequestModuleName')
-    if _sval is not None and _sval != '': d['source'] = str(_sval)
-    _v = _get(obj, 'status', 'Status')
-    if _v is not None: d['status'] = int(_v)
+
+    # timestamp
+    ts = _get(obj, 'timestamp','Timestamp','timeStamp','TimeStamp','ts','TS')
+    ts_i = _coerce_int(ts)
+    if ts_i is not None:
+        d['timestamp'] = ts_i
+
+    # source (SourceModuleName은 쓰지 않음)
+    src = _get(
+        obj,
+        'source','Source',               # 표준
+        'requestModuleName','RequestModuleName',  # 옛 별칭
+        'module','Module','sourceModule','SourceModule'
+    )
+    if src is not None and str(src) != '':
+        d['source'] = str(src)
+
+    # status
+    st = _get(
+        obj,
+        'status','Status',
+        'moduleStatus','ModuleStatus',
+        'healthStatus','HealthStatus',
+        'state','State'
+    )
+    st_i = _coerce_int(st)
+    if st_i is not None:
+        d['status'] = st_i
+
     return d
 
 class ModuleStatusReceiver_0102(IFusionReceive[ModuleStatus], IsLocal, IsSingletone):
@@ -77,12 +68,14 @@ class ModuleStatusReceiver_0102(IFusionReceive[ModuleStatus], IsLocal, IsSinglet
 
     def Receive(self, data: ModuleStatus, src):
         try:
-            _try_save_received('0102', data)
+            # 선택: 최근 수신 원본을 저장 (있으면)
+            try:
+                received_db.set_received_0102(data)
+            except Exception:
+                pass
 
-            body = _try_read_db_body('0102', data)
-            if body is None:
-                body = _to_dict_ModuleStatus(data)
-
+            body = _to_dict_ModuleStatus(data)
+            # 항상 표준 키들만 notify
             notify("0102", json.dumps(body, ensure_ascii=False).encode("utf-8","ignore"))
 
         except Exception:

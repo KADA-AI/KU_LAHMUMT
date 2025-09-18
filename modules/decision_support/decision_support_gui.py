@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 # decision_support_gui.py – 의사결정 지원 전용 GUI
 from __future__ import annotations
 
@@ -45,6 +45,7 @@ PROJECT_ROOT, COMMON_DIR = _bootstrap_paths()
 
 from modules.common.status_reporter import send_status_ok
 from modules.common.ctrl_listener import start_ctrl_listener, env_ctrl_port
+from receive_center import register_listener
 
 _EPOCH2000_MS = 946_684_800_000
 def _now_ms_since_2000() -> int:
@@ -104,7 +105,6 @@ _ = _load_msglib_and_deps()
 
 from receive import *  # modules/common/receive
 from Tabs.decision_support_tab import DecisionSupportTab
-from receive_center import register_listener
 
 # ───────── 모듈별 모니터링 포트(의사결정) ─────────
 def _mon_port() -> int:
@@ -154,7 +154,7 @@ class MainWindow(QMainWindow):
         self._bus_ready = False
         self._last_ctrl_ts: dict[str, float] = {}
         self._last_0102_sent_ms = 0
-        self._rx_counts = {} 
+        self._rx_counts = {}
 
         # 탭
         tabs = QTabWidget()
@@ -212,6 +212,151 @@ class MainWindow(QMainWindow):
         # BUS 준비되면(또는 약간의 지연 뒤) 0102 단발 보장 시도
         QTimer.singleShot(120, self._send_0102_when_ready)
 
+        # ★★★ 0101 수신 → 모드 반영 리스너 & 폴링 보강
+        self._install_0101_mode_listener()
+        self._start_0101_rx_poller()
+
+    # ───────── 0101 모드 수신 리스너 ─────────
+    def _install_0101_mode_listener(self):
+        """
+        receive_center.notify('0101', raw)를 직접 수신해
+        systemMode 숫자코드를 슬라이더로 반영.
+        """
+        class _Rx0101:
+            def __init__(self, host): self.host = host
+            def mark_received(self, msg_id: str, raw: bytes | None = None):
+                try:
+                    self.host._on_rx_0101(raw)
+                except Exception:
+                    pass
+
+        try:
+            self._rx0101 = _Rx0101(self)
+            register_listener("0101", self._rx0101)
+            self._append_log_line("[0101] 모드 수신 리스너 등록 완료")
+        except Exception as e:
+            self._append_log_line(f"[0101] 리스너 등록 실패: {e}")
+
+    # ───────── 0101 RAW 처리: systemMode 숫자 → 슬라이더 반영 ─────────
+    def _on_rx_0101(self, raw: bytes | None):
+        # 1) RAW → 텍스트
+        txt = (raw or b"").decode("utf-8", "ignore")
+        # 2) JSON 블록 추출
+        m = re.search(r"\{.*\}", txt, flags=re.S)
+        jtxt = m.group(0) if m else txt.strip()
+        # 3) 파싱
+        try:
+            body = json.loads(jtxt) if jtxt.startswith("{") else {}
+        except Exception:
+            body = {}
+
+        # 4) 코드 추출(여러 키/형식 허용)
+        code = self._extract_mode_code(body)
+        if code is None:
+            mm = re.search(r'"systemMode"\s*:\s*([0-9]+)', txt)
+            if mm:
+                try: code = int(mm.group(1))
+                except Exception: code = None
+        if code is None:
+            return
+
+        # 5) 적용
+        self._apply_system_mode_code(code)
+
+    def _extract_mode_code(self, body: dict) -> int | None:
+        """
+        다양한 키에서 모드코드 추출(대/소문자, str/bool/float 안전).
+        """
+        if not isinstance(body, dict):
+            return None
+        low = {str(k).lower(): body[k] for k in body.keys() if k is not None}
+        for key in ("systemmode", "mode", "modecode", "state"):
+            if key in low:
+                v = low[key]
+                if isinstance(v, bool):
+                    return 1 if v else 0
+                try:
+                    return int(v)
+                except Exception:
+                    try:
+                        return int(float(str(v).strip()))
+                    except Exception:
+                        return None
+        return None
+
+    def _apply_system_mode_code(self, code: int) -> bool:
+        """
+        외부 0101 systemMode 정의:
+          0 : 초기화 모드
+          1 : 대기 모드
+          2 : 초기임무계획 모드
+          3 : 임무수행 모드
+        내부 슬라이더(0~4): [0=전원 OFF, 1=전원 ON, 2=대기모드, 3=초기 임무 계획, 4=임무 수행]
+        매핑: 0→1, 1→2, 2→3, 3→4
+        """
+        code_to_slider = {0: 1, 1: 2, 2: 3, 3: 4}
+        if code not in code_to_slider:
+            return False
+        val = code_to_slider[code]
+        try:
+            self.mode_slider.blockSignals(True)
+            self.mode_slider.setValue(val)
+            self.mode_slider.blockSignals(False)
+            self._on_mode_slider_changed(val)
+            return True
+        except Exception:
+            return False
+
+    # ───────── RX 테이블 폴링 기반 0101 모드 반영(보강용) ─────────
+    def _start_0101_rx_poller(self):
+        """탭의 RX 테이블 UserRole에 저장된 0101 RAW를 주기적으로 확인해 모드 반영."""
+        self._last_0101_raw = None
+        self._poll_0101_timer = QTimer(self)
+        self._poll_0101_timer.setInterval(250)  # 4Hz
+        self._poll_0101_timer.timeout.connect(self._poll_0101_in_rx_table)
+        self._poll_0101_timer.start()
+
+    def _poll_0101_in_rx_table(self):
+        try:
+            tab = getattr(self, "_tab", None)
+            tbl = getattr(tab, "tbl_rx", None) if tab else None
+            if tbl is None:
+                return
+            target_row = -1
+            for r in range(tbl.rowCount()):
+                it = tbl.item(r, 0)
+                if it and it.text().strip() == "0101":
+                    target_row = r
+                    break
+            if target_row < 0:
+                return
+            raw = tbl.item(target_row, 0).data(Qt.UserRole)
+            if not raw or (self._last_0101_raw is not None and raw == self._last_0101_raw):
+                return
+
+            txt = (raw or b"").decode("utf-8", "ignore")
+            m = re.search(r"\{.*\}", txt, flags=re.S)
+            jtxt = m.group(0) if m else txt.strip()
+            body = {}
+            try:
+                if jtxt.startswith("{"):
+                    body = json.loads(jtxt)
+            except Exception:
+                body = {}
+
+            code = self._extract_mode_code(body)
+            if code is None:
+                mm = re.search(r'"systemMode"\s*:\s*([0-9]+)', txt)
+                if mm:
+                    try: code = int(mm.group(1))
+                    except Exception: code = None
+
+            if code is not None:
+                self._apply_system_mode_code(code)
+                self._last_0101_raw = raw
+        except Exception:
+            pass
+
     # ───────── 모니터링(대시보드) 전송 훅 ─────────
     def _install_mon_wires(self):
         """
@@ -257,9 +402,7 @@ class MainWindow(QMainWindow):
         if hasattr(tab, "bump_rx") and not hasattr(self, "_rx_bump_wrapped"):
             _orig_bump_rx = tab.bump_rx
             def _wrapped_bump_rx(msg_id: str):
-                # 원래 카운트/표시 먼저 수행
                 _orig_bump_rx(msg_id)
-                # 우리 쪽 카운터 갱신 및 UDP 알림은 UI 루프로 비동기 처리 (수신 경로 절대 블록 X)
                 mid = _z4(str(msg_id))
                 def _pulse():
                     cnt = self._rx_counts.get(mid, 0) + 1
@@ -317,8 +460,6 @@ class MainWindow(QMainWindow):
                     return self._orig_tx_click(row)
                 tab._on_tx_button_clicked = _wrapped_tx_click
 
-            # ✘ 제거: RX 수신(mark_received) / RX 카운트(bump_rx) 차단 래퍼
-
         except Exception:
             pass
 
@@ -350,6 +491,7 @@ class MainWindow(QMainWindow):
         try:
             tab = self._tab
             tbl = getattr(tab, "tbl_rx", None)
+        # ... (동일)
             if tbl is None:
                 return
             tbl.setEnabled(enabled)

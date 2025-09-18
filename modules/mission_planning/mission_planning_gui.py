@@ -31,6 +31,7 @@ for _p in (_ROOT, _ROOT / "modules", _ROOT / "modules" / "common"):
 
 from modules.common.status_reporter import send_status_ok
 from modules.common.ctrl_listener import start_ctrl_listener, env_ctrl_port
+from receive_center import register_listener   # ★ 0101 모드 수신 리스너
 
 _EPOCH2000_MS = 946_684_800_000
 def _now_ms_since_2000() -> int:
@@ -137,7 +138,7 @@ class MainWindow(QMainWindow):
         self._power_on = False
         self._self_check_sent = False
         self._last_ctrl_ts = {}     # 디듀프
-        self._rx_counts = {} 
+        self._rx_counts = {}
 
         # 파이프라인 컨텍스트
         self._initplan_running = False
@@ -205,6 +206,158 @@ class MainWindow(QMainWindow):
                 pass
         start_ctrl_listener(env_ctrl_port(45981), _on_ctrl)
 
+        # ★★★ 0101 수신 → 모드 반영 리스너 + 폴백 폴링 설치
+        self._install_0101_mode_listener()
+        self._start_0101_rx_poller()
+
+    # ───────── 0101 모드 수신 리스너 ─────────
+    def _install_0101_mode_listener(self):
+        """
+        receive_center.notify("0101", raw)를 직접 수신해
+        systemMode 숫자코드를 슬라이더로 바로 반영.
+        """
+        class _Rx0101:
+            def __init__(self, host): self.host = host
+            def mark_received(self, msg_id: str, raw: bytes | None = None):
+                try:
+                    self.host._on_rx_0101(raw)
+                except Exception:
+                    pass
+
+        try:
+            self._rx0101 = _Rx0101(self)
+            register_listener("0101", self._rx0101)
+            self._append_log_line("[0101] 모드 수신 리스너 등록 완료")
+        except Exception as e:
+            self._append_log_line(f"[0101] 리스너 등록 실패: {e}")
+
+    def _on_rx_0101(self, raw: bytes | None):
+        # 1) RAW → 텍스트
+        txt = (raw or b"").decode("utf-8", "ignore")
+        # 2) JSON 추출(프리텍스트 대응)
+        m = re.search(r"\{.*\}", txt, flags=re.S)
+        jtxt = m.group(0) if m else txt.strip()
+        # 3) 딕셔너리 파싱
+        try:
+            body = json.loads(jtxt) if jtxt.startswith("{") else {}
+        except Exception:
+            body = {}
+
+        # 4) 코드 추출(여러 키/형식 대응)
+        code = self._extract_mode_code(body)
+        if code is None:
+            # 마지막 폴백: RAW에서 직접 캡쳐
+            mm = re.search(r'"systemMode"\s*:\s*([0-9]+)', txt)
+            if mm:
+                try: code = int(mm.group(1))
+                except Exception: code = None
+
+        if code is None:
+            # 조용히 무시(불필요한 실패 로그 없음)
+            return
+
+        if self._apply_system_mode_code(code):
+            self._append_log_line(f"[0101] 시스템 운용 모드 수신 → code={code}")
+        else:
+            self._append_log_line(f"[MODE] 미지원 코드({code})")
+
+    def _extract_mode_code(self, body: dict) -> int | None:
+        """
+        dict의 다양한 키에서 모드코드를 견고하게 추출.
+        - 키 대/소문자 무시
+        - 값이 str/bool/float 모두 허용
+        """
+        if not isinstance(body, dict):
+            return None
+        low = {str(k).lower(): body[k] for k in body.keys() if k is not None}
+        for key in ("systemmode", "mode", "modecode", "state"):
+            if key in low:
+                v = low[key]
+                if isinstance(v, bool):
+                    return 1 if v else 0
+                try:
+                    return int(v)
+                except Exception:
+                    try:
+                        return int(float(str(v).strip()))
+                    except Exception:
+                        return None
+        return None
+
+    def _apply_system_mode_code(self, code: int) -> bool:
+        """
+        외부 0101 systemMode 매핑
+          0 : 초기화 모드
+          1 : 대기 모드
+          2 : 초기임무계획 모드
+          3 : 임무수행 모드
+        내부 슬라이더(0~4): [0=전원 OFF, 1=전원 ON, 2=대기모드, 3=초기 임무 계획, 4=임무 수행]
+        → 매핑: 0→1, 1→2, 2→3, 3→4
+        """
+        code_to_slider = {0: 1, 1: 2, 2: 3, 3: 4}
+        if code not in code_to_slider:
+            return False
+        val = code_to_slider[code]
+        try:
+            self.mode_slider.blockSignals(True)
+            self.mode_slider.setValue(val)
+            self.mode_slider.blockSignals(False)
+            # 기존 부수효과(전원/주기TX/모니터링 통지) 실행
+            self._on_mode_slider_changed(val)
+        except Exception:
+            return False
+        return True
+
+    # ───────── RX 테이블 폴링 기반 0101 모드 반영(리시버 경로 폴백) ─────────
+    def _start_0101_rx_poller(self):
+        self._last_0101_raw = None
+        self._poll_0101_timer = QTimer(self)
+        self._poll_0101_timer.setInterval(250)  # 4Hz
+        self._poll_0101_timer.timeout.connect(self._poll_0101_in_rx_table)
+        self._poll_0101_timer.start()
+
+    def _poll_0101_in_rx_table(self):
+        try:
+            tab = getattr(self, "_tab", None)
+            tbl = getattr(tab, "tbl_rx", None) if tab else None
+            if tbl is None:
+                return
+            target_row = -1
+            for r in range(tbl.rowCount()):
+                it = tbl.item(r, 0)
+                if it and it.text().strip() == "0101":
+                    target_row = r
+                    break
+            if target_row < 0:
+                return
+            raw = tbl.item(target_row, 0).data(Qt.UserRole)
+            if not raw or (self._last_0101_raw is not None and raw == self._last_0101_raw):
+                return
+
+            txt = (raw or b"").decode("utf-8", "ignore")
+            m = re.search(r"\{.*\}", txt, flags=re.S)
+            jtxt = m.group(0) if m else txt.strip()
+            body = {}
+            try:
+                if jtxt.startswith("{"):
+                    body = json.loads(jtxt)
+            except Exception:
+                body = {}
+
+            code = self._extract_mode_code(body)
+            if code is None:
+                mm = re.search(r'"systemMode"\s*:\s*([0-9]+)', txt)
+                if mm:
+                    try: code = int(mm.group(1))
+                    except Exception: code = None
+
+            if code is not None:
+                if self._apply_system_mode_code(code):
+                    self._append_log_line(f"[0101/POLL] 모드 반영 → code={code}")
+                self._last_0101_raw = raw
+        except Exception:
+            pass
+
     # ───────── 모니터링(대시보드) 전송 훅 ─────────
     def _install_mon_wires(self):
         """
@@ -250,9 +403,7 @@ class MainWindow(QMainWindow):
         if hasattr(tab, "bump_rx") and not hasattr(self, "_rx_bump_wrapped"):
             _orig_bump_rx = tab.bump_rx
             def _wrapped_bump_rx(msg_id: str):
-                # 원래 카운트/표시 먼저 수행
                 _orig_bump_rx(msg_id)
-                # 우리 쪽 카운터 갱신 및 UDP 알림은 UI 루프로 비동기 처리 (수신 경로 절대 블록 X)
                 mid = _z4(str(msg_id))
                 def _pulse():
                     cnt = self._rx_counts.get(mid, 0) + 1
@@ -282,27 +433,18 @@ class MainWindow(QMainWindow):
         if not self._power_on:
             return
         try:
-            # CSCTabBase 기본 주기(5Hz) 보장. 필요시 다시 설정.
             self._tab.periodic_config['0102'] = 5
         except Exception:
             pass
-        # 실제 테이블의 0102 발신 토글 ON (버튼 click() 경로)
         self._ensure_0102(True)
 
     # ───────── Power OFF 가드(발신/수신/카운트/우회 클릭 차단) ─────────
     def _install_power_gate_hooks(self):
-        """
-        Power OFF일 때:
-         - TX 테이블 입력(마우스/키) 하드 차단
-         - 탭의 TX 클릭 슬롯(_on_tx_button_clicked) 차단
-         - 탭의 수신 콜백(mark_received) 차단
-         - 탭의 RX 카운트(bump_rx) 차단
-        """
         try:
             tab = self._tab
             tbl = getattr(tab, "tbl_tx", None)
 
-            # (A) TX 테이블 이벤트 필터: 입력 자체를 차단
+            # TX만 차단
             if tbl is not None:
                 class _PG(QObject):
                     def __init__(self, host): super().__init__(host); self.host = host
@@ -316,33 +458,19 @@ class MainWindow(QMainWindow):
                 self._pg_filter = _PG(self)
                 tbl.installEventFilter(self._pg_filter)
 
-            # (B) TX 버튼 직접 호출 차단(우회 방지)
+            # TX 버튼 우회만 차단
             if hasattr(tab, "_on_tx_button_clicked"):
                 self._orig_tx_click = tab._on_tx_button_clicked
                 def _wrapped_tx_click(row):
                     if not self._power_on:
                         self._append_log_line("[BLOCK] Power OFF → TX 버튼 무시")
                         return
+                    try:
+                        it = getattr(tab, "tbl_tx", None).item(row, 0) if getattr(tab, "tbl_tx", None) else None
+                        if it: self._send_mon("tx", msg_id=_z4(it.text()))
+                    except Exception: pass
                     return self._orig_tx_click(row)
                 tab._on_tx_button_clicked = _wrapped_tx_click
-
-            # (C) RX 수신 콜백 차단(버스 수신 → 탭 처리 가로막기)
-            if hasattr(tab, "mark_received"):
-                self._orig_tab_mark_received = tab.mark_received
-                def _wrapped_mark_received(msg_id, raw=None):
-                    if not self._power_on:
-                        return  # OFF면 무시
-                    return self._orig_tab_mark_received(msg_id, raw)
-                tab.mark_received = _wrapped_mark_received
-
-            # (D) RX 카운트(시각화)도 OFF 상태에서는 무시
-            if hasattr(tab, "bump_rx"):
-                self._orig_bump_rx = tab.bump_rx
-                def _wrapped_bump_rx(mid):
-                    if not self._power_on:
-                        return
-                    return self._orig_bump_rx(mid)
-                tab.bump_rx = _wrapped_bump_rx
 
         except Exception:
             pass
@@ -351,7 +479,7 @@ class MainWindow(QMainWindow):
         on = bool(self._power_on)
         try:
             self._update_tx_table_enabled(on)
-            self._update_rx_table_enabled(on)
+            self._update_rx_table_enabled(True)  # ✅ RX는 항상 보이게
             if not on:
                 self._stop_all_periodic()
         except Exception:
@@ -981,6 +1109,7 @@ class MainWindow(QMainWindow):
             self.log_sig.emit(f"[OK] FlightPath counts: 0303={len(flight_plans_0303)} / 0304={len(flight_plans_0304)}")
 
             # 디스크 저장 (0301/0302/0303/0304)
+            db_root = Path(os.environ.get("KU_MISSION_DB_ROOT") or (Path(PROJECT_ROOT) / "database"))
             dir_mp  = db_root / "MissionPlan"
             dir_imp = db_root / "IndividualMissionPlan"
             dir_fp  = db_root / "FlightPath"
