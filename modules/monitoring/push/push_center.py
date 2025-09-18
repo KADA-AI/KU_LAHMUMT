@@ -26,12 +26,14 @@ def push_message(msg_id: str, messenger, *, on_done=None, body_dict=None) -> boo
             # print(f"[push_center] resolved: {mod.__name__} ({getattr(mod, '__file__', '?')})")
             break
         except Exception as e:
+            print(f"DEBUG: Exception during module import: {e}")
             last_exc = e
 
     if mod is None:
-        raise last_exc or ImportError(
-            f"message{msg_id}_push not found in {SEARCH_PREFIXES}"
-        )
+        if last_exc:
+            raise last_exc
+        else:
+            raise ImportError(f"message{msg_id}_push not found in {SEARCH_PREFIXES}")
 
     # 👇 변경 포인트: '비어있지 않은 dict'일 때만 make_and_push 사용
     use_manual = isinstance(body_dict, dict) and len(body_dict) > 0

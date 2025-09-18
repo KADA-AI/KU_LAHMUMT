@@ -53,9 +53,10 @@ class MonitoringLogic:
                 for agent_state in data_401.agentStateList:
                     if agent_state.isUnmanned == 1:
                         text = ""
-                        if agent_state.fuel / 100 <= 20:
+                        print(f"feul : {agent_state.fuel}")
+                        if agent_state.fuel * 100 // 100 <= 20:
                             text = "yellow"
-                        elif agent_state.fuel / 100 <= 10:
+                        elif agent_state.fuel * 100 // 100 <= 10:
                             text = "red"
                         else:
                             text = "green"
@@ -66,6 +67,7 @@ class MonitoringLogic:
 
                 if body_0501:
                     # 0501 메시지 발신
+                    # print(f"body_0501: {body_0501}")
                     push_message(
                         "0501", self.manager.node_messenger, body_dict=body_0501
                     )
@@ -74,8 +76,22 @@ class MonitoringLogic:
                     )
                     # PushStorage에 저장
                     self.manager.push_store.add_data("0501", body_0501)
+                    # LogicStorage에도 저장
+                    self.manager.logic_store.set_data("0501_data", body_0501)
                     # UDP 통지 추가
                     udp_reporter.notify_tx("0501")
+
+                    # GUI 업데이트 콜백 호출 (0501은 로직에서 생성된 데이터이므로 'logic' 타입으로 전달)
+                    if self.manager.gui_update_callback:
+                        self.manager.gui_update_callback("logic", "0501", body_0501)
+
+                # fuel_data를 LogicStorage에 저장하고 GUI 업데이트
+                if feul_data:  # feul_data가 비어있지 않은 경우에만 처리
+                    self.manager.logic_store.set_data("fuel_data", feul_data)
+                    if self.manager.gui_update_callback:
+                        self.manager.gui_update_callback(
+                            "logic", "fuel_data", feul_data
+                        )
             else:
                 self.manager._log(
                     "MON_LOGIC", "INFO", "401 데이터가 없어 모니터링을 건너뜁니다."
@@ -97,7 +113,7 @@ class MonitoringLogic:
             )
         elif msg_id == "0501":
             return MissionProgressBodyModel(
-                timestamp=timestamp, sourceModuleName=source_module, missionStatus=1
+                timestamp=timestamp, sourceModuleName=source_module
             )
         elif msg_id == "0502":
             return MissionEndRequestBodyModel(

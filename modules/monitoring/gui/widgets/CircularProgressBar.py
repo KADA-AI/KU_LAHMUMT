@@ -13,15 +13,15 @@ class CircularProgressBar(QWidget):
     def setValue(self, value):
         if 0 <= value <= 100:
             self.value = value
-            self.update() # Redraw the widget
+            self.repaint() # Redraw the widget
 
     def setText(self, text):
         self.text = text
-        self.update()
+        self.repaint()
 
     def setColor(self, color: QColor):
         self.progress_color = color
-        self.update()
+        self.repaint()
 
     def paintEvent(self, event):
         painter = QPainter(self)

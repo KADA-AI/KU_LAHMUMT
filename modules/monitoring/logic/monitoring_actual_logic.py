@@ -48,6 +48,7 @@ def run_monitoring_procedure(data_401: AgentStatusModel):
             individualMissionProgressStatus.append(data)
 
     data = MissionProgressBodyModel(
+        sourceModuleName="MonitoringModule",
         timestamp=timestamp,
         currentMissionPlanID=12345,  # 전체임무계획
         currentInputMissionID=23456,  # 협업기저임무?

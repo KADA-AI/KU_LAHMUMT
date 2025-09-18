@@ -25,6 +25,7 @@ from .tabs.SystemModeControlTab import SystemModeControlTab
 class MainWindow(QMainWindow):
     ctrl_payload = pyqtSignal(dict)
     log_received = pyqtSignal(str)  # 스레드 안전 로깅을 위한 시그널
+    update_gui_signal = pyqtSignal(str, str, object) # GUI 업데이트를 위한 새로운 시그널
 
     def __init__(self, manager):
         super().__init__()
@@ -61,6 +62,7 @@ class MainWindow(QMainWindow):
 
         # 시그널-슬롯 연결
         self.log_received.connect(self._append_log_to_widget)
+        self.update_gui_signal.connect(self._perform_gui_update) # 새로운 시그널 연결
 
     @pyqtSlot(str)
     def _append_log_to_widget(self, message):
@@ -74,12 +76,15 @@ class MainWindow(QMainWindow):
         log_entry = f"[{tag}] [{log_type}] {message}"
         self.log_received.emit(log_entry)
 
-    def update_view(self, update_type: str, key: str, data_object: object = None):
-        """Manager가 데이터 변경을 알리기 위해 호출하는 콜백 메소드."""
+    @pyqtSlot(str, str, object)
+    def _perform_gui_update(self, update_type: str, key: str, data_object: object = None):
+        """GUI 업데이트를 메인 스레드에서 수행하는 슬롯"""
         update_info = (update_type, key)
-
-        # 매핑된 모든 핸들러(탭)에 업데이트를 전달합니다.
         handlers = self.update_handlers.get(update_type, [])
         for handler_tab in handlers:
             if hasattr(handler_tab, "refresh_display"):
                 handler_tab.refresh_display(update_info, data_object)
+
+    def update_view(self, update_type: str, key: str, data_object: object = None):
+        """Manager가 데이터 변경을 알리기 위해 호출하는 콜백 메소드. 시그널을 통해 GUI 스레드로 전달."""
+        self.update_gui_signal.emit(update_type, key, data_object)

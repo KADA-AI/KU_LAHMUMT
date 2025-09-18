@@ -1,16 +1,25 @@
 # logic/replan_actual_logic.py: 실제 재계획 판단 로직을 수행하는 함수를 정의합니다.
 from datetime import datetime, timezone
+import random
 
-from logic.Replan.replan_management import ReplanManager
+# from logic.Replan.replan_management import ReplanManager
 import udp_reporter
-from data.message_models import ReplanRequestBodyModel
+from data.message_models import (
+    ReplanRequestBodyModel,
+    ReplanRequestTimeStampModel,
+    InputMissionIDModel,
+    IndividualMissionIDListModel,
+    PriorMissionListModel,
+    OptionListModel,
+)
+from push.message0902_push import make_and_push as push_message_0902
 from push.push_center import push_message
 
 
 def run_replan_procedure(manager):
     """
     실제 재계획 판단 로직의 시작점입니다.
-    ReplanManager를 사용하여 재계획 프로세스를 관리합니다.
+    ReplanManager를 사용하여 재계획 프로세스를 관리합니다。
     """
     manager._log("REPLAN_PROCEDURE", "INFO", "실제 재계획 판단 로직 실행 시작.")
 
@@ -29,26 +38,32 @@ def run_replan_procedure(manager):
         )
         return
 
-    # ReplanManager 인스턴스 생성
-    replan_manager = ReplanManager()
+    # # ReplanManager 인스턴스 생성
+    # replan_manager = ReplanManager()
 
-    # 3. 실제 데이터를 인자로 전달하여 재계획 프로세스 실행
-    final_replan_output, trigger = replan_manager.manage_replan(
-        agent_state=agent_state,
-        mandatory_command=mandatory_command,
-        prior_mission_info=prior_mission_info,
-    )
+    # # 3. 실제 데이터를 인자로 전달하여 재계획 프로세스 실행
+    # final_replan_output, trigger = replan_manager.manage_replan(
+    #     agent_state=agent_state,
+    #     mandatory_command=mandatory_command,
+    #     prior_mission_info=prior_mission_info,
+    # )
 
-    # 4. 최종 결과를 logic_store에 저장
-    manager.logic_store.set_data(
-        "final_replan_output",
-        final_replan_output,
-    )
-    # 5. 트리거 결과를 logic_store에 저장 (GUI 표시용)
-    manager.logic_store.set_data(
-        "replan_triggers",
-        trigger,
-    )
+    # # 4. 최종 결과를 logic_store에 저장
+    # manager.logic_store.set_data(
+    #     "final_replan_output",
+    #     final_replan_output,
+    # )
+    # # 5. 트리거 결과를 logic_store에 저장 (GUI 표시용)
+    # if trigger is None:
+    #     manager.logic_store.set_data(
+    #         "replan_triggers",
+    #         [],
+    #     )
+    # else:
+    #     manager.logic_store.set_data(
+    #         "replan_triggers",
+    #         [trigger],
+    #     )
 
     # 0902 ReplanRequest 메시지 본문 생성
     ## 0918 적 발견으로 인한 유인기 경로 재계획 명령 확인용 더미 데이터
@@ -63,11 +78,33 @@ def run_replan_procedure(manager):
         replan_body = ReplanRequestBodyModel(
             timestamp=timestamp,
             sourceModuleName="MonitoringModule",
+            replanRequestTime=ReplanRequestTimeStampModel(
+                replanRequestTimestamp=timestamp
+            ),
             replanLevel=3,  # 유인기 공격 모델 호출 / 경로 및 촬영 재계획
+            inputMissionIDList=[
+                InputMissionIDModel(inputMissionID=random.randint(1, 10))
+            ],
+            IndividualMissionIDList=[
+                IndividualMissionIDListModel(
+                    individualMissionID=random.randint(101, 110)
+                )
+            ],
+            priorMissionList=[
+                PriorMissionListModel(priorMissionID=random.randint(201, 210))
+            ],
             replanRequest=final_replan_output,  # final_replan_output을 replanRequest 필드에 사용
+            optionList=[
+                OptionListModel(
+                    optionID=random.randint(1, 5),
+                    optionName="Option" + str(random.randint(1, 5)),
+                    missionPlanID=random.randint(1, 10),
+                )
+            ],
         )
 
-        push_message("0902", manager.node_messenger, body_dict=replan_body)
+        push_message_0902(replan_body, manager.node_messenger)
+        print(f"replan_body: {replan_body}")
         manager.receive_store.set_data("0402", None)
 
         # PushStorage에 저장
