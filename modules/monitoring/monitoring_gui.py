@@ -1,8 +1,9 @@
-# -*- coding: utf-8 -*-
+# 파일: /mnt/data/monitoring_gui.py
+# -*- coding: utf-8 -*- 
 # monitoring_gui.py – 임무 모니터링·판단 전용 GUI
 from __future__ import annotations
 
-import sys, os, threading, re, time
+import sys, os, threading, re, time, json, socket
 os.environ["KU_ROLE"] = "monitoring"
 from pathlib import Path
 
@@ -108,6 +109,40 @@ _ = _load_msglib_and_deps()
 from receive import *  # modules/common/receive
 from Tabs.mission_monitoring_tab import MissionMonitoringTab
 
+# ───────── 모듈별 모니터링 포트(모니터링/MSM) ─────────
+def _mon_port() -> int:
+    """모니터링 GUI → 대시보드(run.py) 모니터링 전송 포트"""
+    try:
+        return int(os.getenv("KU_MON_MONITORING_PORT", "46982"))
+    except Exception:
+        return 46982
+
+def _z4(s: str) -> str:
+    s = str(s).strip()
+    return s.zfill(4) if s.isdigit() and len(s) < 4 else s
+
+def _extract_json_from_raw(raw: bytes | None):
+    if not raw:
+        return None
+    try:
+        txt = raw.decode("utf-8", "ignore")
+        import re, json
+        m = re.search(r"\{.*\}", txt, flags=re.S)
+        if not m:  # 전체가 JSON일 수도 있음
+            return json.loads(txt)
+        return json.loads(m.group(0))
+    except Exception:
+        return None
+
+def _pretty(obj, limit=800):
+    try:
+        import json
+        s = json.dumps(obj, ensure_ascii=False, indent=2)
+    except Exception:
+        s = str(obj)
+    if len(s) > limit:
+        return s[:limit] + " ... (truncated)"
+    return s
 
 # ───────── 메인 윈도우 ─────────
 class MainWindow(QMainWindow):
@@ -123,6 +158,7 @@ class MainWindow(QMainWindow):
         self._self_check_sent = False
         self._last_ctrl_ts = {}   # 디듀프용
         self._staged_replan_context = None
+        self._rx_counts = {}      # ★ msg_id별 RX 누적 카운트 (UDP 알림용)
 
         tabs = QTabWidget()
         self._tab = MissionMonitoringTab(messenger=NodeMessenger)
@@ -134,6 +170,7 @@ class MainWindow(QMainWindow):
         )
 
         self._install_power_gate_hooks()  # TX/RX 차단 가드
+        self._install_mon_wires()         # ★ 모니터링 전송 훅
         tabs.addTab(self._tab, "임무 모니터링·판단 CSC")
 
         # ───── 상단 슬라이더 바 ─────
@@ -171,6 +208,193 @@ class MainWindow(QMainWindow):
                 pass
         start_ctrl_listener(env_ctrl_port(45982), _on_ctrl)
 
+    def _install_mon_wires(self):
+        """
+        - TX 완료(mark_sent) 시 → {"kind":"tx","msg_id":"XXXX"} UDP 전송
+        - 주기 TX(_log_only)도 동일 처리
+        - 버튼 클릭 경로에서도 선제 통지(실패해도 무해)
+        - (RX) 실제 수신은 탭 내부 로직이 처리하고, 그 '후'에 bump_rx 래핑으로 UDP 알림만 추가
+        """
+        tab = self._tab
+
+        # (1) mark_sent 래핑 (TX 전송 알림) — 그대로
+        if hasattr(tab, "mark_sent"):
+            self._orig_mark_sent = tab.mark_sent
+            def _wrapped_mark_sent(msg_id: str, raw: bytes = None):
+                try: self._send_mon("tx", msg_id=_z4(str(msg_id)))
+                except Exception: pass
+                return self._orig_mark_sent(msg_id, raw)
+            tab.mark_sent = _wrapped_mark_sent  # type: ignore
+
+        # (2) _log_only 래핑 — 그대로
+        if hasattr(tab, "_log_only"):
+            self._orig_log_only = tab._log_only
+            def _wrapped_log_only(row: int, msg_id: str, raw: bytes = None):
+                try: self._send_mon("tx", msg_id=_z4(str(msg_id)))
+                except Exception: pass
+                return self._orig_log_only(row, msg_id, raw)
+            tab._log_only = _wrapped_log_only  # type: ignore
+
+        # (3) 버튼 클릭 래핑 — 그대로
+        if hasattr(tab, "tbl_tx") and hasattr(tab, "_on_tx_button_clicked"):
+            self._orig_tx_click_for_mon = tab._on_tx_button_clicked
+            def _wrapped_click_for_mon(row: int):
+                try:
+                    it = getattr(tab, "tbl_tx").item(row, 0)
+                    if it: self._send_mon("tx", msg_id=_z4(it.text()))
+                except Exception: pass
+                return self._orig_tx_click_for_mon(row)
+            tab._on_tx_button_clicked = _wrapped_click_for_mon  # type: ignore
+
+        # (4) bump_rx 래핑 — 수신 직후 카운트 & UDP, 그리고 msg_id만 간단 출력
+        if hasattr(tab, "bump_rx") and not hasattr(self, "_rx_bump_wrapped"):
+            _orig_bump_rx = tab.bump_rx
+            def _wrapped_bump_rx(msg_id: str):
+                _orig_bump_rx(msg_id)
+                try:
+                    print(f"[MSM RX] bump_rx mid={_z4(msg_id)}")
+                    if hasattr(self._tab, "append_log"):
+                        self._tab.append_log(f"[MSM RX] { _z4(msg_id) } 수신")
+                except Exception:
+                    pass
+                mid = _z4(str(msg_id))
+                def _pulse():
+                    cnt = self._rx_counts.get(mid, 0) + 1
+                    self._rx_counts[mid] = cnt
+                    self._send_mon("rx", msg_id=mid, count=cnt)
+                QTimer.singleShot(0, _pulse)
+            tab.bump_rx = _wrapped_bump_rx  # type: ignore
+            self._rx_bump_wrapped = True
+
+        if not getattr(self, "_rx_shadow_installed", False):
+            try:
+                # ✅ receive_center 모듈 객체를 '실사용 중인 동일 인스턴스'로 강제 통일
+                import sys
+                _rc = None
+                for k in (
+                    "modules.common.receive_center",  # 우선 공용 경로
+                    "receive_center",                 # 루트 경로 (프로젝트에 따라 이쪽을 씀)
+                ):
+                    if k in sys.modules:
+                        _rc = sys.modules[k]
+                        break
+                if _rc is None:
+                    try:
+                        from modules.common import receive_center as _rc  # type: ignore
+                    except Exception:
+                        import receive_center as _rc  # type: ignore
+
+                register_listener = getattr(_rc, "register_listener")
+
+                # ---- 프린트 유틸 ----
+                def _extract_json_from_raw(raw: bytes | None):
+                    if not raw:
+                        return None
+                    try:
+                        txt = raw.decode("utf-8", "ignore")
+                        import re, json
+                        m = re.search(r"\{.*\}", txt, flags=re.S)
+                        if not m:
+                            return json.loads(txt)
+                        return json.loads(m.group(0))
+                    except Exception:
+                        return None
+
+                def _pretty(obj, limit=1200):
+                    try:
+                        import json
+                        s = json.dumps(obj, ensure_ascii=False, indent=2)
+                    except Exception:
+                        s = str(obj)
+                    return s if len(s) <= limit else s[:limit] + " ... (truncated)"
+
+                class _RxMonTap:
+                    def __init__(self, send_fn, z4_fn, log_fn):
+                        self._send = send_fn; self._z4 = z4_fn; self._log = log_fn
+                    def mark_received(self, msg_id: str, raw: bytes | None = None):
+                        mid = self._z4(msg_id)
+                        obj = _extract_json_from_raw(raw)
+                        # ★ 여기서 '무엇을 받았는지' 즉시 출력
+                        if obj is not None:
+                            txt = _pretty(obj)
+                            print(f"[MSM RX] mid={mid} payload=\n{txt}")
+                            self._log(f"[MSM RX] {mid} payload\n{txt}")
+                        else:
+                            ln = 0 if raw is None else len(raw)
+                            print(f"[MSM RX] mid={mid} (non-JSON raw, {ln} bytes)")
+                            self._log(f"[MSM RX] {mid} (non-JSON raw, {ln} bytes)")
+                        # rx UDP 통지
+                        try:
+                            self._send("rx", msg_id=mid)
+                        except Exception:
+                            pass
+
+                def _safe_log(text: str):
+                    try:
+                        if hasattr(self._tab, "append_log"):
+                            self._tab.append_log(text)
+                        else:
+                            print(text)
+                    except Exception:
+                        pass
+
+                tap = _RxMonTap(self._send_mon, _z4, _safe_log)
+
+                # 현재 탭이 선언한 수신 코드들에만 ‘추가’ 등록 (덮어쓰기 아님)
+                recv_list = getattr(self._tab, "RECEIVE_MESSAGES", None)
+                if recv_list:
+                    for mid, _desc in recv_list:
+                        try: register_listener(str(mid), tap)
+                        except Exception: pass
+                else:
+                    # 안전 기본값
+                    for mid in ("0000","0101","0102","0201","0202","0203","0301","0302","0303","0304",
+                                "0401","0402","0601","0702","0802","0803","0902"):
+                        try: register_listener(mid, tap)
+                        except Exception: pass
+
+                self._rx_shadow_installed = True
+                self._append_log_line("[MON] RX shadow listener installed (bound to active receive_center)")
+            except Exception as e:
+                self._append_log_line(f"[MON] RX shadow listener failed: {e}")
+                
+
+    def _send_mon(self, kind: str, **payload):
+        """
+        대시보드(run.py)가 수신하는 모듈별 모니터링 UDP(JSON).
+        포트: KU_MON_MONITORING_PORT(기본 46982)
+        """
+        data = {"kind": str(kind), "role": "monitoring", **payload}
+
+        try:
+            # ★ 보내는 JSON을 터미널에 그대로 출력
+            text = json.dumps(data, ensure_ascii=False)
+            print(f"[MSM→RUN UDP SEND] {text}")
+
+            # 실제 송신
+            buf = text.encode("utf-8", "ignore")
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.sendto(buf, ("127.0.0.1", _mon_port()))
+            s.close()
+        except Exception as e:
+            # 송신 실패도 확인 가능하게 출력
+            print(f"[MSM→RUN UDP ERROR] {e}  data={data}")
+
+
+    def _send_mon(self, kind: str, **payload):
+        """
+        대시보드(run.py)가 수신하는 모듈별 모니터링 UDP(JSON).
+        포트: KU_MON_MONITORING_PORT(기본 46982)
+        """
+        data = {"kind": str(kind), "role": "monitoring", **payload}  # ← role 명시
+        try:
+            buf = json.dumps(data, ensure_ascii=False).encode("utf-8", "ignore")
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.sendto(buf, ("127.0.0.1", _mon_port()))
+            s.close()
+        except Exception:
+            pass
+
     # ───────── Power ON 시 0.5s 뒤 0102 5Hz 자동 시작 ─────────
     def _start_0102_stream(self):
         if not self._power_on:
@@ -187,7 +411,7 @@ class MainWindow(QMainWindow):
             tab = self._tab
             tbl = getattr(tab, "tbl_tx", None)
 
-            # (A) TX 테이블 입력 차단(OFF)
+            # TX만 차단
             if tbl is not None:
                 class _PG(QObject):
                     def __init__(self, host): super().__init__(host); self.host = host
@@ -201,43 +425,29 @@ class MainWindow(QMainWindow):
                 self._pg_filter = _PG(self)
                 tbl.installEventFilter(self._pg_filter)
 
-            # (B) 전송 슬롯 우회 호출 차단
+            # TX 버튼 우회만 차단
             if hasattr(tab, "_on_tx_button_clicked"):
                 self._orig_tx_click = tab._on_tx_button_clicked
                 def _wrapped_tx_click(row):
                     if not self._power_on:
                         self._append_log_line("[BLOCK] Power OFF → TX 버튼 무시")
                         return
+                    # (선제 통지 유지)
+                    try:
+                        it = getattr(tab, "tbl_tx", None).item(row, 0) if getattr(tab, "tbl_tx", None) else None
+                        if it: self._send_mon("tx", msg_id=_z4(it.text()))
+                    except Exception: pass
                     return self._orig_tx_click(row)
                 tab._on_tx_button_clicked = _wrapped_tx_click
-
-            # (C) 수신 콜백 차단
-            if hasattr(tab, "mark_received"):
-                self._orig_tab_mark_received = tab.mark_received
-                def _wrapped_mark_received(msg_id, raw=None):
-                    if not self._power_on:
-                        return
-                    return self._orig_tab_mark_received(msg_id, raw)
-                tab.mark_received = _wrapped_mark_received
-
-            # (D) RX 카운터 차단
-            if hasattr(tab, "bump_rx"):
-                self._orig_bump_rx = tab.bump_rx
-                def _wrapped_bump_rx(mid):
-                    if not self._power_on:
-                        return
-                    return self._orig_bump_rx(mid)
-                tab.bump_rx = _wrapped_bump_rx
 
         except Exception:
             pass
 
-    # ───────── 전원 상태 적용 ─────────
     def _apply_power_state(self):
         on = bool(self._power_on)
         try:
             self._update_tx_table_enabled(on)
-            self._update_rx_table_enabled(on)
+            self._update_rx_table_enabled(True)  # ★ 항상 활성
             if not on:
                 self._stop_all_periodic()
         except Exception:
@@ -308,6 +518,9 @@ class MainWindow(QMainWindow):
         except Exception: pass
         self._power_on = (int(val) != 0)
         self._append_log_line(f"[MODE] 슬라이더 변경 → {labels[int(val)] if 0 <= val < len(labels) else val}")
+        # ★ 모드 변경도 대시보드로 통지
+        try: self._send_mon("mode", text=labels[int(val)], role="MSM")
+        except Exception: pass
         self._apply_power_state()
         if self._power_on:
             QTimer.singleShot(500, self._start_0102_stream)
@@ -331,6 +544,8 @@ class MainWindow(QMainWindow):
                     self.mode_slider.blockSignals(False)
             if getattr(self, "mode_now", None) is not None:
                 self.mode_now.setText(labels[val])
+            # ★ 텍스트 기반 모드 변경도 통지
+            self._send_mon("mode", text=labels[val], role="MSM")
         except Exception:
             pass
         self._power_on = (int(val) != 0)
@@ -341,7 +556,7 @@ class MainWindow(QMainWindow):
     # ───────── 버스 초기화 ─────────
     def _rx_setup(self):
         FusionNodeIoc.Configure()
-        NodeMessenger.Initialize("MultiTopicReceiveNode")
+        NodeMessenger.Initialize("MSM_ReceiveNode")  # 🔧 기존 "MultiTopicReceiveNode" → 고유화
         NodeMessenger.RegistAllConsumerFromFusionNodeIoc()
         NodeMessenger.InitAllSubscriberFromAssembly()
         NodeMessenger.RegistAllProviderFromFusionNodeIoc()

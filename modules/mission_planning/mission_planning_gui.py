@@ -2,7 +2,7 @@
 # mission_planning_gui.py – 임무 할당·계획수립 전용 GUI (S110 플로우 대응)
 from __future__ import annotations
 
-import sys, os, threading, json, re, time, shutil
+import sys, os, threading, json, re, time, shutil, socket
 os.environ["KU_ROLE"] = "mission"  # MMR
 from pathlib import Path
 
@@ -108,6 +108,18 @@ from receive import *  # noqa
 # 탭
 from Tabs.assignment_planning_tab import AssignmentPlanningTab
 
+# ───────── 모듈별 모니터링 포트(임무계획/MMR) ─────────
+def _mon_port() -> int:
+    """임무계획 GUI → 대시보드(run.py) 모니터링 전송 포트"""
+    try:
+        return int(os.getenv("KU_MON_ASSIGNMENT_PORT", "46981"))
+    except Exception:
+        return 46981
+
+def _z4(s: str) -> str:
+    s = str(s).strip()
+    return s.zfill(4) if s.isdigit() and len(s) < 4 else s
+
 
 # ───────── 메인 윈도우 ─────────
 class MainWindow(QMainWindow):
@@ -125,6 +137,7 @@ class MainWindow(QMainWindow):
         self._power_on = False
         self._self_check_sent = False
         self._last_ctrl_ts = {}     # 디듀프
+        self._rx_counts = {} 
 
         # 파이프라인 컨텍스트
         self._initplan_running = False
@@ -144,7 +157,8 @@ class MainWindow(QMainWindow):
             if str(mid).strip() == "0102" else None
         )
 
-        self._install_power_gate_hooks()                              # Power OFF 가드
+        self._install_power_gate_hooks()       # Power OFF 가드
+        self._install_mon_wires()              # ★ 모니터링 전송 훅
         tabs.addTab(self._tab, "임무 할당·계획수립 CSC")
 
         # ── 상단 모드 슬라이더
@@ -191,13 +205,85 @@ class MainWindow(QMainWindow):
                 pass
         start_ctrl_listener(env_ctrl_port(45981), _on_ctrl)
 
+    # ───────── 모니터링(대시보드) 전송 훅 ─────────
+    def _install_mon_wires(self):
+        """
+        - TX 완료(mark_sent) 시 → {"kind":"tx","msg_id":"XXXX"} UDP 전송
+        - 주기 TX(_log_only) 경로도 동일 처리
+        - 버튼 클릭 경로에서도 선제 통지(실패해도 무해)
+        - 모드 변경은 슬라이더 핸들러에서 {"kind":"mode","text":..., "role":"MMR"} 송신
+        """
+        tab = self._tab
+
+        # (1) mark_sent 래핑
+        if hasattr(tab, "mark_sent"):
+            self._orig_mark_sent = tab.mark_sent
+            def _wrapped_mark_sent(msg_id: str, raw: bytes | None = None):
+                try: self._send_mon("tx", msg_id=_z4(str(msg_id)))
+                except Exception: pass
+                return self._orig_mark_sent(msg_id, raw)
+            tab.mark_sent = _wrapped_mark_sent  # type: ignore
+
+        # (2) _log_only 래핑(주기 전송 로그 경로)
+        if hasattr(tab, "_log_only"):
+            self._orig_log_only = tab._log_only
+            def _wrapped_log_only(row: int, msg_id: str, raw: bytes | None):
+                try: self._send_mon("tx", msg_id=_z4(str(msg_id)))
+                except Exception: pass
+                return self._orig_log_only(row, msg_id, raw)
+            tab._log_only = _wrapped_log_only  # type: ignore
+
+        # (3) 버튼 클릭 경로에서도 선제 통지
+        if hasattr(tab, "tbl_tx") and hasattr(tab, "_on_tx_button_clicked"):
+            self._orig_tx_click_for_mon = tab._on_tx_button_clicked
+            def _wrapped_click_for_mon(row: int):
+                try:
+                    it = getattr(tab, "tbl_tx").item(row, 0)
+                    if it:
+                        self._send_mon("tx", msg_id=_z4(it.text()))
+                except Exception:
+                    pass
+                return self._orig_tx_click_for_mon(row)
+            tab._on_tx_button_clicked = _wrapped_click_for_mon  # type: ignore
+
+        # (4) RX 카운트 발생 지점 훅: bump_rx 호출 ‘후’에 비동기 UDP 알림
+        if hasattr(tab, "bump_rx") and not hasattr(self, "_rx_bump_wrapped"):
+            _orig_bump_rx = tab.bump_rx
+            def _wrapped_bump_rx(msg_id: str):
+                # 원래 카운트/표시 먼저 수행
+                _orig_bump_rx(msg_id)
+                # 우리 쪽 카운터 갱신 및 UDP 알림은 UI 루프로 비동기 처리 (수신 경로 절대 블록 X)
+                mid = _z4(str(msg_id))
+                def _pulse():
+                    cnt = self._rx_counts.get(mid, 0) + 1
+                    self._rx_counts[mid] = cnt
+                    self._send_mon("rx", msg_id=mid, count=cnt)
+                QTimer.singleShot(0, _pulse)
+            tab.bump_rx = _wrapped_bump_rx  # type: ignore
+            self._rx_bump_wrapped = True
+
+    def _send_mon(self, kind: str, **payload):
+        """
+        대시보드(run.py)가 수신하는 모듈별 모니터링 UDP(JSON).
+        포트: KU_MON_ASSIGNMENT_PORT(기본 46981)
+        kind: "tx" | "mode"
+        """
+        data = {"kind": str(kind), **payload}
+        try:
+            buf = json.dumps(data, ensure_ascii=False).encode("utf-8", "ignore")
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.sendto(buf, ("127.0.0.1", _mon_port()))
+            s.close()
+        except Exception:
+            pass  # 모니터링용이므로 실패해도 동작에는 영향 없음
+
     def _start_0102_stream(self):
         """전원 ON 직후 0.5s 뒤 0102를 5Hz로 자동 시작."""
         if not self._power_on:
             return
         try:
             # CSCTabBase 기본 주기(5Hz) 보장. 필요시 다시 설정.
-            self._tab.periodic_config['0102'] = 5   # 5Hz (기본값도 5)  :contentReference[oaicite:1]{index=1}
+            self._tab.periodic_config['0102'] = 5
         except Exception:
             pass
         # 실제 테이블의 0102 발신 토글 ON (버튼 click() 경로)
@@ -363,6 +449,9 @@ class MainWindow(QMainWindow):
             try:
                 btn = tbl.cellWidget(target_row, 3)
                 if btn is not None and hasattr(btn, "click"):
+                    # 선제 통지 시도(안전)
+                    try: self._send_mon("tx", msg_id=_z4(code))
+                    except Exception: pass
                     btn.click()
                     self._append_log_line(f"[PUSH] {code} 버튼 click()")
                     return
@@ -372,6 +461,8 @@ class MainWindow(QMainWindow):
             # (B) 내부 핸들러 직접 호출
             try:
                 if hasattr(tab, "_on_tx_button_clicked"):
+                    try: self._send_mon("tx", msg_id=_z4(code))
+                    except Exception: pass
                     tab._on_tx_button_clicked(target_row)
                     self._append_log_line(f"[PUSH] {code} 내부 핸들러 호출")
                     return
@@ -399,10 +490,12 @@ class MainWindow(QMainWindow):
         except Exception: pass
         self._power_on = (int(val) != 0)
         self._append_log_line(f"[MODE] 슬라이더 변경 → {labels[int(val)] if 0 <= val < len(labels) else val}")
+        # ★ 모드 변경도 대시보드로 통지
+        try: self._send_mon("mode", text=labels[int(val)], role="MMR")
+        except Exception: pass
         self._apply_power_state()
         if self._power_on:
             QTimer.singleShot(500, self._start_0102_stream)
-
 
     def _set_mode_slider_by_text(self, text: str):
         labels = ["전원 OFF", "전원 ON", "대기모드", "초기 임무 계획", "임무 수행"]
@@ -423,6 +516,8 @@ class MainWindow(QMainWindow):
                     self.mode_slider.blockSignals(False)
             if getattr(self, "mode_now", None):
                 self.mode_now.setText(labels[val])
+            # ★ 텍스트 기반 모드 변경도 통지
+            self._send_mon("mode", text=labels[val], role="MMR")
         except Exception:
             pass
         self._power_on = (int(val) != 0)
@@ -433,7 +528,7 @@ class MainWindow(QMainWindow):
     # ───────── nFusion RX 초기화 ─────────
     def _rx_setup(self):
         FusionNodeIoc.Configure()
-        NodeMessenger.Initialize("MultiTopicReceiveNode")
+        NodeMessenger.Initialize("MMR_ReceiveNode")
         NodeMessenger.RegistAllConsumerFromFusionNodeIoc()
         NodeMessenger.InitAllSubscriberFromAssembly()
         NodeMessenger.RegistAllProviderFromFusionNodeIoc()

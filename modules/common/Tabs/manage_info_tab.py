@@ -1,7 +1,10 @@
-# manage_info_tab.py
+# 파일: Tabs/manage_info_tab.py
 from typing import Optional
 
-from PyQt5.QtWidgets import QButtonGroup, QHBoxLayout, QPushButton, QWidget
+from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import (
+    QComboBox, QWidget
+)
 
 from Tabs.csc_tab_base import CSCTabBase, _now_ms_since_2000
 from push_center import push_message
@@ -79,10 +82,10 @@ class ManageInfo(CSCTabBase):
 
     def __init__(self, *, messenger, parent: Optional[QWidget] = None):
         super().__init__(messenger=messenger, parent=parent)
-        self._mode_group: Optional[QButtonGroup] = None
+        self._mode_combo: Optional[QComboBox] = None
         self._current_system_mode: int = 0
         self._system_mode_row: int = self._find_tx_row("0101")
-        self._install_system_mode_buttons()
+        self._install_system_mode_selector()
 
     def _find_tx_row(self, msg_id: str) -> int:
         for row in range(self.tbl_tx.rowCount()):
@@ -91,49 +94,63 @@ class ManageInfo(CSCTabBase):
                 return row
         return -1
 
-    def _install_system_mode_buttons(self) -> None:
+    # ─────────────────────────────────────────────────────────────
+    # 0101: 시스템 운용 모드 → 드롭다운(화살표) 선택으로 변경
+    # ─────────────────────────────────────────────────────────────
+    def _install_system_mode_selector(self) -> None:
         row = self._system_mode_row
         if row < 0:
             return
 
-        self.tbl_tx.setColumnWidth(3, 240)
+        # 행 높이만 살짝 확보(테이블이 작아도 콤보는 안정적으로 보임)
+        self.tbl_tx.setRowHeight(row, max(28, self.tbl_tx.rowHeight(row)))
 
-        container = QWidget(self.tbl_tx)
-        layout = QHBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
+        combo = QComboBox(self.tbl_tx)
+        combo.setFocusPolicy(Qt.StrongFocus)
+        combo.setEditable(False)
+        combo.setMaxVisibleItems(6)
+        combo.setSizeAdjustPolicy(QComboBox.AdjustToContentsOnFirstShow)
+        combo.setMinimumWidth(110)
 
-        self._mode_group = QButtonGroup(container)
-        self._mode_group.setExclusive(True)
+        # 한국어 라벨 ↔ 모드값 매핑
+        # 0: 초기화, 1: 대기, 2: 계획, 3: 임무
+        combo.addItem("초기화(0)", 0)
+        combo.addItem("대기(1)",   1)
+        combo.addItem("초기임무계획(2)",   2)
+        combo.addItem("임무수행(3)",   3)
 
-        buttons = [
-            ("Init", 0),
-            ("Standby", 1),
-            ("Planning", 2),
-            ("Mission", 3),
-        ]
+        # 현재 모드 반영
+        def _apply_current():
+            # _current_system_mode가 목록에 있으면 해당 인덱스로
+            for i in range(combo.count()):
+                if int(combo.itemData(i)) == int(self._current_system_mode):
+                    combo.setCurrentIndex(i)
+                    return
+            combo.setCurrentIndex(0)
 
-        for label, value in buttons:
-            btn = QPushButton(label)
-            btn.setCheckable(True)
-            btn.setToolTip(f"SystemMode={value}")
-            btn.clicked.connect(lambda _=False, v=value: self._send_system_mode(row, v))
-            layout.addWidget(btn)
-            self._mode_group.addButton(btn, value)
+        _apply_current()
 
-        layout.addStretch(1)
-        self.tbl_tx.setCellWidget(row, 3, container)
+        # 선택 즉시 전송
+        combo.activated.connect(lambda _idx: self._on_mode_selected(row))
 
-        default_btn = self._mode_group.button(self._current_system_mode)
-        if default_btn:
-            default_btn.setChecked(True)
+        self.tbl_tx.setCellWidget(row, 3, combo)
+        self._mode_combo = combo
+
+    def _on_mode_selected(self, row: int) -> None:
+        if self._mode_combo is None:
+            return
+        mode = int(self._mode_combo.currentData())
+        self._send_system_mode(row, mode)
 
     def _send_system_mode(self, row: int, mode: int) -> None:
         self._current_system_mode = int(mode)
-        if self._mode_group:
-            btn = self._mode_group.button(mode)
-            if btn and not btn.isChecked():
-                btn.setChecked(True)
+        # 콤보 상태 동기화(외부 호출 대비)
+        if self._mode_combo:
+            for i in range(self._mode_combo.count()):
+                if int(self._mode_combo.itemData(i)) == mode:
+                    if self._mode_combo.currentIndex() != i:
+                        self._mode_combo.setCurrentIndex(i)
+                    break
 
         body = {
             "timestamp": _now_ms_since_2000(),
@@ -157,10 +174,10 @@ class ManageInfo(CSCTabBase):
     def _build_overridden_body(self, msg_id: str):
         if str(msg_id).strip() == "0101":
             mode = self._current_system_mode
-            if self._mode_group:
-                checked = self._mode_group.checkedId()
-                if checked >= 0:
-                    mode = checked
+            if self._mode_combo is not None:
+                data = self._mode_combo.currentData()
+                if data is not None:
+                    mode = int(data)
             return {
                 "timestamp": _now_ms_since_2000(),
                 "source": "IDM",
@@ -172,11 +189,11 @@ class ManageInfo(CSCTabBase):
         item = self.tbl_tx.item(row, 0)
         msg_id = item.text().strip() if item else ""
         if msg_id == "0101":
-            mode = self._current_system_mode
-            if self._mode_group:
-                checked = self._mode_group.checkedId()
-                if checked >= 0:
-                    mode = checked
+            # 현재 드롭다운 선택값으로 즉시 전송
+            if self._mode_combo is not None:
+                mode = int(self._mode_combo.currentData())
+            else:
+                mode = int(self._current_system_mode)
             self._send_system_mode(row, mode)
             return
         super()._on_tx_double_clicked(row, col)

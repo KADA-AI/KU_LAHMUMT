@@ -237,7 +237,7 @@ class MainWindow(QMainWindow):
     def _rx_setup(self):
         try:
             FusionNodeIoc.Configure()
-            NodeMessenger.Initialize("MultiTopicReceiveNode")
+            NodeMessenger.Initialize("INT_ReceiveNode")
             NodeMessenger.RegistAllConsumerFromFusionNodeIoc()
             NodeMessenger.InitAllSubscriberFromAssembly()
             NodeMessenger.RegistAllProviderFromFusionNodeIoc()
