@@ -1,5 +1,8 @@
 # manager.py: 모듈의 모든 컴포넌트(데이터, 로직, GUI)를 총괄하고 데이터 흐름을 중재하는 중앙 관리자(Mediator) 클래스를 정의합니다.
 import sys
+from datetime import datetime, timezone
+
+from datetime import timezone
 
 from typing import Callable, Any, Optional
 from functools import partial
@@ -8,9 +11,12 @@ from functools import partial
 from data.receive_storage import ReceiveStorage
 from data.logic_storage import LogicStorage
 from data.push_storage import PushStorage
+from data.message_models import ModuleStatusModelModel
 
 from logic.monitoring_logic import MonitoringLogicHandler
 from receive.receive_center import register_listener
+from push import message0102_push
+from udp_reporter import notify_mode
 
 
 class MonitoringManager:
@@ -46,6 +52,9 @@ class MonitoringManager:
 
         # 6. 백그라운드 로직 스레드 시작
         self.logic_handler.start()
+
+        # 7. 초기 상태 메시지(0102) 발신
+        self.send_initial_status_message()
 
     def shutdown(self):
         """어플리케이션 종료 시 호출되어 자원을 정리합니다."""
@@ -85,8 +94,39 @@ class MonitoringManager:
         """시스템 실행 모드를 변경합니다. (0:초기화, 1:대기, 2:초기임무재계획, 3:임무수행)"""
         self._log("MON_MGR", "MODE_CHANGE", f"System mode set to '{mode}'.")
         self.logic_store.set_data("SystemMode", mode)
+
+        mode_map = {
+            0: "초기화 모드",
+            1: "대기모드",
+            2: "초기 임무 계획",
+            3: "임무 수행",
+        }
+        mode_text = mode_map.get(mode, f"알 수 없는 모드 ({mode})")
+        notify_mode(mode_text)
+
         if self.gui_update_callback:
             self.gui_update_callback("logic", "SystemMode")
+
+    def send_initial_status_message(self):
+        """초기화 완료 후 0102 상태 메시지를 발신합니다."""
+        self._log("MON_MGR", "INFO", "Sending initial status message (0102)...")
+        timestamp = int(
+            (
+                datetime.now(timezone.utc) - datetime(2000, 1, 1, tzinfo=timezone.utc)
+            ).total_seconds()
+            * 1000
+        )
+
+        # 0102 메시지 본문 생성
+        body_obj = ModuleStatusModelModel(
+            timestamp=timestamp, source="MonitoringModule", status=1  # 1: Normal
+        )
+
+        # 생성된 데이터 모델 객체를 직접 전달
+        message0102_push.make_and_push(body_obj, self.node_messenger)
+
+        # PushStorage에 저장
+        self.push_store.add_data("0102", body_obj)
 
     # --- 기존의 다른 메소드들 (변경 없음) ---
     def trigger_logic(self):

@@ -29,7 +29,10 @@ DB_DIR_RULES = {
 # ── Helper Functions ───────────────────────────────────────────────────────
 
 now_ms = lambda: int(
-    (datetime.utcnow().replace(tzinfo=timezone.utc) - EPOCH_2000).total_seconds() * 1000
+    (
+        datetime.now(timezone.utc).replace(tzinfo=timezone.utc) - EPOCH_2000
+    ).total_seconds()
+    * 1000
 )
 
 

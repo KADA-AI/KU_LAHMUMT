@@ -53,11 +53,15 @@ class MonitoringLogicHandler:
                     # 로직 실행 후 시스템 모드를 1 (대기 모드)로 설정
                     self.manager.set_system_mode(1)
             else:
-                try:
-                    self.monitoring_logic.execute()
-                    self.replan_logic.execute()
-                except Exception as e:
-                    self.manager._log("LOGIC_LOOP", "ERROR", f"로직 실행 중 예외 발생: {e}")
+                if system_mode == 3: # "임무 수행" 모드일 때만 핵심 로직 실행
+                    try:
+                        self.monitoring_logic.execute()
+                        self.replan_logic.execute()
+                    except Exception as e:
+                        self.manager._log("LOGIC_LOOP", "ERROR", f"로직 실행 중 예외 발생: {e}")
+                else:
+                    # 다른 모드에서는 로직을 실행하지 않음
+                    pass
             
-            # 1초 대기 (CPU 사용량 조절)
-            time.sleep(1)
+            # 15Hz 대기 (CPU 사용량 조절)
+            time.sleep(1/15)

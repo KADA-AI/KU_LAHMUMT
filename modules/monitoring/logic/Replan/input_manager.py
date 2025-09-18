@@ -4,6 +4,7 @@ import random
 import string
 import time
 from datetime import datetime, timezone
+, timezone
 from typing import Callable, Dict, Union
 
 
@@ -31,7 +32,9 @@ rand_str: Callable[[int], str] = lambda n: "".join(
 )
 
 _now_ms = lambda: int(
-    (datetime.utcnow().replace(tzinfo=timezone.utc) - _EPOCH_2000).total_seconds()
+    (
+        datetime.now(timezone.utc).replace(tzinfo=timezone.utc) - _EPOCH_2000
+    ).total_seconds()
     * 1000
 )
 

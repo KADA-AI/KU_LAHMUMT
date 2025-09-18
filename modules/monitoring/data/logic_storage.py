@@ -7,6 +7,7 @@ class LogicStorage:
     """내부 로직에 의해 처리/생성된 결과 데이터를 저장합니다."""
     def __init__(self):
         self._data: Dict[str, Any] = {}
+        self._data["fuel_data"] = None # Initialize fuel_data
 
     def set_data(self, key: str, value: Any):
         self._data[key] = value

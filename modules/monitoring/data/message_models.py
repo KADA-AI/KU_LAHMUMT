@@ -615,37 +615,6 @@ class RequestOptionInfoModel:
     pendingOptionList: List[PendingOptionModel]
 
 
-# ----------------- Message 0902 (ReplanRequest) ----------------- #
-@dataclass
-class ReplanRequestTimeModel:
-    replanRequestTimestamp: int
-
-
-@dataclass
-class InputMissionIDModel:
-    inputMissionID: int
-
-
-@dataclass
-class IndividualMissionIDModel:
-    individualMissionID: int
-
-
-@dataclass
-class ReplanRequestModel:
-    """0902 ReplanRequest 메시지"""
-
-    timestamp: int
-    source: str
-    replanRequestTime: ReplanRequestTimeModel
-    replanLevel: int
-    inputMissionIDList: List[InputMissionIDModel]
-    individualMissionIDList: List[IndividualMissionIDModel]
-    priorMissionList: List[PriorMissionModel]
-    replanReason: str
-    pendingOptionList: List[PendingOptionModel]
-
-
 # ----------------- Message 0903 (PerformanceMissionUpdateCommand) ----------------- #
 @dataclass
 class PerformanceMissionUpdateCommandModel:
@@ -660,12 +629,26 @@ class PerformanceMissionUpdateCommandModel:
 
 
 @dataclass
-class MissionPerformanceStatusBodyModel:
+class IndividualMissionIDModel:
+    individualMissionID: int
+
+
+@dataclass
+class IndividualMissionProgressStatusModel:
+    aircraftID: int
+    currentIndividualMission: IndividualMissionIDModel
+    currentIndividualMissionProgress: int
+
+
+@dataclass
+class MissionProgressBodyModel:
     """0501 MissionPerformanceStatus 메시지 본문"""
 
-    timestamp: int
     sourceModuleName: str
-    missionStatus: int
+    timestamp: int
+    currentMissionPlanID: int
+    currentInputMissionID: int
+    individualMissionProgressStatusList: List[IndividualMissionProgressStatusModel]
 
 
 @dataclass
@@ -677,13 +660,52 @@ class MissionEndRequestBodyModel:
     reason: int
 
 
+# ----------------- Message 0902 (ReplanRequest) ----------------- #
+
+
+@dataclass
+class ReplanRequestTimeStampModel:
+    replanRequestTimestamp: int
+
+
+@dataclass
+class InputMissionIDModel:
+    inputMissionID: int
+
+
+@dataclass
+class OptionListModel:
+    optionID: int
+    optionName: str
+    missionPlanID: int
+
+
+@dataclass
+class IndividualMissionIDListModel:
+    individualMissionID: int
+
+
+@dataclass
+class PriorMissionListModel:
+    priorMissionID: int
+
+
 @dataclass
 class ReplanRequestBodyModel:
     """0902 ReplanRequest 메시지 본문"""
 
-    timestamp: int
     sourceModuleName: str
+    timestamp: int
+    replanRequestTime: ReplanRequestTimeStampModel
+    replanLevel: int
+    inputMissionIDList: List[InputMissionIDModel]
+    IndividualMissionIDList: List[IndividualMissionIDListModel]
+    priorMissionList: List[PriorMissionListModel]
     replanRequest: str
+    optionList: List[OptionListModel]
+
+
+# ----------------- Message 0503 (CollaborativeMissionComplete) ----------------- #
 
 
 @dataclass

@@ -1,52 +1,33 @@
 # modules/monitoring/push/message0502_push.py
 from nFusion.Model.msg_0502 import EndMissionRequest
-from generator.message0502_generator import make_msg0502_body
-from .push_utils import (
-    cs_new,
-    try_set,
-    select_tx_fields,
-    make_and_push_based_on_rules,
-    TX_FIELD_WHITELIST,
-)
+from data.message_models import MissionEndRequestBodyModel
+from .push_utils import cs_new, try_set
 
 MSG_ID = "0502"
 
 
-def _dict_to_end_mission_request(data: dict) -> EndMissionRequest:
-    """Converts a dictionary to a C# EndMissionRequest object."""
+def _model_to_cs_object(body: MissionEndRequestBodyModel) -> EndMissionRequest:
+    """Converts a MissionEndRequestBodyModel object to a C# EndMissionRequest object."""
     obj = cs_new("EndMissionRequest", MSG_ID)
-    if "timestamp" in data:
-        try_set(obj, "timestamp", int(data["timestamp"]))
 
-    val_src = data.get(
-        "source", data.get("sourceModuleName", data.get("requestModuleName", ""))
-    )
-    if val_src:
-        if not try_set(obj, "source", str(val_src)):
-            try_set(obj, "sourceModuleName", str(val_src))
+    try_set(obj, "timestamp", body.timestamp)
+    try_set(obj, "sourceModuleName", body.sourceModuleName)
+    try_set(obj, "reason", body.reason)
 
     return obj
 
 
-def make_and_push(body_dict: dict, node_messenger) -> bytes:
-    """Creates and pushes a message, returning a log string."""
-    wl = TX_FIELD_WHITELIST.get(MSG_ID)
-    if wl and isinstance(body_dict, dict):
-        body_dict = select_tx_fields(body_dict, wl)
+def make_and_push(body: MissionEndRequestBodyModel, node_messenger) -> bytes:
+    """Creates and pushes a message from a MissionEndRequestBodyModel object or a compatible dict."""
+    if isinstance(body, dict):
+        body = MissionEndRequestBodyModel(**body)
+    elif not isinstance(body, MissionEndRequestBodyModel):
+        raise TypeError(
+            f"body must be a MissionEndRequestBodyModel object or a dict, not {type(body).__name__}"
+        )
 
-    msg = _dict_to_end_mission_request(body_dict)
+    msg = _model_to_cs_object(body)
     node_messenger.Push(msg)
 
     log_line = f"[{MSG_ID}] PUSH 완료"
     return log_line.encode("utf-8", "ignore")
-
-
-def make_random_and_push(node_messenger) -> bytes:
-    """Creates a message with random/default data and pushes it."""
-    return make_and_push_based_on_rules(
-        MSG_ID,
-        __file__,
-        make_msg0502_body,
-        make_and_push,
-        node_messenger,
-    )

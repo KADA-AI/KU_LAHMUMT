@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 from .message_models import (
     InputMissionPlanModel,
     OperatorMissionReplanCommandModel,
-    ReplanRequestModel,
+    ReplanRequestBodyModel,
     BattlefieldSituationAwarenessInfoModel,
     AgentStatusModel,
     ForcedCommandModel,
@@ -19,7 +19,7 @@ class ReplanInputData:
     timestamp: int
     input_mission_plan: Optional[InputMissionPlanModel] = None
     operator_replan_command: Optional[OperatorMissionReplanCommandModel] = None
-    replan_request: Optional[ReplanRequestModel] = None
+    replan_request: Optional[ReplanRequestBodyModel] = None
     battlefield_situation: Optional[BattlefieldSituationAwarenessInfoModel] = None
     agent_status: Optional[AgentStatusModel] = None
     forced_command: Optional[ForcedCommandModel] = None

@@ -39,7 +39,7 @@ class MainWindow(QMainWindow):
         # 각 탭 인스턴스 생성
         self.monitoring_tab = MonitoringTab(manager=self.manager)
         self.replan_tab = ReplanTab(manager=self.manager)
-        self.dummy_tab = DummyTab()
+        self.dummy_tab = DummyTab(manager=self.manager)
 
         # 탭 위젯에 탭 추가
         self.tabs.addTab(self.monitoring_tab, "모니터링")
@@ -55,8 +55,8 @@ class MainWindow(QMainWindow):
 
         # 업데이트 유형에 따라 처리할 탭들을 리스트로 매핑합니다.
         self.update_handlers = {
-            "receive": [self.monitoring_tab, self.replan_tab],
-            "logic": [self.monitoring_tab, self.replan_tab],
+            "receive": [self.monitoring_tab, self.replan_tab, self.dummy_tab],
+            "logic": [self.monitoring_tab, self.replan_tab, self.dummy_tab],
         }
 
         # 시그널-슬롯 연결

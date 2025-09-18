@@ -6,7 +6,7 @@ from typing import Dict, List, Union
 # --- 데이터 모델 import ---
 from .message_models import (
     ModuleStatusModelModel,
-    MissionPerformanceStatusBodyModel,
+    MissionProgressBodyModel,
     MissionEndRequestBodyModel,
     ReplanRequestBodyModel,
     CollaborativeMissionCompleteModel,
@@ -15,7 +15,7 @@ from .message_models import (
 # --- 저장 가능한 모든 Push 메시지 본문 타입을 정의 ---
 PushBody = Union[
     ModuleStatusModelModel,
-    MissionPerformanceStatusBodyModel,
+    MissionProgressBodyModel,
     MissionEndRequestBodyModel,
     ReplanRequestBodyModel,
     CollaborativeMissionCompleteModel,

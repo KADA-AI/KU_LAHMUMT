@@ -3,6 +3,7 @@
 import sys
 import os
 import threading
+import time
 
 # --- Import nFusionImports to handle CLR and DLL loading ---
 from dll_files.nFusionImports import *
@@ -53,7 +54,7 @@ from receive import *
 
 
 # --- nFusion 초기화 및 NodeMessenger 반환 함수 ---
-def initialize_nfusion_and_get_messenger():
+def initialize_nfusion_and_get_messenger(init_completed_event: threading.Event):
     try:
 
         # nFusion 프레임워크 초기화
@@ -64,7 +65,8 @@ def initialize_nfusion_and_get_messenger():
         NodeMessenger.InitAllSubscriberFromAssembly()
         # NodeMessenger.RegistAllProviderFromFusionNodeIoc()
         print("INFO: nFusion 통신 컴포넌트 초기화 완료.")
-        # return NodeMessenger
+        # 초기화 완료 신호 전송
+        init_completed_event.set()
 
     except Exception as e:
         print(f"치명적 오류: nFusion 초기화에 실패했습니다: {e}")
@@ -73,12 +75,23 @@ def initialize_nfusion_and_get_messenger():
 
 # --- 메인 실행 함수 ---
 def main():
-    print("--- 모니터링 모듈 메인 실행 --- ")
+    print("--- 모니터링 모듈 메인 실행 ---" )
 
     # 1. nFusion 통신 컴포넌트 초기화
-    # C# 어셈블리 로드는 이미 최상단에서 완료되었습니다.
+    nfusion_init_completed = threading.Event()
+    init_thread = threading.Thread(
+        target=initialize_nfusion_and_get_messenger, 
+        args=(nfusion_init_completed,),
+        daemon=True
+    )
+    init_thread.start()
 
-    threading.Thread(target=initialize_nfusion_and_get_messenger, daemon=True).start()
+    # nFusion 초기화가 완료될 때까지 최대 10초 대기
+    print("INFO: nFusion 초기화를 기다리는 중...")
+    initialized = nfusion_init_completed.wait(timeout=10.0)
+    if not initialized:
+        print("치명적 오류: nFusion 초기화가 시간 내에 완료되지 않았습니다.")
+        sys.exit(1)
 
     # 2. 중앙 관리자(MonitoringManager) 생성
     manager = MonitoringManager(
@@ -93,8 +106,14 @@ def main():
     else:
         print("INFO: 콘솔 모드로 애플리케이션을 시작합니다. (GUI 실행 안 함)")
         print("INFO: GUI를 실행하려면 'python test_monitoring.py --gui' 로 실행하세요.")
-        # 여기에 GUI 없이 동작하는 로직 또는 테스트 코드를 추가할 수 있습니다.
-        # 현재는 nFusion 초기화 후 바로 종료됩니다.
+        # 무한 루프를 돌며 Ctrl+C 입력을 기다립니다.
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            print("\nINFO: 어플리케이션 종료 중...")
+            manager.shutdown()
+            print("INFO: 모든 리소스가 정리되었습니다.")
 
 
 if __name__ == "__main__":
