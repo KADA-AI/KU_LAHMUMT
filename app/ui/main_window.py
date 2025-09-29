@@ -1,18 +1,18 @@
-# /mnt/data/main_window.py
+﻿# /mnt/data/main_window.py
 # -*- coding: utf-8 -*-
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QGridLayout, QPushButton, QLabel, QLineEdit, QFileDialog, QShortcut,
-    QHBoxLayout
+    QHBoxLayout, QSizePolicy
 )
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QKeySequence
+from datetime import datetime
 from .zones import GRID_ROWS, GRID_COLS, ZONES
 from ..widgets.cards import Card
 from ..widgets.module_with_log import ModuleWithLog
-from ..widgets.mode_buttons_panel import ModeButtonsPanel
-from ..widgets.flow_visualizer import FlowVisualizer
+from ..widgets.toggle_switch import ToggleSwitch
 from ..widgets.operation_flow_panel import OperationFlowPanel
-import os, subprocess, json
+import os, subprocess, json, socket
 from pathlib import Path
 
 class MainWindow(QMainWindow):
@@ -29,6 +29,19 @@ class MainWindow(QMainWindow):
         self._mw_addr: QLineEdit = None
         self._mw_local: QLineEdit = None
         self._mw_external: QLineEdit = None
+
+        self.module_mission = None
+        self.module_monitor = None
+        self.module_decision = None
+        self.flow = None
+
+        self.auto_toggle = None
+        self.btn_auto_boot = None
+        self.btn_module_shutdown = None
+        self.btn_info_module = None
+        self.btn_integration_module = None
+        self._auto_enabled = False
+        self._role_processes = {}
 
         self._build_ui()
 
@@ -78,25 +91,30 @@ class MainWindow(QMainWindow):
         mw_row = self._make_middleware_row()
         self._add_zone(grid, mw_row, "MIDDLEWARE")
 
-        # Module cards
-        self.module_mission  = ModuleWithLog("Assignment Planning Module")
+        # Remove left-hand controls but keep layout slots
+        self._add_left_placeholder(grid)
+
+        # Module cards (tables + logs) stay visible
+        self.module_mission = ModuleWithLog("Assignment Planning Module")
+        self.module_mission.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self._add_zone(grid, self.module_mission, "MODULE_MISSION_COMBO")
-        self.module_monitor  = ModuleWithLog("Mission Monitoring Module")
+
+        self.module_monitor = ModuleWithLog("Mission Monitoring Module")
+        self.module_monitor.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self._add_zone(grid, self.module_monitor, "MODULE_MONITOR_COMBO")
+
         self.module_decision = ModuleWithLog("Decision Support Module")
+        self.module_decision.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self._add_zone(grid, self.module_decision, "MODULE_DECISION_COMBO")
 
-        # Flow visualizer card
-        self.flow = FlowVisualizer()
-        self._add_zone(grid, self.flow, "FLOW_VIS")
-
-        # Mode buttons panel
-        self._add_zone(grid, ModeButtonsPanel(), "MODE_BUTTONS")
+        self._apply_auto_state_to_modules()
+        self._normalize_module_columns(grid)
 
         # Operation flow panel
         self.operation_panel = OperationFlowPanel()
         self._add_zone(grid, self.operation_panel, "OPS_FLOW")
-        # Operation flow panel
+
+        # Footer
         footer = QLabel("KU Mission Decision Support Dashboard", self)
         footer.setObjectName("FooterFull")
         footer.setAlignment(Qt.AlignCenter)
@@ -271,15 +289,29 @@ class MainWindow(QMainWindow):
 
 
     def _bind_module_buttons(self):
-        for btn in (getattr(self.module_decision, "btn_run", None),
-                    getattr(self.module_mission,  "btn_run", None),
-                    getattr(self.module_monitor,  "btn_run", None)):
-            try: btn.clicked.disconnect()
-            except Exception: pass
+        buttons = {
+            "decision": getattr(getattr(self, "module_decision", None), "btn_run", None),
+            "mission": getattr(getattr(self, "module_mission", None), "btn_run", None),
+            "monitor": getattr(getattr(self, "module_monitor", None), "btn_run", None),
+        }
 
-        self.module_decision.btn_run.clicked.connect(lambda: self._launch_role("decision"))
-        self.module_mission.btn_run.clicked.connect( lambda: self._launch_role("mission"))
-        self.module_monitor.btn_run.clicked.connect( lambda: self._launch_role("monitor"))
+        if not any(buttons.values()):
+            return
+
+        for btn in buttons.values():
+            if btn is None:
+                continue
+            try:
+                btn.clicked.disconnect()
+            except Exception:
+                pass
+
+        if buttons["decision"]:
+            buttons["decision"].clicked.connect(lambda _checked=False: self._launch_role("decision"))
+        if buttons["mission"]:
+            buttons["mission"].clicked.connect(lambda _checked=False: self._launch_role("mission"))
+        if buttons["monitor"]:
+            buttons["monitor"].clicked.connect(lambda _checked=False: self._launch_role("monitor"))
 
     def mark_received(self, msg_id: str, raw: bytes | None = None):
         mid = str(msg_id)
@@ -334,8 +366,10 @@ class MainWindow(QMainWindow):
         import sys, subprocess
         from pathlib import Path
 
+        self._debug_log(f'_launch_role called role={role}')
         root = Path(__file__).resolve().parents[2]
 
+        target_log = None
         if role == "decision":
             candidates = [
                 root / "modules" / "decision_support" / "decision_support_gui.py",
@@ -347,7 +381,6 @@ class MainWindow(QMainWindow):
             candidates = [
                 root / "modules" / "mission_planning" / "mission_planning_gui.py",
                 root / "app"     / "modules" / "mission_planning" / "mission_planning_gui.py",
-                # fallback (legacy)
                 root / "modules" / "decision_support" / "assignment_planning_gui.py",
                 root / "app"     / "modules" / "decision_support" / "assignment_planning_gui.py",
             ]
@@ -357,7 +390,6 @@ class MainWindow(QMainWindow):
             candidates = [
                 root / "modules" / "monitoring" / "monitoring_gui.py",
                 root / "app"     / "modules" / "monitoring" / "monitoring_gui.py",
-                # fallback (decision support directory)
                 root / "modules" / "decision_support" / "monitoring_gui.py",
                 root / "modules" / "decision_support" / "monitoritng_gui.py",
                 root / "app"     / "modules" / "decision_support" / "monitoring_gui.py",
@@ -365,24 +397,58 @@ class MainWindow(QMainWindow):
             ]
             target_log = self.module_monitor
 
+        elif role == "info":
+            candidates = [
+                root / "modules" / "info_manage" / "info_manage.py",
+                root / "app"     / "modules" / "info_manage" / "info_manage.py",
+            ]
+        elif role == "integration":
+            candidates = [
+                root / "modules" / "integration_module" / "integration_gui.py",
+                root / "app"     / "modules" / "integration_module" / "integration_gui.py",
+            ]
         else:
+            return
+
+        existing = self._role_processes.get(role)
+        if existing and existing.poll() is not None:
+            self._role_processes.pop(role, None)
+            existing = None
+        if existing and existing.poll() is None:
+            try:
+                if target_log is not None:
+                    target_log.append_log("[RUN] already running")
+            except Exception:
+                pass
             return
 
         script = next((p for p in candidates if p.exists()), None)
         if not script:
+            self._debug_log(f'_launch_role script not found role={role}')
             try:
-                target_log.append_log("[RUN ERR] not found:\n" + "\n".join(str(p) for p in candidates))
+                if target_log is not None:
+                    target_log.append_log("[RUN ERR] not found:\n" + "\n".join(str(p) for p in candidates))
             except Exception:
                 pass
             return
 
         try:
-            subprocess.Popen([sys.executable, str(script)], cwd=str(root),
-                            shell=False,
-                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        except Exception as e:
+            self._debug_log(f'_launch_role resolved script={script}')
+            proc = subprocess.Popen([sys.executable, str(script)], cwd=str(root),
+                                    shell=False,
+                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            self._role_processes[role] = proc
             try:
-                target_log.append_log(f"[RUN ERR] {e}")
+                if target_log is not None:
+                    target_log.append_log(f"[RUN] launched {script.name}")
+            except Exception:
+                pass
+            self._schedule_module_powerup(role) if role in ("mission", "monitor", "decision") else None
+        except Exception as e:
+            self._debug_log(f'_launch_role error role={role} err={e}')
+            try:
+                if target_log is not None:
+                    target_log.append_log(f"[RUN ERR] {e}")
             except Exception:
                 pass
 
@@ -417,6 +483,242 @@ class MainWindow(QMainWindow):
         if hasattr(self, "flow") and self.flow:
             self.flow.trigger(module, direction)
 
+    def _add_left_placeholder(self, grid: QGridLayout) -> None:
+        mode_zone = ZONES.get("MODE_BUTTONS")
+        flow_zone = ZONES.get("FLOW_VIS")
+
+        if not mode_zone or not flow_zone:
+            for key in ("MODE_BUTTONS", "FLOW_VIS"):
+                self._add_placeholder(grid, key)
+            return
+
+        row0 = min(mode_zone["r0"], flow_zone["r0"])
+        row_end = max(mode_zone["r0"] + mode_zone["rs"],
+                       flow_zone["r0"] + flow_zone["rs"])
+        col0 = min(mode_zone["c0"], flow_zone["c0"])
+        col_end = max(mode_zone["c0"] + mode_zone["cs"],
+                       flow_zone["c0"] + flow_zone["cs"])
+
+        placeholder = Card("", self)
+        placeholder.setObjectName("LEFT_PLACEHOLDER")
+        placeholder.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+        body = getattr(placeholder, 'body_layout', None)
+        if body is not None:
+            body.setSpacing(12)
+
+            auto_row = QHBoxLayout()
+            auto_row.setContentsMargins(0, 0, 0, 0)
+            auto_row.setSpacing(12)
+
+            auto_label = QLabel("Auto", placeholder)
+            auto_label.setObjectName("GlobalAutoLabel")
+            auto_row.addWidget(auto_label)
+
+            self.auto_toggle = ToggleSwitch(placeholder, checked=self._auto_enabled)
+            self.auto_toggle.setObjectName("GlobalAutoToggle")
+            self.auto_toggle.toggled.connect(self._on_global_auto_toggled)
+            auto_row.addWidget(self.auto_toggle)
+            auto_row.addStretch(1)
+
+            body.addLayout(auto_row)
+
+            self.btn_auto_boot = QPushButton("자동 부팅", placeholder)
+            self.btn_auto_boot.setObjectName("BtnAutoBoot")
+            self.btn_auto_boot.setMinimumHeight(34)
+            self.btn_auto_boot.clicked.connect(self._handle_auto_boot)
+            body.addWidget(self.btn_auto_boot)
+
+            self.btn_module_shutdown = QPushButton("모듈 종료", placeholder)
+            self.btn_module_shutdown.setObjectName("BtnModuleShutdown")
+            self.btn_module_shutdown.setMinimumHeight(34)
+            self.btn_module_shutdown.clicked.connect(self._handle_module_shutdown)
+            body.addWidget(self.btn_module_shutdown)
+
+            self.btn_info_module = QPushButton("정보관리모듈 실행", placeholder)
+            self.btn_info_module.setObjectName("BtnInfoModule")
+            self.btn_info_module.setMinimumHeight(34)
+            self.btn_info_module.clicked.connect(lambda: self._launch_role("info"))
+            body.addWidget(self.btn_info_module)
+
+            self.btn_integration_module = QPushButton("연동모듈 실행", placeholder)
+            self.btn_integration_module.setObjectName("BtnIntegrationModule")
+            self.btn_integration_module.setMinimumHeight(34)
+            self.btn_integration_module.clicked.connect(lambda: self._launch_role("integration"))
+            body.addWidget(self.btn_integration_module)
+
+            body.addStretch(1)
+
+        grid.addWidget(placeholder, row0, col0, row_end - row0, col_end - col0)
+
+    def _on_global_auto_toggled(self, checked: bool) -> None:
+        self._auto_enabled = bool(checked)
+        self._apply_auto_state_to_modules()
+        state_msg = "[AUTO] Global auto ON" if self._auto_enabled else "[AUTO] Global auto OFF"
+        for mod in (self.module_mission, self.module_monitor, self.module_decision):
+            if mod and hasattr(mod, 'append_log'):
+                try:
+                    mod.append_log(state_msg)
+                except Exception:
+                    pass
+
+    def _apply_auto_state_to_modules(self) -> None:
+        for mod in (self.module_mission, self.module_monitor, self.module_decision):
+            if mod and hasattr(mod, 'set_auto_enabled'):
+                try:
+                    mod.set_auto_enabled(self._auto_enabled)
+                except Exception:
+                    pass
+
+    def _debug_log(self, message: str) -> None:
+        try:
+            ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')
+            log_path = Path(__file__).resolve().parents[2] / 'run_debug.log'
+            with log_path.open('a', encoding='utf-8') as fh:
+                fh.write(f"[{ts}] {message}\n")
+        except Exception:
+            pass
+
+    def _module_widget(self, role: str):
+        return {
+            'mission': getattr(self, 'module_mission', None),
+            'monitor': getattr(self, 'module_monitor', None),
+            'decision': getattr(self, 'module_decision', None),
+        }.get(role)
+
+    def _log_to_modules(self, message: str) -> None:
+        for role in ('mission', 'monitor', 'decision'):
+            self._log_to_module(role, message)
+
+    def _log_to_module(self, role: str, message: str) -> None:
+        mod = self._module_widget(role)
+        if mod and hasattr(mod, 'append_log'):
+            try:
+                mod.append_log(message)
+            except Exception:
+                pass
+
+    def _broadcast_ctrl(self, payload: dict) -> None:
+        self._debug_log(f'_broadcast_ctrl payload={payload}')
+        data = json.dumps(payload).encode('utf-8')
+        targets = [
+            ('mission', 45981),
+            ('monitoring', 45982),
+            ('decision', 45983),
+            ('info', 45984),
+        ]
+        for _role, port in targets:
+            sock = None
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                sock.sendto(data, ('127.0.0.1', port))
+            except Exception as exc:
+                self._debug_log(f'_broadcast_ctrl failed target={_role} err={exc}')
+            finally:
+                if sock is not None:
+                    try:
+                        sock.close()
+                    except Exception:
+                        pass
+
+    def _send_ctrl_single(self, target: str, payload: dict) -> bool:
+        port_map = {'mission': 45981, 'monitor': 45982, 'decision': 45983}
+        port = port_map.get(target)
+        if port is None:
+            self._debug_log(f'_send_ctrl_single unknown target={target}')
+            return False
+
+        sock = None
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            data = json.dumps(payload).encode('utf-8')
+            sock.sendto(data, ('127.0.0.1', port))
+            self._debug_log(f'_send_ctrl_single ok target={target} payload={payload}')
+            return True
+        except Exception as exc:
+            self._debug_log(f'_send_ctrl_single failed target={target} err={exc}')
+            return False
+        finally:
+            if sock is not None:
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+
+    def _schedule_module_powerup(self, role: str) -> None:
+        self._debug_log(f'_schedule_module_powerup role={role}')
+
+        def send_mode_on():
+            ok = self._send_ctrl_single(role, {'cmd': 'mode', 'text': '전원 ON'})
+            if ok:
+                self._log_to_module(role, '[AUTO] power-on broadcast ("전원 ON")')
+            else:
+                self._log_to_module(role, '[AUTO WARN] power-on send failed')
+
+        def send_self_check():
+            ok = self._send_ctrl_single(role, {'cmd': 'self_check', 'status': 1})
+            if ok:
+                self._log_to_module(role, '[AUTO] self-check requested (0102)')
+            else:
+                self._log_to_module(role, '[AUTO WARN] self-check send failed')
+
+        QTimer.singleShot(1000, send_mode_on)
+        QTimer.singleShot(2000, send_self_check)
+
+    def _handle_auto_boot(self) -> None:
+        self._debug_log('auto boot triggered')
+        self._log_to_modules('[AUTO] boot sequence started')
+
+        for role in ("mission", "monitor", "decision"):
+            self._log_to_module(role, '[AUTO] module launch requested')
+            try:
+                self._debug_log(f'launching role={role}')
+                self._launch_role(role)
+            except Exception as exc:
+                self._log_to_module(role, '[AUTO WARN] launch failed')
+                self._debug_log(f'launch failed role={role} err={exc}')
+
+    def _handle_module_shutdown(self) -> None:
+        for role, proc in list(self._role_processes.items()):
+            if not proc:
+                self._role_processes.pop(role, None)
+                continue
+            if proc.poll() is None:
+                try:
+                    proc.terminate()
+                    proc.wait(timeout=3)
+                except Exception:
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+            self._role_processes.pop(role, None)
+        for mod in (self.module_mission, self.module_monitor, self.module_decision):
+            if mod and hasattr(mod, 'append_log'):
+                try:
+                    mod.append_log('[RUN] module shutdown requested')
+                except Exception:
+                    pass
+
+    def _add_placeholder(self, grid: QGridLayout, zone_key: str) -> None:
+        placeholder = Card("", self)
+        placeholder.setObjectName(f"{zone_key}_placeholder")
+        placeholder.setAttribute(Qt.WA_TransparentForMouseEvents)
+        placeholder.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        body = getattr(placeholder, 'body_layout', None)
+        if body is not None:
+            body.addStretch(1)
+        self._add_zone(grid, placeholder, zone_key)
+
+    def _normalize_module_columns(self, grid: QGridLayout) -> None:
+        module_keys = ("MODULE_MISSION_COMBO", "MODULE_MONITOR_COMBO", "MODULE_DECISION_COMBO")
+        for key in module_keys:
+            zone = ZONES.get(key)
+            if not zone:
+                continue
+            for col in range(zone["c0"], zone["c0"] + zone["cs"]):
+                grid.setColumnStretch(col, 2)
+
     def _add_zone(self, grid: QGridLayout, w: QWidget, key: str):
         """Add widget to the grid using ZONES metadata."""
         z = ZONES[key]
@@ -428,10 +730,14 @@ class MainWindow(QMainWindow):
         if path:
             self._db_path_line.setText(path)
             os.environ["KU_MISSION_DB_ROOT"] = path
-            # Record path selection in module logs
-            self.module_mission.append_log(f"[PATH] {path}")
-            self.module_monitor.append_log(f"[PATH] {path}")
-            self.module_decision.append_log(f"[PATH] {path}")
+            # Record path selection in module logs when modules are available
+            for attr in ("module_mission", "module_monitor", "module_decision"):
+                mod = getattr(self, attr, None)
+                if mod and hasattr(mod, "append_log"):
+                    try:
+                        mod.append_log(f"[PATH] {path}")
+                    except Exception:
+                        pass
 
     def _toggle_demo_flow(self):
         """Toggle demo animation with the D shortcut."""
@@ -446,4 +752,6 @@ class MainWindow(QMainWindow):
         mod, direc = self._demo_seq[self._demo_idx]
         self._pulse(mod, direc)
         self._demo_idx = (self._demo_idx + 1) % len(self._demo_seq)
+
+
 

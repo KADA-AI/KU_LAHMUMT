@@ -19,8 +19,13 @@ from PyQt5.QtWidgets import QApplication
 HERE = Path(__file__).resolve()            # .../modules/mission_planning/MissionPlanner/main_MP.py
 PKG_DIR = HERE.parent                      # .../modules/mission_planning/MissionPlanner
 if str(PKG_DIR) not in sys.path:
-    # • 패키지(-m)로 실행 시에도 로컬 모듈(data_def, AnS, corridor_planner) 임포트 가능하게
+    # 패키지(-m)로 실행 시에도 로컬 모듈(data_def, AnS, corridor_planner) 임포트 가능하게
     sys.path.insert(0, str(PKG_DIR))
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
 
 # ───────── data_def 패키지 ──────────
 _app_guard = QApplication.instance() or QApplication([])
@@ -42,7 +47,6 @@ from AnS import (
     build_mission_plan_0301,    # CMPK+MRPK+IMP → 0301 MissionPlan
 )
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 def gui_logger(widget):
     """텍스트 위젯에 실시간 로그를 남기기 위한 래퍼"""
@@ -58,7 +62,7 @@ def _html_kv(title: str, dic: dict) -> str:
     )
     return f"<b>{title}</b><br><table>{rows}</table>"
 
-# ════════════════════════════════════════════════════════════════════
+# ????????????????????????????????????????????????????????????????????
 class MainGUI(QWidget):
     BRIDGE_THRESH_M = 150.0
     CRUISE_SP       = 40.0
@@ -98,6 +102,15 @@ class MainGUI(QWidget):
         self.pkg0203_id = None   # ← 0203 MissionReferencePackageID
 
         self._visible_aircrafts: set[int] = set(range(1, 7))
+        self._visible_0201 = True
+        self._visible_0203 = True
+
+        self._cmpk_data: dict | None = None
+        self._mrpk_data: dict | None = None
+
+        self._btn_0201: QPushButton | None = None
+        self._btn_0203: QPushButton | None = None
+
 
         # ── 레이아웃 ────────────────────────────────────────────
         root = QHBoxLayout(self)
@@ -159,12 +172,102 @@ class MainGUI(QWidget):
         fmap   = folium.Map(location=center, zoom_start=14)
         
         _js_links = []
+        hover_specs = []
 
         # 작업 구역(예시 사각형) ---------------------------------
         folium.Rectangle(
             [[38.110432, 127.295620], [38.147111, 127.340401]],
             color="blue", weight=1, fill=True, fill_opacity=0.1
         ).add_to(fmap)
+
+        # ── 0201 Input Mission (CMPK) ───────────────────────────
+        if self._visible_0201 and self._cmpk_data:
+            color_area = "#3949ab"
+            color_line = "#00838f"
+            color_point = "#1a237e"
+
+            for miss in self._cmpk_data.get("inputMissionList") or []:
+                mid = miss.get("inputMissionID")
+                detail = miss.get("missionDetail") or {}
+                mission_type = miss.get("inputMissionType")
+                label = f"0201 IM {mid}"
+
+                for idx_area, area in enumerate(detail.get("areaList") or []):
+                    coords = []
+                    for coord in area.get("coordinateList") or []:
+                        lat = coord.get("latitude")
+                        lon = coord.get("longitude")
+                        if lat is None or lon is None:
+                            continue
+                        coords.append((lat, lon))
+                    if len(coords) < 3:
+                        continue
+                    cls = f"cmpk_area_{mid}_{idx_area}"
+                    popup = folium.Popup(
+                        _html_kv("0201 Area", {
+                            "missionID": mid,
+                            "type": mission_type,
+                            "isHole": area.get("isHole"),
+                        }), max_width=260
+                    )
+                    poly = folium.Polygon(
+                        coords, color=color_area, weight=2,
+                        fill=True, fill_opacity=0.2,
+                        popup=popup,
+                        **{"className": cls}
+                    )
+                    poly.add_to(fmap)
+                    folium.Tooltip(f"{label} - Area", sticky=False).add_to(poly)
+                    hover_specs.append({"cls": cls, "kind": "path", "strokeWidth": 4})
+
+                for idx_line, line in enumerate(detail.get("lineList") or []):
+                    coords = []
+                    for coord in line.get("coordinateList") or []:
+                        lat = coord.get("latitude")
+                        lon = coord.get("longitude")
+                        if lat is None or lon is None:
+                            continue
+                        coords.append((lat, lon))
+                    if len(coords) < 2:
+                        continue
+                    cls = f"cmpk_line_{mid}_{idx_line}"
+                    popup = folium.Popup(
+                        _html_kv("0201 Corridor", {
+                            "missionID": mid,
+                            "type": mission_type,
+                            "width(m)": line.get("width"),
+                        }), max_width=240
+                    )
+                    seg = folium.PolyLine(
+                        coords, color=color_line, weight=3, dash_array="6,4",
+                        popup=popup,
+                        **{"className": cls}
+                    )
+                    seg.add_to(fmap)
+                    folium.Tooltip(f"{label} - Line", sticky=False).add_to(seg)
+                    hover_specs.append({"cls": cls, "kind": "path", "strokeWidth": 4})
+
+                for idx_pt, coord in enumerate(detail.get("coordinateList") or [], 1):
+                    lat = coord.get("latitude")
+                    lon = coord.get("longitude")
+                    if lat is None or lon is None:
+                        continue
+                    cls = f"cmpk_point_{mid}_{idx_pt}"
+                    popup = folium.Popup(
+                        _html_kv("0201 Point", {
+                            "missionID": mid,
+                            "type": mission_type,
+                            "alt(m)": coord.get("altitude"),
+                        }), max_width=220
+                    )
+                    folium.CircleMarker(
+                        [lat, lon], radius=4, color=color_point,
+                        fill=True, fill_opacity=1,
+                        popup=popup,
+                        tooltip=f"{label} - P{idx_pt}",
+                        **{"className": cls}
+                    ).add_to(fmap)
+                    hover_specs.append({"cls": cls, "kind": "circle", "baseRadius": 4, "radiusMul": 1.6, "strokeWidth": 4})
 
         # ── 0302 개별 임무 도형 ───────────────────────────────
         for miss in self.missions:
@@ -211,7 +314,7 @@ class MainGUI(QWidget):
             elif info.get("coordinateList"):
                 pts = [(c["latitude"], c["longitude"]) for c in info["coordinateList"]]
 
-                # ── ① 은엄폐( type-9 / pattern-12 ) — 단일 점 ─────────
+                # ── ① 은엄폐( type-9 / pattern-12 ) ? 단일 점 ─────────
                 if info.get("individualMissionType") == 9 and info.get("patternType") == 12:
                     popup = folium.Popup(                                # ★ NEW
                         _html_kv("Cover-and-Hide", {
@@ -225,7 +328,7 @@ class MainGUI(QWidget):
                         tooltip=f"IM {miss['individualMissionID']}"          # (선택)
                     ).add_to(fmap)
 
-                # ── ② 이동( type-7 / pattern-10 ) — 선 + 각 점 ────────
+                # ── ② 이동( type-7 / pattern-10 ) ? 선 + 각 점 ────────
                 else:
                     # 선 자체에도 팝업 하나 달아두기
                     seg_popup = folium.Popup(                             # ★ NEW
@@ -345,62 +448,250 @@ class MainGUI(QWidget):
 
                 _js_links.append((wp_id, line_cls))     # JS 연동
 
+        # ── 0203 Mission Reference overlays ─────────────────────────
+        if self._visible_0203 and self._mrpk_data:
+            mrpk = self._mrpk_data
+            take_color = "#1e88e5"
+            hand_color = "#fb8c00"
+            rtb_color = "#6a1b9a"
+
+            for idx_take, item in enumerate(mrpk.get("takeOverInfoList") or [], 1):
+                coord = item.get("coordinate") or {}
+                lat = coord.get("latitude")
+                lon = coord.get("longitude")
+                if lat is None or lon is None:
+                    continue
+                aid = item.get("aircraftID")
+                cls = f"mrpk_take_{aid}_{idx_take}"
+                popup = folium.Popup(
+                    _html_kv("0203 Take-Over", {
+                        "aircraft": aid,
+                        "alt(m)": coord.get("altitude"),
+                    }), max_width=240
+                )
+                folium.CircleMarker(
+                    [lat, lon], radius=6, color=take_color,
+                    fill=True, fill_opacity=1,
+                    popup=popup,
+                    tooltip=f"TakeOver A/C {aid}",
+                    **{"className": cls}
+                ).add_to(fmap)
+                hover_specs.append({"cls": cls, "kind": "circle", "baseRadius": 6, "radiusMul": 1.4, "strokeWidth": 4})
+
+            for idx_hand, item in enumerate(mrpk.get("handOverInfoList") or [], 1):
+                coord = item.get("coordinate") or {}
+                lat = coord.get("latitude")
+                lon = coord.get("longitude")
+                if lat is None or lon is None:
+                    continue
+                aid = item.get("aircraftID")
+                cls = f"mrpk_hand_{aid}_{idx_hand}"
+                popup = folium.Popup(
+                    _html_kv("0203 Hand-Over", {
+                        "aircraft": aid,
+                        "alt(m)": coord.get("altitude"),
+                    }), max_width=240
+                )
+                folium.CircleMarker(
+                    [lat, lon], radius=6, color=hand_color,
+                    fill=True, fill_opacity=1,
+                    popup=popup,
+                    tooltip=f"HandOver A/C {aid}",
+                    **{"className": cls}
+                ).add_to(fmap)
+                hover_specs.append({"cls": cls, "kind": "circle", "baseRadius": 6, "radiusMul": 1.4, "strokeWidth": 4})
+
+            for idx_rtb, coord in enumerate(mrpk.get("rtbCoordinateList") or [], 1):
+                lat = coord.get("latitude")
+                lon = coord.get("longitude")
+                if lat is None or lon is None:
+                    continue
+                cls = f"mrpk_rtb_{idx_rtb}"
+                popup = folium.Popup(
+                    _html_kv("0203 RTB", {
+                        "index": idx_rtb,
+                        "alt(m)": coord.get("altitude"),
+                    }), max_width=220
+                )
+                folium.CircleMarker(
+                    [lat, lon], radius=7, color=rtb_color,
+                    fill=True, fill_opacity=0.95,
+                    popup=popup,
+                    tooltip=f"RTB #{idx_rtb}",
+                    **{"className": cls}
+                ).add_to(fmap)
+                hover_specs.append({"cls": cls, "kind": "circle", "baseRadius": 7, "radiusMul": 1.3, "strokeWidth": 4})
+
+            for idx_area, area in enumerate(mrpk.get("flightAreaList") or [], 1):
+                coords = []
+                for coord in area.get("areaLatLonList") or []:
+                    lat = coord.get("latitude")
+                    lon = coord.get("longitude")
+                    if lat is None or lon is None:
+                        continue
+                    coords.append((lat, lon))
+                if len(coords) < 3:
+                    continue
+                poly = folium.Polygon(
+                    coords, color="#2196f3", weight=1.5,
+                    fill=True, fill_opacity=0.1,
+                )
+                poly.add_to(fmap)
+                limits = area.get("altitudeLimits") or {}
+                label = area.get("flightAreaID", idx_area)
+                tooltip_text = f"FlightArea {label} ({limits.get('lowerLimit', '-')}-{limits.get('upperLimit', '-')} m)"
+                folium.Tooltip(tooltip_text, permanent=True, direction='center', opacity=0.75).add_to(poly)
+
+            for idx_proh, area in enumerate(mrpk.get("prohibitedAreaList") or [], 1):
+                coords = []
+                for coord in area.get("areaLatLonList") or []:
+                    lat = coord.get("latitude")
+                    lon = coord.get("longitude")
+                    if lat is None or lon is None:
+                        continue
+                    coords.append((lat, lon))
+                if len(coords) < 3:
+                    continue
+                poly = folium.Polygon(
+                    coords, color="#e53935", weight=1.5,
+                    fill=True, fill_opacity=0.08,
+                    dash_array="4,4",
+                )
+                poly.add_to(fmap)
+                limits = area.get("altitudeLimits") or {}
+                label = area.get("prohibitedAreaID", idx_proh)
+                tooltip_text = f"Prohibited {label} ({limits.get('lowerLimit', '-')}-{limits.get('upperLimit', '-')} m)"
+                folium.Tooltip(tooltip_text, permanent=True, direction='center', opacity=0.75).add_to(poly)
+
         # ── HTML 저장 + WebChannel 스크립트 삽입 ───────────────
         path = os.path.join(os.getcwd(), "map.html")
         fmap.save(path)
         js = f"""
-    <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
-    <script>
-    new QWebChannel(qt.webChannelTransport, function(ch){{    
-        const bridge = ch.objects.bridge;
+                    <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+                    <script>
+                    new QWebChannel(qt.webChannelTransport, function(ch){{    
+                        const bridge = ch.objects.bridge;
 
-        /* 1) 지도 객체 */
-        let mp = null;
-        for (let k in window) {{ if (window[k] instanceof L.Map) {{ mp = window[k]; break; }} }}
+                        /* 1) 지도 객체 */
+                        let mp = null;
+                        for (let k in window) {{ if (window[k] instanceof L.Map) {{ mp = window[k]; break; }} }}
 
-        /* 2) WP ↔ Line 클래스 매핑 */
-        const rawLinks = {json.dumps(_js_links)};       /*  ← 파이썬 값만 한 쌍 */
-        const wp2lines = Object.create(null);
-        const line2wp  = Object.create(null);
-        rawLinks.forEach(([wp, cls]) => {{
-            (wp2lines[wp] = wp2lines[wp] || []).push(cls);
-            line2wp[cls] = wp;
-        }});
+                        /* 2) WP ↔ Line 클래스 매핑 */
+                        const rawLinks = {json.dumps(_js_links)};       /*  ← 파이썬 값만 한 쌍 */
+                        const wp2lines = Object.create(null);
+                        const line2wp  = Object.create(null);
+                        rawLinks.forEach(([wp, cls]) => {{
+                            (wp2lines[wp] = wp2lines[wp] || []).push(cls);
+                            line2wp[cls] = wp;
+                        }});
 
-        /* 3) 강조 / 해제 */
-        function highlight(cls, on) {{
-            document.querySelectorAll('.' + cls).forEach(el => {{
-                el.style.stroke      = on ? 'yellow' : '';
-                el.style.strokeWidth = on ? '4'      : '1';
-                el.style.opacity     = on ? '1.0'    : '0.7';
-            }});
-        }}
-        /* 5) 실제 바인드 ---------------------------------------------- */
-        function bindClicks() {{
-            /* 5-A. WP 마커 */
-            Object.keys(wp2lines).forEach(wp => {{
-                document.querySelectorAll('.wp_' + wp).forEach(mk => {{
-                    mk.onclick = () => activate(wp);
-                }});
-            }});
+                        const hoverSpecs = {json.dumps(hover_specs)};
 
-            /* 5-B. Line 자체 */
-            Object.keys(line2wp).forEach(cls => {{
-                document.querySelectorAll('.' + cls).forEach(pl => {{
-                    pl.onclick = () => activate(line2wp[cls]);
-                }});
-            }});
-        }}
+                        /* 3) 강조 / 해제 (legacy for waypoint lineage) */
+                        function highlight(cls, on) {{
+                            document.querySelectorAll('.' + cls).forEach(el => {{
+                                el.style.stroke      = on ? 'yellow' : '';
+                                el.style.strokeWidth = on ? '4'      : '';
+                                el.style.opacity     = on ? '1.0'    : '0.7';
+                            }});
+                        }}
 
-        /* 6) 맵 레이어가 추가될 때마다 & 첫 렌더 이후 바인드 ------------- */
-        if (mp) {{
-            mp.whenReady(() => setTimeout(bindClicks, 0));     // 최초 한 번
-            mp.on('layeradd',  () => setTimeout(bindClicks, 0)); // 이후 동적 레이어
-            mp.on('click', e => bridge.sendPoint(e.latlng.lat, e.latlng.lng));
-        }}
-    }});
-    </script>
-    """
+                        /* 4) Hover highlight for map elements */
+                        function bindHover() {{
+                            hoverSpecs.forEach(spec => {{
+                                document.querySelectorAll('.' + spec.cls).forEach(el => {{
+                                    if (el.dataset.hoverReady) {{ return; }}
+                                    el.dataset.hoverReady = '1';
+                                    const tag = (el.tagName || '').toLowerCase();
+                                    const isCircle = tag === 'circle';
+
+                                    el.addEventListener('mouseenter', () => {{
+                                        if (el.dataset.origStroke === undefined) {{
+                                            const strokeAttr = el.getAttribute('stroke');
+                                            el.dataset.origStroke = strokeAttr !== null ? strokeAttr : '';
+                                            el.dataset.origStrokeStyle = el.style.stroke || '';
+                                        }}
+                                        if (el.dataset.origStrokeWidth === undefined) {{
+                                            const swAttr = el.getAttribute('stroke-width');
+                                            el.dataset.origStrokeWidth = swAttr !== null ? swAttr : '';
+                                            el.dataset.origStrokeWidthStyle = el.style.strokeWidth || '';
+                                        }}
+                                        const highlightColor = spec.highlight || '#ffeb3b';
+                                        const highlightWidth = spec.strokeWidth || 4;
+                                        el.setAttribute('stroke', highlightColor);
+                                        el.style.stroke = highlightColor;
+                                        el.setAttribute('stroke-width', highlightWidth);
+                                        el.style.strokeWidth = highlightWidth;
+                                        if (isCircle) {{
+                                            if (el.dataset.origRadius === undefined) {{
+                                                el.dataset.origRadius = el.getAttribute('r') || '';
+                                            }}
+                                            const base = parseFloat(el.dataset.origRadius || spec.baseRadius || 4);
+                                            const ratio = spec.radiusMul || 1.6;
+                                            el.setAttribute('r', (base * ratio).toString());
+                                        }}
+                                    }});
+
+                                    el.addEventListener('mouseleave', () => {{
+                                        const origStroke = el.dataset.origStroke;
+                                        if (origStroke !== undefined) {{
+                                            if (origStroke) {{
+                                                el.setAttribute('stroke', origStroke);
+                                            }} else {{
+                                                el.removeAttribute('stroke');
+                                            }}
+                                            el.style.stroke = el.dataset.origStrokeStyle || '';
+                                        }}
+                                        const origWidth = el.dataset.origStrokeWidth;
+                                        if (origWidth !== undefined) {{
+                                            if (origWidth) {{
+                                                el.setAttribute('stroke-width', origWidth);
+                                            }} else {{
+                                                el.removeAttribute('stroke-width');
+                                            }}
+                                            el.style.strokeWidth = el.dataset.origStrokeWidthStyle || '';
+                                        }}
+                                        if (isCircle && el.dataset.origRadius !== undefined) {{
+                                            if (el.dataset.origRadius) {{
+                                                el.setAttribute('r', el.dataset.origRadius);
+                                            }}
+                                        }}
+                                    }});
+                                }});
+                            }});
+                        }}
+
+                        /* 5) 실제 바인드 ---------------------------------------------- */
+                        function bindClicks() {{
+                            /* 5-A. WP 마커 */
+                            Object.keys(wp2lines).forEach(wp => {{
+                                document.querySelectorAll('.wp_' + wp).forEach(mk => {{
+                                    mk.onclick = () => activate(wp);
+                                }});
+                            }});
+
+                            /* 5-B. Line 자체 */
+                            Object.keys(line2wp).forEach(cls => {{
+                                document.querySelectorAll('.' + cls).forEach(pl => {{
+                                    pl.onclick = () => activate(line2wp[cls]);
+                                }});
+                            }});
+                        }}
+
+                        function wireAll() {{
+                            bindClicks();
+                            bindHover();
+                        }}
+
+                        /* 6) 맵 레이어가 추가될 때마다 & 첫 렌더 이후 바인드 ------------- */
+                        if (mp) {{
+                            mp.whenReady(() => setTimeout(wireAll, 0));
+                            mp.on('layeradd',  () => setTimeout(wireAll, 0));
+                            mp.on('click', e => bridge.sendPoint(e.latlng.lat, e.latlng.lng));
+                        }}
+                    }});
+                    </script>
+        """
 
 
         with open(path, "r+", encoding="utf-8") as f:
@@ -413,8 +704,8 @@ class MainGUI(QWidget):
         tab  = QWidget(); form = QFormLayout(tab)
 
         # ---- 입력 위젯 -------------------------------------------------
-        self.le_mpid  = QLineEdit("")                 # ❯❯ 기본값 공백
-        self.le_mpid.setPlaceholderText("auto")       #  ⎯ 자동 부여 안내
+        self.le_mpid  = QLineEdit("")                 # ?? 기본값 공백
+        self.le_mpid.setPlaceholderText("auto")       #  ? 자동 부여 안내
         self.le_plid  = QLineEdit("1")
         self.le_ptime = QLineEdit("1.0")
 
@@ -459,8 +750,8 @@ class MainGUI(QWidget):
             else:
                 raise ValueError(
                     "JSON must be one of\n"
-                    "  • [ {\"aircraftID\": …}, … ]\n"
-                    "  • { \"aircraftList\": [ … ] }"
+                    "  ? [ {\"aircraftID\": …}, … ]\n"
+                    "  ? { \"aircraftList\": [ … ] }"
                 )
 
             # ── 상태 갱신 ────────────────────────────────────
@@ -534,6 +825,19 @@ class MainGUI(QWidget):
             vis_row.addWidget(btn)
             self._vis_btns[aid] = btn
 
+        for tag, label in (("0201", "0201"), ("0203", "0203")):
+            btn_ds = QPushButton(label)
+            btn_ds.setCheckable(True); btn_ds.setChecked(True)
+            btn_ds.setStyleSheet("QPushButton:checked{background:#4caf50;color:white}"
+                              "QPushButton{background:#ddd}")
+            btn_ds.toggled.connect(lambda state, key=tag: self._toggle_dataset(key, state))
+            vis_row.addWidget(btn_ds)
+            if tag == "0201":
+                self._btn_0201 = btn_ds
+            else:
+                self._btn_0203 = btn_ds
+
+
         form.addRow("Show/Hide:", vis_row)
 
         # ------------- Log window -----------------------------------
@@ -550,6 +854,16 @@ class MainGUI(QWidget):
         else:
             self._visible_aircrafts.discard(aid)
         self._rebuild_map()            # 지도 다시 그리기
+
+
+    def _toggle_dataset(self, tag: str, state: bool):
+        if tag == "0201":
+            self._visible_0201 = state
+        elif tag == "0203":
+            self._visible_0203 = state
+        else:
+            return
+        self._rebuild_map()
 
     def _generate_all(self):
         if not (self._cmpk_path and self._mrpk_path):
@@ -628,10 +942,17 @@ class MainGUI(QWidget):
 
         self.log_init.appendPlainText("=== Pipeline 완료 ===")
 
-        # ▶︎ 모든 기체 표시 상태를 ON 으로 초기화
+        # ▶? 모든 기체 표시 상태를 ON 으로 초기화
         self._visible_aircrafts = set(range(1, 7))
         for btn in self._vis_btns.values():
             btn.setChecked(True)
+
+        self._visible_0201 = True
+        self._visible_0203 = True
+        if self._btn_0201:
+            self._btn_0201.setChecked(True)
+        if self._btn_0203:
+            self._btn_0203.setChecked(True)
         
     # ─────────────── 0201 / 0203 Load 핸들러 ───────────────
     def _set_led(self, led: QLabel, ok: bool):
@@ -640,7 +961,7 @@ class MainGUI(QWidget):
 
     # ─────────────────────────────────────────────────────────────
     # 0201 협업기저임무패키지(CMPK) 로드
-    #   · 파일명 "1.json" ➜ 1  →  inputMissionPackageID 로 저장
+    #   · 파일명 "1.json" ? 1  →  inputMissionPackageID 로 저장
     #   · LED 초록 & 로그 기록
     # ─────────────────────────────────────────────────────────────
     def _load_0201_json(self):
@@ -655,26 +976,24 @@ class MainGUI(QWidget):
 
         try:
             with open(path, encoding="utf-8") as f:
-                json.load(f)              # 내용 파싱만 → 형식 오류 검출용
+                data = json.load(f)
         except Exception as e:
             QMessageBox.warning(self, "0201 로드 실패", str(e))
             return
 
         try:
-            self.pkg0201_id = int(Path(path).stem)   # "123.json" → 123
+            self.pkg0201_id = int(Path(path).stem)
         except ValueError:
             QMessageBox.warning(self, "0201 로드 실패",
                                 "파일 이름이 '정수.json' 형태여야 합니다.")
             return
 
         self._cmpk_path = path
+        self._cmpk_data = data
         self._led_cmpk.setStyleSheet("background:#0c0; border-radius:6px")
         self.log_init.appendPlainText(f"[OK] CMPK loaded  →  {path}")
+        self._rebuild_map()
 
-    # ─────────────────────────────────────────────────────────────
-    # 0203 비행참조정보패키지(MRPK) 로드
-    #   · 파일명 "3.json" ➜ 3  →  missionReferencePackageID 로 저장
-    # ─────────────────────────────────────────────────────────────
     def _load_0203_json(self):
         path, _ = QFileDialog.getOpenFileName(
             self,
@@ -687,7 +1006,7 @@ class MainGUI(QWidget):
 
         try:
             with open(path, encoding="utf-8") as f:
-                json.load(f)
+                data = json.load(f)
         except Exception as e:
             QMessageBox.warning(self, "0203 로드 실패", str(e))
             return
@@ -700,25 +1019,25 @@ class MainGUI(QWidget):
             return
 
         self._mrpk_path = path
+        self._mrpk_data = data
         self._led_mrpk.setStyleSheet("background:#0c0; border-radius:6px")
         self.log_init.appendPlainText(f"[OK] MRPK loaded  →  {path}")
+        self._rebuild_map()
 
-
-    # ─────────────────────────── 탭 0301 갱신 ───────────────────────────
     def _refresh_0301(self):
         # 항공기 없는 경우 안내
         if not self.aircraft_pool:
-            self.log0301.setPlainText("➜  먼저 A/C 를 추가하거나 JSON 목록을 불러오세요.")
+            self.log0301.setPlainText("?  먼저 A/C 를 추가하거나 JSON 목록을 불러오세요.")
             return
 
         # 0201 / 0203 아직 안 불렀다면 중단
         if self.pkg0201_id is None or self.pkg0203_id is None:
-            self.log0301.setPlainText("➜  0201·0203 파일을 먼저 불러와야 합니다.")
+            self.log0301.setPlainText("?  0201·0203 파일을 먼저 불러와야 합니다.")
             return
 
         # MissionPlanID 입력값 처리
         mpid_raw = self.le_mpid.text().strip()
-        mpid = None if mpid_raw == "" else mpid_raw     # str 그대로 — d0301 내부에서 변환
+        mpid = None if mpid_raw == "" else mpid_raw     # str 그대로 ? d0301 내부에서 변환
 
         try:
             msg = d0301.build_mission_plan(
@@ -891,7 +1210,7 @@ class MainGUI(QWidget):
     # ─────────────────── 임무계획 유효성 검증 ────────────────────
     def _check_missions(self, check_saved: bool = True):
         """
-        0201‧0203‧0301‧0302‧0303‧0304 (메모리) + 디스크 저장본
+        0201?0203?0301?0302?0303?0304 (메모리) + 디스크 저장본
         모두를 한 번에 검증하고, MEM_… / DISK_… 태그로 구분해
         로그에 남긴다.
         """
@@ -906,7 +1225,7 @@ class MainGUI(QWidget):
         def _check_json_types(self, imp_pkgs: list, tag: str):
             """
             imp_pkgs : 0302 IndividualMissionPackage 리스트
-            • 각 IM 의 isDone / isHole / altitude 자료형을 점검한다.
+            ? 각 IM 의 isDone / isHole / altitude 자료형을 점검한다.
             """
             import numbers, math
             local_errs = 0
@@ -945,7 +1264,7 @@ class MainGUI(QWidget):
             FlightPath 리스트 검사 → (err_cnt, warn_cnt)
             · WP 중복, ECF 단조 증가, nextWaypointID 체인
             · operationMode 별 필수 필드
-              - mode 4(HOLD) → aircraftFixed.GimbalPitch/GimbalYaw 포함
+              - mode 4(HOLD) → aircraftFixed.gimbalPitch/gimbalYaw 포함
             """
             local_errs, local_warns = 0, 0
             wp_global = set()
@@ -995,10 +1314,10 @@ class MainGUI(QWidget):
                             errors.append(f"{tag} WP {wid}: mode-{mode} needs {f}")
                             local_errs += 1
 
-                    # ── mode 4: aircraftFixed 하위 필드(GimbalPitch/Yaw) ──
+                    # ── mode 4: aircraftFixed 하위 필드(gimbalPitch/gimbalYaw) ──
                     if mode == 4 and "aircraftFixed" in fp_prop:
                         af = fp_prop["aircraftFixed"]
-                        for sub in ("GimbalPitch", "GimbalYaw"):
+                        for sub in ("gimbalPitch", "gimbalYaw"):
                             if sub not in af:
                                 errors.append(f"{tag} WP {wid}: aircraftFixed missing {sub}")
                                 local_errs += 1
@@ -1103,7 +1422,7 @@ class MainGUI(QWidget):
 
         if errors:
             QMessageBox.critical(self, "Check Missions",
-                                 f"{len(errors)} error(s) • {len(warns)} warning(s)")
+                                 f"{len(errors)} error(s) ? {len(warns)} warning(s)")
         elif warns:
             QMessageBox.warning(self, "Check Missions",
                                  f"All critical tests passed with {len(warns)} warning(s).")
@@ -1196,19 +1515,19 @@ class MainGUI(QWidget):
         self.missions.append(miss)
         self.next_im += 1
         self.pending, self.pending_pts = None, []
-        self.log0302.append("✔ Mission saved")
+        self.log0302.append("? Mission saved")
         self._refresh_0302()
         self._rebuild_map()
 
 
     def _save_all_missions(self):
         """
-        • 저장 폴더: SAVE_DIR/database 하위(구성에 따라) 또는 SAVE_DIR 하위
+        ? 저장 폴더: SAVE_DIR/database 하위(구성에 따라) 또는 SAVE_DIR 하위
         - MissionPlan/<MissionPlanID>.json
         - IndividualMissionPlan/<IMP_ID>.json
         - FlightPath/<PathID>.json
-        • 새로운 임무 저장 전, 위 3개 폴더의 기존 *.json 전부 삭제(클린 세이브)
-        • Save 후 mission_output 임시폴더 자동 삭제
+        ? 새로운 임무 저장 전, 위 3개 폴더의 기존 *.json 전부 삭제(클린 세이브)
+        ? Save 후 mission_output 임시폴더 자동 삭제
         """
         import json, shutil
 
@@ -1255,7 +1574,7 @@ class MainGUI(QWidget):
         except Exception as e:
             self.log0304.appendPlainText(f"[WARN] 0302 저장 실패: {e}")
 
-        # ── 5) 0303‧0304 FlightPath 저장 ─────────────────────
+        # ── 5) 0303?0304 FlightPath 저장 ─────────────────────
         fp_cnt = 0
         for lst in (self.flight_plans, self.flight_plans_0304):
             for fp in lst:
@@ -1278,12 +1597,12 @@ class MainGUI(QWidget):
 
         # ── 7) 완료 로그 ─────────────────────────────────────
         self.log0304.appendPlainText(
-            f"✔ 저장 완료  →  MissionPlan 1, IndividualMission {imp_cnt}, FlightPath {fp_cnt}"
+            f"? 저장 완료  →  MissionPlan 1, IndividualMission {imp_cnt}, FlightPath {fp_cnt}"
         )
 
 
 
-# ════════════════════════════════════════════════════════════════════
+# ????????????????????????????????????????????????????????????????????
 def main():
     import sys, os
     from PyQt5.QtWidgets import QApplication
@@ -1301,3 +1620,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

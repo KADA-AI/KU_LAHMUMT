@@ -17,13 +17,22 @@ os.environ["KU_ROLE"] = "decision"
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-from PyQt5.QtCore import qInstallMessageHandler, QtMsgType, QObject, pyqtSignal, QTimer
+from PyQt5.QtCore import qInstallMessageHandler, QtMsgType, QObject, pyqtSignal, QTimer, QMetaObject, Qt, Q_ARG, pyqtSlot
 from PyQt5.QtWidgets import QApplication, QTextEdit, QPlainTextEdit
 
 from modules.common.states.manager import StateManager
 from modules.common.button_wiring import wire_dashboard_buttons
 import collections
 
+
+def _debug_log(message: str) -> None:
+    try:
+        ts = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')
+        log_path = PROJECT_ROOT / 'run_debug.log'
+        with log_path.open('a', encoding='utf-8') as fh:
+            fh.write(f"[{ts}] {message}\n")
+    except Exception:
+        pass
 
 # ─────────────────────────────────────────────────────────────
 # Qt 경고 필터 (선택)
@@ -53,6 +62,33 @@ def _bootstrap_paths():
     return root, common_dir, ds_dir
 
 PROJECT_ROOT, COMMON_DIR, DS_DIR = _bootstrap_paths()
+
+
+# ---------------------------------------------------------------------------
+# Unhandled exception logging (writes to run_error.log)
+# ---------------------------------------------------------------------------
+import datetime
+
+def _install_exception_logger():
+    def _hook(exc_type, exc, tb):
+        try:
+            ts = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')
+            log_path = PROJECT_ROOT / 'run_error.log'
+            with log_path.open('a', encoding='utf-8') as fh:
+                fh.write(f"[{ts}] {exc_type.__name__}: {exc}\n")
+                import traceback
+                fh.write(''.join(traceback.format_exception(exc_type, exc, tb)))
+                fh.write('\n')
+        except Exception:
+            pass
+        finally:
+            try:
+                sys.__excepthook__(exc_type, exc, tb)
+            except Exception:
+                pass
+    sys.excepthook = _hook
+
+_install_exception_logger()
 
 # ─────────────────────────────────────────────────────────────
 # 스타일(QSS) 로드
@@ -486,6 +522,14 @@ class DashboardOrchestrator(QObject):
                     mid  = str(payload.get("msg_id") or payload.get("id") or payload.get("code") or "").strip()
                     text = str(payload.get("text") or "").strip()
                     src_role = str(payload.get("role") or role).strip()
+                    cmd = str(payload.get("cmd") or "").strip().lower()
+                    _debug_log(f"_reader payload role={role} kind={kind} mid={mid} cmd={cmd} payload={payload!r}")
+
+                    if cmd == "self_check" and not mid:
+                        mid = "0102"
+                        kind = kind or "tx"
+                        src_role = src_role or role
+
 
                 # ── ★ 디버그 프린트: UDP 수신 패킷 원본/핵심 필드 ──
                 try:
@@ -545,17 +589,23 @@ class DashboardOrchestrator(QObject):
         role = self._normalize_role(src_role or "unknown")
         norm = self._normalize_mode_text(text)
 
-        # 역할별 디듀프
         prev = self._module_mode.get(role)
         if prev == norm:
             return
         self._module_mode[role] = norm
 
-        # ① 해당 역할 탭만 UI 반영
+        QMetaObject.invokeMethod(
+            self,
+            "_apply_mode_event",
+            Qt.QueuedConnection,
+            Q_ARG(str, role),
+            Q_ARG(str, norm),
+        )
+
+    @pyqtSlot(str, str)
+    def _apply_mode_event(self, role: str, norm: str):
         self._set_mode_text_single(role, norm)
         self._safe_log(f"[MODE] {role} → {norm}")
-
-        # ② 역할별 시각화만
         self._visualize_mode_change(role, norm)
 
     def _visualize_mode_change(self, role: str, text: str):

@@ -7,6 +7,10 @@ from .mission_helpers import now_ms_since_2000
 from UAV_missionPlanning import UAVMissionPlanner
 from Aisle_Sweep_CPP_shoot_plan import RectanglePath
 from .coord_transform import llh_to_xy, xy_to_llh
+try:
+    from ....common.eta import _order_by_next_chain, _time_from_prev_to_curr_s
+except ImportError:
+    from modules.common.eta import _order_by_next_chain, _time_from_prev_to_curr_s
 
 
 
@@ -159,7 +163,7 @@ def _mk_filming(operation_mode: int = OPMODE_NONE,
 
     • OPMODE_LINE  → lineSearch 필드 삽입  
     • OPMODE_HOLD → aircraftFixed  블록 삽입
-                  ↳ GimbalPitch / GimbalYaw 포함
+                  ↳ gimbalPitch / gimbalYaw 포함
     """
     fp = OrderedDict([
         ("fieldOfView",   fov),
@@ -177,8 +181,8 @@ def _mk_filming(operation_mode: int = OPMODE_NONE,
         gimbal_pitch = -90.0 if gimbal_pitch is None else gimbal_pitch
         gimbal_yaw   =   0.0 if gimbal_yaw   is None else gimbal_yaw
         fp["aircraftFixed"] = OrderedDict([
-            ("GimbalPitch", gimbal_pitch),
-            ("GimbalYaw",   gimbal_yaw),
+            ("gimbalPitch", gimbal_pitch),
+            ("gimbalYaw",   gimbal_yaw),
         ])
 
     return fp
@@ -241,6 +245,26 @@ def _eta_ms_llh(c1: dict, c2: dict, speed_mps: float) -> int:
     if speed_mps and speed_mps > 0.0:
         return int(round(dist_m / speed_mps * 1000.0))
     return 0
+
+
+def _annotate_eta_ms_inplace(waypoints: list[OrderedDict], default_speed_mps: float) -> None:
+    if not waypoints:
+        return
+
+    ordered = _order_by_next_chain(waypoints)
+    if not ordered:
+        return
+
+    ordered[0]["eta"] = 0
+    acc_s = 0.0
+    prev_cum_ms = 0
+    for i in range(1, len(ordered)):
+        dt_s = _time_from_prev_to_curr_s(ordered[i - 1], ordered[i], default_speed_mps=default_speed_mps)
+        acc_s += dt_s
+        cum_ms = int(round(acc_s * 1000.0))
+        delta_ms = max(0, cum_ms - prev_cum_ms)
+        ordered[i]["eta"] = delta_ms
+        prev_cum_ms = cum_ms
 
 def build_flight_plans(
     missions: list[dict],
@@ -588,18 +612,18 @@ def build_flight_plans(
 
     # ────────────────────────── 3) WP ID · 링크 · ECF ────────────────
     for pkt in packets:
-        for wp in pkt["wplist"]:
+        wps = pkt["wplist"]
+        if not wps:
+            continue
+
+        for wp in wps:
             wp["waypointID"] = wp_alloc.alloc()
 
-        total_eta = sum(w["eta"] for w in pkt["wplist"]) or 1
-        cum = 0
-        for idx, wp in enumerate(pkt["wplist"]):
-            cum += wp["eta"]
-            wp["ecf"] = round(cum / total_eta, 2)
-            wp["nextWaypointID"] = (pkt["wplist"][idx + 1]["waypointID"]
-                                     if idx + 1 < len(pkt["wplist"]) else 0)
+        for idx in range(len(wps) - 1):
+            wps[idx]["nextWaypointID"] = wps[idx + 1]["waypointID"]
+        wps[-1]["nextWaypointID"] = 0
 
-            # PASS_FLYOVER(=2) 지점: Loiter + (filmingProperty 누락시) POINT 촬영 보정
+        for wp in wps:
             if wp.get("waypointPassType") == PASS_FLYOVER:
                 if not wp.get("filmingProperty"):
                     wp["filmingProperty"] = _mk_point_filming_for_coord(wp.get("coordinate") or {})
@@ -609,6 +633,17 @@ def build_flight_plans(
                     ("time", 30),
                     ("speed", 40),
                 ])
+
+        _annotate_eta_ms_inplace(wps, default_speed_mps=cruise_speed)
+
+        total_eta = sum(max(0, int(w.get("eta", 0))) for w in wps) or 1
+        cum = 0
+        for wp in wps:
+            step_eta = max(0, int(wp.get("eta", 0)))
+            cum += step_eta
+            wp["ecf"] = round(min(cum / total_eta, 1.0), 2)
+
+        wps[-1]["ecf"] = 1.0
 
     # ────────────────────────── 4) 최종 조립 ─────────────────────────
     result = []
@@ -622,6 +657,7 @@ def build_flight_plans(
             ("waypointList", pkt["wplist"]),
         ]))
     return result
+
 
 
 
