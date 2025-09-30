@@ -1,6 +1,26 @@
-float fieldOfView
-uint sensorType
-uint operationMode
+uint operationMode:
+ - 길이 : 4
+ - min : 0
+ - Max : 5
+ - unit : N/A
+ - 비고 : 운용 모드 번호
+ - enum : 0=None, 1=좌표지향 모드, 2=구간탐색 모드, 3=자동추적 모드, 4=기체고정 모드, 5=자동주사 모드
+
+uint sensorType:
+ - 길이 : 4
+ - min : 0
+ - Max : 2
+ - unit : N/A
+ - 비고 : 촬영할 센서 종류
+ - enum : 0=촬영하지 않음, 1=EO, 2=IR
+
+float fieldOfView:
+ - 길이 : 4
+ - min : 0.0
+ - Max : 180.0
+ - unit : deg
+ - 비고 : 설정 화각
+
 CommonType.CoordinateOrientation coordinateOrientation
 CommonType.LineSearch lineSearch
 CommonType.AutoTracking autoTracking

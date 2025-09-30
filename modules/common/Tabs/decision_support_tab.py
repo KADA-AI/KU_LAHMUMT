@@ -9,6 +9,10 @@ def _now_ms_since_2000():
 
 class DecisionSupportTab(CSCTabBase):
     TITLE = "의사결정 지원 CSC"
+    def __init__(self, *, messenger, parent=None, owner=None):
+        super().__init__(messenger=messenger, parent=parent)
+        self._owner = owner
+
     
     # **FB → Push**
     PUSH_MESSAGES = [
@@ -84,3 +88,16 @@ class DecisionSupportTab(CSCTabBase):
             }
 
         return None  # 그 외는 기본(제네레이터) 사용
+
+    def mark_received(self, msg_id: str, raw: bytes | None = None):
+        super().mark_received(msg_id, raw)
+        if str(msg_id).zfill(4) == "0901":
+            owner = getattr(self, '_owner', None)
+            if owner is not None:
+                try:
+                    owner.mark_received('0901', raw)
+                except Exception as exc:
+                    try:
+                        owner._append_log_line(f"[ERR] 0901 처리 실패: {exc}")
+                    except Exception:
+                        pass

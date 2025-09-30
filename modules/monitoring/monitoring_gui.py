@@ -135,6 +135,7 @@ class MainWindow(QMainWindow):
         self._self_check_sent = False
         self._last_ctrl_ts = {}   # 디듀프용
         self._staged_replan_context = None
+        self._auto_initplan_triggered = False
 
         tabs = QTabWidget()
         self._tab = MissionMonitoringTab(messenger=NodeMessenger)
@@ -473,6 +474,7 @@ class MainWindow(QMainWindow):
         try: self._send_mon("mode", text=labels[int(val)], role="MSM")
         except Exception: pass
         self._apply_power_state()
+        self._handle_mode_transition(int(val))
         if self._power_on:
             QTimer.singleShot(500, self._start_0102_stream)
 
@@ -508,10 +510,82 @@ class MainWindow(QMainWindow):
 
         self._power_on = (int(val) != 0)
         self._apply_power_state()
+        self._handle_mode_transition(int(val))
         if self._power_on:
             QTimer.singleShot(500, self._start_0102_stream)
 
+    def _handle_mode_transition(self, mode_idx: int):
+        try:
+            idx = int(mode_idx)
+        except Exception:
+            return
+        if idx == 3:
+            if not getattr(self, '_auto_initplan_triggered', False):
+                self._auto_initplan_triggered = True
+                QTimer.singleShot(0, self._auto_prepare_replan)
+        else:
+            self._auto_initplan_triggered = False
+
+    def _auto_prepare_replan(self):
+        try:
+            payload = self._build_0902_body()
+        except Exception as exc:
+            self._append_log_line(f'[AUTO] 0902 컨텍스트 생성 실패: {exc}')
+            return
+        if not isinstance(payload, dict):
+            return
+        mission_ids = [item.get('inputMissionID') for item in payload.get('inputMissionIDList', []) if isinstance(item, dict) and item.get('inputMissionID') is not None]
+        options = [opt for opt in payload.get('pendingOptionList', []) if isinstance(opt, dict)]
+        plan_ids = [opt.get('missionPlanID') for opt in options if opt.get('missionPlanID') is not None]
+        option_names = [opt.get('optionName') for opt in options if opt.get('optionName')]
+        if not option_names and options:
+            option_names = [f'옵션{i+1}' for i in range(len(options))]
+        context = {
+            'plan_ids': plan_ids,
+            'mission_ids': mission_ids,
+            'option_names': option_names,
+            'replan_level': payload.get('replanLevel', 1),
+            'reason': payload.get('replanReason') or '초기 임무계획',
+        }
+        self._stage_replan_context(context, trigger='auto')
+        if self._auto_press_0902_button():
+            self._append_log_line('[AUTO] 0902 재계획 요청 자동 송신 실행')
+        else:
+            self._append_log_line('[AUTO] 0902 자동 송신 실패: 버튼을 찾지 못함')
+
     # ───────── 모니터링(대시보드) 전송 훅 ─────────
+    def _auto_press_0902_button(self) -> bool:
+        tab = getattr(self, '_tab', None)
+        tbl = getattr(tab, 'tbl_tx', None) if tab else None
+        if tbl is None:
+            return False
+        row = -1
+        if hasattr(tab, '_find_tx_row'):
+            try:
+                row = tab._find_tx_row('0902')
+            except Exception:
+                row = -1
+        if row is None or row < 0:
+            for r in range(tbl.rowCount()):
+                item = tbl.item(r, 0)
+                if item and item.text().strip() == '0902':
+                    row = r
+                    break
+        if row is None or row < 0:
+            return False
+        try:
+            if hasattr(tab, '_on_tx_button_clicked'):
+                tab._on_tx_button_clicked(row)
+            else:
+                tab._on_tx_double_clicked(row, 0)
+            return True
+        except Exception:
+            try:
+                tab._on_tx_double_clicked(row, 0)
+                return True
+            except Exception:
+                return False
+
     def _install_mon_wires(self):
         """
         - TX 완료(mark_sent) 시 → {"kind":"tx","msg_id":"XXXX"} UDP 전송
@@ -797,7 +871,7 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("1"), self, activated=lambda: self._ensure_selfcheck_0102(True))
         QShortcut(QKeySequence("0"), self, activated=lambda: self._ensure_selfcheck_0102(False))
 
-    def _stage_replan_context(self, raw_context):
+    def _stage_replan_context(self, raw_context, trigger: str | None = None):
         if not isinstance(raw_context, dict):
             self._append_log_line('[CTRL] 0902 재계획 컨텍스트 준비 실패: 형식 오류')
             return
@@ -863,8 +937,10 @@ class MainWindow(QMainWindow):
                         pass
 
         summary = ', '.join(str(pid) for pid in plan_ids) or '-'
-        self._append_log_line(f'[CTRL] 0902 재계획 요청 준비 완료 (planIds: {summary})')
-        self._append_log_line('[GUIDE] 모니터링 탭에서 0902 버튼을 눌러 재계획 요청을 전송하세요.')
+        prefix = '[AUTO]' if trigger == 'auto' else '[CTRL]'
+        self._append_log_line(f'{prefix} 0902 재계획 요청 준비 완료 (planIds: {summary})')
+        if trigger != 'auto':
+            self._append_log_line('[GUIDE] 모니터링 탭에서 0902 버튼을 눌러 재계획 요청을 송신하세요.')
 
     # ───────── CTRL 핸들러 ─────────
     def _handle_ctrl_payload(self, payload: dict):
@@ -888,7 +964,7 @@ class MainWindow(QMainWindow):
             if not ok: self._send_self_check_0102(status=status)
 
         elif cmd == "stage_replan":
-            self._stage_replan_context(payload.get('context') or {})
+            self._stage_replan_context(payload.get('context') or {}, trigger=payload.get('trigger'))
             return
 
         elif cmd == "replan":

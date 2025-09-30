@@ -117,16 +117,6 @@ def _list_numeric_ids(dirname: str, prefix_first_char: str | None = None) -> lis
     ids.sort()
     return ids
 
-def _dict_to_UAVMissionPlanID(data: dict):
-    obj = _new('UAVMissionPlanID')
-    if "uavMissionPlanID" in data: _try_set(obj, "uavMissionPlanID", int(data["uavMissionPlanID"]))
-    return obj
-
-def _dict_to_LAHMissionPlanID(data: dict):
-    obj = _new('LAHMissionPlanID')
-    if "lahMissionPlanID" in data: _try_set(obj, "lahMissionPlanID", int(data["lahMissionPlanID"]))
-    return obj
-
 def _dict_to_Option(data: dict):
     obj = _new('Option')
     if "optionID" in data: _try_set(obj, "optionID", int(data["optionID"]))
@@ -137,16 +127,6 @@ def _dict_to_Option(data: dict):
     if "recogEffectiveness" in data: _try_set(obj, "recogEffectiveness", int(data["recogEffectiveness"]))
     if "distance" in data: _try_set(obj, "distance", int(data["distance"]))
     if "target" in data: _try_set(obj, "target", int(data["target"]))
-    if "uavMissionPlanIDList" in data and isinstance(data["uavMissionPlanIDList"], list):
-        T = _cs('UAVMissionPlanID') or object
-        lst = List[T]()
-        for item in data["uavMissionPlanIDList"]: lst.Add(_dict_to_UAVMissionPlanID(item if isinstance(item, dict) else {}))
-        _try_set(obj, "uavMissionPlanIDList", lst)
-    if "lahMissionPlanIDList" in data and isinstance(data["lahMissionPlanIDList"], list):
-        T = _cs('LAHMissionPlanID') or object
-        lst = List[T]()
-        for item in data["lahMissionPlanIDList"]: lst.Add(_dict_to_LAHMissionPlanID(item if isinstance(item, dict) else {}))
-        _try_set(obj, "lahMissionPlanIDList", lst)
     return obj
 
 def _dict_to_MissionPlanOptionInfo(data: dict):

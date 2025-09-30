@@ -539,7 +539,7 @@ class MainWindow(QMainWindow):
         payload = self._pending_plan_push or {}
         plan_ids     = list(payload.get("plan_ids") or [])
         option_names = list(payload.get("option_names") or [])
-        reason       = payload.get("reason") or "init-plan"
+        reason       = payload.get("reason") or "초기임무재계획"
         if not plan_ids:
             self._append_log_line("[WARN] No missionPlanID to push (0301)")
             return
@@ -547,7 +547,7 @@ class MainWindow(QMainWindow):
         # 0301만 **송신**
         QTimer.singleShot(0,   lambda: self._click_tx_button_for("0301"))
         # 0305 완료 알림
-        QTimer.singleShot(600, lambda: self._push_0305(status=1, reason=reason))
+        QTimer.singleShot(600, lambda: self._push_0305(status=2, reason=reason))
         # 0901 옵션정보 생성 요청(옵션 개수 == plan_ids 개수)
         QTimer.singleShot(900, lambda: self._push_0901_options(plan_ids, option_names))
         self._pending_plan_push = None
@@ -668,11 +668,15 @@ class MainWindow(QMainWindow):
             body = {
                 "timestamp": _now_ms_since_2000(),
                 "source": "IDM",
-                "missionPlanningStatus": int(status),  # 2: 진행중, 1: 완료
+                "missionPlanningStatus": int(status),  # 1: 재계획 수행 중, 2: 재계획 완료
                 "replanReason": reason,
             }
             push_message("0305", NodeMessenger, body_dict=body)
             self.log_sig.emit(f"[0305] status={status}, reason={reason} 전송")
+            try:
+                self._send_mon("tx", msg_id=_z4("0305"), missionPlanningStatus=int(status))
+            except Exception:
+                pass
         except Exception as e:
             self.log_sig.emit(f"[ERR] 0305 전송 실패: {e}")
 
@@ -706,6 +710,10 @@ class MainWindow(QMainWindow):
             }
             push_message("0901", NodeMessenger, body_dict=body)
             self.log_sig.emit(f"[0901] option request sent (count={len(entries)})")
+            try:
+                self._send_mon("tx", msg_id=_z4("0901"), optionCount=len(entries))
+            except Exception:
+                pass
         except Exception as e:
             self.log_sig.emit(f"[ERR] 0901 push failed: {e}")
 
@@ -959,6 +967,9 @@ class MainWindow(QMainWindow):
             return
         self._initplan_running = True
         self._pending_plan_push = None
+        ctx = getattr(self, "_active_plan_context", {}) or {}
+        reason = str(ctx.get("reason") or "초기임무재계획")
+        self._push_0305(status=1, reason=reason)
         threading.Thread(target=self._run_replan_pipeline_do, name="Replan-GUI", daemon=True).start()
 
     def _run_replan_pipeline_do(self):
@@ -971,7 +982,6 @@ class MainWindow(QMainWindow):
             reason = str(ctx.get('reason') or staged.get('reason') or 'init-plan')
 
             self.log_sig.emit(f"[STEP 0] Replan pipeline start (reason={reason})")
-            self._push_0305(status=2, reason=reason)  # 진행 중
 
             # MissionPlanner 패키지 로드 경로 보정
             mp_pkg_dir = Path(PROJECT_ROOT) / "modules" / "mission_planning" / "MissionPlanner"

@@ -21,7 +21,7 @@ PRIMS = {"uint","ulong","int","float","double","bool","string",
          "uint32","uint64","int32","int64","float32","float64"}
 TYPE_MAP = {"uint":"uint32","ulong":"uint64","int":"int32","float":"float32","double":"float64"}
 SOURCE_ENUM_DEFAULT = ["DSC","IDM","MSM","MMR","UCC","MOB","CSP"]
-LIST_LEN = 2
+LIST_LEN = 3
 
 def _parse_kv_list(s: str) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
@@ -163,6 +163,10 @@ DEFAULT_BINDINGS = {
     "mainSensor":"mainSensor_v1",
     "missionType":"missionType_v1",
     "flightMode":"flightMode_v1",
+    "optionName": "optionName_v1",
+    "survivalRate": "survivalRate_v1",
+    "timeContraction": "timeContraction_v1",
+    "recogEffectiveness": "recogEffectiveness_v1",
 }
 
 class GenCtx:
@@ -421,28 +425,16 @@ def _apply_constraints(obj: dict):
 MSG_ID = "0701"
 
 
-def _gen_UAVMissionPlanID(source: str = "DS"):
-    obj = {}
-    obj["uavMissionPlanID"] = gen_value("uavMissionPlanID", "uint32", MSG_ID, obj, 0)
-    return obj
-
-def _gen_LAHMissionPlanID(source: str = "DS"):
-    obj = {}
-    obj["lahMissionPlanID"] = gen_value("lahMissionPlanID", "uint32", MSG_ID, obj, 0)
-    return obj
-
 def _gen_Option(source: str = "DS"):
     obj = {}
     obj["optionID"] = gen_value("optionID", "uint32", MSG_ID, obj, 0)
-    obj["optionName"] = gen_value("optionName", "uint32", MSG_ID, obj, 0)
+    obj["optionName"] = random.choice([1, 2, 3, 4, 5])
     obj["missionPlanID"] = gen_value("missionPlanID", "uint32", MSG_ID, obj, 0)
-    obj["survivalRate"] = gen_value("survivalRate", "int32", MSG_ID, obj, 0)
-    obj["timeContraction"] = gen_value("timeContraction", "int32", MSG_ID, obj, 0)
-    obj["recogEffectiveness"] = gen_value("recogEffectiveness", "int32", MSG_ID, obj, 0)
-    obj["distance"] = gen_value("distance", "uint32", MSG_ID, obj, 0)
-    obj["target"] = gen_value("target", "uint32", MSG_ID, obj, 0)
-    obj["uavMissionPlanIDList"] = [ _gen_UAVMissionPlanID(source=source) for _ in range(LIST_LEN) ]
-    obj["lahMissionPlanIDList"] = [ _gen_LAHMissionPlanID(source=source) for _ in range(LIST_LEN) ]
+    obj["survivalRate"] = random.choice([-1, 0, 1])
+    obj["timeContraction"] = random.choice([-1, 0, 1])
+    obj["recogEffectiveness"] = random.choice([-1, 0, 1])
+    obj["distance"] = random.randint(0, 200_000)
+    obj["target"] = random.randint(0, 20)
     return obj
 
 def _gen_MissionPlanOptionInfo(source: str = "DS"):

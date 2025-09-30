@@ -11,34 +11,12 @@ except Exception:
 @register_state("S110")
 def run(orch):
     orch._safe_log("[OPS] S110: 초기임무계획 진입 요청")
-
-    # 1) 체크리스트 시작(있으면)
+    try:
+        orch._set_mode_text_all("초기임무계획")
+    except Exception:
+        pass
     try:
         ensure_s110_checklist(orch)
     except Exception:
         pass
-
-    # 2) UI/모듈 모드 즉시 싱크(다른 프로그램 켜져 있어도 무관)
-    #    → 각 모듈에 CTRL 'mode=초기임무계획' 브로드캐스트
-    try:
-        orch._enter_initial_plan()
-    except Exception:
-        pass
-
-    # 3) Info 모듈에 실제 0101(SystemMode=2) 생성 지시
-    #    (아래 패치된 info_manage.py가 이를 받아 0101을 버스로 push)
-    ok = False
-    try:
-        ok = orch._send_ctrl_single("info", {"cmd": "system_mode", "mode": 2, "reason": "S110"})
-    except Exception as e:
-        orch._safe_log(f"[WARN] Info system_mode 지시 실패: {e}")
-    if not ok:
-        orch._safe_log("[WARN] Info 모듈 0101 전송 지시 실패")
-    # 4) Kick off the initial mission-planning pipeline
-    try:
-        orch.trigger_initial_plan_pipeline(reason="초기임무재계획")
-    except AttributeError:
-        orch._safe_log('[WARN] trigger_initial_plan_pipeline not available on orchestrator')
-    except Exception as exc:
-        orch._safe_log(f'[WARN] initial mission planning pipeline failed: {exc}')
 

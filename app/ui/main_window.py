@@ -362,7 +362,7 @@ class MainWindow(QMainWindow):
 
         # Optional: register_listener(mid, self) for all IDs if needed
 
-    def _launch_role(self, role: str):
+    def _launch_role(self, role: str, *, schedule_powerup: bool = True):
         import sys, subprocess
         from pathlib import Path
 
@@ -443,7 +443,8 @@ class MainWindow(QMainWindow):
                     target_log.append_log(f"[RUN] launched {script.name}")
             except Exception:
                 pass
-            self._schedule_module_powerup(role) if role in ("mission", "monitor", "decision") else None
+            if schedule_powerup and role in ("mission", "monitor", "decision"):
+                self._schedule_module_powerup(role)
         except Exception as e:
             self._debug_log(f'_launch_role error role={role} err={e}')
             try:
@@ -555,6 +556,10 @@ class MainWindow(QMainWindow):
         self._auto_enabled = bool(checked)
         self._apply_auto_state_to_modules()
         state_msg = "[AUTO] Global auto ON" if self._auto_enabled else "[AUTO] Global auto OFF"
+        if self._auto_enabled:
+            for role in ("mission", "monitor", "decision"):
+                self._launch_role(role, schedule_powerup=False)
+
         for mod in (self.module_mission, self.module_monitor, self.module_decision):
             if mod and hasattr(mod, 'append_log'):
                 try:

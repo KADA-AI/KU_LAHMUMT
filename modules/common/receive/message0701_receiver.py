@@ -61,18 +61,6 @@ def _try_read_db_body(msgid: str, data_obj):
     except Exception:
         return None
 
-def _to_dict_UAVMissionPlanID(obj):
-    d = {}
-    _v = _get(obj, 'uavMissionPlanID', 'UavMissionPlanID')
-    if _v is not None: d['uavMissionPlanID'] = int(_v)
-    return d
-
-def _to_dict_LAHMissionPlanID(obj):
-    d = {}
-    _v = _get(obj, 'lahMissionPlanID', 'LahMissionPlanID')
-    if _v is not None: d['lahMissionPlanID'] = int(_v)
-    return d
-
 def _to_dict_Option(obj):
     d = {}
     _v = _get(obj, 'optionID', 'OptionID')
@@ -91,12 +79,6 @@ def _to_dict_Option(obj):
     if _v is not None: d['distance'] = int(_v)
     _v = _get(obj, 'target', 'Target')
     if _v is not None: d['target'] = int(_v)
-    _coll = _get(obj, 'uavMissionPlanIDList', 'UavMissionPlanIDList') or []
-    if _coll:
-        d['uavMissionPlanIDList'] = [_to_dict_UAVMissionPlanID(it) for it in _coll]
-    _coll = _get(obj, 'lahMissionPlanIDList', 'LahMissionPlanIDList') or []
-    if _coll:
-        d['lahMissionPlanIDList'] = [_to_dict_LAHMissionPlanID(it) for it in _coll]
     return d
 
 def _to_dict_MissionPlanOptionInfo(obj):

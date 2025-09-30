@@ -367,6 +367,7 @@ def ensure_s100_checklist(orch: Any) -> S100ChecklistController:
     return ctrl
 
 
+
 # ─────────────────────────────────────────────────────────────
 # (위쪽 클래스/함수들 그대로 두고) 여기부터 교체
 class S110ChecklistDialog(QDialog):
@@ -375,82 +376,104 @@ class S110ChecklistDialog(QDialog):
         self.setWindowTitle("S110 초기임무계획 체크리스트")
         self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
         self.setMinimumWidth(620)
-        self.resize(720, 540)
+        self.resize(720, 520)
 
-        legend = QLabel("● 초록=생성(TX)   ● 파랑=수신(RX)")
+        legend = QLabel("● 초록=송신(TX)   ● 파랑=수신(RX)")
         legend.setStyleSheet("color:#666; font-size:11px;")
 
-        # ── 체크 항목 생성: style_map으로 TX/RX 지정 ──
-        self.r1  = _Row("1) 0203(비행참조정보) 수신",
-                        expected_keys=("assignment","monitoring","decision"),
-                        style_map={"assignment":"rx","monitoring":"rx","decision":"rx"})
-        self.r2  = _Row("2) 0201(협업기저임무계획) 수신",
-                        expected_keys=("assignment","monitoring","decision"),
-                        style_map={"assignment":"rx","monitoring":"rx","decision":"rx"})
-        self.r3  = _Row("3) 초기임무계획 모드 전환(0101)",
-                        expected_keys=("assignment","monitoring","decision"),
-                        style_map={"assignment":"rx","monitoring":"rx","decision":"rx"})
-        self.r4  = _Row("4) [모니터링] 0902 생성",
-                        expected_keys=("monitoring",),
-                        style_map={"monitoring":"tx"})
-        self.r5  = _Row("5) [할당] 0305 재계획 수립 '중' 생성",
-                        expected_keys=("assignment",),
-                        style_map={"assignment":"tx"})
-        self.r6  = _Row("6) [할당] 0301~0304 생성",
-                        expected_keys=("assignment",),
-                        style_map={"assignment":"tx"})
-        self.r7  = _Row("7) [할당] 0301 임무계획 전달",
-                        expected_keys=("assignment",),
-                        style_map={"assignment":"tx"})
-        self.r8  = _Row("8) 0301 수신(모니터링·의사결정)",
-                        expected_keys=("monitoring","decision"),
-                        style_map={"monitoring":"rx","decision":"rx"})
-        self.r9  = _Row("9) [할당] 0305 재계획 수립 '완료' 생성",
-                        expected_keys=("assignment",),
-                        style_map={"assignment":"tx"})
-        self.r10 = _Row("10) [할당] 0901 옵션정보 생성 요청",
-                        expected_keys=("assignment",),
-                        style_map={"assignment":"tx"})
-        self.r11 = _Row("11) [의사결정] 0701 옵션정보 생성",
-                        expected_keys=("decision",),
-                        style_map={"decision":"tx"})
-        self.r12 = _Row("12) 0702(의사결정 결과) 수신",
-                        expected_keys=("assignment","monitoring","decision"),
-                        style_map={"assignment":"rx","monitoring":"rx","decision":"rx"})
-        self.r13 = _Row("13) 시스템운용모드(대기) 수신",
-                        expected_keys=("assignment","monitoring","decision"),
-                        style_map={"assignment":"rx","monitoring":"rx","decision":"rx"})
+        self.r1 = _Row(
+            "1) 비행 참조정보 수신 (0203)",
+            expected_keys=("assignment", "monitoring", "decision"),
+            style_map={"assignment": "rx", "monitoring": "rx", "decision": "rx"},
+        )
+        self.r2 = _Row(
+            "2) 협업기저임무계획 수신 (0201)",
+            expected_keys=("assignment", "monitoring", "decision"),
+            style_map={"assignment": "rx", "monitoring": "rx", "decision": "rx"},
+        )
+        self.r3 = _Row(
+            "3) 초기 임무계획 모드 전환",
+            expected_keys=("assignment", "monitoring", "decision"),
+            style_map={"assignment": "rx", "monitoring": "rx", "decision": "rx"},
+        )
+        self.r4 = _Row(
+            "4) [모니터링] 0902 데이터 송신",
+            expected_keys=("monitoring",),
+            style_map={"monitoring": "tx"},
+        )
+        self.r5 = _Row(
+            "5) [할당] 0305 송신 (상태=1)",
+            expected_keys=("assignment",),
+            style_map={"assignment": "tx"},
+        )
+        self.r6 = _Row(
+            "6) [할당] 0301 데이터 송신",
+            expected_keys=("assignment",),
+            style_map={"assignment": "tx"},
+        )
+        self.r7 = _Row(
+            "7) 0301 데이터 수신",
+            expected_keys=("monitoring", "decision"),
+            style_map={"monitoring": "rx", "decision": "rx"},
+        )
+        self.r8 = _Row(
+            "8) [할당] 0305 송신 (상태=2)",
+            expected_keys=("assignment",),
+            style_map={"assignment": "tx"},
+        )
+        self.r9 = _Row(
+            "9) [할당] 0901 데이터 송신",
+            expected_keys=("assignment",),
+            style_map={"assignment": "tx"},
+        )
+        self.r10 = _Row(
+            "10) [옵션] 0901 데이터 수신",
+            expected_keys=("decision",),
+            style_map={"decision": "rx"},
+        )
+        self.r11 = _Row(
+            "11) [옵션] 0701 데이터 송신",
+            expected_keys=("decision",),
+            style_map={"decision": "tx"},
+        )
+        self.r12 = _Row(
+            "12) 0702 데이터 수신",
+            expected_keys=("assignment", "monitoring", "decision"),
+            style_map={"assignment": "rx", "monitoring": "rx", "decision": "rx"},
+        )
 
-        self.r1.set_detail("각 모듈이 0203을 수신(rx)했는지")
-        self.r2.set_detail("각 모듈이 0201을 수신(rx)했는지")
-        self.r3.set_detail("각 모듈이 초기임무계획 모드로 전환했는지")
-        self.r4.set_detail("모니터링 모듈이 0902를 생성(tx)")
-        self.r5.set_detail("할당 모듈이 0305('중')를 생성(tx) — 0301 이전")
-        self.r6.set_detail("할당 모듈이 0301/0302/0303/0304 모두 생성(tx)")
-        self.r7.set_detail("할당 모듈이 0301을 송신(tx)")
-        self.r8.set_detail("모니터링·의사결정 모듈이 0301을 수신(rx)")
-        self.r9.set_detail("할당 모듈이 0305('완료')를 생성(tx) — 0301 이후")
-        self.r10.set_detail("할당 모듈이 0901을 송신(tx)")
-        self.r11.set_detail("의사결정 모듈이 0701을 송신(tx)")
-        self.r12.set_detail("세 모듈이 0702를 수신(rx)")
-        self.r13.set_detail("세 모듈이 대기모드(standby)로 전환(rx)")
+        self.r1.set_detail("할당/모니터링/의사결정 모듈이 0203을 수신하는지 확인")
+        self.r2.set_detail("할당/모니터링/의사결정 모듈이 0201을 수신하는지 확인")
+        self.r3.set_detail("각 모듈이 초기 임무계획 모드로 전환했는지")
+        self.r4.set_detail("모니터링 모듈이 0902 메시지를 송신했는지")
+        self.r5.set_detail("할당 모듈이 0305를 상태=1로 송신했는지")
+        self.r6.set_detail("할당 모듈이 0301 메시지를 송신했는지")
+        self.r7.set_detail("모니터링·의사결정 모듈이 0301을 수신했는지")
+        self.r8.set_detail("할당 모듈이 0305를 상태=2로 송신했는지")
+        self.r9.set_detail("할당 모듈이 0901 메시지를 송신했는지")
+        self.r10.set_detail("의사결정(옵션) 모듈이 0901을 수신했는지")
+        self.r11.set_detail("의사결정(옵션) 모듈이 0701을 송신했는지")
+        self.r12.set_detail("할당/모니터링/의사결정 모듈이 0702를 수신했는지")
 
-        for r in (self.r1,self.r2,self.r3,self.r4,self.r5,self.r6,self.r7,self.r8,self.r9,self.r10,self.r11,self.r12,self.r13):
+        rows = (
+            self.r1, self.r2, self.r3, self.r4, self.r5, self.r6,
+            self.r7, self.r8, self.r9, self.r10, self.r11, self.r12,
+        )
+        for r in rows:
             r.set_all(False)
 
-        # ── 버튼 영역 ──
         self.btn_reset = QPushButton("초기화")
         self.btn_close = QPushButton("닫기")
+
         btns = QHBoxLayout()
         btns.addStretch(1)
         btns.addWidget(self.btn_reset)
         btns.addWidget(self.btn_close)
 
-        # ── 스크롤 컨테이너 ──
         content = QWidget()
         content_v = QVBoxLayout(content)
         content_v.addWidget(legend)
-        for r in (self.r1,self.r2,self.r3,self.r4,self.r5,self.r6,self.r7,self.r8,self.r9,self.r10,self.r11,self.r12,self.r13):
+        for r in rows:
             content_v.addWidget(r)
         content_v.addStretch(1)
 
@@ -466,16 +489,17 @@ class S110ChecklistDialog(QDialog):
         self.btn_reset.clicked.connect(self._on_reset)
         self.btn_close.clicked.connect(self.close)
 
+        self._rows = rows
+
     def _on_reset(self):
-        for r in (self.r1,self.r2,self.r3,self.r4,self.r5,self.r6,self.r7,self.r8,self.r9,self.r10,self.r11,self.r12,self.r13):
+        for r in self._rows:
             r.reset()
 
+
 class S110ChecklistController(QObject):
-    """
-    UDP dashPulse + 오케스트레이터 모드 이벤트를 후킹하여
-    13개 항목을 자동 평가한다.
-    """
-    sig_set = pyqtSignal(int, str, bool, str)  # (row_idx, module_key, on, detail)
+    """S110 단계에서 필요한 12개 항목을 추적한다."""
+
+    sig_set = pyqtSignal(int, str, bool, str)
 
     def __init__(self, orch: Any):
         super().__init__()
@@ -483,41 +507,29 @@ class S110ChecklistController(QObject):
         self.ui = S110ChecklistDialog()
         self.ui.show()
 
-        # 내부 상태
-        self._rx0203: Dict[str,bool] = {}
-        self._rx0201: Dict[str,bool] = {}
-        self._mode_init: Dict[str,bool] = {}
-        self._mode_standby: Dict[str,bool] = {}
+        self._rx0203: Dict[str, bool] = {}
+        self._rx0201: Dict[str, bool] = {}
+        self._mode_init: Dict[str, bool] = {}
+        self._monitoring_tx_0902 = False
+        self._assignment_tx_0305_status1 = False
+        self._assignment_tx_0305_status2 = False
+        self._assignment_tx_0301 = False
+        self._assignment_tx_0901 = False
+        self._rx0301: Dict[str, bool] = {}
+        self._decision_rx_0901 = False
+        self._decision_tx_0701 = False
+        self._rx0702: Dict[str, bool] = {}
 
-        self._mon_tx_0902_done = False
-
-        self._as_tx_0301 = False
-        self._as_tx_0302 = False
-        self._as_tx_0303 = False
-        self._as_tx_0304 = False
-        self._as_tx_0301_seen = False
-        self._as_tx_0305_pre = False     # 0301 이전
-        self._as_tx_0305_post = False    # 0301 이후
-        self._as_tx_0901 = False
-
-        self._de_tx_0701 = False
-
-        self._rx0301: Dict[str,bool] = {}   # monitoring/decision
-        self._rx0702: Dict[str,bool] = {}   # assignment/monitoring/decision
-
-        # 신호 연결
         self.sig_set.connect(self._on_sig_set)
 
-        # 훅 장착
         self._hook_dash_pulse()
         self._hook_mode_event()
 
-    # UI 업데이트
     def _on_sig_set(self, idx: int, key: str, on: bool, detail: str):
         row_map = {
-            1:self.ui.r1, 2:self.ui.r2, 3:self.ui.r3, 4:self.ui.r4, 5:self.ui.r5,
-            6:self.ui.r6, 7:self.ui.r7, 8:self.ui.r8, 9:self.ui.r9, 10:self.ui.r10,
-            11:self.ui.r11, 12:self.ui.r12, 13:self.ui.r13
+            1: self.ui.r1, 2: self.ui.r2, 3: self.ui.r3, 4: self.ui.r4,
+            5: self.ui.r5, 6: self.ui.r6, 7: self.ui.r7, 8: self.ui.r8,
+            9: self.ui.r9, 10: self.ui.r10, 11: self.ui.r11, 12: self.ui.r12,
         }
         row = row_map.get(int(idx))
         if not row:
@@ -526,13 +538,15 @@ class S110ChecklistController(QObject):
             row.set_detail(detail)
         row.set_ok(key, on)
 
-    # 공용: role 정규화
     @staticmethod
     def _norm_role_to_key(role: str) -> Optional[str]:
         s = (role or "").strip().lower()
-        if s in ("assignment","mission","mmr","mission_planning","assignment_planning"): return "assignment"
-        if s in ("monitoring","msm"): return "monitoring"
-        if s in ("decision","mob","decision_support"): return "decision"
+        if s in ("assignment", "mission", "mmr", "mission_planning", "assignment_planning"):
+            return "assignment"
+        if s in ("monitoring", "msm"):
+            return "monitoring"
+        if s in ("decision", "mob", "decision_support"):
+            return "decision"
         return None
 
     @staticmethod
@@ -550,118 +564,93 @@ class S110ChecklistController(QObject):
         key = self._norm_role_to_key(role)
         if not key:
             return
-        k = kind.lower()
+        k = (kind or "").lower()
         mid = self._norm_mid(msg_id)
 
-        # 1) 0203 수신
         if k == "rx" and mid == "0203":
             if not self._rx0203.get(key, False):
                 self._rx0203[key] = True
                 self.sig_set.emit(1, key, True, "")
 
-        # 2) 0201 수신
         if k == "rx" and mid == "0201":
             if not self._rx0201.get(key, False):
                 self._rx0201[key] = True
                 self.sig_set.emit(2, key, True, "")
 
-        # 4) MSM 0902 생성
-        if k == "tx" and mid == "0902" and key == "monitoring":
-            if not self._mon_tx_0902_done:
-                self._mon_tx_0902_done = True
+        if k == "tx" and key == "monitoring" and mid == "0902":
+            if not self._monitoring_tx_0902:
+                self._monitoring_tx_0902 = True
                 self.sig_set.emit(4, "monitoring", True, "")
 
-        # 6) MMR 0301~0304 생성
-        if k == "tx" and key == "assignment" and mid in ("0301","0302","0303","0304"):
-            if mid == "0301":
-                self._as_tx_0301 = True
-                self._as_tx_0301_seen = True
-                self.sig_set.emit(7, "assignment", True, "")  # 7) 0301 전달
-            elif mid == "0302":
-                self._as_tx_0302 = True
-            elif mid == "0303":
-                self._as_tx_0303 = True
-            elif mid == "0304":
-                self._as_tx_0304 = True
-            # Row6 상세 갱신
-            done = [m for m, ok in (("0301",self._as_tx_0301),("0302",self._as_tx_0302),("0303",self._as_tx_0303),("0304",self._as_tx_0304)) if ok]
-            self.sig_set.emit(6, "assignment", len(done)==4, f"생성됨: {', '.join(done) or '-'}")
-
-        # 5 & 9) 0305 (재계획 수립 중/완료)
         if k == "tx" and key == "assignment" and mid == "0305":
-            if not self._as_tx_0301_seen and not self._as_tx_0305_pre:
-                self._as_tx_0305_pre = True
-                self.sig_set.emit(5, "assignment", True, "0301 이전 발생")
-            elif self._as_tx_0301_seen and not self._as_tx_0305_post:
-                self._as_tx_0305_post = True
-                self.sig_set.emit(9, "assignment", True, "0301 이후 발생")
+            if not self._assignment_tx_0305_status1 and not self._assignment_tx_0301:
+                self._assignment_tx_0305_status1 = True
+                self.sig_set.emit(5, "assignment", True, "MissionPlanningStatus=1(재계획 수행 중)")
+            elif self._assignment_tx_0301 and not self._assignment_tx_0305_status2:
+                self._assignment_tx_0305_status2 = True
+                self.sig_set.emit(8, "assignment", True, "MissionPlanningStatus=2(재계획 완료)")
 
-        # 8) 0301 수신(모니터링·의사결정)
-        if k == "rx" and mid == "0301" and key in ("monitoring","decision"):
+        if k == "tx" and key == "assignment" and mid == "0301":
+            if not self._assignment_tx_0301:
+                self._assignment_tx_0301 = True
+                self.sig_set.emit(6, "assignment", True, "")
+
+        if k == "rx" and mid == "0301" and key in ("monitoring", "decision"):
             if not self._rx0301.get(key, False):
                 self._rx0301[key] = True
-                self.sig_set.emit(8, key, True, "")
+                self.sig_set.emit(7, key, True, "")
 
-        # 10) 0901 옵션정보 생성 요청 by 할당
         if k == "tx" and key == "assignment" and mid == "0901":
-            if not self._as_tx_0901:
-                self._as_tx_0901 = True
-                self.sig_set.emit(10, "assignment", True, "")
+            if not self._assignment_tx_0901:
+                self._assignment_tx_0901 = True
+                self.sig_set.emit(9, "assignment", True, "")
 
-        # 11) 0701 옵션정보 생성 by 의사결정
+        if k == "rx" and key == "decision" and mid == "0901":
+            if not self._decision_rx_0901:
+                self._decision_rx_0901 = True
+                self.sig_set.emit(10, "decision", True, "")
+
         if k == "tx" and key == "decision" and mid == "0701":
-            if not self._de_tx_0701:
-                self._de_tx_0701 = True
+            if not self._decision_tx_0701:
+                self._decision_tx_0701 = True
                 self.sig_set.emit(11, "decision", True, "")
 
-        # 12) 0702 수신(전 모듈)
-        if k == "rx" and mid == "0702":
+        if k == "rx" and mid == "0702" and key in ("assignment", "monitoring", "decision"):
             if not self._rx0702.get(key, False):
                 self._rx0702[key] = True
                 self.sig_set.emit(12, key, True, "")
 
-        # 13)은 모드 이벤트에서 처리
-
-    # 모드 이벤트 훅
     def _hook_mode_event(self):
         orig = getattr(self.orch, "_handle_mode_event", None)
         if not callable(orig):
             return
+
         def wrapper(src_role: str, text: str):
             try:
                 key = self._norm_role_to_key(src_role)
-                t = self._normalize_mode(text)
-                if key:
-                    if self._is_initial_plan(t) and not self._mode_init.get(key, False):
-                        self._mode_init[key] = True
-                        self.sig_set.emit(3, key, True, t)
-                    if self._is_standby(t) and not self._mode_standby.get(key, False):
-                        self._mode_standby[key] = True
-                        self.sig_set.emit(13, key, True, t)
+                norm = self._normalize_mode(text)
+                if key and self._is_initial_plan(norm) and not self._mode_init.get(key, False):
+                    self._mode_init[key] = True
+                    self.sig_set.emit(3, key, True, norm)
             except Exception:
                 pass
             return orig(src_role, text)
+
         self.orch._handle_mode_event = wrapper  # type: ignore
 
     def _normalize_mode(self, text: str) -> str:
-        # 오케스트레이터 제공 함수가 있으면 사용
         if hasattr(self.orch, "_normalize_mode_text"):
             try:
                 text = str(self.orch._normalize_mode_text(text))
             except Exception:
                 pass
-        t = "".join(str(text or "").split()).lower()
-        return t
+        return "".join(str(text or "").split()).lower()
 
     @staticmethod
     def _is_initial_plan(norm_text: str) -> bool:
         return norm_text in ("초기임무계획", "초기임무", "initplan", "initialplan", "3")
 
-    @staticmethod
-    def _is_standby(norm_text: str) -> bool:
-        return norm_text in ("대기모드","대기","standby","2")
 
-# 외부 진입점
 def ensure_s110_checklist(orch: Any) -> S110ChecklistController:
     ctrl = getattr(orch, "_s110_checklist_ctrl", None)
     if isinstance(ctrl, S110ChecklistController):

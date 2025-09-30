@@ -6,7 +6,7 @@ from Tabs.csc_tab_base import CSCTabBase, _now_ms_since_2000
 
 
 class MissionMonitoringTab(CSCTabBase):
-    TITLE = "정보 관리 CSC"
+    TITLE = "임무 모니터링 CSC"
     PUSH_MESSAGES = (
         ("0102", "모듈 상태 정보"),
         ("0501", "임무 수행상황"),

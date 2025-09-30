@@ -36,3 +36,4 @@ def notify(msg_id: str, raw: Optional[bytes] = None) -> None:
     key = _norm(msg_id)  # ← 여기서 4자리로 통일 (예: '502' → '0502')
     for tab in _listener_registry.get(key, []):
         QTimer.singleShot(0, partial(tab.mark_received, key, raw))
+    # print(f"[notify] msg_id={msg_id} listeners={len(_listener_registry.get(key, []))}", flush=True)

@@ -158,7 +158,7 @@ class MainWindow(QMainWindow):
 
         # 탭
         tabs = QTabWidget()
-        self._tab = DecisionSupportTab(messenger=NodeMessenger)
+        self._tab = DecisionSupportTab(messenger=NodeMessenger, owner=self)
 
         # 0102 바디 오버라이드: 항상 MOB 고정형 생성
         self._tab._build_overridden_body = lambda mid: (

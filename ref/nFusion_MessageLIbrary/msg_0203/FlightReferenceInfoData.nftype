@@ -1,8 +1,24 @@
 # MessageID 0203 비행참조정보
 
-ulong timestamp
-uint missionReferencePackageID
-ulong inputTimestamp
+ulong timestamp:
+ - 길이 : 8
+ - min : 0
+ - Max : 2^64-1
+ - unit : ms
+ - 비고 : 2000년 1월 1일부터 ms
+
+uint missionReferencePackageID:
+ - 길이 : 4
+ - unit : N/A
+ - 비고 : 비행참조정보 ID
+
+ulong inputTimestamp:
+ - 길이 : 4
+ - min : 0
+ - Max : 2^64-1
+ - unit : ms
+ - 비고 : 입력된 시점
+
 List<TakeOverInfo> takeOverInfoList
 List<HandOverInfo> handOverInfoList
 List<RTBCoordinate> rtbCoordinateList

@@ -659,11 +659,18 @@ class CSCTabBase(QWidget):
                 s = str(msg_id)
                 extracted = s.zfill(4) if s.isdigit() and len(s) < 4 else s
 
+            role_code = self._sw_code()
             payload = {
                 "kind": "rx",
                 "msg_id": extracted,
-                "role": self._sw_code()
+                "role": role_code
             }
+            if payload.get("msg_id") == "0901" and role_code == "MOB":
+                try:
+                    host, port = self._udp_addr if self._udp_addr else ("?", "?")
+                    print(f"[UDP SEND RX] addr={host}:{port} data={payload}", flush=True)
+                except Exception:
+                    pass
             self._send_udp_monitor(payload)
         except Exception:
             pass

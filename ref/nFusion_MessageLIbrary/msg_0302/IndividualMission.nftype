@@ -1,5 +1,19 @@
-uint individualMissionID
-bool isDone
+uint individualMissionID:
+ - 길이 : 4
+ - unit : N/A
+ - 비고 : 개별 임무 ID
+
+bool isDone:
+ - 길이 : 1
+ - min : 0
+ - Max : 1
+ - unit : N/A
+ - 비고 : 완료 여부
+ - enum : 0=미완료, 1=완료
+
 RelatedMission relatedMission
 IndividualMissionInfo individualMissionInfo
-uint pathID
+uint pathID:
+ - 길이 : 4
+ - unit : N/A
+ - 비고 : 개별 비행 계획 ID

@@ -270,6 +270,7 @@ class DashboardOrchestrator(QObject):
         super().__init__(window)
         self.win = window
         self.widgets = self._resolve_widgets(window)
+        self._apply_dashboard_button_styles()
         self.msg_map = _load_tab_defs()
         self._wire_operation_panel()
 
@@ -640,6 +641,32 @@ class DashboardOrchestrator(QObject):
             pass
 
     # --------- UI 위젯 해결 ---------
+
+    def _apply_dashboard_button_styles(self) -> None:
+        """Set the auto boot and module shutdown buttons to green."""
+        green_style = "\n".join((
+            "QPushButton {",
+            "  background: #16a34a;",
+            "  color: white;",
+            "  border: none;",
+            "  border-radius: 8px;",
+            "  padding: 6px 12px;",
+            "}",
+            "QPushButton:hover { background: #15803d; }",
+            "QPushButton:pressed { background: #166534; }",
+        ))
+        targets = (
+            getattr(self.win, "btn_auto_boot", None),
+            getattr(self.win, "btn_module_shutdown", None),
+        )
+        for btn in targets:
+            if btn is None:
+                continue
+            try:
+                btn.setStyleSheet(green_style)
+            except Exception:
+                pass
+
     def _resolve_widgets(self, win):
         flow = getattr(win, "flow", None)
         if flow is None:
