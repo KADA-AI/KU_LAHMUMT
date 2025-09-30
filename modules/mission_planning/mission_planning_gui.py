@@ -667,7 +667,7 @@ class MainWindow(QMainWindow):
             from push_center import push_message
             body = {
                 "timestamp": _now_ms_since_2000(),
-                "source": "IDM",
+                "source": "MMR",
                 "missionPlanningStatus": int(status),  # 1: 재계획 수행 중, 2: 재계획 완료
                 "replanReason": reason,
             }
@@ -704,7 +704,7 @@ class MainWindow(QMainWindow):
                 return
             body = {
                 "timestamp": ts,
-                "source": "IDM",            # ← Mission Planning 모듈에서 요청
+                "source": "MMR",            # ← Mission Planning 모듈에서 요청
                 "requestTime": ts,
                 "pendingOptionList": entries,
             }

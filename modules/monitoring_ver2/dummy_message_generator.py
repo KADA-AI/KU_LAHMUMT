@@ -20,9 +20,11 @@ except ImportError:
 # --- DLL 파일 경로 설정 및 C# 라이브러리 로드 ---
 try:
     current_dir = os.path.dirname(__file__)
-    dll_path = os.path.abspath(os.path.join(current_dir, "dll_files"))
+    modules_dir = os.path.abspath(os.path.join(current_dir, ".."))
+    common_dir = os.path.join(modules_dir, "common")
+    dll_path = os.path.abspath(os.path.join(common_dir, "dll_files"))
     msg_lib_path = os.path.abspath(
-        os.path.join(current_dir, "msg_files", "MessageLibrary.dll")
+        os.path.join(common_dir, "msg_files", "MessageLibrary.dll")
     )
 
     if not os.path.isdir(dll_path):

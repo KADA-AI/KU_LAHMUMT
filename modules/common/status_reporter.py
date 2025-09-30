@@ -21,9 +21,9 @@ def send_status_ok(source_module_name: str) -> bool:
         return False
 
     body = {
-        "Timestamp": int(time.time() * 1000),     # ← 대문자 키로 통일
-        "Status": 1,                              # 0: Unknown, 1: 정상, 2: 비정상
-        "Source": str(source_module_name or "UNKNOWN"),
+        "timestamp": int(time.time() * 1000),     # ← 대문자 키로 통일
+        "status": 1,                              # 0: Unknown, 1: 정상, 2: 비정상
+        "source": str(source_module_name or "UNKNOWN"),
     }
     try:
         ok = push_message("0102", NodeMessenger, body_dict=body)

@@ -691,7 +691,15 @@ class MainWindow(QMainWindow):
                                 option_id = int(item.get("optionID", len(option_entries) + 1))
                             except Exception:
                                 option_id = len(option_entries) + 1
-                            option_entries.append({"optionID": option_id, "missionPlanID": plan_id})
+                            raw_name = item.get("optionName")
+                            option_name = str(raw_name).strip() if raw_name is not None else ""
+                            if not option_name:
+                                option_name = f"option{option_id}"
+                            option_entries.append({
+                                "optionID": option_id,
+                                "missionPlanID": plan_id,
+                                "optionName": option_name,
+                            })
             except Exception:
                 option_entries = option_entries or []
 

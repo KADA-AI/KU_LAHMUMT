@@ -12,8 +12,10 @@ from data.message_models import (
     PriorMissionListModel,
     OptionListModel,
 )
-from push.message0902_push import make_and_push as push_message_0902
-from push.push_center import push_message
+from modules.common.push.message0902_push import (
+    make_and_push as push_message_0902,
+)
+from modules.common.push_center import push_message
 
 
 def run_replan_procedure(manager):

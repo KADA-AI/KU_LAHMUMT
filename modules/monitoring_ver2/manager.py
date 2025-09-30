@@ -14,8 +14,8 @@ from data.push_storage import PushStorage
 from data.message_models import ModuleStatusModelModel
 
 from logic.monitoring_logic import MonitoringLogicHandler
-from receive.receive_center import register_listener
-from push import message0102_push
+from modules.common.receive.receive_center import register_listener
+from modules.common.push import message0102_push
 from udp_reporter import notify_mode
 
 

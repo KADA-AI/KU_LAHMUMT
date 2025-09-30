@@ -46,7 +46,6 @@ class DecisionSupportTab(CSCTabBase):
         if mid == "0701":
             ts = _now_ms_since_2000()
             stored_entries = getattr(self, "_last_option_entries", None) or []
-            patterns = [(0, 0, 0), (-1, -1, 1), (1, 1, -1)]
             option_list = []
             for idx, entry in enumerate(stored_entries):
                 try:
@@ -57,14 +56,18 @@ class DecisionSupportTab(CSCTabBase):
                     option_id = int(entry.get("optionID", idx + 1))
                 except Exception:
                     option_id = idx + 1
-                sr, tc, reff = patterns[idx] if idx < len(patterns) else (0, 0, 0)
+                raw_name = entry.get("optionName")
+                option_name = str(raw_name).strip() if raw_name is not None else ""
+                if not option_name:
+                    option_name = f"option{option_id}"
                 option_list.append({
                     "optionID": option_id,
+                    "optionName": option_name,
                     "missionPlanID": plan_id,
-                    "survivalRate": sr,
-                    "timeContraction": tc,
-                    "recogEffectiveness": reff,
-                    "distance": 0,
+                    "survivalRate": 1,
+                    "timeContraction": 1,
+                    "recogEffectiveness": 1,
+                    "distance": 15000,
                     "target": 0,
                 })
 
@@ -72,17 +75,18 @@ class DecisionSupportTab(CSCTabBase):
                 fallback_plan = int(getattr(self, "_last_mission_plan_id", 0) or 0)
                 option_list.append({
                     "optionID": 1,
+                    "optionName": "option1",
                     "missionPlanID": fallback_plan,
-                    "survivalRate": 0,
-                    "timeContraction": 0,
-                    "recogEffectiveness": 0,
-                    "distance": 0,
+                    "survivalRate": 1,
+                    "timeContraction": 1,
+                    "recogEffectiveness": 1,
+                    "distance": 15000,
                     "target": 0,
                 })
 
             return {
                 "timestamp": ts,
-                "source": "MOB",
+                "source": "CSP",
                 "autoExecution": False,
                 "optionList": option_list,
             }
