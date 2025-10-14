@@ -531,25 +531,36 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
-    # ───────── 순차 푸시(0301만 송신 + 0305 완료 + 0901 요청) ─────────
+    # ───────── 순차 푸시(0301 송신 → 0305 완료 → 0903 요청) ─────────
     def _start_push_sequence(self):
         if not self._power_on:
             self._append_log_line("[BLOCK] Power OFF → push sequence 차단")
             return
         payload = self._pending_plan_push or {}
-        plan_ids     = list(payload.get("plan_ids") or [])
-        option_names = list(payload.get("option_names") or [])
-        reason       = payload.get("reason") or "초기임무재계획"
+        plan_ids = list(payload.get("plan_ids") or [])
+        reason   = payload.get("reason") or "초기임무재계획"
         if not plan_ids:
             self._append_log_line("[WARN] No missionPlanID to push (0301)")
             return
 
-        # 0301만 **송신**
+        # 0301 송신
         QTimer.singleShot(0,   lambda: self._click_tx_button_for("0301"))
         # 0305 완료 알림
         QTimer.singleShot(600, lambda: self._push_0305(status=2, reason=reason))
-        # 0901 옵션정보 생성 요청(옵션 개수 == plan_ids 개수)
-        QTimer.singleShot(900, lambda: self._push_0901_options(plan_ids, option_names))
+        # 0903 수행임무갱신 요청 (각 missionPlanID)
+        base_delay = 900
+        scheduled = False
+        for idx, plan_id in enumerate(plan_ids):
+            try:
+                mpid = int(plan_id)
+            except Exception:
+                self._append_log_line(f"[WARN] 0903 skip: invalid missionPlanID={plan_id}")
+                continue
+            delay = base_delay + idx * 200
+            QTimer.singleShot(delay, lambda pid=mpid: self._push_0903(pid))
+            scheduled = True
+        if not scheduled:
+            self._append_log_line("[WARN] No valid missionPlanID for 0903 push")
         self._pending_plan_push = None
 
     def _click_tx_button_for(self, code: str):
@@ -661,7 +672,7 @@ class MainWindow(QMainWindow):
         NodeMessenger.InitAllSubscriberFromAssembly()
         NodeMessenger.RegistAllProviderFromFusionNodeIoc()
 
-    # ───────── 0305 / 0901(요청) ─────────
+    # ───────── 0305 / 0903 요청 ─────────
     def _push_0305(self, status: int, reason: str = "초기임무재계획"):
         try:
             from push_center import push_message
@@ -679,6 +690,46 @@ class MainWindow(QMainWindow):
                 pass
         except Exception as e:
             self.log_sig.emit(f"[ERR] 0305 전송 실패: {e}")
+
+    def _push_0903(self, mission_plan_id):
+        try:
+            from push_center import push_message
+        except Exception as e:
+            self.log_sig.emit(f"[ERR] 0903 push unavailable: {e}")
+            return
+
+        if mission_plan_id is None:
+            self.log_sig.emit("[WARN] 0903 skipped: missionPlanID missing")
+            return
+
+        try:
+            mpid = int(mission_plan_id)
+        except Exception:
+            self.log_sig.emit(f"[WARN] 0903 skipped: invalid missionPlanID={mission_plan_id}")
+            return
+
+        body = {
+            "timestamp": _now_ms_since_2000(),
+            "source": "MMR",
+            "missionPlanID": mpid,
+        }
+        try:
+            push_message("0903", NodeMessenger, body_dict=body)
+            self.log_sig.emit(f"[0903] request sent (missionPlanID={mpid})")
+            try:
+                raw = json.dumps(body, ensure_ascii=False).encode("utf-8", "ignore")
+            except Exception:
+                raw = None
+            try:
+                self._tab.mark_sent(_z4("0903"), raw)
+            except Exception:
+                try:
+                    self._send_mon("tx", msg_id=_z4("0903"), missionPlanID=mpid)
+                except Exception:
+                    pass
+        except Exception as e:
+            self.log_sig.emit(f"[ERR] 0903 push failed: {e}")
+
 
     def _push_0901_options(self, plan_ids, option_names):
         """옵션정보 생성 요청(개수 = plan_ids 개수)."""

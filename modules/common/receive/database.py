@@ -14,7 +14,7 @@ class ReceivedDatabase(object):
         # 040x 상황/상태
         "0401", "0402",
         # 050x 임무 상태/진전(세분)
-        "0501", "0502", "0503",
+        "0501", "0502", "0503", "0504"
         # 060x 기타(예: 링크/시스템 등)
         "0601",
         # 070x 옵션/결과
@@ -88,6 +88,8 @@ class ReceivedDatabase(object):
     def set_received_0502(self, value): self.received_0502 = value
     def get_received_0503(self): return self.received_0503
     def set_received_0503(self, value): self.received_0503 = value
+    def get_received_0504(self): return self.received_0504
+    def set_received_0504(self, value): self.received_0504 = value
 
     # 0601
     def get_received_0601(self): return self.received_0601

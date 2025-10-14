@@ -120,7 +120,7 @@ def _list_numeric_ids(dirname: str, prefix_first_char: str | None = None) -> lis
 def _dict_to_Option(data: dict):
     obj = _new('Option')
     if "optionID" in data: _try_set(obj, "optionID", int(data["optionID"]))
-    if "optionName" in data: _try_set(obj, "optionName", int(data["optionName"]))
+    if "optionName" in data: _try_set(obj, "optionName", str(data["optionName"]))
     if "missionPlanID" in data: _try_set(obj, "missionPlanID", int(data["missionPlanID"]))
     if "survivalRate" in data: _try_set(obj, "survivalRate", int(data["survivalRate"]))
     if "timeContraction" in data: _try_set(obj, "timeContraction", int(data["timeContraction"]))

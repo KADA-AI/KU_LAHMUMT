@@ -276,7 +276,7 @@ class MainWindow(QMainWindow):
 
         try:
             subprocess.Popen(
-                [sys.executable, str(script)],
+                [sys.executable, str(script), *extra_args],
                 cwd=str(root),
                 shell=False,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
@@ -370,6 +370,7 @@ class MainWindow(QMainWindow):
         root = Path(__file__).resolve().parents[2]
 
         target_log = None
+        extra_args = []
         if role == "decision":
             candidates = [
                 root / "modules" / "decision_support" / "decision_support_gui.py",
@@ -396,6 +397,14 @@ class MainWindow(QMainWindow):
                 root / "app"     / "modules" / "decision_support" / "monitoritng_gui.py",
             ]
             target_log = self.module_monitor
+
+        elif role == "monitor_v2":
+            candidates = [
+                root / "modules" / "monitoring_ver2" / "test_monitoring.py",
+                root / "app"     / "modules" / "monitoring_ver2" / "test_monitoring.py",
+            ]
+            target_log = self.module_monitor
+            extra_args = ["--gui"]
 
         elif role == "info":
             candidates = [
@@ -434,7 +443,7 @@ class MainWindow(QMainWindow):
 
         try:
             self._debug_log(f'_launch_role resolved script={script}')
-            proc = subprocess.Popen([sys.executable, str(script)], cwd=str(root),
+            proc = subprocess.Popen([sys.executable, str(script), *extra_args], cwd=str(root),
                                     shell=False,
                                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             self._role_processes[role] = proc
@@ -682,6 +691,15 @@ class MainWindow(QMainWindow):
             except Exception as exc:
                 self._log_to_module(role, '[AUTO WARN] launch failed')
                 self._debug_log(f'launch failed role={role} err={exc}')
+
+        # launch monitoring_ver2 functional stub (no GUI)
+        try:
+            self._debug_log('launching role=monitor_v2')
+            self._launch_role('monitor_v2', schedule_powerup=False)
+            self._log_to_module('monitor', '[AUTO] monitoring_ver2 helper launched')
+        except Exception as exc:
+            self._log_to_module('monitor', '[AUTO WARN] monitoring_ver2 launch failed')
+            self._debug_log(f'launch failed role=monitor_v2 err={exc}')
 
     def _handle_module_shutdown(self) -> None:
         for role, proc in list(self._role_processes.items()):

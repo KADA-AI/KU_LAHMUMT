@@ -1,5 +1,6 @@
-# 파일: Tabs/manage_info_tab.py
+﻿# 파일: Tabs/manage_info_tab.py
 from typing import Optional
+import json
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
@@ -32,9 +33,10 @@ class ManageInfo(CSCTabBase):
         ("0501", "임무수행상태정보"),
         ("0502", "임무종료 요청"),
         ("0503", "협업기저임무 완료 알림"),
+        ("0504", "연료량 경고"),
         ("0601", "기저행위"),
         ("0602", "무인기 통제 명령"),
-        ("0701","의사결정 옵션정보"),
+        ("0701", "의사결정 옵션정보"),
         ("0702", "의사결정 결과"),
         ("0801", "운용자 임무재계획 명령"),
         ("0802", "강제명령"),
@@ -65,9 +67,10 @@ class ManageInfo(CSCTabBase):
         ("0501", "임무수행상태정보"),
         ("0502", "임무종료 요청"),
         ("0503", "협업기저임무 완료 알림"),
+        ("0504", "연료량 경고"),
         ("0601", "기저행위"),
         ("0602", "무인기 통제 명령"),
-        ("0701","의사결정 옵션정보"),
+        ("0701", "의사결정 옵션정보"),
         ("0702", "의사결정 결과"),
         ("0801", "운용자 임무재계획 명령"),
         ("0802", "강제명령"),
@@ -79,6 +82,40 @@ class ManageInfo(CSCTabBase):
         ("0903", "수행임무갱신요청"),
         ("0904", "행동트리 서비스 제공 요청"),
     ]
+
+    def mark_received(self, msg_id: str, raw: bytes | None = None):
+        super().mark_received(msg_id, raw)
+        if str(msg_id).strip().zfill(4) != "0504" or not raw:
+            return
+
+        payload = ""
+        try:
+            payload = raw.decode(errors="ignore")
+        except Exception:
+            if isinstance(raw, str):
+                payload = raw
+
+        body = {}
+        if payload:
+            try:
+                body = json.loads(payload)
+            except Exception:
+                if '{' in payload and '}' in payload:
+                    try:
+                        body = json.loads(payload[payload.index('{'):payload.rindex('}') + 1])
+                    except Exception:
+                        body = {}
+
+        try:
+            level = int(body.get("fuelLevel", body.get("fuellevel", body.get("aircraftID", 0))))
+        except Exception:
+            level = 0
+        level_name = {1: "YELLOW", 2: "RED"}.get(level, "UNKNOWN")
+        aid = body.get("aircraftID", "-")
+        try:
+            self.log_rx.append(f"[0504] Fuel warning: {level_name} (level={level}) - UAV {aid}")
+        except Exception:
+            pass
 
     def __init__(self, *, messenger, parent: Optional[QWidget] = None):
         super().__init__(messenger=messenger, parent=parent)

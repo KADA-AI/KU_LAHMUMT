@@ -10,10 +10,7 @@ from config import RECEIVE_MESSAGES
 
 # from manager import MonitoringManager # MonitoringManager는 인자로 받음
 from gui.monitoring_gui import MainWindow
-from modules.common.receive.receive_center import (
-    SignalEmitter,
-    set_global_signal_emitter,
-)
+from receive.receive_center import SignalEmitter, set_global_signal_emitter
 
 
 def start_gui(manager_instance):
@@ -41,3 +38,4 @@ def start_gui(manager_instance):
     print("INFO: 애플리케이션 시작.")
 
     sys.exit(app.exec_())
+

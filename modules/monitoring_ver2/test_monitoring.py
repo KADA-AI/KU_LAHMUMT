@@ -6,7 +6,7 @@ import threading
 import time
 
 # --- Import nFusionImports to handle CLR and DLL loading ---
-from modules.common.dll_files.nFusionImports import *
+from dll_files.nFusionImports import *
 
 # --- C# 어셈블리 로드 (handled by nFusionImports) ---
 dll_folder_path = ""  # 에러 메시지 출력을 위해 미리 선언
@@ -20,14 +20,13 @@ try:
             sys.path.append(candidate)
 
     project_root = script_dir
-    common_dir = os.path.abspath(os.path.join(project_root, "..", "common"))
 
     # C# DLL 파일이 포함된 폴더들의 경로를 sys.path에 추가합니다.
-    msg_dll_folder_path = os.path.join(common_dir, "msg_files")
+    msg_dll_folder_path = os.path.join(project_root, "msg_files")
     if msg_dll_folder_path not in sys.path:
         sys.path.append(msg_dll_folder_path)
 
-    framework_dll_folder_path = os.path.join(common_dir, "dll_files")
+    framework_dll_folder_path = os.path.join(project_root, "dll_files")
     if framework_dll_folder_path not in sys.path:
         sys.path.append(framework_dll_folder_path)
 
@@ -58,7 +57,7 @@ from config import RECEIVE_MESSAGES  # 추가: RECEIVE_MESSAGES 임포트
 # GUI 실행 로직은 gui/gui_app.py에 있습니다.
 from gui.gui_app import start_gui as run_gui_application
 
-from modules.common.receive import *
+from receive import *
 
 
 # --- nFusion 초기화 및 NodeMessenger 반환 함수 ---

@@ -21,11 +21,13 @@ from PyQt5.QtCore import qInstallMessageHandler, QtMsgType, QObject, pyqtSignal,
 from PyQt5.QtWidgets import QApplication, QTextEdit, QPlainTextEdit
 
 from modules.common.states.manager import StateManager
+from modules.common import db_paths
 from modules.common.button_wiring import wire_dashboard_buttons
 import collections
 
 
 def _debug_log(message: str) -> None:
+    
     try:
         ts = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')
         log_path = PROJECT_ROOT / 'run_debug.log'

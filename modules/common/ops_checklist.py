@@ -358,6 +358,7 @@ def ensure_s100_checklist(orch: Any) -> S100ChecklistController:
     ctrl = getattr(orch, "_s100_checklist_ctrl", None)
     if isinstance(ctrl, S100ChecklistController):
         try:
+            ctrl.ui.show()
             ctrl.ui.raise_(); ctrl.ui.activateWindow()
         except Exception:
             pass
@@ -422,24 +423,14 @@ class S110ChecklistDialog(QDialog):
             style_map={"assignment": "tx"},
         )
         self.r9 = _Row(
-            "9) [할당] 0901 데이터 송신",
+            "9) [할당] 0903 데이터 송신",
             expected_keys=("assignment",),
             style_map={"assignment": "tx"},
         )
         self.r10 = _Row(
-            "10) [옵션] 0901 데이터 수신",
-            expected_keys=("decision",),
-            style_map={"decision": "rx"},
-        )
-        self.r11 = _Row(
-            "11) [옵션] 0701 데이터 송신",
-            expected_keys=("decision",),
-            style_map={"decision": "tx"},
-        )
-        self.r12 = _Row(
-            "12) 0702 데이터 수신",
-            expected_keys=("assignment", "monitoring", "decision"),
-            style_map={"assignment": "rx", "monitoring": "rx", "decision": "rx"},
+            "10) [모니터링] 0903 데이터 수신",
+            expected_keys=("monitoring",),
+            style_map={"monitoring": "rx"},
         )
 
         self.r1.set_detail("할당/모니터링/의사결정 모듈이 0203을 수신하는지 확인")
@@ -450,14 +441,12 @@ class S110ChecklistDialog(QDialog):
         self.r6.set_detail("할당 모듈이 0301 메시지를 송신했는지")
         self.r7.set_detail("모니터링·의사결정 모듈이 0301을 수신했는지")
         self.r8.set_detail("할당 모듈이 0305를 상태=2로 송신했는지")
-        self.r9.set_detail("할당 모듈이 0901 메시지를 송신했는지")
-        self.r10.set_detail("의사결정(옵션) 모듈이 0901을 수신했는지")
-        self.r11.set_detail("의사결정(옵션) 모듈이 0701을 송신했는지")
-        self.r12.set_detail("할당/모니터링/의사결정 모듈이 0702를 수신했는지")
+        self.r9.set_detail("0301에서 확보한 MissionPlanID로 0903 송신 여부 확인")
+        self.r10.set_detail("모니터링 모듈이 0903을 수신했는지 확인")
 
         rows = (
             self.r1, self.r2, self.r3, self.r4, self.r5, self.r6,
-            self.r7, self.r8, self.r9, self.r10, self.r11, self.r12,
+            self.r7, self.r8, self.r9, self.r10,
         )
         for r in rows:
             r.set_all(False)
@@ -497,8 +486,6 @@ class S110ChecklistDialog(QDialog):
 
 
 class S110ChecklistController(QObject):
-    """S110 단계에서 필요한 12개 항목을 추적한다."""
-
     sig_set = pyqtSignal(int, str, bool, str)
 
     def __init__(self, orch: Any):
@@ -514,22 +501,24 @@ class S110ChecklistController(QObject):
         self._assignment_tx_0305_status1 = False
         self._assignment_tx_0305_status2 = False
         self._assignment_tx_0301 = False
-        self._assignment_tx_0901 = False
         self._rx0301: Dict[str, bool] = {}
-        self._decision_rx_0901 = False
-        self._decision_tx_0701 = False
-        self._rx0702: Dict[str, bool] = {}
+        self._pending_0903_tx = False
+        self._assignment_tx_0903 = False
+        self._monitoring_rx_0903 = False
+        self._mission_plan_id: Optional[str] = None
+        self._last_0903_mission_plan_id: Optional[str] = None
 
         self.sig_set.connect(self._on_sig_set)
 
         self._hook_dash_pulse()
         self._hook_mode_event()
+        self._hook_mark_received()
 
     def _on_sig_set(self, idx: int, key: str, on: bool, detail: str):
         row_map = {
             1: self.ui.r1, 2: self.ui.r2, 3: self.ui.r3, 4: self.ui.r4,
             5: self.ui.r5, 6: self.ui.r6, 7: self.ui.r7, 8: self.ui.r8,
-            9: self.ui.r9, 10: self.ui.r10, 11: self.ui.r11, 12: self.ui.r12,
+            9: self.ui.r9, 10: self.ui.r10,
         }
         row = row_map.get(int(idx))
         if not row:
@@ -600,25 +589,21 @@ class S110ChecklistController(QObject):
                 self._rx0301[key] = True
                 self.sig_set.emit(7, key, True, "")
 
-        if k == "tx" and key == "assignment" and mid == "0901":
-            if not self._assignment_tx_0901:
-                self._assignment_tx_0901 = True
-                self.sig_set.emit(9, "assignment", True, "")
+        if k == "tx" and key == "assignment" and mid == "0903":
+            self._pending_0903_tx = True
+            self._assignment_tx_0903 = True
+            detail = "송신 감지" if not self._mission_plan_id else f"송신 감지 (MissionPlanID={self._mission_plan_id})"
+            if self._mission_plan_id is None:
+                detail = "송신 감지 (MissionPlanID 미확보)"
+            self.sig_set.emit(9, "assignment", True, detail)
 
-        if k == "rx" and key == "decision" and mid == "0901":
-            if not self._decision_rx_0901:
-                self._decision_rx_0901 = True
-                self.sig_set.emit(10, "decision", True, "")
-
-        if k == "tx" and key == "decision" and mid == "0701":
-            if not self._decision_tx_0701:
-                self._decision_tx_0701 = True
-                self.sig_set.emit(11, "decision", True, "")
-
-        if k == "rx" and mid == "0702" and key in ("assignment", "monitoring", "decision"):
-            if not self._rx0702.get(key, False):
-                self._rx0702[key] = True
-                self.sig_set.emit(12, key, True, "")
+        if k == "rx" and key == "monitoring" and mid == "0903":
+            if not self._monitoring_rx_0903:
+                self._monitoring_rx_0903 = True
+                detail = ""
+                if self._last_0903_mission_plan_id:
+                    detail = f"MissionPlanID={self._last_0903_mission_plan_id}"
+                self.sig_set.emit(10, "monitoring", True, detail)
 
     def _hook_mode_event(self):
         orig = getattr(self.orch, "_handle_mode_event", None)
@@ -650,11 +635,95 @@ class S110ChecklistController(QObject):
     def _is_initial_plan(norm_text: str) -> bool:
         return norm_text in ("초기임무계획", "초기임무", "initplan", "initialplan", "3")
 
+    def _hook_mark_received(self):
+        orig = getattr(self.orch, "mark_received", None)
+        if not callable(orig):
+            return
+
+        def wrapper(msg_id: str, raw: Optional[bytes] = None):
+            try:
+                self._on_mark_received(msg_id, raw)
+            except Exception:
+                pass
+            return orig(msg_id, raw)
+
+        self.orch.mark_received = wrapper  # type: ignore
+
+    def _on_mark_received(self, msg_id: str, raw: Optional[bytes]):
+        mid = self._norm_mid(msg_id)
+        payload = self._extract_json(raw) or {}
+
+        if mid == "0301":
+            mpid = self._extract_mission_plan_id(payload)
+            if mpid:
+                self._mission_plan_id = mpid
+
+        if mid == "0903":
+            mpid = self._extract_mission_plan_id(payload)
+            if mpid:
+                self._last_0903_mission_plan_id = mpid
+            src = payload.get("Source") or payload.get("source") or payload.get("RequestModuleName") or ""
+            key = self._src_to_key(src)
+            expected = self._mission_plan_id or "-"
+            if mpid:
+                match = bool(self._mission_plan_id) and mpid == self._mission_plan_id
+                detail = f"MissionPlanID={mpid}" if match else f"MissionPlanID 불일치 (0903={mpid} / 0301={expected})"
+            else:
+                match = False
+                detail = "MissionPlanID 없음"
+
+            if self._pending_0903_tx or key == "assignment":
+                self.sig_set.emit(9, "assignment", match, detail)
+                if match:
+                    self._assignment_tx_0903 = True
+                elif self._mission_plan_id:
+                    try:
+                        self.orch._safe_log(f"[OPS][WARN] 0903 MissionPlanID mismatch: 0903={mpid or '없음'}, 0301={expected}")
+                    except Exception:
+                        pass
+                self._pending_0903_tx = False
+
+    @staticmethod
+    def _extract_json(raw: Optional[bytes]):
+        if not raw:
+            return None
+        try:
+            s = raw.decode("utf-8", "ignore")
+            m = re.search(r"\{.*\}", s, flags=re.S)
+            if not m:
+                return None
+            return json.loads(m.group(0))
+        except Exception:
+            return None
+
+    @staticmethod
+    def _extract_mission_plan_id(payload: Dict[str, Any]):
+        for key in ("missionPlanId", "MissionPlanID", "MISSIONPLANID"):
+            val = payload.get(key)
+            if val is not None:
+                text = str(val).strip()
+                if text:
+                    return text
+        return None
+
+    @staticmethod
+    def _src_to_key(src: str) -> Optional[str]:
+        s = (src or "").upper()
+        if "MMR" in s or "MISSION PLANNING" in s or "ASSIGNMENT" in s:
+            return "assignment"
+        if "MSM" in s or "MONITOR" in s:
+            return "monitoring"
+        if "MOB" in s or "DECISION" in s:
+            return "decision"
+        return None
+
+
 
 def ensure_s110_checklist(orch: Any) -> S110ChecklistController:
     ctrl = getattr(orch, "_s110_checklist_ctrl", None)
     if isinstance(ctrl, S110ChecklistController):
         try:
+            ctrl.ui.show()
             ctrl.ui.raise_(); ctrl.ui.activateWindow()
         except Exception:
             pass
@@ -662,3 +731,4 @@ def ensure_s110_checklist(orch: Any) -> S110ChecklistController:
     ctrl = S110ChecklistController(orch)
     setattr(orch, "_s110_checklist_ctrl", ctrl)
     return ctrl
+

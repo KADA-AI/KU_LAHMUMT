@@ -68,6 +68,7 @@ class CSCTabBase(QWidget):
             '0501': 15,
             '0502': None,
             '0503': None,
+            '0504': None,
             '0601': None,
             '0602': None,
             '0701': None,
@@ -353,6 +354,15 @@ class CSCTabBase(QWidget):
     # ──────────── Public API (메시지 완료) ───────────
     def mark_sent(self, msg_id: str, raw: bytes | None = None):
         self._update_state(self.tbl_tx, msg_id, "발신 완료")
+        if raw:
+            try:
+                for r in range(self.tbl_tx.rowCount()):
+                    item = self.tbl_tx.item(r, 0)
+                    if item and item.text() == msg_id:
+                        item.setData(Qt.UserRole, raw)
+                        break
+            except Exception:
+                pass
         self._write_log(self.log_tx, "SEND", msg_id, raw)
 
     def mark_received(self, msg_id: str, raw: bytes | None = None):

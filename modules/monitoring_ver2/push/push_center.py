@@ -6,7 +6,8 @@ _DASH_PORT = int(os.getenv("KU_DASHBOARD_PORT", "45991"))
 SEARCH_PREFIXES = [
     "generator",  # ✅ 새로 추가: 최우선으로 generator/ 를 탐색
     "push_info",  # 공용 push_info
-    "push",  # 공용 push
+    "modules.monitoring_ver2.push",  # 모듈 전용 push 우선 탐색
+    "push",  # 공용 push (상대 경로)
     "modules.common.push_info",  # 명시 common
     "modules.common.push",
     "modules.decision_support.push_info",  # DS fallback
@@ -22,11 +23,8 @@ def push_message(msg_id: str, messenger, *, on_done=None, body_dict=None) -> boo
     for pref in SEARCH_PREFIXES:
         try:
             mod = importlib.import_module(f"{pref}.message{msg_id}_push")
-            # 디버깅에 도움: 실제 로딩된 모듈 경로를 한번 찍어두면 혼동이 없습니다.
-            # print(f"[push_center] resolved: {mod.__name__} ({getattr(mod, '__file__', '?')})")
             break
         except Exception as e:
-            print(f"DEBUG: Exception during module import: {e}")
             last_exc = e
 
     if mod is None:
