@@ -266,29 +266,49 @@ class MainWindow(QMainWindow):
         - replanLevel : 1
         - replanReason: '초기임무재계획'
         - inputMissionIDList: database/InputMissionPlan 의 모든 inputMissionID
-        - pendingOptionList : option 1~3, missionPlanID 700000001~ 오름차순, 중복X
+        - pendingOptionList : option 1~3(초기임무재계획 시 1개), missionPlanID 700000001~ 오름차순, 중복X
         """
         now = _now_ms_since_2000()
         input_ids = self._collect_input_mission_ids()
-        mpids = self._next_mission_plan_ids(3)
+
+        reason = "초기임무재계획"
+        option_specs = [
+            {"optionID": 1, "optionName": "시스템추천"},
+            {"optionID": 2, "optionName": "임무시간최소화"},
+            {"optionID": 3, "optionName": "촬영효과최대"},
+        ]
+        if reason == "초기임무재계획":
+            option_specs = option_specs[:1]
+
+        mpids = self._next_mission_plan_ids(len(option_specs))
 
         body = {
             "timestamp": now,
-            "source": "MMR",  # ← 요청대로 고정
+            "source": "MMR",  # 미션플래너에서 고정
             "replanRequestTime": {
                 "replanRequestTimestamp": now
             },
             "replanLevel": 1,
             "inputMissionIDList": [{"inputMissionID": i} for i in input_ids],
-            "replanReason": "초기임무재계획",
+            "replanReason": reason,
             "pendingOptionList": [
-                {"optionID": 1, "optionName": "시스템추천",   "missionPlanID": mpids[0]},
-                {"optionID": 2, "optionName": "임무시간최소화", "missionPlanID": mpids[1]},
-                {"optionID": 3, "optionName": "촬영효과최대",  "missionPlanID": mpids[2]},
+                {
+                    "optionID": spec["optionID"],
+                    "optionName": spec["optionName"],
+                    "missionPlanID": mpid,
+                }
+                for spec, mpid in zip(option_specs, mpids)
             ],
         }
-        # 로깅(선택)
-        self._append_log_line(f"[0902] 하드코딩 생성 완료 (inputMissionIDs={len(input_ids)}, mpid@{mpids[0]}~)")
+        # 로그(선택)
+        if mpids:
+            self._append_log_line(
+                f"[0902] 재계획 요청 생성 완료 (inputMissionIDs={len(input_ids)}, optionCount={len(option_specs)}, mpid@{mpids[0]})"
+            )
+        else:
+            self._append_log_line(
+                f"[0902] 재계획 요청 생성 완료 (inputMissionIDs={len(input_ids)}, optionCount=0)"
+            )
         return body
 
     def _install_mode_parsefail_log_filter(self):
