@@ -66,6 +66,8 @@ def _bootstrap_paths():
 PROJECT_ROOT, COMMON_DIR, DS_DIR = _bootstrap_paths()
 
 
+db_paths.bootstrap_db_root()
+
 # ---------------------------------------------------------------------------
 # Unhandled exception logging (writes to run_error.log)
 # ---------------------------------------------------------------------------
@@ -313,6 +315,14 @@ class DashboardOrchestrator(QObject):
         self._hz_window    = float(os.getenv("KU_MON_HZ_WIN", "5.0"))     # 이동 평균 창(초)
         self._hz_stats: dict[str, dict] = {}
         self._hz_lock = threading.Lock()
+
+        self._last_system_mode_code: int | None = None
+        info = db_paths.get_info()
+        self._scenario_timestamp = info.get("timestamp_ms")
+        try:
+            self.win.update_db_root(info.get("db_root") or db_paths.get_active_db_root_str())
+        except Exception:
+            pass
 
     def _log_to_role(self, role: str, text: str):
         """해당 role 모듈 로그에만 기록. 실패 시 글로벌 폴백."""
@@ -891,15 +901,71 @@ class DashboardOrchestrator(QObject):
         obj = payload if isinstance(payload, dict) else self._extract_message_json(raw)
         if not isinstance(obj, dict):
             return
-        for key in ("systemMode", "SystemMode"):
-            val = obj.get(key)
-            try:
-                if val is not None and int(val) == 2:
-                    self._safe_log("[OPS] SystemMode=2 수신 → 초기임무계획 모드 진입")
-                    self._enter_initial_plan()
-                    return
-            except Exception:
+
+        timestamp = None
+        for key in ("timestamp", "Timestamp"):
+            value = obj.get(key)
+            if value is None:
                 continue
+            try:
+                timestamp = int(value)
+                break
+            except Exception:
+                try:
+                    timestamp = int(float(str(value).strip()))
+                    break
+                except Exception:
+                    continue
+
+        code = None
+        for key in ("systemMode", "SystemMode"):
+            value = obj.get(key)
+            if value is None:
+                continue
+            try:
+                code = int(value)
+                break
+            except Exception:
+                try:
+                    code = int(float(str(value).strip()))
+                    break
+                except Exception:
+                    continue
+
+        if code is None:
+            return
+
+        if code == 1:
+            self._maybe_activate_scenario(timestamp)
+
+        if code == 2:
+            self._safe_log("[OPS] SystemMode=2 수신 → 초기임무계획 모드 진입")
+            self._enter_initial_plan()
+
+        self._last_system_mode_code = code
+
+    def _maybe_activate_scenario(self, timestamp: int | None) -> None:
+        if self._last_system_mode_code == 1:
+            return
+        if timestamp is None:
+            self._safe_log("[OPS] Standby 모드 timestamp 미확인 → 기존 DB 유지")
+            return
+        try:
+            info = db_paths.activate_scenario(timestamp)
+        except Exception as exc:
+            self._safe_log(f"[ERR] Standby 시나리오 준비 실패: {exc}")
+            return
+
+        self._scenario_timestamp = info.get("timestamp_ms")
+        db_root = info.get("db_root")
+        if db_root:
+            try:
+                self.win.update_db_root(db_root)
+            except Exception:
+                pass
+        db_root_str = db_root or db_paths.get_active_db_root_str()
+        iso = info.get("iso") or timestamp
+        self._safe_log(f"[OPS] Standby 시나리오 활성화 → {iso} @ {db_root_str}")
 
     # --------- 모드/CTRL/런처/로깅 유틸 ---------
     def _log_assignment(self, text: str):
@@ -1039,7 +1105,7 @@ class DashboardOrchestrator(QObject):
 
         ui_line = getattr(self.win, "_db_path_line", None)
         ui_val = ui_line.text().strip() if ui_line and hasattr(ui_line, "text") else ""
-        db_root = ui_val or os.environ.get("KU_MISSION_DB_ROOT") or str(root / "database")
+        db_root = ui_val or db_paths.get_active_db_root_str()
         try: Path(db_root).mkdir(parents=True, exist_ok=True)
         except Exception: pass
 

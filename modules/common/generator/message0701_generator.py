@@ -6,10 +6,15 @@ import os, re, json, random
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+from modules.common import db_paths
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 PROJECT_ROOT = os.path.normpath(os.path.join(HERE, "..", "..", ".."))
-CACHE_FILE_0901 = os.path.join(PROJECT_ROOT, "database", "cache", "latest_0901.json")
+
+
+def _cache_file_0901() -> str:
+    return os.path.join(db_paths.get_active_db_root_str(), "cache", "latest_0901.json")
 RULES_DIR = os.path.normpath(os.path.join(HERE, "..", "nFusion_MessageLIbrary", "rules"))
 FIELD_PROFILES_PATH = os.path.join(RULES_DIR, "field_profiles.txt")
 CONDITIONS_PATH     = os.path.join(RULES_DIR, "conditions.txt")
@@ -27,10 +32,11 @@ SOURCE_ENUM_DEFAULT = ["DSC","IDM","MSM","MMR","UCC","MOB","CSP"]
 LIST_LEN = 3
 
 def _load_cached_0901() -> dict | None:
-    if not os.path.exists(CACHE_FILE_0901):
+    cache_path = _cache_file_0901()
+    if not os.path.exists(cache_path):
         return None
     try:
-        with open(CACHE_FILE_0901, "r", encoding="utf-8") as fp:
+        with open(cache_path, "r", encoding="utf-8") as fp:
             data = json.load(fp)
         if isinstance(data, dict):
             return data

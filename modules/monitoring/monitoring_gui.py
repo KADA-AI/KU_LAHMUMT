@@ -23,6 +23,7 @@ for _p in (_ROOT, _ROOT / "modules", _ROOT / "modules" / "common"):
 
 from modules.common.status_reporter import send_status_ok
 from modules.common.ctrl_listener import start_ctrl_listener, env_ctrl_port
+from modules.common import db_paths
 from receive_center import register_listener   # ★ 0101 리스너 등록용
 
 # ───────── Qt 경고 필터 ─────────
@@ -206,11 +207,11 @@ class MainWindow(QMainWindow):
         """
         ids = []
         try:
-            base = PROJECT_ROOT / "database" / "InputMissionPlan"
+            base = db_paths.get_db_subpath("InputMissionPlan")
             cand_files = []
             if base.exists() and base.is_dir():
                 cand_files.extend([p for p in base.glob("*.json") if p.is_file()])
-            single = PROJECT_ROOT / "database" / "InputMissionPlan.json"
+            single = db_paths.get_db_subpath("InputMissionPlan.json")
             if single.exists():
                 cand_files.append(single)
 
@@ -240,7 +241,7 @@ class MainWindow(QMainWindow):
         - 최초: 700000001 시작
         - 호출마다 오름차순, 중복 방지
         """
-        seq_file = PROJECT_ROOT / "database" / "mission_plan_seq.txt"
+        seq_file = db_paths.get_db_subpath("mission_plan_seq.txt")
         start = 700000001
         try:
             if seq_file.exists():

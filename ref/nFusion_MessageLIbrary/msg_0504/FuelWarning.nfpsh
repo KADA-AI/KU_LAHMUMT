@@ -14,4 +14,9 @@ uint aircraftID:
  - 길이 : 4
  - unit : N/A
  - 비고 : 해당 무인기 ID
+
+uint fuelLevel:
+ - 길이 : 4
+ - unit : N/A
+ - 비고 : 연료량 수준
  - enum : 1=Yellow(잔여 연료량 20%), 2=RED(잔여 연료량 10%)

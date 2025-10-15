@@ -25,12 +25,18 @@ int timeContraction:
  - unit : N/A
  - 비고 : 기존 대비 임무소요시간 감소량
  - enum : -1=시간증가, 0=변화 없음, 1=시간감소효과
-
+		
 int recogEffectiveness:
  - 길이 : 4
  - unit : N/A
  - 비고 : 기존 대비 촬영 효과
  - enum : -1=시간증가, 0=변화 없음, 1=시간감소효과
+
+int fuelWarning:
+ - 길이 : 4
+ - unit : N/A
+ - 비고 : 해당 임무 계획이 연료의 부족이 존재할 가능성이 있는지 알림
+ - enum : -1=연료량주의, 0=연료양호
 
 uint distance:
  - 길이 : 4

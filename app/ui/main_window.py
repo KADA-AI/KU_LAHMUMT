@@ -14,6 +14,7 @@ from ..widgets.toggle_switch import ToggleSwitch
 from ..widgets.operation_flow_panel import OperationFlowPanel
 import os, subprocess, json, socket
 from pathlib import Path
+from modules.common import db_paths
 
 class MainWindow(QMainWindow):
     """Main dashboard window arranged on a 35x50 grid."""
@@ -23,6 +24,7 @@ class MainWindow(QMainWindow):
         self.resize(1800, 900)
 
         self._db_path_line: QLineEdit = None
+        self._current_db_root: str = ""
 
         # Middleware widget references
         self._mw_name: QLineEdit = None
@@ -74,16 +76,11 @@ class MainWindow(QMainWindow):
         self._db_path_line.setPlaceholderText("Database directory")
         self._db_path_line.setReadOnly(True)
 
-        # Apply default path and sync KU_MISSION_DB_ROOT
-        default_db_path = self._find_project_root() / "database"
-        try:
-            default_db_path.mkdir(parents=True, exist_ok=True)
-        except Exception:
-            pass
-
-        default_db_path_str = str(default_db_path)
-        self._db_path_line.setText(default_db_path_str)
-        os.environ["KU_MISSION_DB_ROOT"] = default_db_path_str
+        # Apply default path via shared db path manager
+        info = db_paths.get_info()
+        default_db_path = info.get("db_root") or db_paths.get_active_db_root_str()
+        self._current_db_root = str(default_db_path)
+        self._db_path_line.setText(self._current_db_root)
 
         self._add_zone(grid, self._db_path_line, "DB_PATH")
 
@@ -751,16 +748,22 @@ class MainWindow(QMainWindow):
     def _browse_db(self):
         path = QFileDialog.getExistingDirectory(self, "Select database directory")
         if path:
-            self._db_path_line.setText(path)
-            os.environ["KU_MISSION_DB_ROOT"] = path
+            info = db_paths.set_manual_db_root(path, source="manual-browse")
+            self._current_db_root = info.get("db_root") or path
+            self._db_path_line.setText(self._current_db_root)
             # Record path selection in module logs when modules are available
             for attr in ("module_mission", "module_monitor", "module_decision"):
                 mod = getattr(self, attr, None)
                 if mod and hasattr(mod, "append_log"):
                     try:
-                        mod.append_log(f"[PATH] {path}")
+                        mod.append_log(f"[PATH] {self._current_db_root}")
                     except Exception:
                         pass
+
+    def update_db_root(self, path: str | Path) -> None:
+        self._current_db_root = str(path)
+        if self._db_path_line is not None:
+            self._db_path_line.setText(self._current_db_root)
 
     def _toggle_demo_flow(self):
         """Toggle demo animation with the D shortcut."""

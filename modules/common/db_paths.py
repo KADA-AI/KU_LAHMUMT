@@ -164,10 +164,13 @@ def get_db_subpath(*parts: str) -> Path:
 
 
 def _copy_legacy_into(destination: Path) -> None:
+    destination.mkdir(parents=True, exist_ok=True)
     if not LEGACY_DB_ROOT.exists():
-        destination.mkdir(parents=True, exist_ok=True)
         return
-    shutil.copytree(LEGACY_DB_ROOT, destination, dirs_exist_ok=True)
+    for root, dirnames, _ in os.walk(LEGACY_DB_ROOT):
+        rel = Path(root).relative_to(LEGACY_DB_ROOT) if Path(root) != LEGACY_DB_ROOT else Path('.')
+        target = destination / rel
+        target.mkdir(parents=True, exist_ok=True)
 
 
 def activate_scenario(timestamp_ms: int, agency: Optional[str] = None, *, copy_legacy: bool = True) -> Dict[str, Any]:
@@ -241,4 +244,28 @@ def get_info() -> Dict[str, Any]:
             "db_root": str(_cache.get("db_root")) if _cache.get("db_root") else None,
             "source": _cache.get("source"),
         }
+
+
+def _dir_has_files(path: Path) -> bool:
+    try:
+        return any(p.is_file() for p in path.rglob('*'))
+    except FileNotFoundError:
+        return False
+
+
+def ensure_db_payload(name: str) -> Path:
+    dest = get_active_db_root() / name
+    dest.mkdir(parents=True, exist_ok=True)
+    if _dir_has_files(dest):
+        return dest
+    src = LEGACY_DB_ROOT / name
+    if not src.exists():
+        return dest
+    for root, _, filenames in os.walk(src):
+        rel = Path(root).relative_to(src) if Path(root) != src else Path('.')
+        target_dir = dest / rel
+        target_dir.mkdir(parents=True, exist_ok=True)
+        for fname in filenames:
+            shutil.copy2(Path(root) / fname, target_dir / fname)
+    return dest
 

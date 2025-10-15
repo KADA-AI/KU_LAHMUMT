@@ -4,6 +4,8 @@ import importlib
 from datetime import datetime, timezone
 from pathlib import Path
 
+from modules.common import db_paths
+
 # ── Constants ──────────────────────────────────────────────────────────────
 EPOCH_2000 = datetime(2000, 1, 1, tzinfo=timezone.utc)
 
@@ -113,11 +115,16 @@ def project_root_for_push_file(__file_path: str):
 
 
 def db_dir_for(msgid: str, __file_path: str) -> str:
-    env_root = os.getenv("KU_MISSION_DB_ROOT")
     name = DB_DIR_RULES.get(msgid, f"msg_{msgid}")
-    if env_root:
-        return str(Path(env_root) / name)
-    return str(project_root_for_push_file(__file_path) / "database" / name)
+    try:
+        if msgid in ("0201", "0203"):
+            return str(db_paths.ensure_db_payload(name))
+        root = db_paths.get_active_db_root()
+        target = root / name
+        target.mkdir(parents=True, exist_ok=True)
+        return str(target)
+    except Exception:
+        return str(project_root_for_push_file(__file_path) / "database" / name)
 
 
 def make_and_push_based_on_rules(

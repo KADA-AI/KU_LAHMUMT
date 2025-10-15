@@ -6,6 +6,10 @@ import time
 from .monitoring_logic_part import MonitoringLogic
 from .replan_logic_part import ReplanLogic
 
+# 로직 루프 실행 주기를 중앙에서 관리하도록 상수로 정의
+LOGIC_LOOP_FREQUENCY_HZ = 5
+LOGIC_LOOP_SLEEP_SEC = 1.0 / LOGIC_LOOP_FREQUENCY_HZ
+
 class MonitoringLogicHandler:
     """
     두 개의 세부 로직(모니터링, 재계획)을 소유하고,
@@ -63,5 +67,5 @@ class MonitoringLogicHandler:
                     # 다른 모드에서는 로직을 실행하지 않음
                     pass
             
-            # 15Hz 대기 (CPU 사용량 조절)
-            time.sleep(1/15)
+            # 5Hz 대기 (CPU 사용량 조절)
+            time.sleep(LOGIC_LOOP_SLEEP_SEC)

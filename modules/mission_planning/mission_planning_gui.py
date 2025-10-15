@@ -31,6 +31,7 @@ for _p in (_ROOT, _ROOT / "modules", _ROOT / "modules" / "common"):
 
 from modules.common.status_reporter import send_status_ok
 from modules.common.ctrl_listener import start_ctrl_listener, env_ctrl_port
+from modules.common import db_paths
 from receive_center import register_listener   # ★ 0101 모드 수신 리스너
 
 _EPOCH2000_MS = 946_684_800_000
@@ -1078,7 +1079,7 @@ class MainWindow(QMainWindow):
                         continue
                 return fixed
 
-            db_root = Path(os.environ.get("KU_MISSION_DB_ROOT") or (Path(PROJECT_ROOT) / "database"))
+            db_root = db_paths.get_active_db_root()
             dir_0201 = db_root / "InputMissionPlan"
             dir_0203 = db_root / "MissionReferenceInfo"
             out_root = db_root / "mission_output"
@@ -1170,7 +1171,7 @@ class MainWindow(QMainWindow):
             self.log_sig.emit(f"[OK] FlightPath counts: 0303={len(flight_plans_0303)} / 0304={len(flight_plans_0304)}")
 
             # 디스크 저장 (0301/0302/0303/0304)
-            db_root = Path(os.environ.get("KU_MISSION_DB_ROOT") or (Path(PROJECT_ROOT) / "database"))
+            db_root = db_paths.get_active_db_root()
             dir_mp  = db_root / "MissionPlan"
             dir_imp = db_root / "IndividualMissionPlan"
             dir_fp  = db_root / "FlightPath"

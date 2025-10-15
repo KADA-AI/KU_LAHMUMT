@@ -732,3 +732,388 @@ def ensure_s110_checklist(orch: Any) -> S110ChecklistController:
     setattr(orch, "_s110_checklist_ctrl", ctrl)
     return ctrl
 
+
+
+
+# ─────────────────────────────────────────────────────────────
+# S120 체크리스트 (임무 수행 진입)
+class S120ChecklistDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("S120 임무 수행 체크리스트")
+        self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
+        self.setMinimumWidth(560)
+
+        legend = QLabel("● 초록=송신(TX)   ● 파랑=수신(RX)")
+        legend.setStyleSheet("color:#666; font-size:11px;")
+
+        self.r1 = _Row(
+            "1) 임무 수행 모드 수신",
+            expected_keys=("assignment", "monitoring", "decision"),
+            style_map={"assignment": "rx", "monitoring": "rx", "decision": "rx"},
+        )
+        self.r2 = _Row(
+            "2) 0402 상태정보(정적) 수신",
+            expected_keys=("assignment", "monitoring", "decision"),
+            style_map={"assignment": "rx", "monitoring": "rx", "decision": "rx"},
+        )
+        self.r3 = _Row(
+            "3) 0401 상태정보(동적) 수신",
+            expected_keys=("assignment", "monitoring", "decision"),
+            style_map={"assignment": "rx", "monitoring": "rx", "decision": "rx"},
+        )
+        self.r4 = _Row(
+            "4) [모니터링] 0501 임무수행 상태 TX",
+            expected_keys=("monitoring",),
+            style_map={"monitoring": "tx"},
+        )
+        self.r5 = _Row(
+            "5) [할당/의결] 0501 수신",
+            expected_keys=("assignment", "decision"),
+            style_map={"assignment": "rx", "decision": "rx"},
+        )
+
+        self.r1.set_detail("MMR/MOB 모듈 포함 모든 모듈이 임무 수행 모드로 전환")
+        self.r2.set_detail("모듈별 0402(StateInfo-Static) 수신 여부")
+        self.r3.set_detail("모듈별 0401(StateInfo-Dynamic) 수신 여부")
+        self.r4.set_detail("모니터링 모듈이 0501을 송신했는지 확인")
+        self.r5.set_detail("할당·의결 모듈이 0501을 수신했는지 확인")
+
+        rows = (self.r1, self.r2, self.r3, self.r4, self.r5)
+        for r in rows:
+            r.set_all(False)
+
+        self.btn_reset = QPushButton("초기화")
+        self.btn_close = QPushButton("닫기")
+
+        btns = QHBoxLayout()
+        btns.addStretch(1)
+        btns.addWidget(self.btn_reset)
+        btns.addWidget(self.btn_close)
+
+        content = QWidget()
+        content_v = QVBoxLayout(content)
+        content_v.addWidget(legend)
+        for r in rows:
+            content_v.addWidget(r)
+        content_v.addStretch(1)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setWidget(content)
+
+        lay = QVBoxLayout(self)
+        lay.addWidget(scroll)
+        lay.addLayout(btns)
+
+        self.btn_reset.clicked.connect(self._on_reset)
+        self.btn_close.clicked.connect(self.close)
+
+        self._rows = rows
+
+    def _on_reset(self):
+        for r in self._rows:
+            r.reset()
+
+
+class S120ChecklistController(QObject):
+    sig_set = pyqtSignal(int, str, bool, str)
+
+    def __init__(self, orch: Any):
+        super().__init__()
+        self.orch = orch
+        self.ui = S120ChecklistDialog()
+        self.ui.show()
+
+        self._mode_exec: Dict[str, bool] = {}
+        self._rx0402: Dict[str, bool] = {}
+        self._rx0401: Dict[str, bool] = {}
+        self._monitoring_tx_0501 = False
+        self._rx0501: Dict[str, bool] = {}
+
+        self.sig_set.connect(self._on_sig_set)
+
+        self._hook_dash_pulse()
+        self._hook_mode_event()
+
+    def _on_sig_set(self, idx: int, key: str, on: bool, detail: str):
+        row_map = {
+            1: self.ui.r1,
+            2: self.ui.r2,
+            3: self.ui.r3,
+            4: self.ui.r4,
+            5: self.ui.r5,
+        }
+        row = row_map.get(int(idx))
+        if not row:
+            return
+        if detail:
+            row.set_detail(detail)
+        row.set_ok(key, on)
+
+    @staticmethod
+    def _norm_role_to_key(role: str) -> Optional[str]:
+        s = (role or "").strip().lower()
+        if s in ("assignment", "mission", "mmr", "mission_planning", "assignment_planning"):
+            return "assignment"
+        if s in ("monitoring", "msm"):
+            return "monitoring"
+        if s in ("decision", "mob", "decision_support"):
+            return "decision"
+        return None
+
+    @staticmethod
+    def _norm_mid(mid: str) -> str:
+        m = str(mid).strip()
+        return m.zfill(4) if m.isdigit() and len(m) < 4 else m
+
+    def _hook_dash_pulse(self):
+        try:
+            self.orch.dashPulse.connect(self._on_dash_pulse)
+        except Exception:
+            pass
+
+    def _on_dash_pulse(self, role: str, kind: str, msg_id: str):
+        key = self._norm_role_to_key(role)
+        if not key:
+            return
+        k = (kind or "").lower()
+        mid = self._norm_mid(msg_id)
+
+        if k == "rx" and mid == "0402":
+            if not self._rx0402.get(key, False):
+                self._rx0402[key] = True
+                self.sig_set.emit(2, key, True, "")
+
+        if k == "rx" and mid == "0401":
+            if not self._rx0401.get(key, False):
+                self._rx0401[key] = True
+                self.sig_set.emit(3, key, True, "")
+
+        if k == "tx" and key == "monitoring" and mid == "0501":
+            if not self._monitoring_tx_0501:
+                self._monitoring_tx_0501 = True
+                self.sig_set.emit(4, "monitoring", True, "")
+
+        if k == "rx" and mid == "0501" and key in ("assignment", "decision"):
+            if not self._rx0501.get(key, False):
+                self._rx0501[key] = True
+                self.sig_set.emit(5, key, True, "")
+
+    def _hook_mode_event(self):
+        orig = getattr(self.orch, "_handle_mode_event", None)
+        if not callable(orig):
+            return
+
+        def wrapper(src_role: str, text: str):
+            try:
+                key = self._norm_role_to_key(src_role)
+                norm = self._normalize_mode(text)
+                if key and self._is_execution_mode(norm) and not self._mode_exec.get(key, False):
+                    self._mode_exec[key] = True
+                    self.sig_set.emit(1, key, True, norm)
+            except Exception:
+                pass
+            return orig(src_role, text)
+
+        self.orch._handle_mode_event = wrapper  # type: ignore
+
+    def _normalize_mode(self, text: str) -> str:
+        if hasattr(self.orch, "_normalize_mode_text"):
+            try:
+                text = str(self.orch._normalize_mode_text(text))
+            except Exception:
+                pass
+        return "".join(str(text or "").split()).lower()
+
+    @staticmethod
+    def _is_execution_mode(norm_text: str) -> bool:
+        return norm_text in ("임무수행", "임무수행모드", "execution", "missionmode", "4")
+
+
+def ensure_s120_checklist(orch: Any) -> S120ChecklistController:
+    ctrl = getattr(orch, "_s120_checklist_ctrl", None)
+    if isinstance(ctrl, S120ChecklistController):
+        try:
+            ctrl.ui.show()
+            ctrl.ui.raise_(); ctrl.ui.activateWindow()
+        except Exception:
+            pass
+        return ctrl
+    ctrl = S120ChecklistController(orch)
+    setattr(orch, "_s120_checklist_ctrl", ctrl)
+    return ctrl
+
+
+
+# ─────────────────────────────────────────────────────────────
+# S210 체크리스트 (정상 수행)
+class S210ChecklistDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("S210 정상 수행 체크리스트")
+        self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
+        self.setMinimumWidth(560)
+
+        legend = QLabel("● 초록=송신(TX)   ● 파랑=수신(RX)")
+        legend.setStyleSheet("color:#666; font-size:11px;")
+
+        self.r1 = _Row(
+            "1) 0402 정상상황 정보 수신",
+            expected_keys=("assignment", "monitoring", "decision"),
+            style_map={"assignment": "rx", "monitoring": "rx", "decision": "rx"},
+        )
+        self.r2 = _Row(
+            "2) 0401 유무인기 상태정보 수신",
+            expected_keys=("assignment", "monitoring", "decision"),
+            style_map={"assignment": "rx", "monitoring": "rx", "decision": "rx"},
+        )
+        self.r3 = _Row(
+            "3) [모니터링] 0501 상태정보 송신",
+            expected_keys=("monitoring",),
+            style_map={"monitoring": "tx"},
+        )
+        self.r4 = _Row(
+            "4) [할당/의결] 0501 상태정보 수신",
+            expected_keys=("assignment", "decision"),
+            style_map={"assignment": "rx", "decision": "rx"},
+        )
+
+        self.r1.set_detail("모든 모듈이 0402(정상 상황 정보)를 수신")
+        self.r2.set_detail("모든 모듈이 0401(유/무인기 상태정보)을 수신")
+        self.r3.set_detail("모니터링 모듈이 0501 상태정보를 송신(5Hz)")
+        self.r4.set_detail("할당·의결 모듈이 0501 상태정보를 수신")
+
+        rows = (self.r1, self.r2, self.r3, self.r4)
+        for r in rows:
+            r.set_all(False)
+
+        self.btn_reset = QPushButton("초기화")
+        self.btn_close = QPushButton("닫기")
+
+        btns = QHBoxLayout()
+        btns.addStretch(1)
+        btns.addWidget(self.btn_reset)
+        btns.addWidget(self.btn_close)
+
+        content = QWidget()
+        content_v = QVBoxLayout(content)
+        content_v.addWidget(legend)
+        for r in rows:
+            content_v.addWidget(r)
+        content_v.addStretch(1)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setWidget(content)
+
+        lay = QVBoxLayout(self)
+        lay.addWidget(scroll)
+        lay.addLayout(btns)
+
+        self.btn_reset.clicked.connect(self._on_reset)
+        self.btn_close.clicked.connect(self.close)
+
+        self._rows = rows
+
+    def _on_reset(self):
+        for r in self._rows:
+            r.reset()
+
+
+class S210ChecklistController(QObject):
+    sig_set = pyqtSignal(int, str, bool, str)
+
+    def __init__(self, orch: Any):
+        super().__init__()
+        self.orch = orch
+        self.ui = S210ChecklistDialog()
+        self.ui.show()
+
+        self._rx0402: Dict[str, bool] = {}
+        self._rx0401: Dict[str, bool] = {}
+        self._monitoring_tx_0501 = False
+        self._rx0501: Dict[str, bool] = {}
+
+        self.sig_set.connect(self._on_sig_set)
+
+        self._hook_dash_pulse()
+
+    def _on_sig_set(self, idx: int, key: str, on: bool, detail: str):
+        row_map = {
+            1: self.ui.r1,
+            2: self.ui.r2,
+            3: self.ui.r3,
+            4: self.ui.r4,
+        }
+        row = row_map.get(int(idx))
+        if not row:
+            return
+        if detail:
+            row.set_detail(detail)
+        row.set_ok(key, on)
+
+    @staticmethod
+    def _norm_role_to_key(role: str) -> Optional[str]:
+        s = (role or "").strip().lower()
+        if s in ("assignment", "mission", "mmr", "mission_planning", "assignment_planning"):
+            return "assignment"
+        if s in ("monitoring", "msm"):
+            return "monitoring"
+        if s in ("decision", "mob", "decision_support"):
+            return "decision"
+        return None
+
+    @staticmethod
+    def _norm_mid(mid: str) -> str:
+        m = str(mid).strip()
+        return m.zfill(4) if m.isdigit() and len(m) < 4 else m
+
+    def _hook_dash_pulse(self):
+        try:
+            self.orch.dashPulse.connect(self._on_dash_pulse)
+        except Exception:
+            pass
+
+    def _on_dash_pulse(self, role: str, kind: str, msg_id: str):
+        key = self._norm_role_to_key(role)
+        if not key:
+            return
+        k = (kind or "").lower()
+        mid = self._norm_mid(msg_id)
+
+        if k == "rx" and mid == "0402":
+            if not self._rx0402.get(key, False):
+                self._rx0402[key] = True
+                self.sig_set.emit(1, key, True, "")
+
+        if k == "rx" and mid == "0401":
+            if not self._rx0401.get(key, False):
+                self._rx0401[key] = True
+                self.sig_set.emit(2, key, True, "")
+
+        if k == "tx" and key == "monitoring" and mid == "0501":
+            if not self._monitoring_tx_0501:
+                self._monitoring_tx_0501 = True
+                self.sig_set.emit(3, "monitoring", True, "")
+
+        if k == "rx" and mid == "0501" and key in ("assignment", "decision"):
+            if not self._rx0501.get(key, False):
+                self._rx0501[key] = True
+                self.sig_set.emit(4, key, True, "")
+
+
+def ensure_s210_checklist(orch: Any) -> S210ChecklistController:
+    ctrl = getattr(orch, "_s210_checklist_ctrl", None)
+    if isinstance(ctrl, S210ChecklistController):
+        try:
+            ctrl.ui.show()
+            ctrl.ui.raise_(); ctrl.ui.activateWindow()
+        except Exception:
+            pass
+        return ctrl
+    ctrl = S210ChecklistController(orch)
+    setattr(orch, "_s210_checklist_ctrl", ctrl)
+    return ctrl
