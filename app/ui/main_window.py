@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QGridLayout, QPushButton, QLabel, QLineEdit, QFileDialog, QShortcut,
-    QHBoxLayout, QSizePolicy
+    QHBoxLayout, QVBoxLayout, QSizePolicy
 )
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QKeySequence
@@ -24,6 +24,7 @@ class MainWindow(QMainWindow):
         self.resize(1800, 900)
 
         self._db_path_line: QLineEdit = None
+        self._scenario_root_line: QLineEdit = None
         self._current_db_root: str = ""
 
         # Middleware widget references
@@ -75,14 +76,25 @@ class MainWindow(QMainWindow):
         self._db_path_line.setObjectName("DbPathLine")
         self._db_path_line.setPlaceholderText("Database directory")
         self._db_path_line.setReadOnly(True)
+        self._scenario_root_line = QLineEdit(self)
+        self._scenario_root_line.setObjectName("ScenarioRootLine")
+        self._scenario_root_line.setPlaceholderText("Scenario base (optional)")
+        self._scenario_root_line.setReadOnly(True)
 
         # Apply default path via shared db path manager
         info = db_paths.get_info()
         default_db_path = info.get("db_root") or db_paths.get_active_db_root_str()
         self._current_db_root = str(default_db_path)
         self._db_path_line.setText(self._current_db_root)
+        self.update_scenario_root(info.get("base_root"))
 
-        self._add_zone(grid, self._db_path_line, "DB_PATH")
+        path_container = QWidget(self)
+        path_layout = QVBoxLayout(path_container)
+        path_layout.setContentsMargins(0, 0, 0, 0)
+        path_layout.setSpacing(2)
+        path_layout.addWidget(self._db_path_line)
+        path_layout.addWidget(self._scenario_root_line)
+        self._add_zone(grid, path_container, "DB_PATH")
 
         # Middleware configuration row
         mw_row = self._make_middleware_row()
@@ -748,22 +760,49 @@ class MainWindow(QMainWindow):
     def _browse_db(self):
         path = QFileDialog.getExistingDirectory(self, "Select database directory")
         if path:
-            info = db_paths.set_manual_db_root(path, source="manual-browse")
-            self._current_db_root = info.get("db_root") or path
-            self._db_path_line.setText(self._current_db_root)
-            # Record path selection in module logs when modules are available
-            for attr in ("module_mission", "module_monitor", "module_decision"):
-                mod = getattr(self, attr, None)
-                if mod and hasattr(mod, "append_log"):
-                    try:
-                        mod.append_log(f"[PATH] {self._current_db_root}")
-                    except Exception:
-                        pass
+            selected = Path(path)
+            looks_like_db = (
+                selected.name.lower() == "database"
+                or (selected / "mission_plan_seq.txt").exists()
+                or (selected / "InputMissionPlan").exists()
+                or (selected / "MissionPlan").exists()
+            )
+            if looks_like_db:
+                info = db_paths.set_manual_db_root(path, source="manual-browse")
+                self._current_db_root = info.get("db_root") or path
+                self._db_path_line.setText(self._current_db_root)
+                self.update_scenario_root(info.get("base_root"))
+                # Record path selection in module logs when modules are available
+                for attr in ("module_mission", "module_monitor", "module_decision"):
+                    mod = getattr(self, attr, None)
+                    if mod and hasattr(mod, "append_log"):
+                        try:
+                            mod.append_log(f"[PATH] {self._current_db_root}")
+                        except Exception:
+                            pass
+            else:
+                info = db_paths.set_scenario_base_root(path)
+                base_root = info.get("base_root")
+                self.update_scenario_root(base_root)
+                display = base_root or ""
+                for attr in ("module_mission", "module_monitor", "module_decision"):
+                    mod = getattr(self, attr, None)
+                    if mod and hasattr(mod, "append_log"):
+                        try:
+                            mod.append_log(f"[SCENARIO ROOT] {display}")
+                        except Exception:
+                            pass
 
     def update_db_root(self, path: str | Path) -> None:
         self._current_db_root = str(path)
         if self._db_path_line is not None:
             self._db_path_line.setText(self._current_db_root)
+
+    def update_scenario_root(self, path: str | Path | None) -> None:
+        text = str(path) if path else ""
+        if self._scenario_root_line is not None:
+            self._scenario_root_line.setText(text)
+            self._scenario_root_line.setToolTip(text or "Scenario base (optional)")
 
     def _toggle_demo_flow(self):
         """Toggle demo animation with the D shortcut."""

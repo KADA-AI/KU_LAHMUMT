@@ -321,6 +321,7 @@ class DashboardOrchestrator(QObject):
         self._scenario_timestamp = info.get("timestamp_ms")
         try:
             self.win.update_db_root(info.get("db_root") or db_paths.get_active_db_root_str())
+            self.win.update_scenario_root(info.get("base_root"))
         except Exception:
             pass
 
@@ -961,6 +962,7 @@ class DashboardOrchestrator(QObject):
         if db_root:
             try:
                 self.win.update_db_root(db_root)
+                self.win.update_scenario_root(info.get("base_root"))
             except Exception:
                 pass
         db_root_str = db_root or db_paths.get_active_db_root_str()

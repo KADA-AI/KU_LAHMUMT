@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import os
@@ -15,6 +15,7 @@ SCENARIO_PREFIX = "Scenario_"
 AGENCY_CODE_DEFAULT = os.environ.get("KU_AGENCY_CODE", "SBC2")
 ENV_DB_ROOT = "KU_MISSION_DB_ROOT"
 ENV_SCENARIO_ROOT = "KU_SCENARIO_ROOT"
+ENV_SCENARIO_BASE_ROOT = "KU_SCENARIO_BASE_ROOT"
 INFO_PATH = PROJECT_ROOT / "current_scenario.json"
 _TS_OFFSET_MS = int(os.environ.get("KU_SCENARIO_TS_OFFSET_MS", "0") or 0)
 _EPOCH_2000 = datetime(2000, 1, 1, tzinfo=timezone.utc)
@@ -28,8 +29,27 @@ _cache: Dict[str, Any] = {
     "iso": None,
     "agency": None,
     "source": None,
+    "base_root": None,
 }
 _watcher_started = False
+
+
+def _str_path(value: Path | str | None) -> Optional[str]:
+    if value is None:
+        return None
+    return str(value)
+
+
+def _current_info_dict() -> Dict[str, Any]:
+    return {
+        "timestamp_ms": _cache.get("timestamp_ms"),
+        "iso": _cache.get("iso"),
+        "scenario_dir": _str_path(_cache.get("scenario_dir")),
+        "agency": _cache.get("agency"),
+        "db_root": _str_path(_cache.get("db_root")),
+        "source": _cache.get("source"),
+        "base_root": _cache.get("base_root"),
+    }
 
 
 def _set_env_unlocked(db_root: Optional[Path], scenario_dir: Optional[Path]) -> None:
@@ -41,9 +61,17 @@ def _set_env_unlocked(db_root: Optional[Path], scenario_dir: Optional[Path]) -> 
         os.environ[ENV_SCENARIO_ROOT] = str(scenario_dir)
     else:
         os.environ.pop(ENV_SCENARIO_ROOT, None)
+    base_root = _cache.get("base_root")
+    if base_root:
+        os.environ[ENV_SCENARIO_BASE_ROOT] = str(base_root)
+    else:
+        os.environ.pop(ENV_SCENARIO_BASE_ROOT, None)
 
 
 def _write_info_unlocked(info: Dict[str, Any]) -> None:
+    info = dict(info)
+    if "base_root" not in info:
+        info["base_root"] = _cache.get("base_root")
     INFO_PATH.parent.mkdir(parents=True, exist_ok=True)
     with INFO_PATH.open("w", encoding="utf-8") as fh:
         json.dump(info, fh, ensure_ascii=False, indent=2, sort_keys=True)
@@ -65,6 +93,7 @@ def _refresh_cache_unlocked() -> None:
             "iso": None,
             "agency": None,
             "source": None,
+            "base_root": None,
         })
         return
     try:
@@ -83,6 +112,7 @@ def _refresh_cache_unlocked() -> None:
         "iso": data.get("iso"),
         "agency": data.get("agency"),
         "source": data.get("source"),
+        "base_root": data.get("base_root"),
     })
     _set_env_unlocked(db_root, scenario_dir)
 
@@ -167,24 +197,34 @@ def _copy_legacy_into(destination: Path) -> None:
     destination.mkdir(parents=True, exist_ok=True)
     if not LEGACY_DB_ROOT.exists():
         return
-    for root, dirnames, _ in os.walk(LEGACY_DB_ROOT):
+    for root, _, _ in os.walk(LEGACY_DB_ROOT):
         rel = Path(root).relative_to(LEGACY_DB_ROOT) if Path(root) != LEGACY_DB_ROOT else Path('.')
         target = destination / rel
         target.mkdir(parents=True, exist_ok=True)
 
 
+def _ensure_db_scaffold(db_dir: Path) -> None:
+    for sub in _DB_SUBDIRS:
+        (db_dir / sub).mkdir(parents=True, exist_ok=True)
+
+
 def activate_scenario(timestamp_ms: int, agency: Optional[str] = None, *, copy_legacy: bool = True) -> Dict[str, Any]:
     iso = ms_to_iso(timestamp_ms)
     agency_code = agency or os.environ.get("KU_AGENCY_CODE") or AGENCY_CODE_DEFAULT
-    scenario_dir = PROJECT_ROOT / f"{SCENARIO_PREFIX}{iso}"
+    base_override = _cache.get("base_root")
+    base_root = Path(base_override) if base_override else PROJECT_ROOT
+    base_root.mkdir(parents=True, exist_ok=True)
+    scenario_dir = base_root / f"{SCENARIO_PREFIX}{iso}"
     agency_dir = scenario_dir / agency_code
     db_dir = agency_dir / "database"
     with _lock:
-        if copy_legacy and not db_dir.exists():
+        copy_from_legacy = copy_legacy and not base_override
+        if copy_from_legacy and not db_dir.exists():
             agency_dir.mkdir(parents=True, exist_ok=True)
             _copy_legacy_into(db_dir)
         else:
             db_dir.mkdir(parents=True, exist_ok=True)
+        _ensure_db_scaffold(db_dir)
         info = {
             "timestamp_ms": int(timestamp_ms),
             "iso": iso,
@@ -192,6 +232,7 @@ def activate_scenario(timestamp_ms: int, agency: Optional[str] = None, *, copy_l
             "agency": agency_code,
             "db_root": str(db_dir),
             "source": "scenario",
+            "base_root": base_override,
         }
         _write_info_unlocked(info)
         _cache.update({
@@ -202,6 +243,7 @@ def activate_scenario(timestamp_ms: int, agency: Optional[str] = None, *, copy_l
             "iso": iso,
             "agency": agency_code,
             "source": info["source"],
+            "base_root": base_override,
         })
         _set_env_unlocked(db_dir, scenario_dir)
     return info
@@ -217,6 +259,7 @@ def set_manual_db_root(path: str | Path, *, source: str = "manual") -> Dict[str,
         "agency": None,
         "db_root": str(dest),
         "source": source,
+        "base_root": _cache.get("base_root"),
     }
     with _lock:
         _write_info_unlocked(info)
@@ -228,22 +271,34 @@ def set_manual_db_root(path: str | Path, *, source: str = "manual") -> Dict[str,
             "iso": None,
             "agency": None,
             "source": source,
+            "base_root": _cache.get("base_root"),
         })
         _set_env_unlocked(dest, None)
     return info
 
 
+def set_scenario_base_root(path: str | Path | None) -> Dict[str, Any]:
+    with _lock:
+        base = Path(path).resolve() if path else None
+        _cache.update({
+            "base_root": str(base) if base else None,
+        })
+        info = _current_info_dict()
+        info["base_root"] = _cache.get("base_root")
+        _write_info_unlocked(info)
+        try:
+            _cache["mtime"] = INFO_PATH.stat().st_mtime
+        except FileNotFoundError:
+            _cache["mtime"] = None
+        _set_env_unlocked(_cache.get("db_root"), _cache.get("scenario_dir"))
+        return info
+
+
 def get_info() -> Dict[str, Any]:
     with _lock:
         _refresh_cache_unlocked()
-        return {
-            "timestamp_ms": _cache.get("timestamp_ms"),
-            "iso": _cache.get("iso"),
-            "scenario_dir": str(_cache.get("scenario_dir")) if _cache.get("scenario_dir") else None,
-            "agency": _cache.get("agency"),
-            "db_root": str(_cache.get("db_root")) if _cache.get("db_root") else None,
-            "source": _cache.get("source"),
-        }
+        info = _current_info_dict()
+        return info
 
 
 def _dir_has_files(path: Path) -> bool:
@@ -254,18 +309,37 @@ def _dir_has_files(path: Path) -> bool:
 
 
 def ensure_db_payload(name: str) -> Path:
-    dest = get_active_db_root() / name
+    db_root = get_active_db_root()
+    dest = db_root / name
     dest.mkdir(parents=True, exist_ok=True)
+    _ensure_db_scaffold(db_root)
     if _dir_has_files(dest):
         return dest
     src = LEGACY_DB_ROOT / name
-    if not src.exists():
-        return dest
-    for root, _, filenames in os.walk(src):
-        rel = Path(root).relative_to(src) if Path(root) != src else Path('.')
-        target_dir = dest / rel
-        target_dir.mkdir(parents=True, exist_ok=True)
-        for fname in filenames:
-            shutil.copy2(Path(root) / fname, target_dir / fname)
+    base_override = _cache.get("base_root")
+    if base_override:
+        try:
+            dest.resolve().relative_to(Path(base_override).resolve())
+            src = None
+        except ValueError:
+            pass
+    if src and src.exists():
+        for root, _, filenames in os.walk(src):
+            rel = Path(root).relative_to(src) if Path(root) != src else Path('.')
+            target_dir = dest / rel
+            target_dir.mkdir(parents=True, exist_ok=True)
+            for fname in filenames:
+                shutil.copy2(Path(root) / fname, target_dir / fname)
     return dest
 
+_DB_SUBDIRS = (
+    "cache",
+    "FlightPath",
+    "IndividualMissionPlan",
+    "InputMissionPlan",
+    "Logs",
+    "MissionPlan",
+    "MissionPlanOptionInfo",
+    "MissionReferenceInfo",
+    "mission_output",
+)

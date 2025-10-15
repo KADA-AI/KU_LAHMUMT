@@ -121,6 +121,41 @@ def _z4(s: str) -> str:
     s = str(s).strip()
     return s.zfill(4) if s.isdigit() and len(s) < 4 else s
 
+_MODE_LABELS = [
+    "\uc804\uc6d0 OFF",
+    "\uc804\uc6d0 ON",
+    "\ub300\uae30\ubaa8\ub4dc",
+    "\ucd08\uae30 \uc784\ubb34 \uacc4\ud68d",
+    "\uc784\ubb34 \uc218\ud589",
+]
+
+_MODE_TEXT_ALIASES = {
+    "\uc804\uc6d0off": 0,
+    "off": 0,
+    "poweroff": 0,
+    "0": 0,
+    "\uc804\uc6d0on": 1,
+    "on": 1,
+    "poweron": 1,
+    "1": 1,
+    "\ub300\uae30\ubaa8\ub4dc": 2,
+    "\ub300\uae30": 2,
+    "standby": 2,
+    "wait": 2,
+    "2": 2,
+    "\ucd08\uae30\uc784\ubb34\uacc4\ud68d": 3,
+    "\ucd08\uae30\uc784\ubb34\uacc4\ud68d\ubaa8\ub4dc": 3,
+    "initplan": 3,
+    "initial": 3,
+    "3": 3,
+    "\uc784\ubb34\uc218\ud589": 4,
+    "\uc784\ubb34\uc218\ud589\ubaa8\ub4dc": 4,
+    "execution": 4,
+    "run": 4,
+    "4": 4,
+    "\ucd08\uae30\ud654\ubaa8\ub4dc": 1,
+}
+
 # ───────── 고정 0102 PUSH (단발/폴백 용) ─────────
 def _push_0102_fixed(status: int = 1):
     """버스 준비 이후 MOB/Status 고정 바디 단발 0102."""
@@ -298,19 +333,14 @@ class MainWindow(QMainWindow):
             pass
 
     def _set_mode_slider_by_text(self, text: str):
-        labels = ["?? OFF", "?? ON", "??", "?? ?? ??", "?? ??"]
+        labels = _MODE_LABELS
         norm = re.sub(r"\s+", "", str(text)).lower()
-        mapping = {
-            "??off": 0, "off": 0, "poweroff": 0, "0": 0,
-            "??on": 1, "on": 1, "poweron": 1, "1": 1,
-            "??": 2, "standby": 2, "wait": 2, "2": 2,
-            "??????": 3, "????????": 3, "initplan": 3, "initial": 3, "3": 3,
-            "????": 4, "execution": 4, "run": 4, "4": 4,
-        }
-        val = mapping.get(norm, 2)
+        val = _MODE_TEXT_ALIASES.get(norm, 2)
         try:
             if hasattr(self, "mode_slider") and self.mode_slider.value() != val:
+                self.mode_slider.blockSignals(True)
                 self.mode_slider.setValue(val)
+                self.mode_slider.blockSignals(False)
             if hasattr(self, "mode_now"):
                 self.mode_now.setText(labels[val])
             self._send_mon("mode", text=labels[val], role="MOB")
@@ -319,41 +349,32 @@ class MainWindow(QMainWindow):
         self._power_on = (val != 0)
         self._apply_power_state()
         if self._power_on:
-            QTimer.singleShot(500, lambda: self._send_self_check_0102(status=1))
+            QTimer.singleShot(500, self._start_0102_stream)
+            QTimer.singleShot(650, lambda: self._send_self_check_0102(status=1))
         else:
             self._self_check_sent = False
+            self._ensure_selfcheck_0102(False)
 
     def _on_mode_slider_changed(self, val: int):
-        labels = ["?? OFF", "?? ON", "??", "?? ?? ??", "?? ??"]
+        labels = _MODE_LABELS
         try:
             self.mode_now.setText(labels[int(val)])
         except Exception:
             pass
         self._power_on = (int(val) != 0)
-        self._append_log_line(f"[MODE] ?? ?? ? {labels[int(val)] if 0 <= val < len(labels) else val}")
+        label = labels[int(val)] if 0 <= val < len(labels) else str(val)
+        self._append_log_line(f"[MODE] 모드 변경 → {label}")
         try:
-            self._send_mon("mode", text=labels[int(val)], role="MOB")
+            self._send_mon("mode", text=label, role="MOB")
         except Exception:
             pass
         self._apply_power_state()
         if self._power_on:
-            QTimer.singleShot(500, lambda: self._send_self_check_0102(status=1))
+            QTimer.singleShot(500, self._start_0102_stream)
+            QTimer.singleShot(650, lambda: self._send_self_check_0102(status=1))
         else:
             self._self_check_sent = False
-
-    def _on_mode_slider_changed(self, val: int):
-        labels = ["전원 OFF", "전원 ON", "대기", "초기 임무 계획", "임무 수행"]
-        try:
-            self.mode_now.setText(labels[int(val)])
-        except Exception:
-            pass
-        self._power_on = (int(val) != 0)
-        self._append_log_line(f"[MODE] 모드 변경 → {labels[int(val)] if 0 <= val < len(labels) else val}")
-        try:
-            self._send_mon("mode", text=labels[int(val)], role="MOB")
-        except Exception:
-            pass
-        self._apply_power_state()
+            self._ensure_selfcheck_0102(False)
 
     def _apply_power_state(self):
         on = bool(self._power_on)
@@ -362,6 +383,7 @@ class MainWindow(QMainWindow):
             self._update_rx_table_enabled(True)
             if not on:
                 self._stop_all_periodic()
+                self._ensure_selfcheck_0102(False)
         except Exception:
             pass
 
@@ -396,6 +418,63 @@ class MainWindow(QMainWindow):
                 tab.stop_all_periodic()
         except Exception:
             pass
+
+    def _start_0102_stream(self):
+        if not self._power_on:
+            return
+        try:
+            tab = getattr(self, "_tab", None)
+            if tab is not None and hasattr(tab, "periodic_config"):
+                tab.periodic_config["0102"] = 5
+        except Exception:
+            pass
+        self._ensure_selfcheck_0102(True)
+
+    def _ensure_selfcheck_0102(self, on: bool) -> bool:
+        if on and not self._power_on:
+            self._append_log_line("[BLOCK] Power OFF → 0102 제어 차단")
+            return False
+        try:
+            tab = getattr(self, "_tab", None)
+            if tab is None or not hasattr(tab, "tbl_tx"):
+                if on:
+                    self._append_log_line("[CTRL] 0102 대상 테이블을 찾지 못했습니다.")
+                return False
+            tbl = tab.tbl_tx
+            target_row = -1
+            for r in range(tbl.rowCount()):
+                it = tbl.item(r, 0)
+                if it and it.text().strip() == "0102":
+                    target_row = r
+                    break
+            if target_row < 0:
+                if on:
+                    self._append_log_line("[CTRL] TX 테이블에 0102 행이 없습니다.")
+                return False
+            running = "0102" in getattr(tab, "periodic_timers", {})
+            if (on and not running) or ((not on) and running):
+                try:
+                    btn = tbl.cellWidget(target_row, 3)
+                    if btn is not None and hasattr(btn, "click"):
+                        btn.click()
+                        self._append_log_line(f"[CTRL] 0102 버튼 click() → {'ON' if on else 'OFF'} 요청")
+                        return True
+                except Exception:
+                    pass
+                try:
+                    if hasattr(tab, "_on_tx_button_clicked"):
+                        tab._on_tx_button_clicked(target_row)
+                        self._append_log_line(f"[CTRL] 0102 토글 메서드 호출 → {'ON' if on else 'OFF'} 요청")
+                        return True
+                except Exception:
+                    pass
+                self._send_self_check_0102(status=1 if on else 0)
+                return True
+            self._append_log_line(f"[CTRL] 0102 상태 유지: {'ON' if running else 'OFF'}")
+            return True
+        except Exception as exc:
+            self._append_log_line(f"[CTRL] 0102 토글 처리 실패: {exc}")
+            return False
 
     def _handle_ctrl_payload(self, payload: dict):
         if not isinstance(payload, dict):
@@ -440,8 +519,38 @@ class MainWindow(QMainWindow):
             self._bus_ready = False
 
     def _start_control_udp(self):
-        # Control UDP는 필요 시 확장. 여기서는 placeholder만 둔다.
-        self._ctrl_sock = None
+        """
+        대시보드(run.py)에서 송신하는 CTRL UDP 명령 수신.
+        기본 포트: 45983 (env KU_CTRL_PORT로 오버라이드 가능)
+        """
+        import socket, json, threading, os
+        if getattr(self, "_ctrl_udp_started", False):
+            return
+        self._ctrl_udp_started = True
+
+        port = int(os.getenv("KU_CTRL_PORT", "45983"))
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind(("127.0.0.1", port))
+            self._append_log_line(f"CTRL UDP 수신 대기 시작 (127.0.0.1:{port})")
+        except Exception as exc:
+            self._append_log_line(f"CTRL UDP 바인드 실패: {exc}")
+            return
+
+        def loop():
+            while True:
+                try:
+                    data, _ = sock.recvfrom(8192)
+                    try:
+                        payload = json.loads(data.decode("utf-8", "ignore"))
+                    except Exception:
+                        continue
+                    self.ctrl_payload.emit(payload)
+                except Exception:
+                    pass
+
+        threading.Thread(target=loop, name="CTRL@MOB", daemon=True).start()
 
     def _install_test_shortcuts(self):
         try:
@@ -450,10 +559,14 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
-    def _send_0102_when_ready(self):
+    def _send_0102_when_ready(self, _retry: int = 0):
         if not getattr(self, "_bus_ready", False):
-            self._append_log_line("[0102] 버스 초기화 전이라 0102 송신을 보류합니다.")
-            return
+            if _retry < 20:
+                if _retry == 0:
+                    self._append_log_line("[0102] 버스 초기화 전이라 0102 송신을 보류합니다.")
+                QTimer.singleShot(250, lambda: self._send_0102_when_ready(_retry + 1))
+                return
+            self._append_log_line("[0102] 버스 준비 확인이 지연되어 강제 송신을 시도합니다.")
         self._send_self_check_0102(status=1)
 
     def _send_self_check_0102(self, status: int = 1, _retry: int = 0):
@@ -463,6 +576,8 @@ class MainWindow(QMainWindow):
         if status == 1 and not getattr(self, "_power_on", False):
             self._append_log_line("[BLOCK] Power OFF → 0102 송신 차단")
             return
+        if not getattr(self, "_bus_ready", False) and _retry == 0:
+            self._append_log_line("[0102] 버스 준비 전 상태에서 송신을 시도합니다.")
         try:
             ok = bool(_push_0102_fixed(status=status))
         except Exception as exc:
