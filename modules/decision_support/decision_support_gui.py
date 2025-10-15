@@ -158,6 +158,7 @@ class MainWindow(QMainWindow):
         self._last_ctrl_ts: dict[str, float] = {}
         self._last_0102_sent_ms = 0
         self._rx_counts = {}
+        self._self_check_sent = False
 
         # 탭
         tabs = QTabWidget()
@@ -218,6 +219,268 @@ class MainWindow(QMainWindow):
         # ★★★ 0101 수신 → 모드 반영 리스너 & 폴링 보강
         self._install_0101_mode_listener()
         self._start_0101_rx_poller()
+
+    def _append_log_line(self, text: str):
+        try:
+            if getattr(self, "_tab", None) and hasattr(self._tab, "append_log"):
+                self._tab.append_log(text)
+                return
+        except Exception:
+            pass
+        try:
+            print(text)
+        except Exception:
+            pass
+
+    def _send_mon(self, kind: str, **payload):
+        data = {"kind": str(kind), **payload}
+        try:
+            buf = json.dumps(data, ensure_ascii=False).encode("utf-8", "ignore")
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.sendto(buf, ("127.0.0.1", _mon_port()))
+            sock.close()
+        except Exception:
+            pass
+
+    def _install_mon_wires(self):
+        try:
+            tab = getattr(self, "_tab", None)
+            if not tab:
+                return
+            if hasattr(tab, "mark_sent"):
+                self._orig_mark_sent = tab.mark_sent
+                def _wrapped_mark_sent(msg_id: str, raw: bytes | None = None):
+                    try:
+                        self._send_mon("tx", msg_id=_z4(str(msg_id)))
+                    except Exception:
+                        pass
+                    return self._orig_mark_sent(msg_id, raw)
+                tab.mark_sent = _wrapped_mark_sent  # type: ignore
+        except Exception:
+            pass
+
+    def _install_power_gate_hooks(self):
+        """Power OFF 시 TX 동작을 차단."""
+        try:
+            tab = getattr(self, "_tab", None)
+            tbl_tx = getattr(tab, "tbl_tx", None) if tab else None
+
+            if tbl_tx is not None:
+                class _PG(QObject):
+                    def __init__(self, host):
+                        super().__init__(host)
+                        self.host = host
+                    def eventFilter(self, obj, ev):
+                        if not self.host._power_on and ev.type() in (
+                            QEvent.MouseButtonPress, QEvent.MouseButtonRelease,
+                            QEvent.MouseButtonDblClick, QEvent.KeyPress, QEvent.KeyRelease
+                        ):
+                            return True
+                        return False
+                self._pg_filter_tx = _PG(self)
+                tbl_tx.installEventFilter(self._pg_filter_tx)
+
+            if tab and hasattr(tab, "_on_tx_button_clicked"):
+                self._orig_tx_click_for_gate = tab._on_tx_button_clicked
+                def _wrapped_tx_click(row: int):
+                    if not self._power_on:
+                        self._append_log_line("[BLOCK] Power OFF → TX 버튼 무시")
+                        return
+                    try:
+                        item = getattr(tab, "tbl_tx", None).item(row, 0) if getattr(tab, "tbl_tx", None) else None
+                        if item:
+                            self._send_mon("tx", msg_id=_z4(item.text()))
+                    except Exception:
+                        pass
+                    return self._orig_tx_click_for_gate(row)
+                tab._on_tx_button_clicked = _wrapped_tx_click
+        except Exception:
+            pass
+
+    def _set_mode_slider_by_text(self, text: str):
+        labels = ["?? OFF", "?? ON", "??", "?? ?? ??", "?? ??"]
+        norm = re.sub(r"\s+", "", str(text)).lower()
+        mapping = {
+            "??off": 0, "off": 0, "poweroff": 0, "0": 0,
+            "??on": 1, "on": 1, "poweron": 1, "1": 1,
+            "??": 2, "standby": 2, "wait": 2, "2": 2,
+            "??????": 3, "????????": 3, "initplan": 3, "initial": 3, "3": 3,
+            "????": 4, "execution": 4, "run": 4, "4": 4,
+        }
+        val = mapping.get(norm, 2)
+        try:
+            if hasattr(self, "mode_slider") and self.mode_slider.value() != val:
+                self.mode_slider.setValue(val)
+            if hasattr(self, "mode_now"):
+                self.mode_now.setText(labels[val])
+            self._send_mon("mode", text=labels[val], role="MOB")
+        except Exception:
+            pass
+        self._power_on = (val != 0)
+        self._apply_power_state()
+        if self._power_on:
+            QTimer.singleShot(500, lambda: self._send_self_check_0102(status=1))
+        else:
+            self._self_check_sent = False
+
+    def _on_mode_slider_changed(self, val: int):
+        labels = ["?? OFF", "?? ON", "??", "?? ?? ??", "?? ??"]
+        try:
+            self.mode_now.setText(labels[int(val)])
+        except Exception:
+            pass
+        self._power_on = (int(val) != 0)
+        self._append_log_line(f"[MODE] ?? ?? ? {labels[int(val)] if 0 <= val < len(labels) else val}")
+        try:
+            self._send_mon("mode", text=labels[int(val)], role="MOB")
+        except Exception:
+            pass
+        self._apply_power_state()
+        if self._power_on:
+            QTimer.singleShot(500, lambda: self._send_self_check_0102(status=1))
+        else:
+            self._self_check_sent = False
+
+    def _on_mode_slider_changed(self, val: int):
+        labels = ["전원 OFF", "전원 ON", "대기", "초기 임무 계획", "임무 수행"]
+        try:
+            self.mode_now.setText(labels[int(val)])
+        except Exception:
+            pass
+        self._power_on = (int(val) != 0)
+        self._append_log_line(f"[MODE] 모드 변경 → {labels[int(val)] if 0 <= val < len(labels) else val}")
+        try:
+            self._send_mon("mode", text=labels[int(val)], role="MOB")
+        except Exception:
+            pass
+        self._apply_power_state()
+
+    def _apply_power_state(self):
+        on = bool(self._power_on)
+        try:
+            self._update_tx_table_enabled(on)
+            self._update_rx_table_enabled(True)
+            if not on:
+                self._stop_all_periodic()
+        except Exception:
+            pass
+
+    def _update_tx_table_enabled(self, enabled: bool):
+        try:
+            tab = getattr(self, "_tab", None)
+            tbl = getattr(tab, "tbl_tx", None)
+            if tbl is None:
+                return
+            tbl.setEnabled(enabled)
+            for r in range(tbl.rowCount()):
+                w = tbl.cellWidget(r, 3)
+                if w is not None and hasattr(w, "setEnabled"):
+                    w.setEnabled(enabled)
+        except Exception:
+            pass
+
+    def _update_rx_table_enabled(self, enabled: bool):
+        try:
+            tab = getattr(self, "_tab", None)
+            tbl = getattr(tab, "tbl_rx", None)
+            if tbl is None:
+                return
+            tbl.setEnabled(enabled)
+        except Exception:
+            pass
+
+    def _stop_all_periodic(self):
+        try:
+            tab = getattr(self, "_tab", None)
+            if tab and hasattr(tab, "stop_all_periodic"):
+                tab.stop_all_periodic()
+        except Exception:
+            pass
+
+    def _handle_ctrl_payload(self, payload: dict):
+        if not isinstance(payload, dict):
+            return
+        cmd = str(payload.get("cmd") or "").strip().lower()
+        if cmd == "mode":
+            text = str(payload.get("text") or "").strip()
+            self._append_log_line(f"[CTRL] MODE change request: {text}")
+            self._set_mode_slider_by_text(text)
+            return
+        if cmd == "self_check":
+            try:
+                status = int(payload.get("status", payload.get("value", 1)))
+            except Exception:
+                status = 1
+            self._append_log_line(f"[CTRL] self_check status={status}")
+            self._send_self_check_0102(status=status)
+            return
+        if cmd in ("power", "power_on", "poweroff"):
+            status = str(payload.get("status") or payload.get("text") or "").lower()
+            if payload.get("on") is not None:
+                on = bool(payload.get("on"))
+            else:
+                on = status in ("1", "on", "true", "yes")
+            self._power_on = on
+            self._apply_power_state()
+            self._append_log_line(f"[CTRL] POWER {'ON' if on else 'OFF'}")
+            return
+        self._append_log_line(f"[CTRL] {payload}")
+
+    def _rx_setup(self):
+        try:
+            FusionNodeIoc.Configure()
+            NodeMessenger.Initialize("MOB_ReceiveNode")
+            NodeMessenger.RegistAllConsumerFromFusionNodeIoc()
+            NodeMessenger.InitAllSubscriberFromAssembly()
+            NodeMessenger.RegistAllProviderFromFusionNodeIoc()
+            self._bus_ready = True
+            self._append_log_line("[BUS] MOB NodeMessenger 초기화 완료")
+        except Exception as exc:
+            self._append_log_line(f"[WARN] RX setup 실패: {exc}")
+            self._bus_ready = False
+
+    def _start_control_udp(self):
+        # Control UDP는 필요 시 확장. 여기서는 placeholder만 둔다.
+        self._ctrl_sock = None
+
+    def _install_test_shortcuts(self):
+        try:
+            QShortcut(QKeySequence("Ctrl+1"), self, activated=lambda: self._set_mode_slider_by_text("대기"))
+            QShortcut(QKeySequence("Ctrl+2"), self, activated=lambda: self._set_mode_slider_by_text("임무 수행"))
+        except Exception:
+            pass
+
+    def _send_0102_when_ready(self):
+        if not getattr(self, "_bus_ready", False):
+            self._append_log_line("[0102] 버스 초기화 전이라 0102 송신을 보류합니다.")
+            return
+        self._send_self_check_0102(status=1)
+
+    def _send_self_check_0102(self, status: int = 1, _retry: int = 0):
+        if status == 1 and self._self_check_sent and _retry == 0:
+            self._append_log_line("[0102] 상태 보고 이미 송신됨")
+            return
+        if status == 1 and not getattr(self, "_power_on", False):
+            self._append_log_line("[BLOCK] Power OFF → 0102 송신 차단")
+            return
+        try:
+            ok = bool(_push_0102_fixed(status=status))
+        except Exception as exc:
+            ok = False
+            self._append_log_line(f"[WARN] 0102 송신 예외: {exc}")
+        if ok:
+            self._self_check_sent = (status == 1)
+            self._last_0102_sent_ms = _now_ms_since_2000()
+            self._append_log_line(f"[0102] 상태 보고 송신 (status={status})")
+            try:
+                self._send_mon("tx", msg_id="0102", role="MOB", status=status)
+            except Exception:
+                pass
+        else:
+            if _retry < 5:
+                QTimer.singleShot(500, lambda: self._send_self_check_0102(status=status, _retry=_retry + 1))
+            else:
+                self._append_log_line("[WARN] 0102 송신 재시도 한계 도달")
 
     # ───────── 0101 모드 수신 리스너 ─────────
     def _install_0101_mode_listener(self):
@@ -369,3 +632,16 @@ class MainWindow(QMainWindow):
                 self._last_0101_raw = raw_latest
         except Exception:
             pass
+
+
+# ───────── 엔트리 포인트 ─────────
+def _main():
+    app = QApplication(sys.argv)
+    win = MainWindow()
+    win.show()
+    return app.exec_()
+
+
+if __name__ == "__main__":
+    sys.exit(_main())
+

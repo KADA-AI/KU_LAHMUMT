@@ -1,6 +1,7 @@
 # /mnt/data/csc_tab_base.py
 from __future__ import annotations
 from datetime import datetime
+import time
 from typing import Optional, Sequence, Tuple, Dict
 
 from PyQt5.QtWidgets import (
@@ -320,17 +321,23 @@ class CSCTabBase(QWidget):
 
     def _append_payload_history(self, item: QTableWidgetItem | None, raw: bytes | None):
         if item is None:
-            return
+            return []
         raw_bytes = self._coerce_payload_bytes(raw)
         if raw_bytes is None:
-            return
+            return self._normalize_payload_history(item.data(Qt.UserRole))
 
         history = self._normalize_payload_history(item.data(Qt.UserRole))
-        history.append({"ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "raw": raw_bytes})
+        now = time.time()
+        history.append({
+            "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "ms": int(now * 1000),
+            "raw": raw_bytes
+        })
         limit = getattr(self, "HISTORY_LIMIT", 50) or 50
         if len(history) > limit:
             history = history[-limit:]
         item.setData(Qt.UserRole, history)
+        return history
 
     def _latest_payload_bytes(self, payload) -> bytes:
         history = self._normalize_payload_history(payload)
@@ -350,27 +357,72 @@ class CSCTabBase(QWidget):
         except Exception:
             return m.group(0).strip() or "(데이터 없음)"
 
+    def _history_timestamps(self, history: list[dict]) -> list[float]:
+        result: list[float] = []
+        for entry in history:
+            ms = entry.get("ms")
+            if ms is None:
+                ts = entry.get("ts")
+                if isinstance(ts, str):
+                    try:
+                        dt = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
+                        ms = int(dt.timestamp() * 1000)
+                    except Exception:
+                        continue
+            if ms is None:
+                continue
+            try:
+                result.append(float(ms) / 1000.0)
+            except Exception:
+                continue
+        result.sort()
+        return result
+
+    def _calc_recent_frequency(self, history: list[dict], window_sec: float = 10.0) -> float | None:
+        timestamps = self._history_timestamps(history)
+        if len(timestamps) < 2:
+            return None
+        latest = timestamps[-1]
+        cutoff = latest - window_sec
+        recent = [t for t in timestamps if t >= cutoff]
+        if len(recent) < 2:
+            return None
+        span = recent[-1] - recent[0]
+        if span <= 0:
+            return None
+        return (len(recent) - 1) / span
+
+
+    def _format_rate_state(self, label: str, planned: float | None, actual: float | None) -> str:
+        rate_parts = []
+        if planned is not None:
+            rate_parts.append(f"{planned:g}Hz")
+        if actual is not None:
+            rate_parts.append(f"{actual:.2f}Hz")
+        if rate_parts:
+            joined = " / ".join(rate_parts)
+            return f"{label}({joined})"
+        return label
 
     def _format_history_for_dialog(self, history: list[dict]) -> str:
         if not history:
             return "(데이터 없음)"
-        parts: list[str] = []
         total = len(history)
         separator = getattr(self, "HISTORY_SEPARATOR", "=" * 64)
+        parts: list[str] = []
 
-        indexed = list(enumerate(history, 1))
-        for idx, entry in reversed(indexed):
+        for idx, entry in enumerate(reversed(history), 1):
             ts = entry.get("ts")
             raw = entry.get("raw")
             body = self._format_payload_for_display(raw)
-            meta_parts = []
+            meta_tokens = []
             if total > 1:
-                meta_parts.append(f"{idx}/{total}")
+                meta_tokens.append(f"{idx}/{total}")
             if ts:
-                meta_parts.append(ts)
-            meta = " ".join(meta_parts)
-            if meta:
-                parts.append(f"{separator}\n[{meta}]\n{body}")
+                meta_tokens.append(ts)
+            header = " ".join(meta_tokens)
+            if header:
+                parts.append(f"{separator}\n[{header}]\n{body}")
             else:
                 parts.append(f"{separator}\n{body}")
 
@@ -435,59 +487,77 @@ class CSCTabBase(QWidget):
         return tbl
 
     # ──────────── Public API (메시지 완료) ───────────
+
     def mark_sent(self, msg_id: str, raw: bytes | None = None):
         self._update_state(self.tbl_tx, msg_id, "발신 완료")
-        if raw:
-            try:
-                for r in range(self.tbl_tx.rowCount()):
-                    item = self.tbl_tx.item(r, 0)
-                    if item and item.text() == msg_id:
-                        self._append_payload_history(item, raw)
-                        break
-            except Exception:
-                pass
+        row_index: int | None = None
+        history: list[dict] = []
+        try:
+            for r in range(self.tbl_tx.rowCount()):
+                item = self.tbl_tx.item(r, 0)
+                if item and item.text() == msg_id:
+                    row_index = r
+                    if raw is not None:
+                        history = self._append_payload_history(item, raw)
+                    else:
+                        history = self._normalize_payload_history(item.data(Qt.UserRole))
+                    break
+        except Exception:
+            history = []
+
+        freq = self.periodic_config.get(msg_id, None)
+        if freq and row_index is not None:
+            actual = self._calc_recent_frequency(history)
+            state_item = self.tbl_tx.item(row_index, 2)
+            if state_item:
+                state_item.setText(self._format_rate_state("주기송신", freq, actual))
+                state_item.setForeground(QColor("blue"))
+
         self._write_log(self.log_tx, "SEND", msg_id, raw)
 
     def mark_received(self, msg_id: str, raw: bytes | None = None):
         freq = self.periodic_config.get(msg_id, None)
 
-        # 1) 테이블 상태 업데이트
         for r in range(self.tbl_rx.rowCount()):
-            if self.tbl_rx.item(r, 0).text() == msg_id:
-                item = self.tbl_rx.item(r, 2)
+            id_item = self.tbl_rx.item(r, 0)
+            if not id_item or id_item.text() != msg_id:
+                continue
 
-                if freq:
-                    item.setText(f"수신 중({freq}Hz)")
-                    item.setForeground(QColor("blue"))
-
-                    if msg_id in self.receive_timers:
-                        self.receive_timers[msg_id].stop()
-                        self.receive_timers[msg_id].deleteLater()
-                        del self.receive_timers[msg_id]
-
-                    timer = QTimer(self)
-                    timer.setSingleShot(True)
-                    timeout_ms = int((2000.0 / freq))
-                    timer.setInterval(timeout_ms)
-                    timer.timeout.connect(lambda mid=msg_id: self._receive_timeout(mid))
-                    timer.start()
-                    self.receive_timers[msg_id] = timer
-                else:
-                    count = self.receive_counts.get(msg_id, 0) + 1
-                    self.receive_counts[msg_id] = count
-                    item.setText(f"수신 완료({count})")
-                    item.setForeground(QColor("blue"))
-                if raw:
-                    self._append_payload_history(self.tbl_rx.item(r, 0), raw)
+            state_item = self.tbl_rx.item(r, 2)
+            if state_item is None:
                 break
 
-        # 2) 로그 기록
+            if raw is not None:
+                history = self._append_payload_history(id_item, raw)
+            else:
+                history = self._normalize_payload_history(id_item.data(Qt.UserRole))
+
+            if freq:
+                actual = self._calc_recent_frequency(history)
+                state_item.setText(self._format_rate_state("수신 중", freq, actual))
+                state_item.setForeground(QColor("blue"))
+
+                if msg_id in self.receive_timers:
+                    self.receive_timers[msg_id].stop()
+                    self.receive_timers[msg_id].deleteLater()
+                    del self.receive_timers[msg_id]
+
+                timer = QTimer(self)
+                timer.setSingleShot(True)
+                timeout_ms = int(2000.0 / freq)
+                timer.setInterval(timeout_ms)
+                timer.timeout.connect(lambda mid=msg_id: self._receive_timeout(mid))
+                timer.start()
+                self.receive_timers[msg_id] = timer
+            else:
+                count = self.receive_counts.get(msg_id, 0) + 1
+                self.receive_counts[msg_id] = count
+                state_item.setText(f"수신 완료({count})")
+                state_item.setForeground(QColor("blue"))
+            break
+
         self._write_log(self.log_rx, "RECV", msg_id, raw)
-
-        # 3) 콘솔 요약 JSON (UDP 포맷과 동일)
         self._print_received_summary(msg_id, raw)
-
-        # 4) UDP 모니터로 전송
         self._emit_rx_monitor(msg_id, raw)
 
     # ──────────── 더블클릭 → Push (주기/비주기) ────────────────
@@ -521,10 +591,26 @@ class CSCTabBase(QWidget):
             self.receive_timers[msg_id].deleteLater()
             del self.receive_timers[msg_id]
 
+
     def _mark_single_sent(self, row: int, msg_id: str, raw: bytes | None):
-        self.tbl_tx.item(row, 2).setText("발신 완료")
-        if raw:
-            self._append_payload_history(self.tbl_tx.item(row, 0), raw)
+        state_item = self.tbl_tx.item(row, 2)
+        history: list[dict] = []
+        msg_item = self.tbl_tx.item(row, 0)
+        if msg_item is not None:
+            if raw is not None:
+                history = self._append_payload_history(msg_item, raw)
+            else:
+                history = self._normalize_payload_history(msg_item.data(Qt.UserRole))
+
+        freq = self.periodic_config.get(msg_id, None)
+        if freq and state_item is not None:
+            actual = self._calc_recent_frequency(history)
+            state_item.setText(self._format_rate_state("주기송신", freq, actual))
+            state_item.setForeground(QColor("blue"))
+        elif state_item is not None:
+            state_item.setText("발신 완료")
+            state_item.setForeground(QColor("blue"))
+
         self._write_log(self.log_tx, "SEND", msg_id, raw)
 
     # ──────────── 주기 전송 관리 ─────────────────────
@@ -536,7 +622,10 @@ class CSCTabBase(QWidget):
         timer.start()
 
         self.periodic_timers[msg_id] = timer
-        self.tbl_tx.item(row, 2).setText(f"전송중 ({freq_hz}Hz)")
+        state_item = self.tbl_tx.item(row, 2)
+        if state_item is not None:
+            state_item.setText(self._format_rate_state("주기송신", freq_hz, None))
+            state_item.setForeground(QColor("blue"))
 
     def _stop_periodic_send(self, msg_id: str, row: int):
         timer = self.periodic_timers.get(msg_id)
