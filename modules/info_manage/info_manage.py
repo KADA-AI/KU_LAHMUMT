@@ -6,6 +6,15 @@ import sys, os, threading, json, re, time, socket
 os.environ["KU_ROLE"] = "info"  # INF
 from pathlib import Path
 
+_ROOT = Path(__file__).resolve().parents[2]  # .../KU_LAHMUMT
+for _p in (_ROOT, _ROOT / "modules", _ROOT / "modules" / "common"):
+    _ps = str(_p)
+    if _p.exists() and _ps not in sys.path:
+        sys.path.insert(0, _ps)
+
+from modules.common.qt_env import ensure_qt_platform
+ensure_qt_platform()
+
 from PyQt5.QtCore import (
     qInstallMessageHandler, QtMsgType, pyqtSignal, QTimer, Qt, QEvent, QObject
 )
@@ -23,12 +32,6 @@ def _qt_silent_handler(mode: QtMsgType, context, message: str):
 qInstallMessageHandler(_qt_silent_handler)
 
 # ───────── 경로 부트스트랩 ─────────
-_ROOT = Path(__file__).resolve().parents[2]  # .../KU_LAHMUMT
-for _p in (_ROOT, _ROOT / "modules", _ROOT / "modules" / "common"):
-    _ps = str(_p)
-    if _p.exists() and _ps not in sys.path:
-        sys.path.insert(0, _ps)
-
 from modules.common.status_reporter import send_status_ok
 from modules.common.ctrl_listener import start_ctrl_listener, env_ctrl_port
 

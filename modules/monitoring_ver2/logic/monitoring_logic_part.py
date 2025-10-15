@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from typing import Union
+from typing import Any, Dict, Optional, Union
 
 # --- 데이터 모델 import ---
 from data.message_models import (
@@ -17,6 +17,7 @@ import udp_reporter
 import socket
 import json
 import os
+from modules.common import db_paths
 
 
 # --- 반환 가능한 모든 Push 메시지 본문 타입을 정의 ---
@@ -50,6 +51,154 @@ PushBodyType = Union[
 class MonitoringLogic:
     def __init__(self, manager):
         self.manager = manager
+        self._current_mission_plan_id: Optional[int] = None
+        self._plan_context: Optional[Dict[str, Any]] = None
+
+    def _process_mission_plan_update(self) -> None:
+        data_0903 = None
+        try:
+            data_0903 = self.manager.receive_store.get_data("0903")
+        except Exception:
+            data_0903 = None
+        if not data_0903:
+            return
+        mission_plan_id = getattr(data_0903, "missionPlanID", None)
+        try:
+            mission_plan_id = int(mission_plan_id)
+        except (TypeError, ValueError):
+            return
+        if mission_plan_id == self._current_mission_plan_id:
+            return
+        try:
+            context = self._load_mission_plan_context(mission_plan_id)
+        except FileNotFoundError as exc:
+            self.manager._log(
+                "MON_LOGIC",
+                "WARN",
+                f"MissionPlan {mission_plan_id} file missing: {exc}",
+            )
+            return
+        except Exception as exc:
+            self.manager._log(
+                "MON_LOGIC",
+                "WARN",
+                f"MissionPlan {mission_plan_id} load failed: {exc}",
+            )
+            return
+        self._plan_context = context
+        self._current_mission_plan_id = mission_plan_id
+        try:
+            self.manager.logic_store.set_data("current_mission_plan", context)
+        except Exception:
+            pass
+        self.manager._log(
+            "MON_LOGIC",
+            "INFO",
+            f"MissionPlan {mission_plan_id} loaded for monitoring",
+        )
+
+    def _load_mission_plan_context(self, mission_plan_id: int) -> Dict[str, Any]:
+        mission_plan_path = db_paths.get_db_subpath("MissionPlan", f"{mission_plan_id}.json")
+        with mission_plan_path.open("r", encoding="utf-8") as fh:
+            plan_data = json.load(fh)
+
+        aircraft_map: Dict[int, Dict[str, Any]] = {}
+        input_ids = set()
+
+        for entry in plan_data.get("aircraftList", []):
+            try:
+                aircraft_id = int(entry.get("aircraftID"))
+                package_id = int(entry.get("individualMissionPackageID"))
+            except (TypeError, ValueError):
+                continue
+
+            imp_path = db_paths.get_db_subpath(
+                "IndividualMissionPlan", f"{package_id}.json"
+            )
+            try:
+                with imp_path.open("r", encoding="utf-8") as fh:
+                    imp_data = json.load(fh)
+            except FileNotFoundError:
+                self.manager._log(
+                    "MON_LOGIC",
+                    "WARN",
+                    f"IndividualMissionPlan {package_id} file missing",
+                )
+                continue
+            except Exception as exc:
+                self.manager._log(
+                    "MON_LOGIC",
+                    "WARN",
+                    f"IndividualMissionPlan {package_id} load failed: {exc}",
+                )
+                continue
+
+            missions = []
+            for mission_entry in imp_data.get("individualMissionList", []):
+                individual_mission_id = mission_entry.get("individualMissionID")
+                path_id = mission_entry.get("pathID")
+                related = mission_entry.get("relatedMission") or {}
+                input_mission_id = related.get("inputMissionID")
+                if input_mission_id is not None:
+                    try:
+                        input_ids.add(int(input_mission_id))
+                    except (TypeError, ValueError):
+                        pass
+
+                waypoint_ids = []
+                if path_id is not None:
+                    try:
+                        fp_path = db_paths.get_db_subpath(
+                            "FlightPath", f"{int(path_id)}.json"
+                        )
+                        with fp_path.open("r", encoding="utf-8") as fh:
+                            fp_data = json.load(fh)
+                        waypoint_ids = [
+                            int(wp.get("waypointID"))
+                            for wp in fp_data.get("waypointList", [])
+                            if wp.get("waypointID") is not None
+                        ]
+                    except FileNotFoundError:
+                        self.manager._log(
+                            "MON_LOGIC",
+                            "WARN",
+                            f"FlightPath {path_id} file missing",
+                        )
+                    except Exception as exc:
+                        self.manager._log(
+                            "MON_LOGIC",
+                            "WARN",
+                            f"FlightPath {path_id} load failed: {exc}",
+                        )
+
+                missions.append(
+                    {
+                        "individualMissionID": int(individual_mission_id)
+                        if individual_mission_id is not None
+                        else 0,
+                        "pathID": int(path_id) if path_id is not None else None,
+                        "waypoints": waypoint_ids,
+                        "inputMissionID": int(input_mission_id)
+                        if input_mission_id is not None
+                        else None,
+                    }
+                )
+
+            waypoint_map: Dict[int, Any] = {}
+            for idx, mission in enumerate(missions):
+                for pos, waypoint_id in enumerate(mission.get("waypoints") or []):
+                    waypoint_map[waypoint_id] = (idx, pos)
+
+            aircraft_map[aircraft_id] = {
+                "missions": missions,
+                "waypoint_map": waypoint_map,
+            }
+
+        return {
+            "missionPlanID": mission_plan_id,
+            "aircraft": aircraft_map,
+            "inputMissionIDs": sorted(input_ids),
+        }
 
     def execute(self, mode_override=None):
         """시스템 모드를 확인하고, 'monitoring'일 경우에만 로직을 실행합니다."""
@@ -61,6 +210,9 @@ class MonitoringLogic:
 
         if system_mode == 3:
             self.manager._log("MON_LOGIC", "EXEC", "모니터링 로직 실행됨.")
+            self._process_mission_plan_update()
+            plan_context = self._plan_context
+            current_plan_id = self._current_mission_plan_id
             # 401 데이터 가져오기
             data_401 = self.manager.receive_store.get_data("0401")
             if data_401:
@@ -68,7 +220,7 @@ class MonitoringLogic:
                     "MON_LOGIC", "INFO", "401 데이터 확인. 모니터링 절차 실행."
                 )
                 # 모니터링 절차 실행하여 0501 메시지 본문 생성
-                body_0501 = run_monitoring_procedure(data_401)
+                body_0501 = run_monitoring_procedure(data_401, plan_context, current_plan_id)
 
                 # 연료 경고 로직
                 feul_data = []

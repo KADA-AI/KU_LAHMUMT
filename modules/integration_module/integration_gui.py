@@ -7,6 +7,15 @@ import sys, os, threading, json, re, time
 os.environ["KU_ROLE"] = "integration"
 from pathlib import Path
 
+_ROOT = Path(__file__).resolve().parents[2]  # .../KU_LAHMUMT
+for _p in (_ROOT, _ROOT / "modules", _ROOT / "modules" / "common"):
+    _ps = str(_p)
+    if _p.exists() and _ps not in sys.path:
+        sys.path.insert(0, _ps)
+
+from modules.common.qt_env import ensure_qt_platform
+ensure_qt_platform()
+
 from PyQt5.QtCore import qInstallMessageHandler, QtMsgType, pyqtSignal, QTimer, Qt, QEvent, QObject, QPointF
 from PyQt5.QtWidgets import QApplication, QMainWindow, QTabWidget, QWidget, QLabel, QHBoxLayout, QVBoxLayout, QSlider, QLineEdit, QPushButton, QFileDialog, QGroupBox, QMessageBox, QSizePolicy, QTableWidget, QHeaderView, QTableWidgetItem
 from PyQt5.QtGui import QPainter, QColor, QPen
@@ -19,12 +28,6 @@ def _qt_silent_handler(mode: QtMsgType, context, message: str):
 qInstallMessageHandler(_qt_silent_handler)
 
 # ───────── 경로 부트스트랩 ─────────
-_ROOT = Path(__file__).resolve().parents[2]  # .../KU_LAHMUMT
-for _p in (_ROOT, _ROOT / "modules", _ROOT / "modules" / "common"):
-    _ps = str(_p)
-    if _p.exists() and _ps not in sys.path:
-        sys.path.insert(0, _ps)
-
 def _bootstrap_paths():
     here = Path(__file__).resolve()
     modules_dir = here.parents[1]                # .../modules

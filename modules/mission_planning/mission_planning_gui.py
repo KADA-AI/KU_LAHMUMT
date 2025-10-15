@@ -6,6 +6,15 @@ import sys, os, threading, json, re, time, shutil, socket
 os.environ["KU_ROLE"] = "mission"  # MMR
 from pathlib import Path
 
+_ROOT = Path(__file__).resolve().parents[2]  # .../KU_LAHMUMT
+for _p in (_ROOT, _ROOT / "modules", _ROOT / "modules" / "common"):
+    _ps = str(_p)
+    if _p.exists() and _ps not in sys.path:
+        sys.path.insert(0, _ps)
+
+from modules.common.qt_env import ensure_qt_platform
+ensure_qt_platform()
+
 from PyQt5.QtCore import (
     qInstallMessageHandler, QtMsgType, pyqtSignal, QTimer, Qt, QEvent, QObject
 )
@@ -23,12 +32,6 @@ def _qt_silent_handler(mode: QtMsgType, context, message: str):
 qInstallMessageHandler(_qt_silent_handler)
 
 # ───────── 경로 부트스트랩 ─────────
-_ROOT = Path(__file__).resolve().parents[2]  # .../KU_LAHMUMT
-for _p in (_ROOT, _ROOT / "modules", _ROOT / "modules" / "common"):
-    _ps = str(_p)
-    if _p.exists() and _ps not in sys.path:
-        sys.path.insert(0, _ps)
-
 from modules.common.status_reporter import send_status_ok
 from modules.common.ctrl_listener import start_ctrl_listener, env_ctrl_port
 from modules.common import db_paths
@@ -317,6 +320,7 @@ class MainWindow(QMainWindow):
         self._poll_0101_timer.timeout.connect(self._poll_0101_in_rx_table)
         self._poll_0101_timer.start()
 
+
     def _poll_0101_in_rx_table(self):
         try:
             tab = getattr(self, "_tab", None)
@@ -331,11 +335,18 @@ class MainWindow(QMainWindow):
                     break
             if target_row < 0:
                 return
-            raw = tbl.item(target_row, 0).data(Qt.UserRole)
-            if not raw or (self._last_0101_raw is not None and raw == self._last_0101_raw):
+            item = tbl.item(target_row, 0)
+            payload = item.data(Qt.UserRole) if item else None
+            if tab and hasattr(tab, "_latest_payload_bytes"):
+                raw_latest = tab._latest_payload_bytes(payload)
+            else:
+                raw_latest = payload if isinstance(payload, (bytes, bytearray)) else b""
+            if not raw_latest:
+                return
+            if self._last_0101_raw is not None and raw_latest == self._last_0101_raw:
                 return
 
-            txt = (raw or b"").decode("utf-8", "ignore")
+            txt = raw_latest.decode("utf-8", "ignore")
             m = re.search(r"\{.*\}", txt, flags=re.S)
             jtxt = m.group(0) if m else txt.strip()
             body = {}
@@ -349,15 +360,18 @@ class MainWindow(QMainWindow):
             if code is None:
                 mm = re.search(r'"systemMode"\s*:\s*([0-9]+)', txt)
                 if mm:
-                    try: code = int(mm.group(1))
-                    except Exception: code = None
+                    try:
+                        code = int(mm.group(1))
+                    except Exception:
+                        code = None
 
             if code is not None:
                 if self._apply_system_mode_code(code):
-                    self._append_log_line(f"[0101/POLL] 모드 반영 → code={code}")
-                self._last_0101_raw = raw
+                    self._append_log_line(f"[0101/POLL] 모드 동기화 code={code}")
+                self._last_0101_raw = raw_latest
         except Exception:
             pass
+
 
     # ───────── 모니터링(대시보드) 전송 훅 ─────────
     def _install_mon_wires(self):

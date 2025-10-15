@@ -6,6 +6,15 @@ import sys, os, threading, re, time, json, socket
 os.environ["KU_ROLE"] = "monitoring"
 from pathlib import Path
 
+_ROOT = Path(__file__).resolve().parents[2]  # .../KU_LAHMUMT
+for _p in (_ROOT, _ROOT / "modules", _ROOT / "modules" / "common"):
+    _ps = str(_p)
+    if _p.exists() and _ps not in sys.path:
+        sys.path.insert(0, _ps)
+
+from modules.common.qt_env import ensure_qt_platform
+ensure_qt_platform()
+
 from PyQt5.QtCore import (
     qInstallMessageHandler, QtMsgType, pyqtSignal, QTimer, Qt, QEvent, QObject
 )
@@ -14,12 +23,6 @@ from PyQt5.QtWidgets import (
     QWidget, QLabel, QHBoxLayout, QVBoxLayout, QSlider
 )
 from PyQt5.QtGui import QKeySequence
-
-_ROOT = Path(__file__).resolve().parents[2]  # .../KU_LAHMUMT
-for _p in (_ROOT, _ROOT / "modules", _ROOT / "modules" / "common"):
-    _ps = str(_p)
-    if _p.exists() and _ps not in sys.path:
-        sys.path.insert(0, _ps)
 
 from modules.common.status_reporter import send_status_ok
 from modules.common.ctrl_listener import start_ctrl_listener, env_ctrl_port
@@ -347,9 +350,32 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self._append_log_line(f"[0101] 리스너 등록 실패: {e}")
 
+
+    def _unwrap_payload(self, payload) -> bytes:
+        tab = getattr(self, "_tab", None)
+        if tab and hasattr(tab, "_latest_payload_bytes"):
+            latest = tab._latest_payload_bytes(payload)
+            if isinstance(latest, bytes):
+                return latest
+        if isinstance(payload, list):
+            payload = payload[-1] if payload else b""
+        if isinstance(payload, dict):
+            payload = payload.get("raw")
+        if payload is None:
+            return b""
+        if isinstance(payload, bytes):
+            return payload
+        if isinstance(payload, str):
+            return payload.encode("utf-8", "ignore")
+        try:
+            return bytes(payload)
+        except Exception:
+            return b""
+
     def _on_rx_0101(self, raw: bytes | None):
         # 1) RAW → 텍스트
-        txt = (raw or b"").decode("utf-8", "ignore")
+        raw_latest = self._unwrap_payload(raw)
+        txt = raw_latest.decode("utf-8", "ignore")
         # 2) JSON 추출 시도(원문이 JSON만 올 때와, 프리텍스트가 붙을 때 모두 대응)
         m = re.search(r"\{.*\}", txt, flags=re.S)
         jtxt = m.group(0) if m else txt.strip()
@@ -451,11 +477,13 @@ class MainWindow(QMainWindow):
                     break
             if target_row < 0:
                 return
-            raw = tbl.item(target_row, 0).data(Qt.UserRole)
-            if not raw or (self._last_0101_raw is not None and raw == self._last_0101_raw):
+            item = tbl.item(target_row, 0)
+            raw_payload = item.data(Qt.UserRole) if item else None
+            raw_latest = self._unwrap_payload(raw_payload)
+            if not raw_latest or (self._last_0101_raw is not None and raw_latest == self._last_0101_raw):
                 return
 
-            txt = (raw or b"").decode("utf-8", "ignore")
+            txt = raw_latest.decode("utf-8", "ignore")
             m = re.search(r"\{.*\}", txt, flags=re.S)
             jtxt = m.group(0) if m else txt.strip()
             body = {}
@@ -476,7 +504,7 @@ class MainWindow(QMainWindow):
                 if self._apply_system_mode_code(code):
                     # 새 RAW에 대해서만 로그
                     self._append_log_line(f"[0101/POLL] 모드 반영 → code={code}")
-                self._last_0101_raw = raw
+                self._last_0101_raw = raw_latest
         except Exception:
             pass
 

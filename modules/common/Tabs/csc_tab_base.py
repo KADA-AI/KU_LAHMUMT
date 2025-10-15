@@ -42,6 +42,9 @@ class CSCTabBase(QWidget):
     """
 
     # 서브클래스에서 오버라이드할 상수 -----------------
+    HISTORY_LIMIT: int = 50
+    HISTORY_SEPARATOR: str = "=" * 64
+
     TITLE: str = "CSC"
     PUSH_MESSAGES: Sequence[Tuple[str, str]] = ()
     RECEIVE_MESSAGES: Sequence[Tuple[str, str]] = ()
@@ -274,49 +277,129 @@ class CSCTabBase(QWidget):
                 btn_view.clicked.connect(lambda _, row=r: self._on_rx_view_button_clicked(row))
                 tbl.setCellWidget(r, 3, btn_view)
 
+
+    # ───────── Payload History 유틸 ─────────
+    def _coerce_payload_bytes(self, payload) -> bytes | None:
+        if payload is None:
+            return None
+        if isinstance(payload, bytes):
+            return payload
+        if isinstance(payload, bytearray):
+            return bytes(payload)
+        if isinstance(payload, str):
+            return payload.encode("utf-8", "ignore")
+        try:
+            return bytes(payload)
+        except Exception:
+            return None
+
+    def _normalize_payload_history(self, payload) -> list[dict]:
+        history: list[dict] = []
+        if payload is None:
+            return history
+
+        if isinstance(payload, list):
+            iterable = payload
+        else:
+            iterable = [payload]
+
+        for entry in iterable:
+            ts = None
+            raw_obj = entry
+            if isinstance(entry, dict):
+                ts = entry.get("ts")
+                raw_obj = entry.get("raw")
+            elif isinstance(entry, (tuple, list)) and len(entry) >= 2:
+                ts = entry[0]
+                raw_obj = entry[1]
+            raw_bytes = self._coerce_payload_bytes(raw_obj)
+            if raw_bytes is None:
+                continue
+            history.append({"ts": ts, "raw": raw_bytes})
+        return history
+
+    def _append_payload_history(self, item: QTableWidgetItem | None, raw: bytes | None):
+        if item is None:
+            return
+        raw_bytes = self._coerce_payload_bytes(raw)
+        if raw_bytes is None:
+            return
+
+        history = self._normalize_payload_history(item.data(Qt.UserRole))
+        history.append({"ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "raw": raw_bytes})
+        limit = getattr(self, "HISTORY_LIMIT", 50) or 50
+        if len(history) > limit:
+            history = history[-limit:]
+        item.setData(Qt.UserRole, history)
+
+    def _latest_payload_bytes(self, payload) -> bytes:
+        history = self._normalize_payload_history(payload)
+        return history[-1]["raw"] if history else b""
+
+    def _format_payload_for_display(self, raw: bytes | None) -> str:
+        if not raw:
+            return "(데이터 없음)"
+        txt = raw.decode(errors="ignore")
+        m = re.search(r"\{.*\}", txt, flags=re.S)
+        if not m:
+            stripped = txt.strip()
+            return stripped or "(데이터 없음)"
+        try:
+            obj = json.loads(m.group(0))
+            return json.dumps(obj, indent=2, ensure_ascii=False)
+        except Exception:
+            return m.group(0).strip() or "(데이터 없음)"
+
+
+    def _format_history_for_dialog(self, history: list[dict]) -> str:
+        if not history:
+            return "(데이터 없음)"
+        parts: list[str] = []
+        total = len(history)
+        separator = getattr(self, "HISTORY_SEPARATOR", "=" * 64)
+
+        indexed = list(enumerate(history, 1))
+        for idx, entry in reversed(indexed):
+            ts = entry.get("ts")
+            raw = entry.get("raw")
+            body = self._format_payload_for_display(raw)
+            meta_parts = []
+            if total > 1:
+                meta_parts.append(f"{idx}/{total}")
+            if ts:
+                meta_parts.append(ts)
+            meta = " ".join(meta_parts)
+            if meta:
+                parts.append(f"{separator}\n[{meta}]\n{body}")
+            else:
+                parts.append(f"{separator}\n{body}")
+
+        return "\n".join(parts)
+
+
     def _on_rx_view_button_clicked(self, row: int):
         item = self.tbl_rx.item(row, 0)
         mid  = item.text()
-        raw  = item.data(Qt.UserRole)
+        history = self._normalize_payload_history(item.data(Qt.UserRole))
 
-        if not raw:
+        if not history:
             self._show_data_dialog(mid, "(데이터 없음)")
             return
 
-        txt = raw.decode(errors="ignore")
-        m   = re.search(r"\{.*\}", txt, flags=re.S)
-        if not m:
-            self._show_data_dialog(mid, txt.strip())
-            return
-
-        try:
-            obj     = json.loads(m.group(0))
-            pretty  = json.dumps(obj, indent=2, ensure_ascii=False)
-            self._show_data_dialog(mid, pretty)
-        except Exception:
-            self._show_data_dialog(mid, m.group(0).strip())
+        rendered = self._format_history_for_dialog(history)
+        self._show_data_dialog(mid, rendered)
 
     def _on_tx_view_button_clicked(self, row: int):
         item = self.tbl_tx.item(row, 0)
         mid  = item.text()
-        raw  = item.data(Qt.UserRole)
+        history = self._normalize_payload_history(item.data(Qt.UserRole))
 
-        if not raw:
+        if not history:
             self._show_data_dialog(mid, "(데이터 없음)")
             return
 
-        txt = raw.decode(errors="ignore")
-        m = re.search(r"\{.*\}", txt, flags=re.S)
-        if not m:
-            self._show_data_dialog(mid, txt.strip())
-            return
-
-        try:
-            obj = json.loads(m.group(0))
-            pretty = json.dumps(obj, indent=2, ensure_ascii=False)
-            self._show_data_dialog(mid, pretty)
-        except Exception:
-            self._show_data_dialog(mid, m.group(0).strip())
+        rendered = self._format_history_for_dialog(history)
+        self._show_data_dialog(mid, rendered)
 
     def _show_data_dialog(self, msg_id: str, text: str):
         dlg = QDialog(self)
@@ -359,7 +442,7 @@ class CSCTabBase(QWidget):
                 for r in range(self.tbl_tx.rowCount()):
                     item = self.tbl_tx.item(r, 0)
                     if item and item.text() == msg_id:
-                        item.setData(Qt.UserRole, raw)
+                        self._append_payload_history(item, raw)
                         break
             except Exception:
                 pass
@@ -395,7 +478,7 @@ class CSCTabBase(QWidget):
                     item.setText(f"수신 완료({count})")
                     item.setForeground(QColor("blue"))
                 if raw:
-                    self.tbl_rx.item(r, 0).setData(Qt.UserRole, raw)
+                    self._append_payload_history(self.tbl_rx.item(r, 0), raw)
                 break
 
         # 2) 로그 기록
@@ -441,7 +524,7 @@ class CSCTabBase(QWidget):
     def _mark_single_sent(self, row: int, msg_id: str, raw: bytes | None):
         self.tbl_tx.item(row, 2).setText("발신 완료")
         if raw:
-            self.tbl_tx.item(row, 0).setData(Qt.UserRole, raw)
+            self._append_payload_history(self.tbl_tx.item(row, 0), raw)
         self._write_log(self.log_tx, "SEND", msg_id, raw)
 
     # ──────────── 주기 전송 관리 ─────────────────────
@@ -492,7 +575,7 @@ class CSCTabBase(QWidget):
 
     def _log_only(self, row: int, msg_id: str, raw: bytes | None):
         if raw:
-            self.tbl_tx.item(row, 0).setData(Qt.UserRole, raw)
+            self._append_payload_history(self.tbl_tx.item(row, 0), raw)
         self._write_log(self.log_tx, "SEND", msg_id, raw)
 
     # ──────────── 내부 유틸 ───────────────────────
@@ -684,3 +767,10 @@ class CSCTabBase(QWidget):
             self._send_udp_monitor(payload)
         except Exception:
             pass
+
+
+
+
+
+
+
