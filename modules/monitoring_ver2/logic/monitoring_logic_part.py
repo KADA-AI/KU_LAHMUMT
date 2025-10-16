@@ -60,14 +60,36 @@ class MonitoringLogic:
             data_0903 = self.manager.receive_store.get_data("0903")
         except Exception:
             data_0903 = None
-        if not data_0903:
-            return
-        mission_plan_id = getattr(data_0903, "missionPlanID", None)
+
+        mission_plan_id = None
+        if data_0903:
+            mission_plan_id = getattr(data_0903, "missionPlanID", None)
+
+        if mission_plan_id is None:
+            try:
+                data_0902 = self.manager.receive_store.get_data("0902")
+            except Exception:
+                data_0902 = None
+            if data_0902:
+                # 메시지 구조가 dict 또는 객체일 수 있으므로 getattr/키 조회 병행
+                mission_plan_id = getattr(data_0902, "missionPlanID", None)
+                if mission_plan_id is None and isinstance(data_0902, dict):
+                    mission_plan_id = data_0902.get("missionPlanID")
+
+        if mission_plan_id is None:
+            mission_plan_id = self._scan_latest_mission_plan_id()
+
         try:
-            mission_plan_id = int(mission_plan_id)
+            mission_plan_id = int(mission_plan_id) if mission_plan_id is not None else None
         except (TypeError, ValueError):
+            mission_plan_id = None
+
+        if mission_plan_id is None or mission_plan_id == self._current_mission_plan_id:
             return
-        if mission_plan_id == self._current_mission_plan_id:
+
+        mission_plan_path = db_paths.get_db_subpath("MissionPlan", f"{mission_plan_id}.json")
+        if not mission_plan_path.exists():
+            # MissionPlan 파일이 아직 생성되지 않았다면 다음 사이클까지 대기
             return
         try:
             context = self._load_mission_plan_context(mission_plan_id)
@@ -96,6 +118,27 @@ class MonitoringLogic:
             "INFO",
             f"MissionPlan {mission_plan_id} loaded for monitoring",
         )
+
+    def _scan_latest_mission_plan_id(self) -> Optional[int]:
+        """MissionPlan 디렉터리에서 가장 최신의 plan ID를 추론한다."""
+        try:
+            mission_plan_dir = db_paths.get_db_subpath("MissionPlan")
+        except Exception:
+            return None
+        try:
+            entries = list(mission_plan_dir.glob("*.json"))
+        except Exception:
+            return None
+        if not entries:
+            return None
+        try:
+            latest = max(entries, key=lambda p: p.stat().st_mtime)
+        except Exception:
+            return None
+        try:
+            return int(latest.stem)
+        except (TypeError, ValueError):
+            return None
 
     def _load_mission_plan_context(self, mission_plan_id: int) -> Dict[str, Any]:
         mission_plan_path = db_paths.get_db_subpath("MissionPlan", f"{mission_plan_id}.json")
@@ -192,10 +235,12 @@ class MonitoringLogic:
             aircraft_map[aircraft_id] = {
                 "missions": missions,
                 "waypoint_map": waypoint_map,
+                "individualMissionPackageID": package_id,
             }
 
         return {
             "missionPlanID": mission_plan_id,
+            "inputMissionPackageID": plan_data.get("inputMissionPackageID"),
             "aircraft": aircraft_map,
             "inputMissionIDs": sorted(input_ids),
         }

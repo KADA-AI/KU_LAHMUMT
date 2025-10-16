@@ -1,0 +1,74 @@
+{
+  "timestamp": 813917557674,
+  "Source": "MMR",
+  "individualMissionPackageID": 800001267,
+  "aircraftID": 4,
+  "individualMissionList": [
+    {
+      "individualMissionID": 900017683,
+      "isDone": false,
+      "relatedMission": {
+        "relatedMissionType": 1,
+        "inputMissionID": 1,
+        "priorMissionID": 0
+      },
+      "individualMissionInfo": {
+        "individualMissionType": 6,
+        "patternType": 4,
+        "autoZoomIn": true,
+        "lineList": [
+          {
+            "width": 333.3333333333333,
+            "coordinateList": [
+              {
+                "latitude": 38.131233,
+                "longitude": 127.29925,
+                "altitude": 100
+              },
+              {
+                "latitude": 38.141422,
+                "longitude": 127.32052851463158,
+                "altitude": 100
+              }
+            ]
+          }
+        ],
+        "targetID": null
+      },
+      "pathID": 400000001
+    },
+    {
+      "individualMissionID": 900017684,
+      "isDone": false,
+      "relatedMission": {
+        "relatedMissionType": 1,
+        "inputMissionID": 2,
+        "priorMissionID": 0
+      },
+      "individualMissionInfo": {
+        "individualMissionType": 6,
+        "patternType": 4,
+        "autoZoomIn": true,
+        "lineList": [
+          {
+            "width": 333.3333333333333,
+            "coordinateList": [
+              {
+                "latitude": 38.13256,
+                "longitude": 127.33242,
+                "altitude": 100
+              },
+              {
+                "latitude": 38.117653,
+                "longitude": 127.32306904524269,
+                "altitude": 100
+              }
+            ]
+          }
+        ],
+        "targetID": null
+      },
+      "pathID": 400000002
+    }
+  ]
+}

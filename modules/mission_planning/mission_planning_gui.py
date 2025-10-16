@@ -697,10 +697,37 @@ class MainWindow(QMainWindow):
                 "missionPlanningStatus": int(status),  # 1: 재계획 수행 중, 2: 재계획 완료
                 "replanReason": reason,
             }
-            push_message("0305", NodeMessenger, body_dict=body)
+            orig_mark_fn = getattr(self, "_orig_mark_sent", None)
+            mon_sent_via_wrapper = {"done": False}
+
+            def _after_push(mid, raw):
+                mid_norm = _z4(str(mid))
+                if callable(orig_mark_fn):
+                    try:
+                        orig_mark_fn(mid_norm, raw)
+                        return
+                    except Exception:
+                        pass
+                tab = getattr(self, "_tab", None)
+                mark_method = getattr(tab, "mark_sent", None) if tab else None
+                if callable(mark_method):
+                    try:
+                        mark_method(mid_norm, raw)
+                        if callable(orig_mark_fn):
+                            mon_sent_via_wrapper["done"] = True
+                    except Exception:
+                        pass
+
+            push_message(
+                "0305",
+                NodeMessenger,
+                on_done=_after_push,
+                body_dict=body,
+            )
             self.log_sig.emit(f"[0305] status={status}, reason={reason} 전송")
             try:
-                self._send_mon("tx", msg_id=_z4("0305"), missionPlanningStatus=int(status))
+                if not mon_sent_via_wrapper["done"]:
+                    self._send_mon("tx", msg_id=_z4("0305"), missionPlanningStatus=int(status))
             except Exception:
                 pass
         except Exception as e:
