@@ -1,7 +1,23 @@
 # MissionID 0501 임무수행상태정보
 
-ulong timestamp
-string source
-uint currentMissionPlanID
-uint currentInputMissionID
+ulong timestamp:
+ - 길이 : 8
+ - min : 0
+ - Max : 2^64-1
+ - unit : ms
+ - 비고 : 2000년 1월 1일부터 ms
+
+string source:
+ - 비고 : 메시지를 전송하는 모듈 이름
+
+uint currentMissionPlanID:
+ - 길이 : 4
+ - unit : N/A
+ - 비고 : 수행중인 임무 계획 ID
+
+uint currentInputMissionID:
+ - 길이 : 4
+ - unit : N/A
+ - 비고 : 현재 협업기저 임무 ID
+
 List<IndividualMissionProgressStatus> individualMissionProgressStatusList

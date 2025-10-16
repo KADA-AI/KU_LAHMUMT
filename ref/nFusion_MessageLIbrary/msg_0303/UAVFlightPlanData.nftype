@@ -1,8 +1,35 @@
 # MissionID 0303 무인기 비행계획
 
-ulong timestamp
-uint pathID
-uint aircraftID
-bool isFormationFlight
-CommonType.FormationInfo formationInfo
-List<Waypoint> waypointList
+ulong timestamp:
+ - 길이 : 8
+ - min : 0
+ - Max : 2^64-1
+ - unit : ms
+ - 비고 : 2000년 1월 1일부터 ms
+
+uint pathID:
+ - 길이 : 4
+ - unit : N/A
+ - 비고 : 개별 비행 계획 ID
+
+uint aircraftID:
+ - 길이 : 4
+ - min : 0
+ - Max : 6
+ - unit : N/A
+ - 비고 : 해당 비행계획의 대상 유인기 또는 무인기 ID
+ - enum : 0~3=Not Used, 4=UAV#1, 5=UAV#2, 6=UAV#3
+
+bool isFormationFlight:
+ - 길이 : 1
+ - min : 0
+ - Max : 1
+ - unit : N/A
+ - 비고 : 그룹/개별 경로 여부
+ - enum : 0=개별, 1=그룹
+
+CommonType.FormationInfo formationInfo:
+ - 비고 : IsFormationFlight가 1 일때 사용
+
+List<Waypoint> waypointList:
+ - 비고 : IsFormationFlight가 0일때 (경로 비행)

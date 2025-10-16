@@ -10,6 +10,7 @@
 import os, re, sys, textwrap, datetime
 from typing import Dict, List, Tuple, Optional
 
+from modules.common import db_paths
 # ─────────────────────────────────────────────────────────
 # 경로/확장자
 # ─────────────────────────────────────────────────────────
@@ -326,13 +327,17 @@ def _project_root_for_push_file(__file_path: str):
     return Path(__file_path).resolve().parents[3]
 
 def _db_dir_for(msgid: str, __file_path: str) -> str:
-    import os
-    from pathlib import Path
-    env_root = os.getenv("KU_MISSION_DB_ROOT")
     name = DB_DIR_RULES.get(msgid, f"msg_{msgid}")
-    if env_root:
-        return str(Path(env_root) / name)
-    return str(_project_root_for_push_file(__file_path) / "database" / name)
+    try:
+        if msgid in ("0201", "0203"):
+            return str(db_paths.ensure_db_payload(name))
+        root = db_paths.get_active_db_root()
+        target = root / name
+        target.mkdir(parents=True, exist_ok=True)
+        return str(target)
+    except Exception:
+        base = _project_root_for_push_file(__file_path)
+        return str(base / "database" / name)
 
 def _list_numeric_ids(dirname: str, prefix_first_char: str | None = None) -> list[int]:
     import os, glob

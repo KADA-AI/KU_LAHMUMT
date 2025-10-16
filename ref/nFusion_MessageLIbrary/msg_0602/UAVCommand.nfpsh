@@ -1,8 +1,30 @@
 # MessageID 0602 무인기 통제 명령
 
-ulong timestamp
-string source
-uint uavCommandModeType
-uint aircraftID
+ulong timestamp:
+ - 길이 : 8
+ - min : 0
+ - Max : 2^64-1
+ - unit : ms
+ - 비고 : 2000년 1월 1일부터 ms
+
+string source:
+ - 비고 : 메시지를 전송하는 모듈 이름
+
+uint uavCommandModeType:
+ - 길이 : 4
+ - min : 0
+ - Max : 3
+ - unit : N/A
+ - 비고 : 무인기 통제정보 유형
+ - enum : 1=비행모드 통제, 2=임무장비 모드 통제, 3=비행 및 임무장비모드 동시 통제
+
+uint aircraftID:
+ - 길이 : 4
+ - min : 0
+ - Max : 6
+ - unit : N/A
+ - 비고 : 수행 무인기 ID
+ - enum : 0~3=Not Used, 4=UAV#1, 5=UAV#2, 6=UAV#3
+
 FlightModeCommand flightModeCommand
 FilmingModeCommand filmingModeCommand

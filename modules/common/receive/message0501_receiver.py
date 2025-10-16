@@ -1,110 +1,128 @@
 # modules/common/receive/message0501_receiver.py
-# auto-generated at 2025-08-24T16:37:13.100867+00:00
+# MissionProgress(0501) 수신 리시버 - 안정 변환 & notify
 
-from dll_files.nFusionImports import *            # IFusionReceive, IsLocal, IsSingletone
+from dll_files.nFusionImports import *          # IFusionReceive, IsLocal, IsSingletone
 from nFusion.Model.msg_0501 import *            # C# 모델
-from nFusion.Model.CommonType import *             # 공통 타입
+from nFusion.Model.CommonType import *          # 공통 타입
 from .database import received_db
 from receive_center import notify
-import json, traceback, sys, os, importlib
+import json, traceback, sys
 
-# 대/소문자 안전 접근
-_get = lambda obj, *names: next((getattr(obj, n) for n in names if hasattr(obj, n)), None)
+# ────────────────────────── 유틸 ──────────────────────────
+def _get(obj, *names):
+    """대/소문자 혼용 속성 안전 접근"""
+    for n in names:
+        try:
+            if hasattr(obj, n):
+                return getattr(obj, n)
+        except Exception:
+            pass
+    return None
 
-# ── Embedded rules (TX/DB 공용) ──────────────────────────────────────────
-TX_FIELD_WHITELIST = {'0201': ['timestamp', 'inputMissionPackageID'], '0203': ['timestamp', 'missionReferencePackageID'], '0301': ['timestamp', 'missionPlanID'], '0302': ['timestamp', 'individualMissionPackageID'], '0303': ['timestamp', 'pathID'], '0304': ['timestamp', 'pathID']}
-DB_DIR_RULES        = {'0201': 'InputMissionPlan', '0203': 'FlightReferenceInfo', '0301': 'MissionPlan', '0302': 'IndividualMissionPlan', '0303': 'UAVFlightPlan', '0304': 'FlightPath'}
-DB_FETCH_ON_RECEIVE = {'0201', '0203'}
-ID_FIELD_FOR        = {'0201': 'inputMissionPackageID', '0203': 'missionReferencePackageID', '0301': 'missionPlanID', '0302': 'individualMissionPackageID', '0303': 'pathID', '0304': 'pathID'}
-
-def _project_root_for_recv_file(__file_path: str):
-    from pathlib import Path
-    return Path(__file_path).resolve().parents[3]
-
-def _db_dir_for(msgid: str, __file_path: str) -> str:
-    from pathlib import Path
-    env_root = os.getenv("KU_MISSION_DB_ROOT")
-    name = DB_DIR_RULES.get(msgid)
-    if not name:
-        return str(_project_root_for_recv_file(__file_path))
-    if env_root:
-        return str(Path(env_root) / name)
-    return str(_project_root_for_recv_file(__file_path) / "database" / name)
-
-def _try_save_received(msgid: str, data_obj):
+def _as_int(v):
     try:
-        fn = getattr(received_db, f"set_received_{msgid}")
-        fn(data_obj)
-    except Exception:
-        pass
-
-def _try_read_db_body(msgid: str, data_obj):
-    """DB_FETCH_ON_RECEIVE에 포함된 메시지는 ID 필드로 DB JSON을 찾아 반환(없으면 None)."""
-    try:
-        if msgid not in DB_FETCH_ON_RECEIVE:
-            return None
-        id_field = ID_FIELD_FOR.get(msgid)
-        if not id_field:
-            return None
-        # 객체에서 ID 값을 추출(대/소문자 안전)
-        _val = _get(data_obj, id_field, id_field[:1].upper()+id_field[1:])
-        if _val is None:
-            return None
-        vid = int(_val)
-        dbdir = _db_dir_for(msgid, __file__)
-        fpath = os.path.join(dbdir, f"{vid}.json")
-        print(f"[{msgid}] DB 참조! ({fpath})")
-        if os.path.exists(fpath):
-            with open(fpath, "r", encoding="utf-8") as f:
-                return json.load(f)
-        return None
+        # UInt32/UInt64/문자열 모두 수용
+        return int(str(v))
     except Exception:
         return None
 
+def _iter_safe(coll):
+    """IEnumerable(.NET) / list 모두 안전 순회"""
+    if coll is None:
+        return []
+    try:
+        for it in coll:
+            yield it
+    except Exception:
+        return []
+
+# ─────────────────────── C# → dict 변환 ───────────────────────
 def _to_dict_CurrentIndividualMission(obj):
     d = {}
-    _v = _get(obj, 'individualMissionID', 'IndividualMissionID')
-    if _v is not None: d['individualMissionID'] = int(_v)
+    v = _get(obj, 'individualMissionID', 'IndividualMissionID')
+    iv = _as_int(v)
+    if iv is not None:
+        d['individualMissionID'] = iv
     return d
 
 def _to_dict_IndividualMissionProgressStatus(obj):
     d = {}
-    _v = _get(obj, 'aircraftID', 'AircraftID')
-    if _v is not None: d['aircraftID'] = int(_v)
-    _sub = _get(obj, 'currentIndividualMission', 'CurrentIndividualMission')
-    if _sub is not None: d['currentIndividualMission'] = _to_dict_CurrentIndividualMission(_sub)
-    _v = _get(obj, 'currentIndividualMissionProgress', 'CurrentIndividualMissionProgress')
-    if _v is not None: d['currentIndividualMissionProgress'] = int(_v)
+    v = _get(obj, 'aircraftID', 'AircraftID')
+    iv = _as_int(v)
+    if iv is not None:
+        d['aircraftID'] = iv
+
+    sub = _get(obj, 'currentIndividualMission', 'CurrentIndividualMission')
+    if sub is not None:
+        d['currentIndividualMission'] = _to_dict_CurrentIndividualMission(sub)
+
+    v = _get(obj, 'currentIndividualMissionProgress', 'CurrentIndividualMissionProgress')
+    iv = _as_int(v)
+    if iv is not None:
+        d['currentIndividualMissionProgress'] = iv
     return d
 
-def _to_dict_MissionProgress(obj):
+def _to_dict_MissionProgress(obj, src_hint=None):
     d = {}
-    _v = _get(obj, 'timestamp', 'Timestamp')
-    if _v is not None: d['timestamp'] = int(_v)
-    _sval = _get(obj, 'source', 'Source', 'source','Source','Source','Source','requestModuleName','RequestModuleName')
-    if _sval is not None and _sval != '': d['source'] = str(_sval)
-    _v = _get(obj, 'currentMissionPlanID', 'CurrentMissionPlanID')
-    if _v is not None: d['currentMissionPlanID'] = int(_v)
-    _v = _get(obj, 'currentInputMissionID', 'CurrentInputMissionID')
-    if _v is not None: d['currentInputMissionID'] = int(_v)
-    _coll = _get(obj, 'individualMissionProgressStatusList', 'IndividualMissionProgressStatusList') or []
-    if _coll:
-        d['individualMissionProgressStatusList'] = [_to_dict_IndividualMissionProgressStatus(it) for it in _coll]
+
+    v = _get(obj, 'timestamp', 'Timestamp')
+    iv = _as_int(v)
+    if iv is not None:
+        d['timestamp'] = iv
+
+    # source는 여러 후보에서 폴백 (모델 속성 → 요청자 이름/문자열 → RequestModuleName)
+    s = _get(obj, 'source', 'Source', 'requestModuleName', 'RequestModuleName')
+    if s is None or str(s).strip() == '':
+        if src_hint is not None:
+            try:
+                s = getattr(src_hint, 'Name', None) or str(src_hint)
+            except Exception:
+                s = None
+    if s is not None and str(s).strip() != '':
+        d['source'] = str(s)
+
+    v = _get(obj, 'currentMissionPlanID', 'CurrentMissionPlanID')
+    iv = _as_int(v)
+    if iv is not None:
+        d['currentMissionPlanID'] = iv
+
+    v = _get(obj, 'currentInputMissionID', 'CurrentInputMissionID')
+    iv = _as_int(v)
+    if iv is not None:
+        d['currentInputMissionID'] = iv
+
+    coll = _get(obj, 'individualMissionProgressStatusList', 'IndividualMissionProgressStatusList')
+    items = []
+    for it in _iter_safe(coll):
+        try:
+            items.append(_to_dict_IndividualMissionProgressStatus(it))
+        except Exception:
+            # 개별 아이템 오류는 스킵
+            pass
+    if items:
+        d['individualMissionProgressStatusList'] = items
+
     return d
 
+# ───────────────────────── Receiver ─────────────────────────
 class MissionProgressReceiver_0501(IFusionReceive[MissionProgress], IsLocal, IsSingletone):
     """0501 MissionProgress 메시지 수신 리시버"""
+
     __namespace__ = "MissionProgressReceiver_0501"
 
     def Receive(self, data: MissionProgress, src):
         try:
-            _try_save_received('0501', data)
+            # 원본 보관 (있으면)
+            try:
+                received_db.set_received_0501(data)
+            except Exception:
+                pass
 
-            body = _try_read_db_body('0501', data)
-            if body is None:
-                body = _to_dict_MissionProgress(data)
+            body = _to_dict_MissionProgress(data, src_hint=src)
 
-            notify("0501", json.dumps(body, ensure_ascii=False).encode("utf-8","ignore"))
+            # notify로 바이너리 전송(JSON UTF-8)
+            payload = json.dumps(body, ensure_ascii=False).encode("utf-8", "ignore")
+            notify("0501", payload)
 
         except Exception:
             print("[ERROR][Receive-0501] traceback ↓↓↓")

@@ -1,3 +1,17 @@
-uint relatedMissionType
-uint inputMissionID
-uint priorMissionID
+uint relatedMissionType:
+ - 길이 : 4
+ - min : 0
+ - Max : 2
+ - unit : N/A
+ - 비고 : 상위 임무 ID
+ - enum : 0=None, 1=협업기저임무, 2=선행임무
+
+uint inputMissionID:
+ - 길이 : 4
+ - unit : N/A
+ - 비고 : 입력 임무 ID (RelatedMissionType = 2일 때도 입력필요)
+
+uint priorMissionID:
+ - 길이 : 4
+ - unit : N/A
+ - 비고 : 선행 임무 ID (RelatedMissionType = 2일 때만 입력 필요)
