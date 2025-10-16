@@ -15,7 +15,7 @@ from nFusion.Model.msg_0402 import (
 from nFusion.Model.CommonType import Coordinate
 
 # 로컬 이벤트 버스
-from .receive_center import notify_to_manager
+from gui.gui_app import notify_to_manager
 
 # 데이터 저장소 및 Python 데이터 모델
 from data.receive_storage import ReceiveStorage

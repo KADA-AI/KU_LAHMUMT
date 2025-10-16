@@ -11,7 +11,7 @@ from data.message_models import (
     MissionEndRequestBodyModel,
     ReplanRequestBodyModel,
 )
-from push.push_center import push_message
+from push.push_utils import push_message
 from .monitoring_actual_logic import run_monitoring_procedure
 import udp_reporter
 

@@ -15,7 +15,7 @@ import json, dataclasses
 
 
 from config import PUSH_MESSAGES, RECEIVE_MESSAGES
-from push.push_center import push_message
+from push.push_utils import push_message
 from data.message_models import (
     ModuleStatusModelModel,
     MissionProgressBodyModel,
