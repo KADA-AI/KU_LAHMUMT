@@ -17,7 +17,7 @@ from modules.common.qt_env import ensure_qt_platform
 ensure_qt_platform()
 
 from PyQt5.QtCore import qInstallMessageHandler, QtMsgType, pyqtSignal, QTimer, Qt, QEvent, QObject, QPointF
-from PyQt5.QtWidgets import QApplication, QMainWindow, QTabWidget, QWidget, QLabel, QHBoxLayout, QVBoxLayout, QSlider, QLineEdit, QPushButton, QFileDialog, QGroupBox, QMessageBox, QSizePolicy, QTableWidget, QHeaderView, QTableWidgetItem
+from PyQt5.QtWidgets import QApplication, QMainWindow, QTabWidget, QWidget, QLabel, QHBoxLayout, QVBoxLayout, QSlider, QLineEdit, QPushButton, QFileDialog, QGroupBox, QMessageBox, QSizePolicy, QTableWidget, QHeaderView, QTableWidgetItem, QCheckBox
 from PyQt5.QtGui import QPainter, QColor, QPen
 
 # ───────── Qt 경고 필터 ─────────
@@ -105,6 +105,7 @@ from modules.common.status_reporter import send_status_ok
 from modules.common.ctrl_listener import start_ctrl_listener, env_ctrl_port
 
 from push_center import push_message
+from modules.common import db_paths
 
 
 # ───────── 0401 이동 미니맵 위젯 ─────────
@@ -371,6 +372,11 @@ class _MissionSidePanel(QGroupBox):
         r2.addWidget(self._lamp_0402); r2.addWidget(lbl2); r2.addWidget(self._path_0402); r2.addWidget(btn2)
         lay.addWidget(row2)
 
+        # 임무 데이터 기반 덮어쓰기 옵션
+        self._chk_use_mission = QCheckBox("임무 데이터 기반 0401 덮어쓰기", self)
+        self._chk_use_mission.setToolTip("임무 계획에 저장된 각 무인기의 비행 경로를 따라 currentWaypointID와 연료를 자동으로 갱신합니다.")
+        lay.addWidget(self._chk_use_mission)
+
         # 시작 버튼
         self.btn_start = QPushButton("임무 수행 모사 시작", self)
         self.btn_start.setMinimumHeight(90)
@@ -414,15 +420,266 @@ class _MissionSidePanel(QGroupBox):
     def selected_paths_0402(self) -> list[str]:
         return list(self._paths_0402)
 
+    def use_mission_overlay(self) -> bool:
+        return bool(self._chk_use_mission.isChecked())
+
+
+class _MissionPlanWaypointOverlay:
+    """MissionPlan/IndividualMissionPlan/FlightPath을 이용해 0401 메시지를 보정한다."""
+
+    def __init__(self, logger):
+        self._log = logger
+        self._waypoints: dict[int, list[int]] = {}
+        self._cursor: dict[int, int] = {}
+        self._fuel: dict[int, float] = {}
+        self._fuel_step: dict[int, float] = {}
+        self._ticks: dict[int, int] = {}
+        self._plan_key = None
+        self._prepared = False
+        try:
+            self._advance_every = max(1, int(os.environ.get("KU_0401_WP_STEP", "10")))
+        except Exception:
+            self._advance_every = 20  # waypoint 전환 간격 (메시지 수)
+
+    def _log_info(self, text: str) -> None:
+        if callable(self._log):
+            self._log(text)
+
+    def disable(self) -> None:
+        self._prepared = False
+        self._plan_key = None
+        self._waypoints.clear()
+        self._cursor.clear()
+        self._fuel.clear()
+        self._fuel_step.clear()
+        self._ticks.clear()
+
+    def prepare(self, *, force: bool = False) -> bool:
+        mission_plan_path = self._find_latest_mission_plan()
+        if mission_plan_path is None:
+            self._log_info("[REPLAY] MissionPlan 파일을 찾을 수 없습니다.")
+            self.disable()
+            return False
+
+        plan_key = (str(mission_plan_path), mission_plan_path.stat().st_mtime)
+        if not force and self._prepared and self._plan_key == plan_key:
+            self._cursor = {aid: 0 for aid in self._waypoints}
+            self._fuel.clear()
+            self._fuel_step.clear()
+            self._ticks = {aid: 0 for aid in self._waypoints}
+            return True
+
+        if not self._load_from_plan(mission_plan_path):
+            self.disable()
+            return False
+
+        self._plan_key = plan_key
+        self._cursor = {aid: 0 for aid in self._waypoints}
+        self._fuel.clear()
+        self._fuel_step.clear()
+        self._ticks = {aid: 0 for aid in self._waypoints}
+        self._prepared = True
+        summary = ", ".join(f"UAV{aid}:{len(seq)}개" for aid, seq in sorted(self._waypoints.items()))
+        self._log_info(f"[REPLAY] 임무 기반 0401 덮어쓰기 준비 완료 ({summary}, step={self._advance_every})")
+        return True
+
+    def apply(self, body: dict) -> None:
+        if not self._prepared or not self._waypoints:
+            return
+        agent_list = None
+        if isinstance(body, dict):
+            for key in ("agentStateList", "AgentStateList"):
+                val = body.get(key)
+                if isinstance(val, list):
+                    agent_list = val
+                    break
+        if not isinstance(agent_list, list):
+            return
+        for agent in agent_list:
+            if not isinstance(agent, dict):
+                continue
+            aid = self._get_int(agent, "aircraftID")
+            if aid is None:
+                continue
+            is_unmanned = self._get_int(agent, "isUnmanned")
+            if is_unmanned != 1:
+                continue
+            seq = self._waypoints.get(aid)
+            if not seq:
+                continue
+            idx = self._cursor.get(aid, 0)
+            if idx < 0:
+                idx = 0
+            if idx >= len(seq):
+                idx = len(seq) - 1
+            tick = self._ticks.get(aid, 0) + 1
+            advance_every = max(1, int(self._advance_every))
+            if tick >= advance_every:
+                if idx < len(seq) - 1:
+                    idx += 1
+                tick = 0
+            self._ticks[aid] = tick
+            self._cursor[aid] = idx
+            if 0 <= idx < len(seq):
+                waypoint_id = seq[idx]
+                info = self._ensure_unmanned_info(agent)
+                current = info.get("currentWaypointID")
+                if not isinstance(current, dict):
+                    current = {}
+                    info["currentWaypointID"] = current
+                current["waypointID"] = waypoint_id
+            self._apply_fuel_decay(agent, aid)
+
+    # ── 내부 헬퍼 ─────────────────────────────────────────
+    def _find_latest_mission_plan(self) -> Path | None:
+        try:
+            mission_plan_dir = db_paths.get_db_subpath("MissionPlan")
+        except Exception:
+            return None
+        try:
+            entries = list(Path(mission_plan_dir).glob("*.json"))
+        except Exception:
+            entries = []
+        if not entries:
+            return None
+        latest = max(entries, key=lambda p: p.stat().st_mtime)
+        return latest
+
+    def _load_from_plan(self, plan_path: Path) -> bool:
+        try:
+            data = json.loads(plan_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            self._log_info(f"[REPLAY] MissionPlan 로드 실패: {exc}")
+            return False
+
+        waypoints: dict[int, list[int]] = {}
+        for entry in data.get("aircraftList", []):
+            if not isinstance(entry, dict):
+                continue
+            aid = self._safe_int(entry.get("aircraftID"))
+            imp_id = self._safe_int(entry.get("individualMissionPackageID"))
+            if aid is None or imp_id is None:
+                continue
+            seq = self._collect_waypoints(imp_id)
+            if seq:
+                waypoints[aid] = seq
+        if not waypoints:
+            self._log_info("[REPLAY] MissionPlan에 사용할 UAV 임무가 없습니다.")
+            return False
+        self._waypoints = waypoints
+        return True
+
+    def _collect_waypoints(self, imp_id: int) -> list[int]:
+        try:
+            imp_path = db_paths.get_db_subpath("IndividualMissionPlan", f"{imp_id}.json")
+        except Exception:
+            return []
+        imp_path = Path(imp_path)
+        if not imp_path.exists():
+            self._log_info(f"[REPLAY] IndividualMissionPlan 파일 없음: {imp_id}")
+            return []
+        try:
+            data = json.loads(imp_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            self._log_info(f"[REPLAY] IndividualMissionPlan 로드 실패({imp_id}): {exc}")
+            return []
+        seq: list[int] = []
+        for mission in data.get("individualMissionList", []):
+            if not isinstance(mission, dict):
+                continue
+            path_id = self._safe_int(mission.get("pathID"))
+            if path_id is None:
+                continue
+            seq.extend(self._read_waypoint_ids(path_id))
+        return seq
+
+    def _read_waypoint_ids(self, path_id: int) -> list[int]:
+        try:
+            fp_path = db_paths.get_db_subpath("FlightPath", f"{path_id}.json")
+        except Exception:
+            return []
+        fp_path = Path(fp_path)
+        if not fp_path.exists():
+            self._log_info(f"[REPLAY] FlightPath 파일 없음: {path_id}")
+            return []
+        try:
+            data = json.loads(fp_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            self._log_info(f"[REPLAY] FlightPath 로드 실패({path_id}): {exc}")
+            return []
+        out: list[int] = []
+        for wp in data.get("waypointList", []):
+            if not isinstance(wp, dict):
+                continue
+            wid = self._safe_int(wp.get("waypointID") or wp.get("WaypointID"))
+            if wid is None:
+                continue
+            out.append(wid)
+        return out
+
+    def _apply_fuel_decay(self, agent: dict, aid: int) -> None:
+        fuel_raw = agent.get("fuel")
+        try:
+            fuel_current = float(fuel_raw)
+        except (TypeError, ValueError):
+            return
+        base = self._fuel.get(aid)
+        if base is None:
+            base = fuel_current
+            self._fuel[aid] = base
+        step = self._fuel_step.get(aid)
+        if step is None:
+            step = max(base * 0.0005, 0.02)
+            self._fuel_step[aid] = step
+        new_val = max(0.0, self._fuel[aid] - step)
+        self._fuel[aid] = new_val
+        agent["fuel"] = round(new_val, 2)
+        info = self._ensure_unmanned_info(agent)
+        warn = 0
+        if new_val <= 10:
+            warn = 2
+        elif new_val <= 20:
+            warn = 1
+        info["fuelWarning"] = warn
+
+    # ── 유틸 ────────────────────────────────────────────────
+    def _safe_int(self, value) -> int | None:
+        try:
+            if value is None:
+                return None
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _get_int(self, data: dict, key: str) -> int | None:
+        for k, v in data.items():
+            if k.lower() == key.lower():
+                return self._safe_int(v)
+        return None
+
+    def _ensure_unmanned_info(self, agent: dict) -> dict:
+        for key in ("unmannedInfo", "UnmannedInfo"):
+            info = agent.get(key)
+            if isinstance(info, dict):
+                if key != "unmannedInfo":
+                    agent["unmannedInfo"] = info
+                return info
+        info = {}
+        agent["unmannedInfo"] = info
+        return info
+
 
 # ───────── 리플레이 매니저 ─────────
 class _ReplayManager(QObject):
-    def __init__(self, tab: IntegrationTab, messenger, logger, tracker: _Agent0401Panel):
+    def __init__(self, tab: IntegrationTab, messenger, logger, side_panel: _MissionSidePanel):
         super().__init__(tab)
         self._tab = tab
         self._msgr = messenger
         self._log = logger
-        self._tracker = tracker
+        self._side = side_panel
+        self._tracker = side_panel.tracker_0401
+        self._overlay = _MissionPlanWaypointOverlay(logger)
+        self._overlay_active = False
         self._timers: list[QTimer] = []
 
     def stop(self):
@@ -430,6 +687,7 @@ class _ReplayManager(QObject):
             try: t.stop()
             except Exception: pass
         self._timers.clear()
+        self._overlay_active = False
         if callable(self._log): self._log("[REPLAY] 중지됨")
 
     def _row_of(self, msg_id: str) -> int:
@@ -516,6 +774,17 @@ class _ReplayManager(QObject):
         try: self._tracker._map.clear()
         except Exception: pass
 
+        self._overlay_active = False
+        if self._side.use_mission_overlay():
+            if self._overlay.prepare(force=True):
+                self._overlay_active = True
+            else:
+                if callable(self._log):
+                    self._log("[REPLAY] 임무 데이터 덮어쓰기 준비 실패 → 기본 데이터 사용")
+                self._overlay.disable()
+        else:
+            self._overlay.disable()
+
         buckets = {"0401": [], "0402": []}
         for p in paths_0401:
             for obj in self._iter_ndjson(p):
@@ -583,6 +852,14 @@ class _ReplayManager(QObject):
     # modules/integration_module/integration_gui.py  (_ReplayManager._schedule_send 내부 iter_states/do_send 교체)
     def _schedule_send(self, msg_id: str, body: dict, delay_ms: int):
         row = self._row_of(msg_id)
+
+        if msg_id == "0401" and self._overlay_active:
+            try:
+                self._overlay.apply(body)
+            except Exception as exc:
+                self._overlay_active = False
+                if callable(self._log):
+                    self._log(f"[REPLAY] 임무 데이터 덮어쓰기 오류: {exc}")
 
         def get_ci(d, k):
             if not isinstance(d, dict): return None
@@ -699,7 +976,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(center)
 
         # 리플레이 매니저
-        self._replay = _ReplayManager(self._tab, NodeMessenger, self._append_log_line, self._side.tracker_0401)
+        self._replay = _ReplayManager(self._tab, NodeMessenger, self._append_log_line, self._side)
 
         # 초기 OFF
         self._set_mode_slider_by_text("전원 OFF")
