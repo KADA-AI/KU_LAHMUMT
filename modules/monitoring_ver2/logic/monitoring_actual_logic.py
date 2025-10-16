@@ -28,6 +28,12 @@ def run_monitoring_procedure(
     plan_context = plan_context or {}
     plan_aircraft: Dict[int, Dict[str, Any]] = plan_context.get("aircraft") or {}
     plan_input_ids: List[int] = plan_context.get("inputMissionIDs") or []
+    plan_input_package_id = plan_context.get("inputMissionPackageID")
+    try:
+        if plan_input_package_id is not None:
+            plan_input_package_id = int(plan_input_package_id)
+    except (TypeError, ValueError):
+        plan_input_package_id = None
 
     timestamp = int(
         (
@@ -39,20 +45,26 @@ def run_monitoring_procedure(
     individual_mission_progress: List[IndividualMissionProgressStatusModel] = []
 
     def _progress_entries_for_agent(agent_state, agent_plan):
+        aircraft_id = int(getattr(agent_state, "aircraftID", 0))
         entries: List[IndividualMissionProgressStatusModel] = []
-        if agent_state.isUnmanned != 1:
+        if getattr(agent_state, "isUnmanned", 0) != 1:
             return entries
 
         unmanned_info = getattr(agent_state, "unmannedInfo", None)
         current_wp = None
         if unmanned_info and getattr(unmanned_info, "currentWaypointID", None):
             current_wp = getattr(unmanned_info.currentWaypointID, "waypointID", None)
+            try:
+                if current_wp is not None:
+                    current_wp = int(current_wp)
+            except (TypeError, ValueError):
+                pass
 
         if not agent_plan:
             progress_value = int(current_wp or 0)
             entries.append(
                 IndividualMissionProgressStatusModel(
-                    aircraftID=agent_state.aircraftID,
+                    aircraftID=aircraft_id,
                     currentIndividualMission=IndividualMissionIDModel(
                         individualMissionID=0
                     ),
@@ -67,7 +79,7 @@ def run_monitoring_procedure(
             progress_value = int(current_wp or 0)
             entries.append(
                 IndividualMissionProgressStatusModel(
-                    aircraftID=agent_state.aircraftID,
+                    aircraftID=aircraft_id,
                     currentIndividualMission=IndividualMissionIDModel(
                         individualMissionID=0
                     ),
@@ -104,7 +116,7 @@ def run_monitoring_procedure(
             progress = max(0, min(progress, 100))
             entries.append(
                 IndividualMissionProgressStatusModel(
-                    aircraftID=agent_state.aircraftID,
+                    aircraftID=aircraft_id,
                     currentIndividualMission=IndividualMissionIDModel(
                         individualMissionID=mission_id
                     ),
@@ -114,7 +126,11 @@ def run_monitoring_procedure(
         return entries
 
     for agent_state in data_401.agentStateList:
-        agent_plan = plan_aircraft.get(agent_state.aircraftID)
+        try:
+            aid = int(getattr(agent_state, "aircraftID", 0))
+        except (TypeError, ValueError):
+            aid = getattr(agent_state, "aircraftID", 0)
+        agent_plan = plan_aircraft.get(aid)
         individual_mission_progress.extend(
             _progress_entries_for_agent(agent_state, agent_plan)
         )
@@ -122,12 +138,16 @@ def run_monitoring_procedure(
     mission_plan_value = mission_plan_id
     if mission_plan_value is None:
         mission_plan_value = plan_context.get("missionPlanID")
-    mission_plan_value = int(mission_plan_value) if mission_plan_value else 12345
+    mission_plan_value = int(mission_plan_value) if mission_plan_value else 0
 
-    current_input_mission_id = plan_input_ids[0] if plan_input_ids else 23456
+    current_input_mission_id = plan_input_package_id or (plan_input_ids[0] if plan_input_ids else None)
+    try:
+        current_input_mission_id = int(current_input_mission_id) if current_input_mission_id is not None else 0
+    except (TypeError, ValueError):
+        current_input_mission_id = 0
 
     data = MissionProgressBodyModel(
-        source="MonitoringModule",
+        source="MSM",
         timestamp=timestamp,
         currentMissionPlanID=mission_plan_value,
         currentInputMissionID=current_input_mission_id,

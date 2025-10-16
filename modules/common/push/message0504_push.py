@@ -4,6 +4,8 @@
 import json
 from datetime import datetime, timezone
 
+from System import UInt32, UInt64  # type: ignore
+
 from nFusion.Model.msg_0504 import FuelWarning  # type: ignore
 from nFusion.Model.CommonType import *  # type: ignore  # noqa: F401,F403
 
@@ -26,6 +28,26 @@ def _try_set(obj, name: str, value) -> bool:
     return False
 
 
+def _as_uint32(value, default: int = 0) -> UInt32:
+    try:
+        v = int(value)
+    except Exception:
+        v = int(default)
+    if v < 0:
+        v = 0
+    return UInt32(max(0, v))
+
+
+def _as_uint64(value, default: int = 0) -> UInt64:
+    try:
+        v = int(value)
+    except Exception:
+        v = int(default)
+    if v < 0:
+        v = 0
+    return UInt64(v)
+
+
 def _normalize_body(body_dict: dict | None) -> dict:
     data = dict(body_dict or {})
 
@@ -34,6 +56,8 @@ def _normalize_body(body_dict: dict | None) -> dict:
         timestamp = int(ts)
     except Exception:
         timestamp = _now_ms()
+    if timestamp < 0:
+        timestamp = 0
 
     source_val = data.get("source") or data.get("Source") or data.get("requestModuleName") or "MSM"
     source = str(source_val).strip() or "MSM"
@@ -49,7 +73,9 @@ def _normalize_body(body_dict: dict | None) -> dict:
         fuel_level = int(data.get("fuelLevel", data.get("FuelLevel", 1)))
     except Exception:
         fuel_level = 1
-    if fuel_level not in (1, 2):
+    if fuel_level < 0:
+        fuel_level = 0
+    if fuel_level not in (0, 1, 2):
         fuel_level = 1
 
     return {
@@ -62,12 +88,12 @@ def _normalize_body(body_dict: dict | None) -> dict:
 
 def _dict_to_obj(body_dict: dict) -> FuelWarning:
     obj = FuelWarning()
-    _try_set(obj, "timestamp", int(body_dict.get("timestamp", _now_ms())))
+    _try_set(obj, "timestamp", _as_uint64(body_dict.get("timestamp", _now_ms())))
     src = body_dict.get("source") or body_dict.get("Source") or "MSM"
     if src:
         _try_set(obj, "source", str(src))
-    _try_set(obj, "aircraftID", int(body_dict.get("aircraftID", 0)))
-    _try_set(obj, "fuelLevel", int(body_dict.get("fuelLevel", 1)))
+    _try_set(obj, "aircraftID", _as_uint32(body_dict.get("aircraftID", 0)))
+    _try_set(obj, "fuelLevel", _as_uint32(body_dict.get("fuelLevel", 1)))
     return obj
 
 

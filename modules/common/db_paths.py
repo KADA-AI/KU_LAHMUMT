@@ -12,7 +12,7 @@ from typing import Any, Dict, Optional
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 LEGACY_DB_ROOT = PROJECT_ROOT / "database"
 SCENARIO_PREFIX = "Scenario_"
-AGENCY_CODE_DEFAULT = os.environ.get("KU_AGENCY_CODE", "SBC2")
+AGENCY_CODE_DEFAULT = os.environ.get("KU_AGENCY_CODE", "SBC3")
 ENV_DB_ROOT = "KU_MISSION_DB_ROOT"
 ENV_SCENARIO_ROOT = "KU_SCENARIO_ROOT"
 ENV_SCENARIO_BASE_ROOT = "KU_SCENARIO_BASE_ROOT"
@@ -216,14 +216,12 @@ def activate_scenario(timestamp_ms: int, agency: Optional[str] = None, *, copy_l
     base_root.mkdir(parents=True, exist_ok=True)
     scenario_dir = base_root / f"{SCENARIO_PREFIX}{iso}"
     agency_dir = scenario_dir / agency_code
-    db_dir = agency_dir / "database"
+    db_dir = agency_dir
     with _lock:
+        agency_dir.mkdir(parents=True, exist_ok=True)
         copy_from_legacy = copy_legacy and not base_override
-        if copy_from_legacy and not db_dir.exists():
-            agency_dir.mkdir(parents=True, exist_ok=True)
+        if copy_from_legacy and not _dir_has_files(db_dir):
             _copy_legacy_into(db_dir)
-        else:
-            db_dir.mkdir(parents=True, exist_ok=True)
         _ensure_db_scaffold(db_dir)
         info = {
             "timestamp_ms": int(timestamp_ms),

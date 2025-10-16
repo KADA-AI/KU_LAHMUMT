@@ -284,6 +284,7 @@ class DashboardOrchestrator(QObject):
         self._latest_db_payloads = {}
         self._push_suppression = {}
         self._standby_pending = False
+        self._scenario_activated_once = False
 
         # 모드 루프 방지용 상태
         self._mode_text = "전원 OFF"
@@ -948,6 +949,10 @@ class DashboardOrchestrator(QObject):
     def _maybe_activate_scenario(self, timestamp: int | None) -> None:
         if self._last_system_mode_code == 1:
             return
+        if self._scenario_activated_once:
+            reuse_root = db_paths.get_active_db_root_str()
+            self._safe_log(f"[OPS] Standby re-entry - reuse existing DB @ {reuse_root}")
+            return
         if timestamp is None:
             self._safe_log("[OPS] Standby 모드 timestamp 미확인 → 기존 DB 유지")
             return
@@ -968,6 +973,7 @@ class DashboardOrchestrator(QObject):
         db_root_str = db_root or db_paths.get_active_db_root_str()
         iso = info.get("iso") or timestamp
         self._safe_log(f"[OPS] Standby 시나리오 활성화 → {iso} @ {db_root_str}")
+        self._scenario_activated_once = True
 
     # --------- 모드/CTRL/런처/로깅 유틸 ---------
     def _log_assignment(self, text: str):
