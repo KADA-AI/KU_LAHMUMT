@@ -111,7 +111,7 @@ from Tabs.decision_support_tab import DecisionSupportTab
 
 # ───────── 모듈별 모니터링 포트(의사결정) ─────────
 def _mon_port() -> int:
-    """의사결정 GUI → 대시보드(run.py) 모니터링 전송 포트"""
+    """Decision Support GUI (MOB - Mission Option Builder) → 대시보드(run.py) 모니터링 전송 포트"""
     try:
         return int(os.getenv("KU_MON_DECISION_PORT", "46983"))
     except Exception:
@@ -184,7 +184,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.setWindowTitle("의사결정지원 GUI")
+        self.setWindowTitle('의사결정(MOB)')
         self.resize(1100, 700)
 
         # 전원/버스/디듀프 상태
@@ -759,4 +759,6 @@ def _main():
 
 if __name__ == "__main__":
     sys.exit(_main())
+
+
 

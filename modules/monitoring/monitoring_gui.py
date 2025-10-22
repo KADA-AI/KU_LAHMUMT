@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*- 
+﻿# -*- coding: utf-8 -*- 
 # monitoring_gui.py – 임무 모니터링·판단 전용 GUI
 from __future__ import annotations
 
@@ -131,7 +131,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.setWindowTitle("임무 모니터링·판단 GUI")
+        self.setWindowTitle('모니터링(MSM)')
         self.resize(1100, 700)
 
         # Power/State
@@ -1066,3 +1066,5 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     win = MainWindow(); win.show()
     sys.exit(app.exec_())
+
+

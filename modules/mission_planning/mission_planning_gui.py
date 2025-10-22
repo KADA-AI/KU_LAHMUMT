@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 # mission_planning_gui.py – 임무 할당·계획수립 전용 GUI (S110 플로우 대응)
 from __future__ import annotations
 
@@ -135,7 +135,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.setWindowTitle("임무 할당·계획수립 GUI")
+        self.setWindowTitle('임무계획(MMR)')
         self.resize(1100, 700)
 
         # 파워/상태
@@ -1309,3 +1309,5 @@ if __name__ == "__main__":
     win = MainWindow()
     win.show()
     sys.exit(app.exec_())
+
+

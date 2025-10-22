@@ -230,7 +230,7 @@ def _index_refpoints(ref0203: dict | None):
 
 def _eta_ms_llh(c1: dict, c2: dict, speed_mps: float) -> int:
     """
-    간단한 구면 근사로 거리→ETA(ms) 계산. speed_mps<=0이면 0.
+    간단한 구면 근사로 거리→ETA(s) 계산. speed_mps<=0이면 0.
     c* = {"latitude": float, "longitude": float}
     """
     try:
@@ -243,11 +243,12 @@ def _eta_ms_llh(c1: dict, c2: dict, speed_mps: float) -> int:
     dy = (lat2 - lat1) * DEG_M
     dist_m = math.hypot(dx, dy)
     if speed_mps and speed_mps > 0.0:
-        return int(round(dist_m / speed_mps * 1000.0))
+        return int(round(dist_m / speed_mps))
     return 0
 
 
 def _annotate_eta_ms_inplace(waypoints: list[OrderedDict], default_speed_mps: float) -> None:
+    # NOTE: historical function name kept for compatibility; ETA is emitted in seconds.
     if not waypoints:
         return
 
@@ -255,16 +256,17 @@ def _annotate_eta_ms_inplace(waypoints: list[OrderedDict], default_speed_mps: fl
     if not ordered:
         return
 
+    # ETA is stored as seconds-per-leg for downstream consumers (spec unit: seconds)
     ordered[0]["eta"] = 0
     acc_s = 0.0
-    prev_cum_ms = 0
+    prev_cum_s = 0
     for i in range(1, len(ordered)):
         dt_s = _time_from_prev_to_curr_s(ordered[i - 1], ordered[i], default_speed_mps=default_speed_mps)
         acc_s += dt_s
-        cum_ms = int(round(acc_s * 1000.0))
-        delta_ms = max(0, cum_ms - prev_cum_ms)
-        ordered[i]["eta"] = delta_ms
-        prev_cum_ms = cum_ms
+        cum_s = int(round(acc_s))
+        delta_s = max(0, cum_s - prev_cum_s)
+        ordered[i]["eta"] = delta_s
+        prev_cum_s = cum_s
 
 def build_flight_plans(
     missions: list[dict],

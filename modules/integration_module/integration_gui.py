@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 # modules/integration_module/integration_gui.py
 # Integration GUI – 연동 모듈 전용 GUI
 from __future__ import annotations
@@ -940,7 +940,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.setWindowTitle("연동 모듈 GUI")
+        self.setWindowTitle('통합모듈(INT)')
         self.resize(1380, 780)
 
         self._power_on = False
@@ -1175,3 +1175,5 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     win = MainWindow(); win.show()
     sys.exit(app.exec_())
+
+

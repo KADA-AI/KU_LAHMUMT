@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 # info.py – 정보관리(INF) 전용 GUI
 from __future__ import annotations
 
@@ -131,7 +131,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.setWindowTitle("정보관리 GUI")
+        self.setWindowTitle('정보관리(INF)')
         self.resize(1100, 700)
 
         # 파워/상태
@@ -575,3 +575,5 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     win = MainWindow(); win.show()
     sys.exit(app.exec_())
+
+

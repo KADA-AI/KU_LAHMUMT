@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 # --- 데이터 모델 import ---
 from data.message_models import (
@@ -53,6 +53,13 @@ class MonitoringLogic:
         self.manager = manager
         self._current_mission_plan_id: Optional[int] = None
         self._plan_context: Optional[Dict[str, Any]] = None
+        self._input_mission_tracker: Dict[
+            int, Dict[str, Set[Tuple[int, int, Optional[int]]]]
+        ] = {}
+        self._mission_to_input: Dict[Tuple[int, int, Optional[int]], int] = {}
+        self._completed_input_ids: Set[int] = set()
+        self._collab_completion_sent: bool = False
+        self._monitoring_suspended: bool = False
 
     def _process_mission_plan_update(self) -> None:
         data_0903 = None
@@ -109,6 +116,7 @@ class MonitoringLogic:
             return
         self._plan_context = context
         self._current_mission_plan_id = mission_plan_id
+        self._initialize_input_tracker(context)
         try:
             self.manager.logic_store.set_data("current_mission_plan", context)
         except Exception:
@@ -245,6 +253,45 @@ class MonitoringLogic:
             "inputMissionIDs": sorted(input_ids),
         }
 
+    def _initialize_input_tracker(self, context: Dict[str, Any]) -> None:
+        tracker: Dict[int, Dict[str, Set[Tuple[int, int, Optional[int]]]]] = {}
+        reverse_map: Dict[Tuple[int, int, Optional[int]], int] = {}
+        for aircraft_id, payload in (context.get("aircraft") or {}).items():
+            missions = payload.get("missions") or []
+            try:
+                aircraft_id_int = int(aircraft_id)
+            except (TypeError, ValueError):
+                continue
+            for mission in missions:
+                input_id = mission.get("inputMissionID")
+                if input_id is None:
+                    continue
+                try:
+                    input_id_int = int(input_id)
+                except (TypeError, ValueError):
+                    continue
+                try:
+                    mission_id = int(mission.get("individualMissionID") or 0)
+                except (TypeError, ValueError):
+                    mission_id = 0
+                path_id = mission.get("pathID")
+                if path_id is not None:
+                    try:
+                        path_id = int(path_id)
+                    except (TypeError, ValueError):
+                        path_id = None
+                key = (aircraft_id_int, mission_id, path_id)
+                entry = tracker.setdefault(
+                    input_id_int, {"total": set(), "completed": set()}
+                )
+                entry["total"].add(key)
+                reverse_map[key] = input_id_int
+        self._input_mission_tracker = tracker
+        self._mission_to_input = reverse_map
+        self._completed_input_ids = set()
+        self._collab_completion_sent = False
+        self._monitoring_suspended = False
+
     def execute(self, mode_override=None):
         """시스템 모드를 확인하고, 'monitoring'일 경우에만 로직을 실행합니다."""
         system_mode = (
@@ -265,7 +312,14 @@ class MonitoringLogic:
                     "MON_LOGIC", "INFO", "401 데이터 확인. 모니터링 절차 실행."
                 )
                 # 모니터링 절차 실행하여 0501 메시지 본문 생성
-                body_0501 = run_monitoring_procedure(data_401, plan_context, current_plan_id)
+                body_0501, mission_status = run_monitoring_procedure(
+                    data_401, plan_context, current_plan_id
+                )
+
+                self._update_input_mission_progress(mission_status)
+
+                if self._monitoring_suspended:
+                    body_0501 = None
 
                 # 연료 경고 로직
                 feul_data = []
@@ -368,6 +422,106 @@ class MonitoringLogic:
                 self.manager._log(
                     "MON_LOGIC", "INFO", "401 데이터가 없어 모니터링을 건너뜁니다."
                 )
+
+    def _update_input_mission_progress(self, mission_status: List[Dict[str, Any]]) -> None:
+        if not mission_status or not self._input_mission_tracker:
+            return
+        changed = False
+        for entry in mission_status:
+            try:
+                aircraft_id = int(entry.get("aircraftID", 0))
+                mission_id = int(entry.get("individualMissionID", 0))
+            except (TypeError, ValueError):
+                continue
+            path_id = entry.get("pathID")
+            if path_id is not None:
+                try:
+                    path_id = int(path_id)
+                except (TypeError, ValueError):
+                    path_id = None
+            key = (aircraft_id, mission_id, path_id)
+            input_id = entry.get("inputMissionID")
+            if input_id is None:
+                input_id = self._mission_to_input.get(key)
+            if input_id is None:
+                continue
+            try:
+                input_id = int(input_id)
+            except (TypeError, ValueError):
+                continue
+            tracker = self._input_mission_tracker.get(input_id)
+            if not tracker or key not in tracker.get("total", set()):
+                continue
+            try:
+                progress = int(entry.get("progress", 0))
+            except (TypeError, ValueError):
+                progress = 0
+            if progress >= 100 and key not in tracker["completed"]:
+                tracker["completed"].add(key)
+                changed = True
+        if not changed:
+            return
+        for input_id, data in self._input_mission_tracker.items():
+            total = data.get("total") or set()
+            if not total:
+                continue
+            completed = data.get("completed") or set()
+            if total <= completed:
+                self._completed_input_ids.add(input_id)
+        if self._completed_input_ids and all(
+            (info.get("total") or set()) <= (info.get("completed") or set())
+            for info in self._input_mission_tracker.values()
+        ):
+            self._handle_all_input_missions_completed()
+
+    def _handle_all_input_missions_completed(self) -> None:
+        if self._collab_completion_sent:
+            return
+        self._collab_completion_sent = True
+        self._monitoring_suspended = True
+        timestamp = int(
+            (
+                datetime.now(timezone.utc) - datetime(2000, 1, 1, tzinfo=timezone.utc)
+            ).total_seconds()
+            * 1000
+        )
+        body_0503 = {
+            "timestamp": timestamp,
+            "source": "MSM",
+            "systemRecommend": 1,
+        }
+        try:
+            push_message("0503", self.manager.node_messenger, body_dict=body_0503)
+            self.manager._log(
+                "MON_LOGIC",
+                "INFO",
+                "0503 협업기저임무 완료 알림을 발신했습니다.",
+            )
+        except Exception as exc:
+            self.manager._log(
+                "MON_LOGIC",
+                "WARN",
+                f"0503 메시지 발신 실패: {exc}",
+            )
+            return
+        try:
+            self.manager.push_store.add_data("0503", body_0503)
+        except Exception:
+            pass
+        try:
+            self.manager.logic_store.set_data("0503_data", body_0503)
+        except Exception:
+            pass
+        try:
+            udp_reporter.notify_tx("0503")
+        except Exception:
+            pass
+        _inform_info_module("0503", body_0503)
+        if self.manager.gui_update_callback:
+            try:
+                self.manager.gui_update_callback("logic", "0503", body_0503)
+            except Exception:
+                pass
 
     def generate_body_for(self, msg_id: str) -> PushBodyType:
         """메시지 ID에 따라 데이터 클래스 인스턴스를 생성하여 반환합니다."""

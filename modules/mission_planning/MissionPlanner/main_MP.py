@@ -381,7 +381,7 @@ class MainGUI(QWidget):
 
                 # 2-A. WP 마커
                 popup = folium.Popup(_html_kv(f"WP {wp_id}", {
-                            "ETA(ms)": w["eta"],
+                            "ETA(s)": w["eta"],
                             "ECF":     w["ecf"],
                             "speed":   w["speed"],
                         }), max_width=220)
@@ -433,7 +433,7 @@ class MainGUI(QWidget):
             for w in fp["lahWaypointList"]:
                 wp_id = w["waypointID"]
                 popup = folium.Popup(_html_kv(f"WP {wp_id}", {
-                            "ETA(ms)": w["eta"],
+                            "ETA(s)": w["eta"],
                             "ECF":     w["ecf"],
                             "speed":   w["speed"],
                         }), max_width=220)

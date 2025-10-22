@@ -1,6 +1,6 @@
 # logic/monitoring_actual_logic.py
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from data.message_models import (
     AgentStatusModel,
@@ -17,13 +17,14 @@ def run_monitoring_procedure(
     data_401: AgentStatusModel,
     plan_context: Optional[Dict[str, Any]] = None,
     mission_plan_id: Optional[int] = None,
-):
+    
+) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
     """
     401 메시지를 기반으로 임무 진행 상황을 계산하고,
     0501 MissionProgress 메시지 본문을 생성한다.
     """
     if not data_401 or not data_401.agentStateList:
-        return None
+        return None, []
 
     plan_context = plan_context or {}
     plan_aircraft: Dict[int, Dict[str, Any]] = plan_context.get("aircraft") or {}
@@ -43,12 +44,14 @@ def run_monitoring_procedure(
     )
 
     individual_mission_progress: List[IndividualMissionProgressStatusModel] = []
+    mission_progress_snapshots: List[Dict[str, Any]] = []
 
     def _progress_entries_for_agent(agent_state, agent_plan):
         aircraft_id = int(getattr(agent_state, "aircraftID", 0))
         entries: List[IndividualMissionProgressStatusModel] = []
+        mission_progress: List[Dict[str, Any]] = []
         if getattr(agent_state, "isUnmanned", 0) != 1:
-            return entries
+            return entries, mission_progress
 
         unmanned_info = getattr(agent_state, "unmannedInfo", None)
         current_wp = None
@@ -71,7 +74,16 @@ def run_monitoring_procedure(
                     currentIndividualMissionProgress=progress_value,
                 )
             )
-            return entries
+            mission_progress.append(
+                {
+                    "aircraftID": aircraft_id,
+                    "individualMissionID": 0,
+                    "pathID": None,
+                    "inputMissionID": None,
+                    "progress": progress_value,
+                }
+            )
+            return entries, mission_progress
 
         missions: List[Dict[str, Any]] = agent_plan.get("missions") or []
         waypoint_map: Dict[int, Any] = agent_plan.get("waypoint_map") or {}
@@ -86,7 +98,16 @@ def run_monitoring_procedure(
                     currentIndividualMissionProgress=progress_value,
                 )
             )
-            return entries
+            mission_progress.append(
+                {
+                    "aircraftID": aircraft_id,
+                    "individualMissionID": 0,
+                    "pathID": None,
+                    "inputMissionID": None,
+                    "progress": progress_value,
+                }
+            )
+            return entries, mission_progress
 
         current_idx = None
         current_pos = None
@@ -95,6 +116,7 @@ def run_monitoring_procedure(
         elif current_wp in waypoint_map:
             current_idx, current_pos = waypoint_map[current_wp]
 
+        progress_list: List[tuple[int, int]] = []
         for idx, mission in enumerate(missions):
             mission_id = int(mission.get("individualMissionID") or 0)
             total_waypoints = len(mission.get("waypoints") or []) or 1
@@ -114,16 +136,36 @@ def run_monitoring_procedure(
                 progress = 0
 
             progress = max(0, min(progress, 100))
-            entries.append(
-                IndividualMissionProgressStatusModel(
-                    aircraftID=aircraft_id,
-                    currentIndividualMission=IndividualMissionIDModel(
-                        individualMissionID=mission_id
-                    ),
-                    currentIndividualMissionProgress=progress,
-                )
+            progress_list.append((mission_id, progress))
+            mission_progress.append(
+                {
+                    "aircraftID": aircraft_id,
+                    "individualMissionID": mission_id,
+                    "pathID": mission.get("pathID"),
+                    "inputMissionID": mission.get("inputMissionID"),
+                    "progress": progress,
+                }
             )
-        return entries
+
+        chosen_id = 0
+        chosen_progress = 0
+        if progress_list:
+            chosen_id, chosen_progress = progress_list[-1]
+            for mid, prog in progress_list:
+                if prog < 100:
+                    chosen_id, chosen_progress = mid, prog
+                    break
+
+        entries.append(
+            IndividualMissionProgressStatusModel(
+                aircraftID=aircraft_id,
+                currentIndividualMission=IndividualMissionIDModel(
+                    individualMissionID=chosen_id
+                ),
+                currentIndividualMissionProgress=chosen_progress,
+            )
+        )
+        return entries, mission_progress
 
     for agent_state in data_401.agentStateList:
         try:
@@ -131,9 +173,11 @@ def run_monitoring_procedure(
         except (TypeError, ValueError):
             aid = getattr(agent_state, "aircraftID", 0)
         agent_plan = plan_aircraft.get(aid)
-        individual_mission_progress.extend(
-            _progress_entries_for_agent(agent_state, agent_plan)
+        entries, mission_snapshot = _progress_entries_for_agent(
+            agent_state, agent_plan
         )
+        individual_mission_progress.extend(entries)
+        mission_progress_snapshots.extend(mission_snapshot)
 
     mission_plan_value = mission_plan_id
     if mission_plan_value is None:
@@ -155,4 +199,4 @@ def run_monitoring_procedure(
     )
 
     body_0501 = asdict(data)
-    return body_0501
+    return body_0501, mission_progress_snapshots
