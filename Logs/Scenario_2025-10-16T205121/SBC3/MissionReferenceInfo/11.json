@@ -1,0 +1,106 @@
+{
+  "timestamp": 813917551004,
+  "missionReferencePackageID": 11,
+  "inputTimestamp": 813917551004,
+  "takeOverInfoList": [
+    {
+      "aircraftID": 4,
+      "coordinate": {
+        "latitude": 37.97115,
+        "longitude": 127.52642,
+        "altitude": 1000
+      }
+    },
+    {
+      "aircraftID": 5,
+      "coordinate": {
+        "latitude": 37.947327,
+        "longitude": 127.531456,
+        "altitude": 1000
+      }
+    },
+    {
+      "aircraftID": 6,
+      "coordinate": {
+        "latitude": 37.953465,
+        "longitude": 127.5413,
+        "altitude": 1000
+      }
+    }
+  ],
+  "handOverInfoList": [
+    {
+      "aircraftID": 4,
+      "coordinate": {
+        "latitude": 37.98991,
+        "longitude": 127.52024,
+        "altitude": 1000
+      }
+    },
+    {
+      "aircraftID": 5,
+      "coordinate": {
+        "latitude": 37.991714,
+        "longitude": 127.52894,
+        "altitude": 1000
+      }
+    },
+    {
+      "aircraftID": 6,
+      "coordinate": {
+        "latitude": 37.994602,
+        "longitude": 127.5413,
+        "altitude": 1000
+      }
+    }
+  ],
+  "rtbCoordinateList": [
+    {
+      "latitude": 38.131233,
+      "longitude": 127.29925,
+      "altitude": 600
+    }
+  ],
+  "flightAreaList": [
+    {
+      "flightAreaID": 1,
+      "areaLatLonList": [
+        {
+          "latitude": 38.131233,
+          "longitude": 127.29925
+        }
+      ],
+      "altitudeLimits": {
+        "lowerLimit": 200,
+        "upperLimit": 2000
+      }
+    }
+  ],
+  "prohibitedAreaList": [
+    {
+      "prohibitedAreaID": 1,
+      "areaLatLonList": [
+        {
+          "latitude": 38.25999,
+          "longitude": 127.66993
+        },
+        {
+          "latitude": 38.257835,
+          "longitude": 127.124275
+        },
+        {
+          "latitude": 38.158558,
+          "longitude": 127.12565
+        },
+        {
+          "latitude": 38.162155,
+          "longitude": 127.664894
+        }
+      ],
+      "altitudeLimits": {
+        "lowerLimit": 200,
+        "upperLimit": 1500
+      }
+    }
+  ]
+}
