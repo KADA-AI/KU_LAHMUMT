@@ -4,6 +4,13 @@
 from dll_files.nFusionImports import *            # IFusionReceive, IsLocal, IsSingletone
 from nFusion.Model.msg_0101 import *            # C# 모델
 from nFusion.Model.CommonType import *             # 공통 타입
+try:
+    SystemOperationMode
+except NameError:
+    import importlib
+
+    _msg0101 = importlib.import_module("nFusion.Model.msg_0101")
+    SystemOperationMode = getattr(_msg0101, "SystemOperationMode", object)
 from .database import received_db
 from receive_center import notify
 import json, traceback, sys, os, importlib

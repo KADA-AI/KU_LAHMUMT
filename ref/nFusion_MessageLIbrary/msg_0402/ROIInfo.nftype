@@ -1,3 +1,14 @@
-uint aircraftID
+uint aircraftID:
+ - 길이 : 4
+ - min : 0
+ - Max : 2^8-1
+ - unit : N/A
+ - 비고 : 줌인할 무인기 ID
+
 CommonType.Coordinate coordinate
-float fov
+float fov:
+ - 길이 : 4
+ - min : 0
+ - Max : 180.0
+ - unit : deg
+ - 비고 : 화각 (줌)

@@ -1,1 +1,6 @@
-uint time
+ulong time:
+ - 길이 : 8
+ - min : 0
+ - Max : 2^64-1
+ - unit : sec
+ - 비고 : 호버링 시간

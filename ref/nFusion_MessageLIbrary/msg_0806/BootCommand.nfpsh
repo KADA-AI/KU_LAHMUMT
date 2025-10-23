@@ -1,5 +1,17 @@
 # MissionID 0806 SW종료 명령
 
-ulong timestamp
-string source
-uint command
+ulong timestamp:
+ - 길이 : 8
+ - min : 0
+ - Max : 2^64-1
+ - unit : ms
+ - 비고 : 2000년 1월 1일부터 ms
+
+string source:
+ - 비고 : 메시지를 전송하는 모듈 이름
+
+uint command:
+ - 길이 : 4
+ - unit : N/A
+ - 비고 : 내부 SW 재부팅 및 종료 명령
+ - enum : 1=시스템 종료, 2=시스템 재부팅

@@ -38,8 +38,6 @@ def wire_dashboard_buttons(orch):
     # 상단/공용 버튼 → 상태 코드
     mapping = [
         (("sw 실행", "전체 실행", "all run", "launch all", "run all", "전체 구동"), "S101"),
-        (("sw 자체점검", "sw 상태확인", "자체점검", "self check", "self-check", "selfcheck"), "S102"),
-        (("대기모드", "대기", "standby"), "S200"),
         (("초기임무계획모드", "초기임무계획", "initial", "init plan"), "S110"),
         (("임무수행모드", "임무 수행", "운용모드", "mission mode", "operation mode"), "S300"),
     ]

@@ -1,3 +1,4 @@
+# 파일: /mnt/data/operation_flow_panel.py
 # -*- coding: utf-8 -*-
 from pathlib import Path
 
@@ -10,9 +11,11 @@ from PyQt5.QtWidgets import (
     QSizePolicy,
     QVBoxLayout,
     QWidget,
+    QGraphicsView,
+    QGraphicsScene,
 )
-from PyQt5.QtGui import QKeySequence, QPixmap
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtGui import QKeySequence, QPixmap, QPainter
+from PyQt5.QtCore import Qt, pyqtSignal, QRectF
 
 from .cards import Card
 
@@ -32,6 +35,64 @@ class OperationButton(QPushButton):
             event.accept()
             return
         super().mousePressEvent(event)
+
+
+# ─────────────────────────────────────────────
+# 확대/축소 전용 GraphicsView (초기 1:1 표시)
+# ─────────────────────────────────────────────
+class _ZoomableGraphicsView(QGraphicsView):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
+        self.setDragMode(QGraphicsView.ScrollHandDrag)  # 마우스로 패닝
+        self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
+        self.setResizeAnchor(QGraphicsView.AnchorViewCenter)
+
+        self._scene = QGraphicsScene(self)
+        self.setScene(self._scene)
+        self._pixmap_item = self._scene.addPixmap(QPixmap())
+
+        self._fit_scale = 1.0
+        self._scale = 1.0
+        self._min_scale = 0.1
+        self._max_scale = 12.0
+
+    def set_image(self, pm: QPixmap):
+        self._pixmap_item.setPixmap(pm)
+        self._scene.setSceneRect(QRectF(pm.rect()))
+        # ★ 초기 배율: 1.0 (원본 크기 그대로)
+        self.resetTransform()
+        self._fit_scale = 1.0
+        self._scale = 1.0
+
+    def _apply_scale(self):
+        self.resetTransform()
+        s = max(self._min_scale, min(self._max_scale, self._scale))
+        self.scale(s, s)
+
+    # 단축키용
+    def zoom_in(self):
+        self._scale *= 1.2
+        self._apply_scale()
+
+    def zoom_out(self):
+        self._scale /= 1.2
+        self._apply_scale()
+
+    def reset_zoom(self):
+        self._scale = self._fit_scale
+        self._apply_scale()
+
+    # Ctrl + 휠로만 확대/축소
+    def wheelEvent(self, event):
+        if event.modifiers() & Qt.ControlModifier:
+            delta = event.angleDelta().y()
+            factor = 1.2 if delta > 0 else (1 / 1.2)
+            self._scale *= factor
+            self._apply_scale()
+            event.accept()
+            return
+        super().wheelEvent(event)
 
 
 class OperationFlowPanel(Card):
@@ -75,7 +136,7 @@ class OperationFlowPanel(Card):
             ("S251", "자동 줌인 중단"),
         ]
 
-        columns = 9
+        columns = 5
         buttons = []
         for idx, (code, label) in enumerate(button_specs):
             row = idx // columns
@@ -114,31 +175,42 @@ class OperationFlowPanel(Card):
         vbox.setContentsMargins(12, 12, 12, 12)
         vbox.setSpacing(8)
 
-        label = QLabel(dialog)
-        label.setAlignment(Qt.AlignCenter)
-        vbox.addWidget(label)
+        view = _ZoomableGraphicsView(dialog)
+        vbox.addWidget(view, 1)
 
-        info_label = QLabel("ESC 키를 누르면 창이 닫힙니다.", dialog)
+        info_label = QLabel("ESC 닫기 · Ctrl+휠 확대/축소 · Ctrl+=/Ctrl+- · Ctrl+0(리셋)", dialog)
         info_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         info_label.setObjectName("OperationImageHint")
         vbox.addWidget(info_label)
 
         QShortcut(QKeySequence(Qt.Key_Escape), dialog, activated=dialog.close)
+        QShortcut(QKeySequence.ZoomIn, dialog, activated=view.zoom_in)    # Ctrl+=
+        QShortcut(QKeySequence.ZoomOut, dialog, activated=view.zoom_out)  # Ctrl+-
+        QShortcut(QKeySequence("Ctrl+0"), dialog, activated=view.reset_zoom)
 
-        pixmap = QPixmap(str(image_path)) if image_path else QPixmap()
-        if not pixmap.isNull():
-            scaled = self._scaled_pixmap(pixmap)
-            label.setPixmap(scaled)
-            dialog.resize(scaled.width() + 40, scaled.height() + 60)
+        pm = QPixmap(str(image_path)) if image_path else QPixmap()
+        if not pm.isNull():
+            view.set_image(pm)  # ★ 초기 1:1
+            # ★ 창 크기 = 이미지 크기 + 여백 (스크린 가용 영역 90% 이내로만 제한)
+            screen_geo = dialog.screen().availableGeometry()
+            pad_w, pad_h = 48, 120
+            want_w = pm.width() + pad_w
+            want_h = pm.height() + pad_h
+            max_w = int(screen_geo.width() * 0.9)
+            max_h = int(screen_geo.height() * 0.9)
+            dialog.resize(max(360, min(want_w, max_w)), max(240, min(want_h, max_h)))
         else:
-            label.setText("이미지를 찾을 수 없습니다.")
-            label.setStyleSheet("color:#b22;")
+            placeholder = QLabel("이미지를 찾을 수 없습니다.", dialog)
+            placeholder.setStyleSheet("color:#b22;")
+            placeholder.setAlignment(Qt.AlignCenter)
+            vbox.insertWidget(0, placeholder, 1)
             dialog.resize(360, 180)
 
         self._track_dialog(dialog)
         dialog.show()
 
     def _scaled_pixmap(self, pixmap: QPixmap) -> QPixmap:
+        # (호환 유지용 — 현재는 GraphicsView 사용)
         max_width = 1180
         max_height = 820
         if pixmap.width() <= max_width and pixmap.height() <= max_height:

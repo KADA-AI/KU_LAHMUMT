@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 # modules/integration_module/integration_gui.py
 # Integration GUI – 연동 모듈 전용 GUI
 from __future__ import annotations

@@ -1,18 +1,40 @@
 ﻿# /run.py
 # -*- coding: utf-8 -*-
 # KU_LAHMUMT 대시보드 실행 & 모듈 모니터링/관리 전용
+# ─────────────────────────────────────────────────────────────
+# [모듈별 모니터링(수신) 포트 기본값 / 환경변수]
+# - mission_planning (modules/mission_planning/mission_planning_gui.py) → 46981  (KU_MON_ASSIGNMENT_PORT)
+# - monitoring       (modules/monitoring/monitoring_gui.py)             → 46982  (KU_MON_MONITORING_PORT)
+# - decision         (modules/decision_support/decision_support_gui.py) → 46983  (KU_MON_DECISION_PORT)
+# - info             (modules/info_manage/info_manage.py)               → 46984  (KU_MON_INFO_PORT)
+#
+# ※ CTRL 브로드캐스트(송신)는 45981/45982/45983/45984 유지.
+#   본 파일의 46981~46984는 ‘모듈→대시보드(본 파일)’ 모니터링 수신용입니다.
 
 from __future__ import annotations
 import os, sys, subprocess, threading
 os.environ["KU_ROLE"] = "decision"
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple
 
-from PyQt5.QtCore import qInstallMessageHandler, QtMsgType, QObject, pyqtSignal, QTimer
+from PyQt5.QtCore import qInstallMessageHandler, QtMsgType, QObject, pyqtSignal, QTimer, QMetaObject, Qt, Q_ARG, pyqtSlot
 from PyQt5.QtWidgets import QApplication, QTextEdit, QPlainTextEdit
 
 from modules.common.states.manager import StateManager
+from modules.common import db_paths
 from modules.common.button_wiring import wire_dashboard_buttons
+import collections
+
+
+def _debug_log(message: str) -> None:
+    
+    try:
+        ts = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')
+        log_path = PROJECT_ROOT / 'run_debug.log'
+        with log_path.open('a', encoding='utf-8') as fh:
+            fh.write(f"[{ts}] {message}\n")
+    except Exception:
+        pass
 
 # ─────────────────────────────────────────────────────────────
 # Qt 경고 필터 (선택)
@@ -42,6 +64,35 @@ def _bootstrap_paths():
     return root, common_dir, ds_dir
 
 PROJECT_ROOT, COMMON_DIR, DS_DIR = _bootstrap_paths()
+
+
+db_paths.bootstrap_db_root()
+
+# ---------------------------------------------------------------------------
+# Unhandled exception logging (writes to run_error.log)
+# ---------------------------------------------------------------------------
+import datetime
+
+def _install_exception_logger():
+    def _hook(exc_type, exc, tb):
+        try:
+            ts = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')
+            log_path = PROJECT_ROOT / 'run_error.log'
+            with log_path.open('a', encoding='utf-8') as fh:
+                fh.write(f"[{ts}] {exc_type.__name__}: {exc}\n")
+                import traceback
+                fh.write(''.join(traceback.format_exception(exc_type, exc, tb)))
+                fh.write('\n')
+        except Exception:
+            pass
+        finally:
+            try:
+                sys.__excepthook__(exc_type, exc, tb)
+            except Exception:
+                pass
+    sys.excepthook = _hook
+
+_install_exception_logger()
 
 # ─────────────────────────────────────────────────────────────
 # 스타일(QSS) 로드
@@ -207,16 +258,23 @@ def _load_tab_defs() -> Dict[str, Dict[str, List[Tuple[str, str]]]]:
         result[key] = {"tx": tx_defs, "rx": rx_defs}
     return result
 
+
+_env_safe = os.getenv("KU_SAFE_STATES_WHEN_APPS_RUNNING", "")
+SAFE_STATES_WHEN_APPS_RUNNING = set([s.strip() for s in _env_safe.split(",") if s.strip()]) or {"S110"}
+
 # ─────────────────────────────────────────────────────────────
 # 대시보드 오케스트레이터 (모니터링/관리 전용)
 class DashboardOrchestrator(QObject):
-    dashEvent = pyqtSignal(str, str)   # (kind, msg_id) → UI 펄스
-    uiLog     = pyqtSignal(str)        # 텍스트 로그 UI 스레드 기록
+    dashEvent = pyqtSignal(str, str)        # (kind, msg_id)
+    dashPulse = pyqtSignal(str, str, str)   # (role, kind, msg_id) — 이미 있으면 유지
+    uiLog     = pyqtSignal(str)             # 글로벌/폴백용 단일 문자열
+    uiLog2    = pyqtSignal(str, str)        # 역할 지정 (role, text)
 
     def __init__(self, window: MainWindow):
         super().__init__(window)
         self.win = window
         self.widgets = self._resolve_widgets(window)
+        self._apply_dashboard_button_styles()
         self.msg_map = _load_tab_defs()
         self._wire_operation_panel()
 
@@ -225,100 +283,404 @@ class DashboardOrchestrator(QObject):
         self._manage_info_proc = None
         self._latest_db_payloads = {}
         self._push_suppression = {}
-        self._last_mode_trigger = 0.0
         self._standby_pending = False
+        self._scenario_activated_once = False
+
+        # 모드 루프 방지용 상태
+        self._mode_text = "전원 OFF"
+        self._last_mode_broadcast_ms = 0.0
 
         # 안전 로거 alias
         self._log_everywhere = getattr(self, "_log_everywhere", None) or (lambda text: self._append_log_global(str(text)))
         self._safe_log = lambda text: self._log_everywhere(text) if hasattr(self, "_log_everywhere") else self._append_log_global(text)
 
+        self._fallback_log_role = os.getenv("KU_MON_FALLBACK_LOG", "decision")
         self.dashEvent.connect(self._handle_dash_event)
-        self.uiLog.connect(self._log_assignment)
+        self.dashPulse.connect(self._handle_dash_pulse)   # 이미 연결돼 있으면 유지
+        self.uiLog.connect(self._append_log_global)       # 단일 문자열 → 글로벌/폴백
+        self.uiLog2.connect(self._log_to_role)            # (role, text) → 해당 모듈
 
         self._init_rows()
         wire_dashboard_buttons(self)   # 버튼 → 상태 디스패치 연결
 
         self._start_bus_monitor()
-        self._start_dashboard_socket()
+        self._start_module_sockets()   # 4개 모듈 모니터링 포트 바인드
 
         # 시작 시 전원 OFF
         self._set_mode_text_all("전원 OFF")
         self._broadcast_ctrl({"cmd": "mode", "text": "전원 OFF"})
 
-    # ── UDP 대시보드 소켓
-    def _start_dashboard_socket(self):
-        import socket, json, time, threading
-        self._seen_evt_ts = {}
-        port = int(os.getenv("KU_DASHBOARD_PORT", "45991"))
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._module_mode = {"assignment": "전원 OFF", "monitoring": "전원 OFF", "decision": "전원 OFF", "info": "전원 OFF"}
+
+        self._hz_threshold = float(os.getenv("KU_MON_HZ_THRESH", "1.0"))  # 1Hz 이하는 비주기로 간주, 로그 생략
+        self._hz_window    = float(os.getenv("KU_MON_HZ_WIN", "5.0"))     # 이동 평균 창(초)
+        self._hz_stats: dict[str, dict] = {}
+        self._hz_lock = threading.Lock()
+
+        self._last_system_mode_code: int | None = None
+        info = db_paths.get_info()
+        self._scenario_timestamp = info.get("timestamp_ms")
         try:
-            sock.bind(("127.0.0.1", port))
-        except Exception as e:
-            sys.stderr.write(f"[WARN] dashboard UDP bind failed: {e}\n")
+            self.win.update_db_root(info.get("db_root") or db_paths.get_active_db_root_str())
+            self.win.update_scenario_root(info.get("base_root"))
+        except Exception:
+            pass
+
+    def _log_to_role(self, role: str, text: str):
+        """해당 role 모듈 로그에만 기록. 실패 시 글로벌 폴백."""
+        r = self._normalize_role(role)
+        target = self.widgets.get(r)
+        if target and hasattr(target, "append_log"):
+            try:
+                target.append_log(text)
+                return
+            except Exception:
+                pass
+        # 폴백
+        self._append_log_global(text)
+
+    def _hz_touch(self, role: str, kind: str, mid: str):
+        """
+        role-kind-mid 스트림의 이벤트 1건을 반영하여
+        - 최근 Hz(이동창 평균)
+        - 누적 Hz(시작~현재 평균)
+        를 갱신한다. 최근 Hz > threshold 일 때만 로그 출력.
+        """
+        import time
+        now = time.monotonic()
+        key = f"{self._normalize_role(role)}:{kind}:{self._norm_code(mid)}"
+
+        with self._hz_lock:
+            s = self._hz_stats.get(key)
+            if s is None:
+                s = {"count": 0, "first": now, "last": now, "dq": collections.deque(), "last_log": 0.0}
+                self._hz_stats[key] = s
+
+            s["count"] += 1
+            s["last"] = now
+            dq = s["dq"]
+            dq.append(now)
+
+            # 이동창 유지
+            cutoff = now - self._hz_window
+            while dq and dq[0] < cutoff:
+                dq.popleft()
+
+            # 최근 Hz: 창 내 간격 평균 기반 (샘플 2개 이상일 때)
+            if len(dq) >= 2:
+                recent_hz = (len(dq) - 1) / max(1e-6, dq[-1] - dq[0])
+            else:
+                recent_hz = 0.0
+
+            # 누적 Hz: 전체 구간 평균
+            span = max(1e-6, s["last"] - s["first"])
+            cum_hz = s["count"] / span
+
+            s["recent_hz"] = recent_hz
+            s["cum_hz"] = cum_hz
+
+            # 1Hz 이하는 비주기로 간주 → 로그 생략
+            if recent_hz <= self._hz_threshold:
+                return
+
+            # 과도한 로그 방지(최소 1초 간격)
+            if now - s["last_log"] >= 1.0:
+                self.uiLog2.emit(role, f"[HZ] {self._normalize_role(role)}:{kind}:{self._norm_code(mid)}  recent≈{recent_hz:.2f} Hz   cum≈{cum_hz:.2f} Hz")
+                s["last_log"] = now
+
+    def _set_mode_text_single(self, role: str, text: str):
+        role = self._normalize_role(role)
+        mod = self.widgets.get(role)
+        if not mod:
+            return
+        # 우선 set_mode_text가 있으면 사용
+        if hasattr(mod, "set_mode_text") and callable(mod.set_mode_text):
+            try:
+                mod.set_mode_text(text)
+                return
+            except Exception:
+                pass
+        # 폴백: mode_line QLabel 직접 세팅
+        try:
+            ml = getattr(mod, "mode_line", None)
+            if ml is not None and hasattr(ml, "setText"):
+                ml.setText(text)
+        except Exception:
+            pass
+
+    def _normalize_role(self, role: str) -> str:
+        r = (role or "").strip().lower()
+        if r in ("assignment", "mission", "mission_planning", "mmr"):
+            return "assignment"
+        if r in ("monitoring", "monitor", "msm"):
+            return "monitoring"
+        if r in ("decision", "mob", "decision_support", "decision-support"):
+            return "decision"
+        if r in ("info", "info_manage", "imr", "information"):
+            return "info"
+        return r or "unknown"
+
+
+    def _owner_modules_for(self, mid: str):
+        """msg_map을 뒤져 mid를 RECEIVE로 가진 탭 키 목록을 반환 (코드 4자리 정규화)"""
+        midn = self._norm_code(mid)
+        owners = []
+        for mk, defs in self.msg_map.items():
+            rx_ids = {self._norm_code(m) for m, _ in defs.get("rx", [])}  # ★ 정규화
+            if midn in rx_ids:
+                owners.append(mk)
+        return owners
+
+    def _handle_dash_pulse(self, role: str, kind: str, msg_id: str):
+        role = self._normalize_role(role)
+        mid  = self._norm_code(msg_id)
+
+        w = {
+            "assignment": self.widgets.get("assignment"),
+            "monitoring": self.widgets.get("monitoring"),
+            "decision":   self.widgets.get("decision"),
+        }.get(role)
+        if not w:
             return
 
-        def _dedup(key: str) -> bool:
+        defs = self.msg_map.get(role, {})
+
+        if kind == "tx" and hasattr(w, "bump_tx"):
+            w.bump_tx(mid)
+            self._animate(role, "out")
+            if hasattr(w, "append_log"): w.append_log(f"[{mid}] PUSH 완료")
+
+        elif kind == "rx":
+            # ★ 여기서도 RX 정의를 4자리로 맞춰서 비교
+            rx_ids = {self._norm_code(m) for m, _ in defs.get("rx", [])}
+            did = False
+            if mid in rx_ids and hasattr(w, "bump_rx"):
+                w.bump_rx(mid); did = True
+                self._animate(role, "in")
+                if hasattr(w, "append_log"): w.append_log(f"[{mid}] RX 수신")
+            if not did:
+                owners = self._owner_modules_for(mid)
+                for mk in owners:
+                    ww = {
+                        "assignment": self.widgets.get("assignment"),
+                        "monitoring": self.widgets.get("monitoring"),
+                        "decision":   self.widgets.get("decision"),
+                    }.get(mk)
+                    if ww and hasattr(ww, "bump_rx"):
+                        ww.bump_rx(mid)
+                        self._animate(mk, "in")
+                        if hasattr(ww, "append_log"): ww.append_log(f"[{mid}] RX 수신")
+
+    def _init_rows(self):
+        # ★ 행을 채울 때도 4자리로 정규화해서, 나중에 bump_rx("0301")이 정확히 매칭되게
+        for key, defs in self.msg_map.items():
+            mod = self.widgets.get(key)
+            if not mod:
+                continue
+            tx_pairs = [(self._norm_code(mid), 0) for (mid, _name) in defs.get("tx", [])]  # ★
+            rx_pairs = [(self._norm_code(mid), 0) for (mid, _name) in defs.get("rx", [])]  # ★
+            set_tx = getattr(mod, "set_tx_rows", None)
+            if callable(set_tx):
+                set_tx(tx_pairs)
+            set_rx = getattr(mod, "set_rx_rows", None)
+            if callable(set_rx):
+                set_rx(rx_pairs)
+
+
+    # ── 모듈별 모니터링 소켓(UDP) 시작: 4개 포트 바인드
+    def _get_monitor_port_map(self) -> Dict[str, int]:
+        return {
+            "assignment": int(os.getenv("KU_MON_ASSIGNMENT_PORT", "46981")),
+            "monitoring": int(os.getenv("KU_MON_MONITORING_PORT", "46982")),
+            "decision":   int(os.getenv("KU_MON_DECISION_PORT", "46983")),
+            "info":       int(os.getenv("KU_MON_INFO_PORT", "46984")),
+        }
+
+    def _start_module_sockets(self):
+        import socket, json, time
+
+        self._seen_evt_ts = {}
+        self._monitor_socks = {}
+
+        port_map = self._get_monitor_port_map()
+        try:
+            lines = [f"[MON PORTS] {role}: {port}" for role, port in port_map.items()]
+            self._safe_log("\n".join(lines))
+        except Exception:
+            pass
+
+        def _dedup(key: str, window: float = 0.15) -> bool:
             now = time.monotonic()
             last = self._seen_evt_ts.get(key, 0.0)
-            if (now - last) < 0.15:
+            if (now - last) < window:
                 return True
             self._seen_evt_ts[key] = now
             return False
 
-        def loop():
+        def _reader(role: str, sock: "socket.socket"):
             while True:
                 try:
-                    data, _ = sock.recvfrom(8192)
-                    payload = json.loads(data.decode("utf-8", "ignore"))
-                    kind = str(payload.get("kind") or "")
-                    mid  = str(payload.get("msg_id") or "")
-                    if kind not in ("tx", "rx") or not mid:
-                        continue
-                    if _dedup(f"udp:{kind}:{mid}"):
-                        continue
-                    self.dashEvent.emit(kind, mid)
+                    data, _addr = sock.recvfrom(65535)
+                except Exception:
+                    break
+
+                # ── 원본 payload/파싱 ──
+                kind, mid, text, src_role = "", "", "", ""
+                payload = {}
+                try:
+                    payload = json.loads(data.decode("utf-8", "ignore")) if data else {}
+                except Exception:
+                    payload = {}
+
+                if isinstance(payload, dict):
+                    kind = str(payload.get("kind") or payload.get("direction") or "").strip().lower()
+                    mid  = str(payload.get("msg_id") or payload.get("id") or payload.get("code") or "").strip()
+                    text = str(payload.get("text") or "").strip()
+                    src_role = str(payload.get("role") or role).strip()
+                    cmd = str(payload.get("cmd") or "").strip().lower()
+                    _debug_log(f"_reader payload role={role} kind={kind} mid={mid} cmd={cmd} payload={payload!r}")
+
+                    if cmd == "self_check" and not mid:
+                        mid = "0102"
+                        kind = kind or "tx"
+                        src_role = src_role or role
+
+
+                # ── ★ 디버그 프린트: UDP 수신 패킷 원본/핵심 필드 ──
+                try:
+                    self.uiLog2.emit(role, f"[UDP RECV] {role}/{src_role}  kind={kind}  mid={mid}")
                 except Exception:
                     pass
-        threading.Thread(target=loop, daemon=True).start()
 
-    def _wire_operation_panel(self):
-        panel = self.widgets.get("operation_panel") if hasattr(self, "widgets") else None
-        if panel is None:
+                # 1) tx/rx → 해당 role만 카운트 + HZ 집계
+                if kind in ("tx", "rx") and mid:
+                    norm_role = self._normalize_role(src_role or role)
+                    if not _dedup(f"mon:{norm_role}:{kind}:{mid}"):
+                        try:
+                            self._hz_touch(norm_role, kind, mid)   # HZ 집계
+                        except Exception:
+                            pass
+                        self.dashPulse.emit(norm_role, kind, mid)  # 카운트/애니메
+
+                # 2) mode → 동기화
+                if kind == "mode" and text:
+                    self._handle_mode_event(src_role or role, text)
+
+                # 3) 부가 로그
+                log_txt = None
+                if isinstance(payload, dict):
+                    log_txt = payload.get("log") or payload.get("message") or None
+                if log_txt:
+                    self.uiLog2.emit(src_role or role, str(log_txt))
+
+        # 소켓 4개 바인드 + 스레드 시작 (그대로)
+        import socket
+        for role, port in port_map.items():
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                s.bind(("127.0.0.1", port))
+                self._monitor_socks[role] = s
+                t = threading.Thread(target=_reader, args=(role, s), daemon=True)
+                t.start()
+            except Exception as e:
+                try:
+                    self._safe_log(f"[WARN] monitor UDP bind failed: {role}:{port} → {e}")
+                except Exception:
+                    pass
+
+    # --------- mode 이벤트 처리(수신→대시보드/모듈 전체 동기화) ---------
+    def _normalize_mode_text(self, text: str) -> str:
+        t = "".join(str(text).split()).lower()
+        if t in ("전원off", "off", "poweroff", "0"): return "전원 OFF"
+        if t in ("전원on",  "on",  "poweron",  "1"): return "전원 ON"
+        if t in ("대기모드", "대기", "standby", "2"): return "대기모드"
+        if t in ("초기임무계획", "초기임무계획모드", "initplan", "initial", "3", "초기임무계획모드진입"): return "초기임무계획"
+        if t in ("임무수행", "execution", "4"): return "임무 수행"
+        return text or "대기모드"
+
+    def _handle_mode_event(self, src_role: str, text: str):
+        import time
+        role = self._normalize_role(src_role or "unknown")
+        norm = self._normalize_mode_text(text)
+
+        prev = self._module_mode.get(role)
+        if prev == norm:
             return
+        self._module_mode[role] = norm
+
+        QMetaObject.invokeMethod(
+            self,
+            "_apply_mode_event",
+            Qt.QueuedConnection,
+            Q_ARG(str, role),
+            Q_ARG(str, norm),
+        )
+
+    @pyqtSlot(str, str)
+    def _apply_mode_event(self, role: str, norm: str):
+        self._set_mode_text_single(role, norm)
+        self._safe_log(f"[MODE] {role} → {norm}")
+        self._visualize_mode_change(role, norm)
+
+    def _visualize_mode_change(self, role: str, text: str):
+        flow = self.widgets.get("flow")
+        if not flow and callable(getattr(self.win, "_pulse", None)):
+            # 대시보드가 제공하는 간단 펄스만 있는 경우
+            vis_key = {"assignment": "mission", "monitoring": "monitor", "decision": "decision"}.get(self._normalize_role(role), "system")
+            try:
+                self.win._pulse(vis_key, "mode")
+            except Exception:
+                pass
+            return
+
+        if not flow:
+            return
+
+        vis_key = {"assignment": "mission", "monitoring": "monitor", "decision": "decision"}.get(self._normalize_role(role), "system")
+        # 가능한 API들을 안전하게 시도
+        for name in ("set_mode_text", "setModeText", "set_status", "setStatus", "setMode"):
+            fn = getattr(flow, name, None)
+            if callable(fn):
+                try:
+                    fn(str(text))
+                    break
+                except Exception:
+                    pass
         try:
-            panel.stateTriggered.connect(self._handle_operation_state)
+            trig = getattr(flow, "trigger", None)
+            if callable(trig):
+                trig(vis_key, "mode")
         except Exception:
             pass
 
-    def _norm_code(self, mid) -> str:
-        s = str(mid)
-        return s.zfill(4) if s.isdigit() and len(s) < 4 else s
-
-    def _handle_dash_event(self, kind: str, msg_id: str):
-        mid = str(msg_id)
-        if self._recently_seen(f"udp:{kind}", mid):
-            return
-
-        key_to_widget = {
-            "assignment": self.widgets.get("assignment"),
-            "monitoring": self.widgets.get("monitoring"),
-            "decision":   self.widgets.get("decision"),
-        }
-        for module_key, defs in self.msg_map.items():
-            w = key_to_widget.get(module_key)
-            if not w:
-                continue
-            if kind == "tx" and any(m == mid for m, _ in defs.get("tx", [])):
-                if hasattr(w, "bump_tx"): w.bump_tx(mid)
-                self._animate(module_key, "out")
-                if hasattr(w, "append_log"): w.append_log(f"[{mid}] PUSH 완료")
-            if kind == "rx" and any(m == mid for m, _ in defs.get("rx", [])):
-                if hasattr(w, "bump_rx"): w.bump_rx(mid)
-                self._animate(module_key, "in")
-                if hasattr(w, "append_log"): w.append_log(f"[{mid}] RX 수신")
-
     # --------- UI 위젯 해결 ---------
+
+    def _apply_dashboard_button_styles(self) -> None:
+        """Set the auto boot and module shutdown buttons to green."""
+        green_style = "\n".join((
+            "QPushButton {",
+            "  background: #16a34a;",
+            "  color: white;",
+            "  border: none;",
+            "  border-radius: 8px;",
+            "  padding: 6px 12px;",
+            "}",
+            "QPushButton:hover { background: #15803d; }",
+            "QPushButton:pressed { background: #166534; }",
+        ))
+        targets = (
+            getattr(self.win, "btn_auto_boot", None),
+            getattr(self.win, "btn_module_shutdown", None),
+        )
+        for btn in targets:
+            if btn is None:
+                continue
+            try:
+                btn.setStyleSheet(green_style)
+            except Exception:
+                pass
+
     def _resolve_widgets(self, win):
         flow = getattr(win, "flow", None)
         if flow is None:
@@ -382,7 +744,7 @@ class DashboardOrchestrator(QObject):
         d[key] = t
         self._seen_any = d
         return False
-    
+
     # --------- 초기 목록 채우기 ---------
     def _init_rows(self):
         for key, defs in self.msg_map.items():
@@ -456,25 +818,27 @@ class DashboardOrchestrator(QObject):
                 sys.stderr.write(f"[WARN] NodeMessenger init failed: {e}\n")
         threading.Thread(target=_rx_setup, daemon=True).start()
 
+    def _norm_code(self, mid) -> str:
+        """메시지 코드를 '0102'처럼 4자리 0패딩으로 통일"""
+        s = str(mid).strip()
+        return s.zfill(4) if s.isdigit() and len(s) < 4 else s
+    
     # --------- 버스 수신 시각화 + 특수 메시지 처리 ---------
     def mark_received(self, msg_id: str, raw: bytes | None = None):
         mid = self._norm_code(msg_id)
         payload_obj = self._extract_message_json(raw)
 
-        # 소스 추정(로깅/디듀프용)
+        # 소스 모듈 추정 → role 정규화
         src_key = None
         if isinstance(payload_obj, dict):
-            src = payload_obj.get("Source") or payload_obj.get("source") or payload_obj.get("requestModuleName")
+            src = (payload_obj.get("source")
+                   or payload_obj.get("source")
+                   or payload_obj.get("requestModuleName"))
             if src:
-                s = str(src).upper()
-                if "MMR" in s or "MULTI-AGENT MISSION PLANNER" in s:
-                    src_key = "assignment"
-                elif "MSM" in s or "MISSION STATE MONITOR" in s:
-                    src_key = "monitoring"
-                elif "MOB" in s or "MISSION OPTION BUILDER" in s:
-                    src_key = "decision"
+                src_key = self._normalize_role(str(src))
 
-        tag = f"bus:{src_key or 'all'}"
+        # 디듀프(역할 구분)
+        tag = f"bus:{src_key or 'unknown'}"
         if self._recently_seen(tag, mid, window=0.02):
             return
 
@@ -484,33 +848,32 @@ class DashboardOrchestrator(QObject):
             "decision":   self.widgets.get("decision"),
         }
 
-        # UI 카운트/애니메이션
-        for module_key in ("assignment", "monitoring", "decision"):
+        # 대상 모듈 결정: 소스가 명확하면 그 하나만,
+        # 아니면 rx 정의의 '유일 소유자'인 경우에만 1곳 카운트
+        target_modules = []
+        if src_key in key_to_widget and key_to_widget[src_key]:
+            target_modules = [src_key]
+        else:
+            owners = [mk for mk, defs in self.msg_map.items()
+                      if any(m == mid for m, _ in defs.get("rx", []))]
+            if len(owners) == 1:
+                target_modules = owners  # 유일 소유자일 때만
+
+        for module_key in target_modules:
             w = key_to_widget.get(module_key)
             if not w:
                 continue
             defs = self.msg_map.get(module_key, {})
-            tx_ids = {m for m, _ in defs.get("tx", [])}
             rx_ids = {m for m, _ in defs.get("rx", [])}
-            if mid in tx_ids and hasattr(w, "bump_tx"):
-                w.bump_tx(mid); self._animate(module_key, "out")
-                if hasattr(w, "append_log"): w.append_log(f"[{mid}] PUSH 완료")
             if mid in rx_ids and hasattr(w, "bump_rx"):
                 w.bump_rx(mid); self._animate(module_key, "in")
                 if hasattr(w, "append_log"): w.append_log(f"[{mid}] RX 수신")
 
-        # 특수 메시지 처리(새 플로우 반영)
+        # 특수 메시지 처리(모드 전환 등)
         self._handle_special_bus_message(mid, payload_obj, raw)
 
     def _handle_special_bus_message(self, mid: str, payload: dict | None, raw: bytes | None) -> None:
-        """
-        새 S110 플로우에 맞게 '모니터링/관리'만 수행:
-          - 0101 SystemMode==2 → 초기임무계획 모드 진입(대시보드/모듈 CTRL 모드 전파)
-          - 0305: in-progress/완료 로깅만 (대기모드 전환은 0702에서)
-          - 0702: 사용자가 Info에서 승인 버튼(0702) 눌러 전송 시 → 대기모드 전환
-          - 0201/0203 자동 PUSH/파이프라인 수행 없음(각 모듈 버튼이 전담)
-        """
-        # 0101 SystemMode 처리
+        # 0101 SystemMode==2 → 초기임무계획 모드 진입
         if mid == "0101":
             self._handle_system_mode_message(payload, raw)
             return
@@ -536,22 +899,81 @@ class DashboardOrchestrator(QObject):
             self._enter_standby()
             return
 
-        # (주의) 예전 자동 0201/0203 PUSH, 파이프라인 실행 등은 삭제됨
-
     def _handle_system_mode_message(self, payload: dict | None, raw: bytes | None) -> None:
         obj = payload if isinstance(payload, dict) else self._extract_message_json(raw)
         if not isinstance(obj, dict):
             return
-        # systemMode==2 → 초기임무계획
-        for key in ("systemMode", "SystemMode"):
-            val = obj.get(key)
-            try:
-                if val is not None and int(val) == 2:
-                    self._safe_log("[OPS] SystemMode=2 수신 → 초기임무계획 모드 진입")
-                    self._enter_initial_plan()  # 모드 전파(CTRL), 대시보드 표시
-                    return
-            except Exception:
+
+        timestamp = None
+        for key in ("timestamp", "Timestamp"):
+            value = obj.get(key)
+            if value is None:
                 continue
+            try:
+                timestamp = int(value)
+                break
+            except Exception:
+                try:
+                    timestamp = int(float(str(value).strip()))
+                    break
+                except Exception:
+                    continue
+
+        code = None
+        for key in ("systemMode", "SystemMode"):
+            value = obj.get(key)
+            if value is None:
+                continue
+            try:
+                code = int(value)
+                break
+            except Exception:
+                try:
+                    code = int(float(str(value).strip()))
+                    break
+                except Exception:
+                    continue
+
+        if code is None:
+            return
+
+        if code == 1:
+            self._maybe_activate_scenario(timestamp)
+
+        if code == 2:
+            self._safe_log("[OPS] SystemMode=2 수신 → 초기임무계획 모드 진입")
+            self._enter_initial_plan()
+
+        self._last_system_mode_code = code
+
+    def _maybe_activate_scenario(self, timestamp: int | None) -> None:
+        if self._last_system_mode_code == 1:
+            return
+        if self._scenario_activated_once:
+            reuse_root = db_paths.get_active_db_root_str()
+            self._safe_log(f"[OPS] Standby re-entry - reuse existing DB @ {reuse_root}")
+            return
+        if timestamp is None:
+            self._safe_log("[OPS] Standby 모드 timestamp 미확인 → 기존 DB 유지")
+            return
+        try:
+            info = db_paths.activate_scenario(timestamp)
+        except Exception as exc:
+            self._safe_log(f"[ERR] Standby 시나리오 준비 실패: {exc}")
+            return
+
+        self._scenario_timestamp = info.get("timestamp_ms")
+        db_root = info.get("db_root")
+        if db_root:
+            try:
+                self.win.update_db_root(db_root)
+                self.win.update_scenario_root(info.get("base_root"))
+            except Exception:
+                pass
+        db_root_str = db_root or db_paths.get_active_db_root_str()
+        iso = info.get("iso") or timestamp
+        self._safe_log(f"[OPS] Standby 시나리오 활성화 → {iso} @ {db_root_str}")
+        self._scenario_activated_once = True
 
     # --------- 모드/CTRL/런처/로깅 유틸 ---------
     def _log_assignment(self, text: str):
@@ -623,8 +1045,43 @@ class DashboardOrchestrator(QObject):
             except Exception: pass
             return False
 
+    def trigger_initial_plan_pipeline(self, reason: str = "초기임무재계획") -> None:
+        """Send control commands that drive the initial mission-planning pipeline."""
+        normalized_reason = str(reason or "초기임무재계획")
+        context = {"reason": normalized_reason, "replan_level": 1}
+
+        self._safe_log(f"[OPS] S110: preparing initial mission planning (reason={normalized_reason})")
+
+        try:
+            ok_assign = self._send_ctrl_single("assignment", {"cmd": "init_plan_context", "context": context, "trigger": "S110"})
+            if not ok_assign:
+                self._safe_log('[WARN] init_plan_context dispatch to assignment failed')
+        except Exception as exc:
+            self._safe_log(f'[WARN] init_plan_context dispatch error: {exc}')
+
+        try:
+            ok_stage = self._send_ctrl_single("monitoring", {"cmd": "stage_replan", "context": context})
+            if not ok_stage:
+                self._safe_log('[WARN] stage_replan dispatch to monitoring failed')
+        except Exception as exc:
+            self._safe_log(f'[WARN] stage_replan dispatch error: {exc}')
+
+        def _fire_replan():
+            payload = {"cmd": "replan", "reason": normalized_reason, "replanLevel": context.get("replan_level", 1)}
+            try:
+                ok = self._send_ctrl_single("monitoring", payload)
+                if ok:
+                    self._safe_log('[OPS] 0902 replan request sent to monitoring')
+                else:
+                    self._safe_log('[WARN] 0902 replan request dispatch failed')
+            except Exception as exc:
+                self._safe_log(f'[WARN] replan dispatch error: {exc}')
+
+        QTimer.singleShot(300, _fire_replan)
+
+
     def _launch_all_guis(self):
-        for sn in ("mission_planning_gui.py", "monitoring_gui.py", "decision_support_gui.py"):
+        for sn in ("mission_planning_gui.py", "monitoring_gui.py", "decision_support_gui.py", "info_manage.py"):
             self._launch_gui(sn)
         QTimer.singleShot(1000, lambda: self._set_mode_text_all("전원 ON"))
         QTimer.singleShot(1000, lambda: self._broadcast_ctrl({"cmd": "mode", "text": "전원 ON"}))
@@ -637,13 +1094,13 @@ class DashboardOrchestrator(QObject):
         root = Path(__file__).resolve().parent
         modules_dir = root / "modules"
 
-        # ✅ 후보 경로 확장 + 가시 로그
         candidates = [
             root / script_name,
-            modules_dir / script_name,                           # modules 바로 아래
+            modules_dir / script_name,
             modules_dir / "mission_planning" / script_name,
             modules_dir / "monitoring" / script_name,
             modules_dir / "decision_support" / script_name,
+            modules_dir / "info_manage" / script_name,
         ]
         script = next((p for p in candidates if p.exists()), None)
         if script is None:
@@ -654,23 +1111,21 @@ class DashboardOrchestrator(QObject):
             except Exception: pass
             return
 
-        # DB root
         ui_line = getattr(self.win, "_db_path_line", None)
         ui_val = ui_line.text().strip() if ui_line and hasattr(ui_line, "text") else ""
-        db_root = ui_val or os.environ.get("KU_MISSION_DB_ROOT") or str(root / "database")
+        db_root = ui_val or db_paths.get_active_db_root_str()
         try: Path(db_root).mkdir(parents=True, exist_ok=True)
         except Exception: pass
 
-        # 환경변수
         env = os.environ.copy()
         env.setdefault("KU_LAUNCHED_BY_DASHBOARD", "1")
         env["KU_MISSION_DB_ROOT"] = db_root
 
-        # ✅ 포트 매핑(대시보드 브로드캐스트와 일치)
         port_map = {
-            "mission_planning_gui.py": "45981",  # assignment
-            "monitoring_gui.py":       "45982",  # monitoring
-            "decision_support_gui.py": "45983",  # decision
+            "mission_planning_gui.py": "45981",
+            "monitoring_gui.py":       "45982",
+            "decision_support_gui.py": "45983",
+            "info_manage.py":          "45984",
         }
         try:
             script_basename = script.name
@@ -678,11 +1133,9 @@ class DashboardOrchestrator(QObject):
             script_basename = script_name
         env["KU_CTRL_PORT"] = port_map.get(script_basename, port_map.get(script_name, ""))
 
-        # ✅ 실행 전 가시 로그
         try: self._safe_log(f"[RUN] {script_basename} @ {script}")
         except Exception: pass
 
-        # Windows에서 콘솔 확인이 필요하면 CREATE_NEW_CONSOLE 사용(선택)
         creationflags = 0
         if os.name == "nt":
             creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
@@ -730,21 +1183,73 @@ class DashboardOrchestrator(QObject):
             try: fn(vis_key, direction)
             except Exception: pass
 
-    def _append_log_global(self, text: str):
-        ed = self.widgets.get("log_edit")
-        if ed is None:
+    def _wire_operation_panel(self):
+        """운용 패널(체크리스트/상태 버튼) → 상태 디스패치 연결"""
+        panel = self.widgets.get("operation_panel") if hasattr(self, "widgets") else None
+        if not panel:
             return
         try:
-            p = ed.parent()
-            while p is not None:
-                if isinstance(p, ModuleWithLog):
-                    return
-                p = p.parent()
+            panel.stateTriggered.connect(self._handle_operation_state)
         except Exception:
             pass
+
+    def _handle_dash_event(self, kind: str, msg_id: str):
+        mid = str(msg_id)
+        if self._recently_seen(f"udp:{kind}", mid):
+            return
+
+        key_to_widget = {
+            "assignment": self.widgets.get("assignment"),
+            "monitoring": self.widgets.get("monitoring"),
+            "decision":   self.widgets.get("decision"),
+        }
+        for module_key, defs in self.msg_map.items():
+            w = key_to_widget.get(module_key)
+            if not w:
+                continue
+            if kind == "tx" and any(m == mid for m, _ in defs.get("tx", [])):
+                if hasattr(w, "bump_tx"): w.bump_tx(mid)
+                self._animate(module_key, "out")
+                if hasattr(w, "append_log"): w.append_log(f"[{mid}] PUSH 완료")
+            if kind == "rx" and any(m == mid for m, _ in defs.get("rx", [])):
+                if hasattr(w, "bump_rx"): w.bump_rx(mid)
+                self._animate(module_key, "in")
+                if hasattr(w, "append_log"): w.append_log(f"[{mid}] RX 수신")
+
+    def _append_log_global(self, text: str):
+        ed = self.widgets.get("log_edit")
+        if ed is not None:
+            try:
+                # 모듈 내부 로그 위젯과의 중복 방지 로직은 유지
+                p = ed.parent()
+                while p is not None:
+                    from PyQt5.QtWidgets import QWidget  # 안전
+                    if isinstance(p, ModuleWithLog):
+                        break
+                    p = p.parent()
+            except Exception:
+                pass
+            try:
+                if isinstance(ed, QPlainTextEdit): ed.appendPlainText(text)
+                elif isinstance(ed, QTextEdit): ed.append(text)
+                else:  # 예외적으로 타입이 다르면 폴백
+                    raise RuntimeError("no global text edit")
+                return
+            except Exception:
+                pass
+
+        # 전역 로그 위젯이 없거나 실패 → 폴백 모듈로
+        fb = self.widgets.get(self._fallback_log_role)
+        if fb and hasattr(fb, "append_log"):
+            try:
+                fb.append_log(text)
+                return
+            except Exception:
+                pass
+
+        # 최종 폴백: 콘솔
         try:
-            if isinstance(ed, QPlainTextEdit): ed.appendPlainText(text)
-            elif isinstance(ed, QTextEdit): ed.append(text)
+            print(text)
         except Exception:
             pass
 

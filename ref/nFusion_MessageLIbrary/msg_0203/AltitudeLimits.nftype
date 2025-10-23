@@ -1,2 +1,13 @@
-float lowerLimit
-float upperLimit
+float lowerLimit:
+ - 길이 : 4
+ - min : 0
+ - Max : 50000
+ - unit : m
+ - 비고 : 비행가능구역의 하한 고도
+
+float upperLimit:
+ - 길이 : 4
+ - min : 0
+ - Max : 50000
+ - unit : m
+ - 비고 : 비행가능구역의 상한 고도

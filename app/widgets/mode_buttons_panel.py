@@ -19,8 +19,6 @@ class ModeButtonsPanel(QWidget):
 
         button_specs = [
             ("SW 실행",         "btn_sw_run"),
-            ("SW 상태확인",     "btn_self_check"),
-            ("대기모드",        "btn_standby"),
             ("초기임무계획모드", "btn_init_plan"),
             ("임무 수행 모드",   "btn_mission_mode"),
         ]
