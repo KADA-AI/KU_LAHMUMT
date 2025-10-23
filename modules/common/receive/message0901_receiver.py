@@ -21,6 +21,8 @@ def _project_root_for_recv_file(__file_path: str):
     from pathlib import Path
     return Path(__file_path).resolve().parents[3]
 
+CACHE_FILE_0901 = os.path.join(_project_root_for_recv_file(__file__), "database", "cache", "latest_0901.json")
+
 def _db_dir_for(msgid: str, __file_path: str) -> str:
     from pathlib import Path
     env_root = os.getenv("KU_MISSION_DB_ROOT")
@@ -75,7 +77,7 @@ def _to_dict_RequestOptionInfo(obj):
     d = {}
     _v = _get(obj, 'timestamp', 'Timestamp')
     if _v is not None: d['timestamp'] = int(_v)
-    _sval = _get(obj, 'source', 'Source', 'source','Source','sourceModuleName','SourceModuleName','requestModuleName','RequestModuleName')
+    _sval = _get(obj, 'source', 'Source', 'source','Source','Source','Source','requestModuleName','RequestModuleName')
     if _sval is not None and _sval != '': d['source'] = str(_sval)
     _v = _get(obj, 'requestTime', 'RequestTime')
     if _v is not None: d['requestTime'] = int(_v)
@@ -95,6 +97,13 @@ class RequestOptionInfoReceiver_0901(IFusionReceive[RequestOptionInfo], IsLocal,
             body = _try_read_db_body('0901', data)
             if body is None:
                 body = _to_dict_RequestOptionInfo(data)
+
+            try:
+                os.makedirs(os.path.dirname(CACHE_FILE_0901), exist_ok=True)
+                with open(CACHE_FILE_0901, "w", encoding="utf-8") as fp:
+                    json.dump(body, fp, ensure_ascii=False, indent=2)
+            except Exception:
+                pass
 
             notify("0901", json.dumps(body, ensure_ascii=False).encode("utf-8","ignore"))
 

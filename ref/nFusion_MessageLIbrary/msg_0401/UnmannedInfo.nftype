@@ -1,0 +1,28 @@
+CurrentWaypointID currentWaypointID
+uint flightMode:
+ - 길이 : 4
+ - min : 0
+ - Max : 9
+ - unit : N/A
+ - 비고 : 무인기의 현재 비행모드
+ - enum : 0=Not Used, 1=자동이륙, 2=자동착륙, 3=통제권이양지이동, 4=전술집결지이동, 5=RTB, 6=편대비행, 7=경로이동비행, 8=점항법비행, 9=표적추적비행
+
+LoiterCoordinate loiterCoordinate
+TargetFollowing targetFollowing
+CommonType.LeaderAircraftID leaderAircraftID
+SensorInfo sensorInfo
+uint payloadHealth:
+ - 길이 : 4
+ - min : 0
+ - Max : 3
+ - unit : N/A
+ - 비고 : 임무장비 상태
+ - enum : 0=None, 1=정상, 2=비정상
+
+uint fuelWarning:
+ - 길이 : 4
+ - min : 0
+ - Max : 3
+ - unit : N/A
+ - 비고 : 연료량 경고
+ - enum : 0=None, 1=양호, 2=경고, 3=위험

@@ -1,0 +1,20 @@
+float latitude:
+ - 길이 : 4
+ - min : -90.0
+ - Max : 90.0
+ - unit : deg
+ - 비고 : 위치-위도 (FlightMode8일 때)
+
+float longitude:
+ - 길이 : 4
+ - min : -180.0
+ - Max : 180.0
+ - unit : deg
+ - 비고 : 위치-경도 (FlightMode8일 때)
+
+int altitude:
+ - 길이 : 4
+ - min : 0
+ - Max : 50000
+ - unit : m
+ - 비고 : 위치-고도 (FlightMode8일 때)

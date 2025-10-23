@@ -1,0 +1,22 @@
+# MissionID 0302 개별임무계획
+
+ulong timestamp:
+ - 길이 : 8
+ - min : 0
+ - Max : 2^64-1
+ - unit : ms
+ - 비고 : 2000년 1월 1일부터 ms
+
+uint individualMissionPackageID:
+ - 길이 : 4
+ - unit : N/A
+ - 비고 : 개별임무계획 패키지 ID
+
+uint aircraftID:
+ - 길이 : 4
+ - min : 0
+ - Max : 6
+ - unit : N/A
+ - 비고 : 유무인기 ID
+
+List<IndividualMission> individualMissionList

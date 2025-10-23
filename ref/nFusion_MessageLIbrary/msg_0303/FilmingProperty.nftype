@@ -1,0 +1,37 @@
+float fieldOfView:
+ - 길이 : 4
+ - min : 0
+ - Max : 180
+ - unit : deg
+ - 비고 : 설정 화각
+
+uint sensorType:
+ - 길이 : 4
+ - min : 0
+ - Max : 2
+ - unit : N/A
+ - 비고 : 촬영할 센서 종류
+ - enum : 0=None, 1=EO, 2=IR
+
+uint operationMode:
+ - 길이 : 4
+ - min : 0
+ - Max : 5
+ - unit : N/A
+ - 비고 : 운용 모드 번호
+ - enum : 0=None, 1=좌표지행모드, 2= 구간탐색모드, 3=자동추적모드, 4=기체고정모드, 5=자동주사모드
+
+CommonType.CoordinateOrientation coordinateOrientation:
+ - 비고 : OperationMode 1일 때 사용
+
+CommonType.LineSearch lineSearch:
+ - 비고 : OperationMode 2일 때 사용
+
+CommonType.AutoTracking autoTracking:
+ - 비고 : OperationMode 3일 때 사용
+
+CommonType.AircraftFixed aircraftFixed:
+ - 비고 : OperationMode 4일 때 사용
+
+CommonType.AutoScan autoScan:
+ - 비고 : OperationMode 5일 때 사용

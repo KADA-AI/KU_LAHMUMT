@@ -1,4 +1,5 @@
 from __future__ import annotations
+import os
 import math
 from collections import OrderedDict
 from typing import List, Tuple                       # ★ 추가
@@ -6,6 +7,21 @@ from .mission_helpers import now_ms_since_2000
 from UAV_missionPlanning import UAVMissionPlanner
 from Aisle_Sweep_CPP_shoot_plan import RectanglePath
 from .coord_transform import llh_to_xy, xy_to_llh
+try:
+    from ....common.eta import _order_by_next_chain, _time_from_prev_to_curr_s
+except ImportError:
+    from modules.common.eta import _order_by_next_chain, _time_from_prev_to_curr_s
+
+
+
+def _sw_code(default: str = "MMR") -> str:
+    role = (os.environ.get("KU_ROLE") or "").lower()
+    return {
+        "mission": "MMR",
+        "monitoring": "MSM",
+        "decision": "MOB",
+    }.get(role, default)
+
 
 # ── 타입 alias (가독용) ─────────────────────────────
 Point = Tuple[float, float]
@@ -147,7 +163,7 @@ def _mk_filming(operation_mode: int = OPMODE_NONE,
 
     • OPMODE_LINE  → lineSearch 필드 삽입  
     • OPMODE_HOLD → aircraftFixed  블록 삽입
-                  ↳ GimbalPitch / GimbalYaw 포함
+                  ↳ gimbalPitch / gimbalYaw 포함
     """
     fp = OrderedDict([
         ("fieldOfView",   fov),
@@ -165,8 +181,8 @@ def _mk_filming(operation_mode: int = OPMODE_NONE,
         gimbal_pitch = -90.0 if gimbal_pitch is None else gimbal_pitch
         gimbal_yaw   =   0.0 if gimbal_yaw   is None else gimbal_yaw
         fp["aircraftFixed"] = OrderedDict([
-            ("GimbalPitch", gimbal_pitch),
-            ("GimbalYaw",   gimbal_yaw),
+            ("gimbalPitch", gimbal_pitch),
+            ("gimbalYaw",   gimbal_yaw),
         ])
 
     return fp
@@ -214,7 +230,7 @@ def _index_refpoints(ref0203: dict | None):
 
 def _eta_ms_llh(c1: dict, c2: dict, speed_mps: float) -> int:
     """
-    간단한 구면 근사로 거리→ETA(ms) 계산. speed_mps<=0이면 0.
+    간단한 구면 근사로 거리→ETA(s) 계산. speed_mps<=0이면 0.
     c* = {"latitude": float, "longitude": float}
     """
     try:
@@ -227,8 +243,30 @@ def _eta_ms_llh(c1: dict, c2: dict, speed_mps: float) -> int:
     dy = (lat2 - lat1) * DEG_M
     dist_m = math.hypot(dx, dy)
     if speed_mps and speed_mps > 0.0:
-        return int(round(dist_m / speed_mps * 1000.0))
+        return int(round(dist_m / speed_mps))
     return 0
+
+
+def _annotate_eta_ms_inplace(waypoints: list[OrderedDict], default_speed_mps: float) -> None:
+    # NOTE: historical function name kept for compatibility; ETA is emitted in seconds.
+    if not waypoints:
+        return
+
+    ordered = _order_by_next_chain(waypoints)
+    if not ordered:
+        return
+
+    # ETA is stored as seconds-per-leg for downstream consumers (spec unit: seconds)
+    ordered[0]["eta"] = 0
+    acc_s = 0.0
+    prev_cum_s = 0
+    for i in range(1, len(ordered)):
+        dt_s = _time_from_prev_to_curr_s(ordered[i - 1], ordered[i], default_speed_mps=default_speed_mps)
+        acc_s += dt_s
+        cum_s = int(round(acc_s))
+        delta_s = max(0, cum_s - prev_cum_s)
+        ordered[i]["eta"] = delta_s
+        prev_cum_s = cum_s
 
 def build_flight_plans(
     missions: list[dict],
@@ -236,16 +274,51 @@ def build_flight_plans(
     cruise_speed: float = 40.0,
     turn_step_deg: float = 45.0,
 ) -> list[dict]:
-
     wp_alloc = wp_alloc or _WPAllocator()
-    now_ms   = now_ms_since_2000()
+    now_ms = now_ms_since_2000()
 
     # ── 상수 ───────────────────────────────────────────────
     FOV_DEG, SENSOR, OPMODE = 5.5, 1, 2
-    SEARCH_SPEED            = round(cruise_speed * 2.8955, 2)
-    ALT_M                   = 850.0            # 촬영거리(=separation)
-    DEG_M                   = 111_132
-    GROUP_K                 = 5
+    SEARCH_SPEED = round(cruise_speed * 2.8955, 2)
+    ALT_M = 850.0
+    DEG_M = 111_132
+    GROUP_K_BASE = 7
+    GROUP_K_MIN = 5
+    GROUP_K_MAX = 9
+
+    def _angle_diff_deg(a: float, b: float) -> float:
+        diff = (b - a + 180.0) % 360.0 - 180.0
+        return abs(diff)
+
+    def _pick_group_span(headings: list[float]) -> int:
+        if len(headings) <= 1:
+            return GROUP_K_BASE
+        diffs = [_angle_diff_deg(h1, h2) for h1, h2 in zip(headings, headings[1:])]
+        max_turn = max(diffs)
+        avg_turn = sum(diffs) / len(diffs)
+        if max_turn <= 6.0 and avg_turn <= 3.0:
+            return min(GROUP_K_MAX, GROUP_K_BASE * 2)
+        if max_turn >= 22.5 or avg_turn >= 12.0:
+            return GROUP_K_MIN
+        return GROUP_K_BASE
+
+
+    # ── 마지막점용 POINT 촬영 블록 생성기 ─────────────────
+    def _mk_point_filming_for_coord(coord: dict) -> OrderedDict:
+        lat = float(coord.get("latitude", 0.0))
+        lon = float(coord.get("longitude", 0.0))
+        return OrderedDict([
+            ("fieldOfView", 66.638654),
+            ("sensorType", SENSOR_EO_IR),
+            ("operationMode", OPMODE_POINT),
+            ("coordinateOrientation", OrderedDict([
+                ("coordinate", OrderedDict([
+                    ("latitude",  lat),
+                    ("longitude", lon),
+                    ("altitude",  0),
+                ]))
+            ])),
+        ])
 
     packets: list[dict] = []
 
@@ -255,8 +328,8 @@ def build_flight_plans(
         if aid not in (4, 5, 6):
             continue
 
-        info   = miss["individualMissionInfo"]
-        mtype  = info.get("individualMissionType")
+        info = miss["individualMissionInfo"]
+        mtype = info.get("individualMissionType")
         wplist: list[OrderedDict] = []
 
         # 1-A. 통로정찰 / 영역수색 (type 3·4·6)
@@ -265,38 +338,29 @@ def build_flight_plans(
 
             # (i) lineList → corridor
             if info.get("lineList"):
-                line  = info["lineList"][0]
+                line = info["lineList"][0]
                 width = line["width"]
-                base  = [(c["latitude"], c["longitude"]) for c in line["coordinateList"]]
+                base = [(c["latitude"], c["longitude"]) for c in line["coordinateList"]]
 
             # (ii) areaList
             elif info.get("areaList"):
-                pts = [(p["latitude"], p["longitude"])
-                       for p in info["areaList"][0]["coordinateList"]]
+                pts = [(p["latitude"], p["longitude"]) for p in info["areaList"][0]["coordinateList"]]
 
-                # bearing → 전진벡터 (ENU; 0°=북, 90°=동)
                 bearing = miss.get("bearing_deg", 90.0)
-                th      = math.radians(bearing)
+                th = math.radians(bearing)
                 ux_b, uy_b = math.sin(th), math.cos(th)
 
-                prev_pt = miss.get("prevPoint", pts[0])   # CPP anchor
+                prev_pt = miss.get("prevPoint", pts[0])
 
-                # 스윕 생성
                 if len(pts) == 4:
                     coord_list = _cpp_line_search(
-                        rect_llh     = pts,
-                        anchor_llh   = prev_pt,
-                        separation_m = ALT_M,
-                        uav_height_m = 610.0,
-                        fov_deg      = FOV_DEG,
+                        rect_llh=pts, anchor_llh=prev_pt, separation_m=ALT_M,
+                        uav_height_m=610.0, fov_deg=FOV_DEG,
                     )
                 else:
                     coord_list = _poly_sweeps_general(
-                        poly_llh     = pts,
-                        anchor_llh   = prev_pt,
-                        bearing_deg  = bearing,
-                        fov_deg      = FOV_DEG,
-                        separation_m = ALT_M,
+                        poly_llh=pts, anchor_llh=prev_pt, bearing_deg=bearing,
+                        fov_deg=FOV_DEG, separation_m=ALT_M,
                     )
                 if not coord_list:
                     continue
@@ -312,7 +376,7 @@ def build_flight_plans(
                 for ln in lines:
                     s_lat, s_lon = ln[0]["latitude"], ln[0]["longitude"]
                     e_lat, e_lon = ln[1]["latitude"], ln[1]["longitude"]
-                    dx = (e_lon - s_lon) * 111_132 * math.cos(math.radians((s_lat + e_lat)/2))
+                    dx = (e_lon - s_lon) * 111_132 * math.cos(math.radians((s_lat + e_lat) / 2))
                     dy = (e_lat - s_lat) * 111_132
                     if math.hypot(dx, dy) >= MIN_SWEEP_LEN:
                         filtered.append(ln)
@@ -322,120 +386,120 @@ def build_flight_plans(
 
                 lat0, lon0 = lines[0][0]["latitude"], lines[0][0]["longitude"]
 
-                # ➊ 그룹화 (스윕 수 < GROUP_K 이어도 1그룹 생성)
+                # ➊ 그룹화
+                lines_xy: list[tuple[tuple[float, float], tuple[float, float]]] = []
+                headings: list[float] = []
+                for ln in lines:
+                    s_lat, s_lon = ln[0]["latitude"], ln[0]["longitude"]
+                    e_lat, e_lon = ln[1]["latitude"], ln[1]["longitude"]
+                    s_xy = llh_to_xy(s_lat, s_lon, lat0, lon0)
+                    e_xy = llh_to_xy(e_lat, e_lon, lat0, lon0)
+                    lines_xy.append((s_xy, e_xy))
+                    headings.append(math.degrees(math.atan2(e_xy[1] - s_xy[1], e_xy[0] - s_xy[0])))
+
+                group_span = max(1, _pick_group_span(headings))
                 groups: list[dict] = []
                 for idx, ln in enumerate(lines):
-                    gidx = idx // GROUP_K
-                    if len(groups) <= gidx:
-                        groups.append({"segments": []})
-                    groups[gidx]["segments"].append(ln)
+                    if idx % group_span == 0:
+                        groups.append({"segments": [], "segments_xy": []})
+                    groups[-1]["segments"].append(ln)
+                    groups[-1]["segments_xy"].append(lines_xy[idx])
 
-                # ➋ 그룹별 앵커 + lineSearch
+                # ??그룹??
                 last_off_xy: tuple[float, float] | None = None
                 for g in groups:
                     segs = g["segments"]
+                    segs_xy = g["segments_xy"]
 
-                    # 첫 세그 중점 → 앵커 위치 (ALT_M 역방향 오프셋)
-                    s_lat, s_lon = segs[0][0]["latitude"], segs[0][0]["longitude"]
-                    e_lat, e_lon = segs[0][1]["latitude"], segs[0][1]["longitude"]
-                    s_xy = llh_to_xy(s_lat, s_lon, lat0, lon0)
-                    e_xy = llh_to_xy(e_lat, e_lon, lat0, lon0)
-                    mid_xy = ((s_xy[0]+e_xy[0]) / 2, (s_xy[1]+e_xy[1]) / 2)
+                    s_xy, e_xy = segs_xy[0]
+                    mid_xy = ((s_xy[0] + e_xy[0]) / 2, (s_xy[1] + e_xy[1]) / 2)
                     off_xy = (mid_xy[0] - ux_b * ALT_M, mid_xy[1] + uy_b * ALT_M)
                     last_off_xy = off_xy
                     off_lat, off_lon = xy_to_llh(*off_xy, lat0, lon0)
 
-                    # 그룹 스윕을 지그재그로 합치기
                     coord_list = []
                     for order, sw in enumerate(segs, 1):
                         s, e = (sw[1], sw[0]) if order % 2 == 0 else sw
                         coord_list.extend([s, e])
 
-                    # 앵커 WP (촬영 ON: lineSearch)
                     wplist.append(OrderedDict([
                         ("waypointID", 0),
-                        ("coordinate", {"latitude": off_lat,
-                                        "longitude": off_lon,
-                                        "altitude": 1200}),
-                        ("speed",      cruise_speed),
-                        ("eta",        2500),
-                        ("ecf",        0.0),
+                        ("coordinate", {"latitude": off_lat, "longitude": off_lon, "altitude": 1200}),
+                        ("speed", cruise_speed),
+                        ("eta", 2500),
+                        ("ecf", 0.0),
                         ("nextWaypointID", 0),
                         ("waypointPassType", PASS_FLYBY),
                         ("filmingProperty", _mk_filming(
-                            operation_mode = OPMODE_LINE,
-                            sensor         = SENSOR_EO_IR,
-                            line_search    = OrderedDict([
+                            operation_mode=OPMODE_LINE,
+                            sensor=SENSOR_EO_IR,
+                            line_search=OrderedDict([
                                 ("coordinateList", coord_list),
-                                ("searchSpeed",    SEARCH_SPEED),
+                                ("searchSpeed", SEARCH_SPEED),
                             ]),
                         )),
                     ]))
 
-                # ➌ 종료 WP 추가 (항상 filmingProperty: null)
+                # ➌ 종료 WP (Loiter + POINT 촬영)
                 if len(wplist) >= 2:
-                    # 직전→마지막 진행벡터로 200 m
-                    last_wp  = wplist[-1]["coordinate"]
-                    prev_wp  = wplist[-2]["coordinate"]
-                    last_xy  = llh_to_xy(last_wp["latitude"], last_wp["longitude"], lat0, lon0)
-                    prev_xy  = llh_to_xy(prev_wp["latitude"], prev_wp["longitude"], lat0, lon0)
-                    vx, vy   = last_xy[0] - prev_xy[0], last_xy[1] - prev_xy[1]
-                    vlen     = math.hypot(vx, vy) or 1.0
+                    last_wp = wplist[-1]["coordinate"]
+                    prev_wp = wplist[-2]["coordinate"]
+                    last_xy = llh_to_xy(last_wp["latitude"], last_wp["longitude"], lat0, lon0)
+                    prev_xy = llh_to_xy(prev_wp["latitude"], prev_wp["longitude"], lat0, lon0)
+                    vx, vy = last_xy[0] - prev_xy[0], last_xy[1] - prev_xy[1]
+                    vlen = math.hypot(vx, vy) or 1.0
                     ux_end, uy_end = vx / vlen, vy / vlen
-                    end_xy   = (last_xy[0] + ux_end * 200.0,
-                                last_xy[1] + uy_end * 200.0)
+                    end_xy = (last_xy[0] + ux_end * 200.0, last_xy[1] + uy_end * 200.0)
                     end_lat, end_lon = xy_to_llh(*end_xy, lat0, lon0)
+                    end_coord = {"latitude": end_lat, "longitude": end_lon, "altitude": 1200}
 
                     wplist.append(OrderedDict([
                         ("waypointID", 0),
-                        ("coordinate", {"latitude": end_lat,
-                                        "longitude": end_lon,
-                                        "altitude": 1200}),
-                        ("speed",      cruise_speed),
-                        ("eta",        0),
-                        ("ecf",        0.0),
+                        ("coordinate", end_coord),
+                        ("speed", cruise_speed),
+                        ("eta", 0),
+                        ("ecf", 0.0),
                         ("nextWaypointID", 0),
                         ("waypointPassType", PASS_FLYOVER),
-                        ("filmingProperty", None),   # ← null 로 출력
+                        ("filmingProperty", _mk_point_filming_for_coord(end_coord)),
                     ]))
                 elif len(wplist) == 1 and last_off_xy is not None:
-                    # 단일 그룹 케이스: bearing 전진벡터로 200 m
-                    end_xy   = (last_off_xy[0] + ux_b * 200.0,
-                                last_off_xy[1] + uy_b * 200.0)
+                    end_xy = (last_off_xy[0] + ux_b * 200.0, last_off_xy[1] + uy_b * 200.0)
                     end_lat, end_lon = xy_to_llh(*end_xy, lat0, lon0)
+                    end_coord = {"latitude": end_lat, "longitude": end_lon, "altitude": 1200}
+
                     wplist.append(OrderedDict([
                         ("waypointID", 0),
-                        ("coordinate", {"latitude": end_lat,
-                                        "longitude": end_lon,
-                                        "altitude": 1200}),
-                        ("speed",      cruise_speed),
-                        ("eta",        0),
-                        ("ecf",        0.0),
+                        ("coordinate", end_coord),
+                        ("speed", cruise_speed),
+                        ("eta", 0),
+                        ("ecf", 0.0),
                         ("nextWaypointID", 0),
                         ("waypointPassType", PASS_FLYOVER),
-                        ("filmingProperty", None),   # ← null 로 출력
+                        ("filmingProperty", _mk_point_filming_for_coord(end_coord)),
                     ]))
 
             # (iii) Corridor-planner
             if base and len(base) >= 2:
                 planner = UAVMissionPlanner(
-                    base,
-                    corridor_width = width,
-                    separation     = ALT_M,
-                    fov_deg        = 10,
-                    cruise_speed   = cruise_speed,
-                    crs            = "lla",
+                    base, corridor_width=width, separation=ALT_M,
+                    fov_deg=10, cruise_speed=cruise_speed, crs="lla",
                 )
 
+                headings: list[float] = []
+                for sw in planner.sweeps:
+                    s_xy, e_xy = sw
+                    headings.append(math.degrees(math.atan2(e_xy[1] - s_xy[1], e_xy[0] - s_xy[0])))
+
+                group_span = max(1, _pick_group_span(headings))
                 groups: list[dict] = []
                 for idx, (pt, sw) in enumerate(zip(planner.orange_pts, planner.sweeps)):
-                    gidx = idx // GROUP_K
-                    if len(groups) <= gidx:
+                    if idx % group_span == 0:
                         groups.append({"anchor": pt, "segments": []})
-                    groups[gidx]["segments"].append(sw)
+                    groups[-1]["segments"].append(sw)
 
-                last_anchor_xy: tuple[float,float] | None = None
-                first_line_xy : tuple[float,float] | None = None
+                last_anchor_xy: tuple[float, float] | None = None
+                first_line_xy: tuple[float, float] | None = None
                 for g in groups:
                     anchor_xy = g["anchor"]
                     w_lat, w_lon = planner._proj_back(anchor_xy[0], anchor_xy[1])[::-1]
@@ -454,80 +518,73 @@ def build_flight_plans(
 
                     wplist.append(OrderedDict([
                         ("waypointID", 0),
-                        ("coordinate", {"latitude": w_lat,
-                                        "longitude": w_lon,
-                                        "altitude": 1200}),
-                        ("speed",      cruise_speed),
-                        ("eta",        2500),
-                        ("ecf",        0.0),
+                        ("coordinate", {"latitude": w_lat, "longitude": w_lon, "altitude": 1200}),
+                        ("speed", cruise_speed),
+                        ("eta", 2500),
+                        ("ecf", 0.0),
                         ("nextWaypointID", 0),
                         ("waypointPassType", PASS_FLYBY),
                         ("filmingProperty", _mk_filming(
-                            operation_mode = OPMODE_LINE,
-                            sensor         = SENSOR_EO_IR,
-                            line_search    = OrderedDict([
+                            operation_mode=OPMODE_LINE,
+                            sensor=SENSOR_EO_IR,
+                            line_search=OrderedDict([
                                 ("coordinateList", coord_list),
-                                ("searchSpeed",    SEARCH_SPEED),
+                                ("searchSpeed", SEARCH_SPEED),
                             ]),
                         )),
                     ]))
 
                     last_anchor_xy = anchor_xy
-                    first_line_xy  = None
+                    first_line_xy = None
 
                 if last_anchor_xy:
-                    # 마지막 앵커 → 첫 진입 스윕점 방향으로 300 m
                     s0_xy = groups[-1]["segments"][0][0]
                     vx, vy = s0_xy[0] - last_anchor_xy[0], s0_xy[1] - last_anchor_xy[1]
-                    vlen   = math.hypot(vx, vy) or 1.0
+                    vlen = math.hypot(vx, vy) or 1.0
                     ux_c, uy_c = vx / vlen, vy / vlen
-                    end_xy = (last_anchor_xy[0] + ux_c * 300.0,
-                              last_anchor_xy[1] + uy_c * 300.0)
+                    end_xy = (last_anchor_xy[0] + ux_c * 300.0, last_anchor_xy[1] + uy_c * 300.0)
                     end_lat, end_lon = planner._proj_back(end_xy[0], end_xy[1])[::-1]
+                    end_coord = {"latitude": end_lat, "longitude": end_lon, "altitude": 1200}
 
                     wplist.append(OrderedDict([
                         ("waypointID", 0),
-                        ("coordinate", {"latitude": end_lat,
-                                        "longitude": end_lon,
-                                        "altitude": 1200}),
-                        ("speed",      cruise_speed),
-                        ("eta",        0),
-                        ("ecf",        0.0),
+                        ("coordinate", end_coord),
+                        ("speed", cruise_speed),
+                        ("eta", 0),
+                        ("ecf", 0.0),
                         ("nextWaypointID", 0),
                         ("waypointPassType", PASS_FLYOVER),
-                        ("filmingProperty", None),   # ← null 로 출력
+                        ("filmingProperty", _mk_point_filming_for_coord(end_coord)),
                     ]))
 
         # 1-B. 이동 미션 (type 7)
         elif mtype == 7:
-            base: list[tuple[float,float]] = []
+            base: list[tuple[float, float]] = []
             if info.get("coordinateList"):
                 base = [(c["latitude"], c["longitude"]) for c in info["coordinateList"]]
             elif info.get("lineList"):
-                base = [(c["latitude"], c["longitude"])
-                        for c in info["lineList"][0]["coordinateList"]]
+                base = [(c["latitude"], c["longitude"]) for c in info["lineList"][0]["coordinateList"]]
 
             if len(base) == 1:
                 lat, lon = base[0]
                 wplist.append(OrderedDict([
                     ("waypointID", 0),
-                    ("coordinate", {"latitude":lat,"longitude":lon,"altitude":1200}),
-                    ("speed", cruise_speed), ("eta",0), ("ecf",1.0),
-                    ("nextWaypointID",0), ("waypointPassType",1),
-                    ("filmingProperty", {}),   # 이동 단일점은 기존대로 유지
+                    ("coordinate", {"latitude": lat, "longitude": lon, "altitude": 1200}),
+                    ("speed", cruise_speed), ("eta", 0), ("ecf", 1.0),
+                    ("nextWaypointID", 0), ("waypointPassType", 1),
+                    ("filmingProperty", {}),
                 ]))
             elif len(base) >= 2:
                 raw_pts = UAVMissionPlanner.plan_route_only(
-                    base, cruise_speed, heading_tol_deg = turn_step_deg, store=False
+                    base, cruise_speed, heading_tol_deg=turn_step_deg, store=False
                 )
-
                 MIN_SPACING_M = 200.0
-                simp : list[dict] = [raw_pts[0]]
+                simp: list[dict] = [raw_pts[0]]
                 for p in raw_pts[1:]:
                     d = math.hypot(
-                        (p["lon"]-simp[-1]["lon"])*DEG_M*math.cos(
-                            math.radians((p["lat"]+simp[-1]["lat"])/2)),
-                        (p["lat"]-simp[-1]["lat"])*DEG_M
+                        (p["lon"] - simp[-1]["lon"]) * DEG_M * math.cos(
+                            math.radians((p["lat"] + simp[-1]["lat"]) / 2)),
+                        (p["lat"] - simp[-1]["lat"]) * DEG_M
                     )
                     if d >= MIN_SPACING_M or p is raw_pts[-1]:
                         simp.append(p)
@@ -535,50 +592,76 @@ def build_flight_plans(
                 for p in simp:
                     wplist.append(OrderedDict([
                         ("waypointID", 0),
-                        ("coordinate", {"latitude":p["lat"],
-                                        "longitude":p["lon"],
-                                        "altitude":1200}),
+                        ("coordinate", {"latitude": p["lat"], "longitude": p["lon"], "altitude": 1200}),
                         ("speed", cruise_speed),
-                        ("eta",   p["eta_ms"]),
-                        ("ecf",   0.0),
-                        ("nextWaypointID",0),
-                        ("waypointPassType",1),
+                        ("eta", p["eta_ms"]),
+                        ("ecf", 0.0),
+                        ("nextWaypointID", 0),
+                        ("waypointPassType", 1),
                         ("filmingProperty", _mk_filming(
-                            operation_mode = OPMODE_HOLD,
-                            sensor         = SENSOR_EO_IR
+                            operation_mode=OPMODE_HOLD,
+                            sensor=SENSOR_EO_IR
                         )),
                     ]))
 
         # 1-C. 패킷 저장
         if wplist:
             packets.append({
-                "pathID":     miss["pathID"],
+                "pathID": miss["pathID"],
                 "aircraftID": aid,
-                "wplist":     wplist,
+                "wplist": wplist,
             })
 
     # ────────────────────────── 3) WP ID · 링크 · ECF ────────────────
     for pkt in packets:
-        for wp in pkt["wplist"]:
+        wps = pkt["wplist"]
+        if not wps:
+            continue
+
+        for wp in wps:
             wp["waypointID"] = wp_alloc.alloc()
 
-        total_eta = sum(w["eta"] for w in pkt["wplist"]) or 1
+        for idx in range(len(wps) - 1):
+            wps[idx]["nextWaypointID"] = wps[idx + 1]["waypointID"]
+        wps[-1]["nextWaypointID"] = 0
+
+        for wp in wps:
+            if wp.get("waypointPassType") == PASS_FLYOVER:
+                if not wp.get("filmingProperty"):
+                    wp["filmingProperty"] = _mk_point_filming_for_coord(wp.get("coordinate") or {})
+                wp["loiterProperty"] = OrderedDict([
+                    ("radius", 800),
+                    ("direction", 1),
+                    ("time", 30),
+                    ("speed", 40),
+                ])
+
+        _annotate_eta_ms_inplace(wps, default_speed_mps=cruise_speed)
+
+        total_eta = sum(max(0, int(w.get("eta", 0))) for w in wps) or 1
         cum = 0
-        for idx, wp in enumerate(pkt["wplist"]):
-            cum += wp["eta"]
-            wp["ecf"] = round(cum / total_eta, 2)
-            wp["nextWaypointID"] = (
-                pkt["wplist"][idx + 1]["waypointID"] if idx + 1 < len(pkt["wplist"]) else 0
-            )
+        for wp in wps:
+            step_eta = max(0, int(wp.get("eta", 0)))
+            cum += step_eta
+            wp["ecf"] = round(min(cum / total_eta, 1.0), 2)
+
+        wps[-1]["ecf"] = 1.0
 
     # ────────────────────────── 4) 최종 조립 ─────────────────────────
     result = []
     for pkt in packets:
         result.append(OrderedDict([
-            ("timestamp",           now_ms),
-            ("pathID",              pkt["pathID"]),
-            ("aircraftID",          pkt["aircraftID"]),
-            ("isFormationFlight",   False),
-            ("waypointList",        pkt["wplist"]),
+            ("timestamp", now_ms),
+            ("Source", _sw_code()),
+            ("pathID", pkt["pathID"]),
+            ("aircraftID", pkt["aircraftID"]),
+            ("isFormationFlight", False),
+            ("waypointList", pkt["wplist"]),
         ]))
     return result
+
+
+
+
+
+

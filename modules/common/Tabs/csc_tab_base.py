@@ -1,6 +1,7 @@
-# csc_tab_base.py
+# /mnt/data/csc_tab_base.py
 from __future__ import annotations
 from datetime import datetime
+import time
 from typing import Optional, Sequence, Tuple, Dict
 
 from PyQt5.QtWidgets import (
@@ -9,6 +10,8 @@ from PyQt5.QtWidgets import (
 )
 import json
 import re
+import os
+import socket
 
 from PyQt5.QtGui import QColor
 from PyQt5.QtCore import Qt, QTimer
@@ -26,9 +29,23 @@ class CSCTabBase(QWidget):
     ──────────────────────────────────────────────
     서브클래스에서 TITLE / PUSH_MESSAGES / RECEIVE_MESSAGES 만 바꿔주면
     UI·로직은 자동 재사용된다.
+
+    [UDP 모니터링 전송 설정]
+    - 우선순위 1: KU_MONITOR_UDP="HOST:PORT" (전체 모듈 공용)
+    - 우선순위 2: 모듈별 호스트/포트
+        KU_MON_HOST (기본 127.0.0.1)
+        KU_MON_ASSIGNMENT_PORT (기본 46981)  # mission_planning / mission
+        KU_MON_MONITORING_PORT (기본 46982)  # monitoring
+        KU_MON_DECISION_PORT   (기본 46983)  # decision / decision_support
+        KU_MON_INFO_PORT       (기본 46984)  # info / info_manage
+    - KU_ROLE 별 role 코드:
+        monitoring → MSM, mission → MMR, decision → MOB, info → INF
     """
 
     # 서브클래스에서 오버라이드할 상수 -----------------
+    HISTORY_LIMIT: int = 50
+    HISTORY_SEPARATOR: str = "=" * 64
+
     TITLE: str = "CSC"
     PUSH_MESSAGES: Sequence[Tuple[str, str]] = ()
     RECEIVE_MESSAGES: Sequence[Tuple[str, str]] = ()
@@ -52,9 +69,10 @@ class CSCTabBase(QWidget):
             '0304': None,
             '0401': 5,
             '0402': None,
-            '0501': 15,
+            '0501': 5,
             '0502': None,
             '0503': None,
+            '0504': None,
             '0601': None,
             '0602': None,
             '0701': None,
@@ -73,46 +91,46 @@ class CSCTabBase(QWidget):
 
         # 2) 동작 중인 타이머 사전: { msg_id: QTimer }
         self.periodic_timers: Dict[str, QTimer] = {}
-        # ─────────────────────────────────────────────────────────
-
         # 3) 수신 자동완료 타이머 사전: { msg_id: QTimer }
         self.receive_timers: Dict[str, QTimer] = {}
-
         # 4) 비주기 수신 횟수 카운트용 사전: { msg_id: int }
         self.receive_counts: Dict[str, int] = {}
+
+        # ── UDP 모니터 연결(옵션) ─────────────────────────────
+        self._udp_addr = self._resolve_udp_target()       # ('host', port) 또는 None
+        self._udp_sock: Optional[socket.socket] = None
+        if self._udp_addr:
+            try:
+                self._udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            except Exception:
+                self._udp_sock = None
+        # ───────────────────────────────────────────────────
 
         self._init_ui()
         self.tbl_tx.cellDoubleClicked.connect(self._on_tx_double_clicked)
 
-        # ───────── 수신 메시지(tab) 등록 ────────────────────
-        # self.RECEIVE_MESSAGES: List[Tuple[msg_id, msg_name]]
+        # 수신 메시지(tab) 등록
         for msg_id, _ in getattr(self, "RECEIVE_MESSAGES", []):
             register_listener(msg_id, self)
 
-        # ── [추가] 자체점검 간이모드(2초 후 정상 보고) ────────────────────
-        self._selfcheck_simple = True   # 지금은 간단 모드: 2초 후 → status=1
-        self._selfcheck_ready  = False  # 초기엔 0(Unknown)
+        # 자체점검 간이모드(2초 후 정상 보고)
+        self._selfcheck_simple = True
+        self._selfcheck_ready  = False
         QTimer.singleShot(2000, self._mark_selfcheck_ready)
-        # ─────────────────────────────────────────────────────────────
 
-    # ── [추가] 2초 후 Ready 마킹 ───────────────────────────────────────
     def _mark_selfcheck_ready(self):
         self._selfcheck_ready = True
-    # ────────────────────────────────────────────────────────────────
 
     # ──────────────── UI 빌드 ───────────────────────
     def _init_ui(self):
-        # 테이블 생성
-        self.tbl_tx = self._make_tx_table()   # ← 변경: 4열 테이블
-        self.tbl_rx = self._make_rx_table()      # 3열 그대로
+        self.tbl_tx = self._make_tx_table()
+        self.tbl_rx = self._make_rx_table()
         self._populate(self.tbl_tx, self.PUSH_MESSAGES, "발신 전")
         self._populate(self.tbl_rx, self.RECEIVE_MESSAGES, "수신 전")
 
-        # 로그
         self.log_tx = self._make_log()
         self.log_rx = self._make_log()
 
-        # 레이아웃
         left = self._side("발신", self.tbl_tx, self.log_tx)
         right = self._side("수신", self.tbl_rx, self.log_rx)
         body = QHBoxLayout()
@@ -122,11 +140,11 @@ class CSCTabBase(QWidget):
         root = QVBoxLayout(self)
         title = QLabel(self.TITLE)
         title.setStyleSheet("font-size:18px;font-weight:600;")
+        self._title_label = title
         root.addWidget(title)
         root.addLayout(body)
         root.setContentsMargins(4, 4, 4, 4)
-
-    # ──────────────── Helper ───────────────────────
+        
     def _make_table(self) -> QTableWidget:
         tbl = QTableWidget(0, 3)
         tbl.setHorizontalHeaderLabels(["Message ID", "Message Name", "상태"])
@@ -137,44 +155,44 @@ class CSCTabBase(QWidget):
         tbl.setStyleSheet("font-size:12px;")
         return tbl
 
+    def _role_norm(self) -> str:
+        """
+        KU_ROLE 값을 표준화:
+        mission_planning→mission, decision_support→decision, info_manage→info
+        """
+        role = (os.environ.get("KU_ROLE") or "").lower()
+        return {
+            "mission_planning": "mission",
+            "decision_support": "decision",
+            "info_manage": "info",
+        }.get(role, role)
+
     def _module_human_name(self) -> str:
         """
-        KU_ROLE 기준으로 모듈 표시명을 반환.
-        monitoring → Mission State Monitor
-        mission    → Multi-agent Mission Planner
-        decision   → Mission Option Builder
+        (기존) KU_ROLE 기준 모듈 표시명 반환.
+        ※ 내부 UI 용도로 남겨둠. 모니터링 전송은 _sw_code() 사용.
         """
-        import os
-        role = (os.environ.get("KU_ROLE") or "").lower()
+        role = self._role_norm()
         return {
             "monitoring": "Mission State Monitor",
             "mission":    "Multi-agent Mission Planner",
             "decision":   "Mission Option Builder",
+            "info":       "Information Manager",
         }.get(role, "Multi-agent Mission Planner")
 
-    # ── [교체] SW 코드(MMR/MSM/MOB) 반환 ─────────────────────────────
     def _sw_code(self) -> str:
-        import os
-        role = (os.environ.get("KU_ROLE") or "").lower()
-        return {"mission": "MMR", "monitoring": "MSM", "decision": "MOB"}.get(role, "MMR")
-    # ────────────────────────────────────────────────────────────────
+        """
+        KU_ROLE → 코드:
+        monitoring: MSM, mission: MMR, decision: MOB, info: INF
+        """
+        role = self._role_norm()
+        return {"mission": "MMR", "monitoring": "MSM", "decision": "MOB", "info": "INF"}.get(role, "MMR")
 
-    # ── [교체] 자체 진단 결과(0/1/2) ──────────────────────────────────
     def _self_diag_status(self) -> int:
-        """
-        0: Unknown(초기 2초)
-        1: 정상(간이모드: 2초 경과)
-        2: 비정상(간이모드 해제 시에만 실제 점검 실패 시 보고)
-        """
-        # 2초 전에는 무조건 0
         if not self._selfcheck_ready:
             return 0
-
-        # 간이모드면 2초 경과 후 바로 정상(=1)
         if self._selfcheck_simple:
             return 1
-
-        # ── 아래는 '간이모드 해제'했을 때만 쓰는 실제 점검(지금은 사용 안 함)
         try:
             import importlib.util as _iu
             try:
@@ -200,12 +218,8 @@ class CSCTabBase(QWidget):
             return 1 if (found_push and rx_ok and messenger_ok) else 2
         except Exception:
             return 2
-    # ────────────────────────────────────────────────────────────────
 
     def _make_rx_table(self) -> QTableWidget:
-        """
-        수신 테이블: 4열(메시지ID·이름·상태·데이터) 구성
-        """
         tbl = QTableWidget(0, 4)
         tbl.setHorizontalHeaderLabels(["Message ID", "Message Name", "상태", "데이터"])
         tbl.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
@@ -213,7 +227,7 @@ class CSCTabBase(QWidget):
         tbl.setEditTriggers(QTableWidget.NoEditTriggers)
         tbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         tbl.setStyleSheet("font-size:12px;")
-        tbl.setColumnWidth(3, 60)   # '데이터' 버튼
+        tbl.setColumnWidth(3, 60)
         return tbl
 
     def _make_log(self) -> QTextEdit:
@@ -239,11 +253,6 @@ class CSCTabBase(QWidget):
                 tbl: QTableWidget,
                 data: Sequence[Tuple[str, str]],
                 default_state: str):
-        """
-        테이블에 (msg_id, msg_name) 목록을 채운다.
-        * 발신 테이블(5열) → '발신'·'데이터' 버튼
-        * 수신 테이블(4열) → '데이터' 버튼만
-        """
         col_cnt     = tbl.columnCount()
         is_tx_table = col_cnt == 5
         is_rx_table = col_cnt == 4
@@ -269,69 +278,182 @@ class CSCTabBase(QWidget):
                 btn_view.clicked.connect(lambda _, row=r: self._on_rx_view_button_clicked(row))
                 tbl.setCellWidget(r, 3, btn_view)
 
-    def _on_rx_view_button_clicked(self, row: int):
-        """
-        수신 테이블 '보기' 버튼 클릭 → 최근 RAW(JSON) 팝업
-        """
-        item = self.tbl_rx.item(row, 0)
-        mid  = item.text()
-        raw  = item.data(Qt.UserRole)
 
-        if not raw:
-            self._show_data_dialog(mid, "(데이터 없음)")
-            return
-
-        txt = raw.decode(errors="ignore")
-        m   = re.search(r"\{.*\}", txt, flags=re.S)
-        if not m:
-            self._show_data_dialog(mid, txt.strip())
-            return
-
+    # ───────── Payload History 유틸 ─────────
+    def _coerce_payload_bytes(self, payload) -> bytes | None:
+        if payload is None:
+            return None
+        if isinstance(payload, bytes):
+            return payload
+        if isinstance(payload, bytearray):
+            return bytes(payload)
+        if isinstance(payload, str):
+            return payload.encode("utf-8", "ignore")
         try:
-            obj     = json.loads(m.group(0))
-            pretty  = json.dumps(obj, indent=2, ensure_ascii=False)
-            self._show_data_dialog(mid, pretty)
+            return bytes(payload)
         except Exception:
-            self._show_data_dialog(mid, m.group(0).strip())
+            return None
 
+    def _normalize_payload_history(self, payload) -> list[dict]:
+        history: list[dict] = []
+        if payload is None:
+            return history
 
-    def _on_tx_view_button_clicked(self, row: int):
-        """
-        데이터 보기 버튼 클릭: 저장된 RAW 문자열에서 JSON만 추출해
-        pretty-print(indent=2) 형태로 팝업 표시.
-        """
-        item = self.tbl_tx.item(row, 0)
-        mid  = item.text()
-        raw  = item.data(Qt.UserRole)
+        if isinstance(payload, list):
+            iterable = payload
+        else:
+            iterable = [payload]
 
-        # RAW 데이터가 없을 때
+        for entry in iterable:
+            ts = None
+            raw_obj = entry
+            if isinstance(entry, dict):
+                ts = entry.get("ts")
+                raw_obj = entry.get("raw")
+            elif isinstance(entry, (tuple, list)) and len(entry) >= 2:
+                ts = entry[0]
+                raw_obj = entry[1]
+            raw_bytes = self._coerce_payload_bytes(raw_obj)
+            if raw_bytes is None:
+                continue
+            history.append({"ts": ts, "raw": raw_bytes})
+        return history
+
+    def _append_payload_history(self, item: QTableWidgetItem | None, raw: bytes | None):
+        if item is None:
+            return []
+        raw_bytes = self._coerce_payload_bytes(raw)
+        if raw_bytes is None:
+            return self._normalize_payload_history(item.data(Qt.UserRole))
+
+        history = self._normalize_payload_history(item.data(Qt.UserRole))
+        now = time.time()
+        history.append({
+            "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "ms": int(now * 1000),
+            "raw": raw_bytes
+        })
+        limit = getattr(self, "HISTORY_LIMIT", 50) or 50
+        if len(history) > limit:
+            history = history[-limit:]
+        item.setData(Qt.UserRole, history)
+        return history
+
+    def _latest_payload_bytes(self, payload) -> bytes:
+        history = self._normalize_payload_history(payload)
+        return history[-1]["raw"] if history else b""
+
+    def _format_payload_for_display(self, raw: bytes | None) -> str:
         if not raw:
-            self._show_data_dialog(mid, "(데이터 없음)")
-            return
-
-        # ① bytes → str
+            return "(데이터 없음)"
         txt = raw.decode(errors="ignore")
-
-        # ② JSON 블록 추출: BODY 뒤 중괄호 … 마지막 중괄호까지
         m = re.search(r"\{.*\}", txt, flags=re.S)
         if not m:
-            # JSON 못 찾으면 원문 그대로
-            self._show_data_dialog(mid, txt.strip())
-            return
-
+            stripped = txt.strip()
+            return stripped or "(데이터 없음)"
         try:
             obj = json.loads(m.group(0))
-            pretty = json.dumps(obj, indent=2, ensure_ascii=False)
-            self._show_data_dialog(mid, pretty)
+            return json.dumps(obj, indent=2, ensure_ascii=False)
         except Exception:
-            # 파싱 실패 시 원문 그대로
-            self._show_data_dialog(mid, m.group(0).strip())
+            return m.group(0).strip() or "(데이터 없음)"
 
+    def _history_timestamps(self, history: list[dict]) -> list[float]:
+        result: list[float] = []
+        for entry in history:
+            ms = entry.get("ms")
+            if ms is None:
+                ts = entry.get("ts")
+                if isinstance(ts, str):
+                    try:
+                        dt = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
+                        ms = int(dt.timestamp() * 1000)
+                    except Exception:
+                        continue
+            if ms is None:
+                continue
+            try:
+                result.append(float(ms) / 1000.0)
+            except Exception:
+                continue
+        result.sort()
+        return result
+
+    def _calc_recent_frequency(self, history: list[dict], window_sec: float = 10.0) -> float | None:
+        timestamps = self._history_timestamps(history)
+        if len(timestamps) < 2:
+            return None
+        latest = timestamps[-1]
+        cutoff = latest - window_sec
+        recent = [t for t in timestamps if t >= cutoff]
+        if len(recent) < 2:
+            return None
+        span = recent[-1] - recent[0]
+        if span <= 0:
+            return None
+        return (len(recent) - 1) / span
+
+
+    def _format_rate_state(self, label: str, planned: float | None, actual: float | None) -> str:
+        rate_parts = []
+        if planned is not None:
+            rate_parts.append(f"{planned:g}Hz")
+        if actual is not None:
+            rate_parts.append(f"{actual:.2f}Hz")
+        if rate_parts:
+            joined = " / ".join(rate_parts)
+            return f"{label}({joined})"
+        return label
+
+    def _format_history_for_dialog(self, history: list[dict]) -> str:
+        if not history:
+            return "(데이터 없음)"
+        total = len(history)
+        separator = getattr(self, "HISTORY_SEPARATOR", "=" * 64)
+        parts: list[str] = []
+
+        for idx, entry in enumerate(reversed(history), 1):
+            ts = entry.get("ts")
+            raw = entry.get("raw")
+            body = self._format_payload_for_display(raw)
+            meta_tokens = []
+            if total > 1:
+                meta_tokens.append(f"{idx}/{total}")
+            if ts:
+                meta_tokens.append(ts)
+            header = " ".join(meta_tokens)
+            if header:
+                parts.append(f"{separator}\n[{header}]\n{body}")
+            else:
+                parts.append(f"{separator}\n{body}")
+
+        return "\n".join(parts)
+
+
+    def _on_rx_view_button_clicked(self, row: int):
+        item = self.tbl_rx.item(row, 0)
+        mid  = item.text()
+        history = self._normalize_payload_history(item.data(Qt.UserRole))
+
+        if not history:
+            self._show_data_dialog(mid, "(데이터 없음)")
+            return
+
+        rendered = self._format_history_for_dialog(history)
+        self._show_data_dialog(mid, rendered)
+
+    def _on_tx_view_button_clicked(self, row: int):
+        item = self.tbl_tx.item(row, 0)
+        mid  = item.text()
+        history = self._normalize_payload_history(item.data(Qt.UserRole))
+
+        if not history:
+            self._show_data_dialog(mid, "(데이터 없음)")
+            return
+
+        rendered = self._format_history_for_dialog(history)
+        self._show_data_dialog(mid, rendered)
 
     def _show_data_dialog(self, msg_id: str, text: str):
-        """
-        메시지별 상세 데이터 팝업
-        """
         dlg = QDialog(self)
         dlg.setWindowTitle(f"{msg_id} – 발신 데이터")
         vbox = QVBoxLayout(dlg)
@@ -349,17 +471,10 @@ class CSCTabBase(QWidget):
         dlg.resize(540, 320)
         dlg.exec_()
 
-
     def _on_tx_button_clicked(self, row: int):
-        """
-        발신 버튼 클릭 시: 더블-클릭과 동일한 처리 경로로 보낸다.
-        """
-        self._on_tx_double_clicked(row, 0)   # col=0(dummy)
+        self._on_tx_double_clicked(row, 0)
 
     def _make_tx_table(self) -> QTableWidget:
-        """
-        발신 테이블: 5열(메시지ID·이름·상태·발신·보기) 구성
-        """
         tbl = QTableWidget(0, 5)
         tbl.setHorizontalHeaderLabels(["Message ID", "Message Name", "상태", "발신", "데이터"])
         tbl.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
@@ -367,61 +482,89 @@ class CSCTabBase(QWidget):
         tbl.setEditTriggers(QTableWidget.NoEditTriggers)
         tbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         tbl.setStyleSheet("font-size:12px;")
-        tbl.setColumnWidth(3, 60)   # 발신 버튼
-        tbl.setColumnWidth(4, 60)   # 데이터 버튼
+        tbl.setColumnWidth(3, 60)
+        tbl.setColumnWidth(4, 60)
         return tbl
 
     # ──────────── Public API (메시지 완료) ───────────
+
     def mark_sent(self, msg_id: str, raw: bytes | None = None):
         self._update_state(self.tbl_tx, msg_id, "발신 완료")
+        row_index: int | None = None
+        history: list[dict] = []
+        try:
+            for r in range(self.tbl_tx.rowCount()):
+                item = self.tbl_tx.item(r, 0)
+                if item and item.text() == msg_id:
+                    row_index = r
+                    if raw is not None:
+                        history = self._append_payload_history(item, raw)
+                    else:
+                        history = self._normalize_payload_history(item.data(Qt.UserRole))
+                    break
+        except Exception:
+            history = []
+
+        freq = self.periodic_config.get(msg_id, None)
+        if freq and row_index is not None:
+            actual = self._calc_recent_frequency(history)
+            state_item = self.tbl_tx.item(row_index, 2)
+            if state_item:
+                state_item.setText(self._format_rate_state("주기송신", freq, actual))
+                state_item.setForeground(QColor("blue"))
+
         self._write_log(self.log_tx, "SEND", msg_id, raw)
 
     def mark_received(self, msg_id: str, raw: bytes | None = None):
         freq = self.periodic_config.get(msg_id, None)
 
-        # 1) 테이블 상태 업데이트: 수신 중 또는 수신 완료
         for r in range(self.tbl_rx.rowCount()):
-            if self.tbl_rx.item(r, 0).text() == msg_id:
-                item = self.tbl_rx.item(r, 2)
-                from PyQt5.QtGui import QColor
+            id_item = self.tbl_rx.item(r, 0)
+            if not id_item or id_item.text() != msg_id:
+                continue
 
-                if freq:
-                    # 주기 수신일 때: "수신 중(XXHz)"
-                    item.setText(f"수신 중({freq}Hz)")
-                    item.setForeground(QColor("blue"))
-
-                    # 기존 타이머 있으면 중지
-                    if msg_id in self.receive_timers:
-                        self.receive_timers[msg_id].stop()
-                        self.receive_timers[msg_id].deleteLater()
-                        del self.receive_timers[msg_id]
-
-                    # 새 타이머: 2/freq 초 후에 자동으로 "수신 완료"로 전환
-                    timer = QTimer(self)
-                    timer.setSingleShot(True)
-                    timeout_ms = int((2000.0 / freq))  # 2초/freq 면 충분합니다
-                    timer.setInterval(timeout_ms)
-                    timer.timeout.connect(lambda mid=msg_id: self._receive_timeout(mid))
-                    timer.start()
-                    self.receive_timers[msg_id] = timer
-                else:
-                    # 비주기 수신일 때: 횟수 카운트 후 "수신 완료(n회)"
-                    count = self.receive_counts.get(msg_id, 0) + 1
-                    self.receive_counts[msg_id] = count
-                    item.setText(f"수신 완료({count})")
-                    item.setForeground(QColor("blue"))
-                if raw:
-                    self.tbl_rx.item(r, 0).setData(Qt.UserRole, raw)
+            state_item = self.tbl_rx.item(r, 2)
+            if state_item is None:
                 break
 
-        # 2) 로그 기록
+            if raw is not None:
+                history = self._append_payload_history(id_item, raw)
+            else:
+                history = self._normalize_payload_history(id_item.data(Qt.UserRole))
+
+            if freq:
+                actual = self._calc_recent_frequency(history)
+                state_item.setText(self._format_rate_state("수신 중", freq, actual))
+                state_item.setForeground(QColor("blue"))
+
+                if msg_id in self.receive_timers:
+                    self.receive_timers[msg_id].stop()
+                    self.receive_timers[msg_id].deleteLater()
+                    del self.receive_timers[msg_id]
+
+                timer = QTimer(self)
+                timer.setSingleShot(True)
+                timeout_ms = int(2000.0 / freq)
+                timer.setInterval(timeout_ms)
+                timer.timeout.connect(lambda mid=msg_id: self._receive_timeout(mid))
+                timer.start()
+                self.receive_timers[msg_id] = timer
+            else:
+                count = self.receive_counts.get(msg_id, 0) + 1
+                self.receive_counts[msg_id] = count
+                state_item.setText(f"수신 완료({count})")
+                state_item.setForeground(QColor("blue"))
+            break
+
         self._write_log(self.log_rx, "RECV", msg_id, raw)
+        self._print_received_summary(msg_id, raw)
+        self._emit_rx_monitor(msg_id, raw)
 
     # ──────────── 더블클릭 → Push (주기/비주기) ────────────────
     def _on_tx_double_clicked(self, row: int, _col: int):
         msg_id = self.tbl_tx.item(row, 0).text()
         freq = self.periodic_config.get(msg_id, None)
-        body = self._build_overridden_body(msg_id)  # ★ 0102 바디 강제
+        body = self._build_overridden_body(msg_id)
 
         if freq is None:
             ok = push_message(
@@ -438,38 +581,40 @@ class CSCTabBase(QWidget):
                 self._start_periodic_send(msg_id, row, freq)
 
     def _receive_timeout(self, msg_id: str):
-        """
-        주기 수신 중 타이머가 만료되면 호출됩니다.
-        tbl_rx 상태를 '수신 완료'(파란색)로 바꾸고, 타이머 삭제
-        """
         for r in range(self.tbl_rx.rowCount()):
             if self.tbl_rx.item(r, 0).text() == msg_id:
                 item = self.tbl_rx.item(r, 2)
-                from PyQt5.QtGui import QColor
                 item.setText("수신 완료")
                 item.setForeground(QColor("blue"))
                 break
-
-        # 타이머 객체 정리
         if msg_id in self.receive_timers:
             self.receive_timers[msg_id].deleteLater()
             del self.receive_timers[msg_id]
 
 
     def _mark_single_sent(self, row: int, msg_id: str, raw: bytes | None):
-        """
-        비주기 전송이 완료된 후 호출: 상태를 '발신 완료'로 업데이트하고 로그 기록
-        """
-        self.tbl_tx.item(row, 2).setText("발신 완료")
-        if raw:
-            self.tbl_tx.item(row, 0).setData(Qt.UserRole, raw)
+        state_item = self.tbl_tx.item(row, 2)
+        history: list[dict] = []
+        msg_item = self.tbl_tx.item(row, 0)
+        if msg_item is not None:
+            if raw is not None:
+                history = self._append_payload_history(msg_item, raw)
+            else:
+                history = self._normalize_payload_history(msg_item.data(Qt.UserRole))
+
+        freq = self.periodic_config.get(msg_id, None)
+        if freq and state_item is not None:
+            actual = self._calc_recent_frequency(history)
+            state_item.setText(self._format_rate_state("주기송신", freq, actual))
+            state_item.setForeground(QColor("blue"))
+        elif state_item is not None:
+            state_item.setText("발신 완료")
+            state_item.setForeground(QColor("blue"))
+
         self._write_log(self.log_tx, "SEND", msg_id, raw)
 
-    # ──────────── 주기 전송 관리 메서드 ─────────────────────
+    # ──────────── 주기 전송 관리 ─────────────────────
     def _start_periodic_send(self, msg_id: str, row: int, freq_hz: float):
-        """
-        주기 전송 시작: 지정된 주파수(freq_hz)마다 push_message 호출.
-        """
         interval_ms = int(1000.0 / freq_hz)
         timer = QTimer(self)
         timer.setInterval(interval_ms)
@@ -477,39 +622,28 @@ class CSCTabBase(QWidget):
         timer.start()
 
         self.periodic_timers[msg_id] = timer
-        # 타이머 시작 직후 상태를 '전송중'으로 표시
-        self.tbl_tx.item(row, 2).setText(f"전송중 ({freq_hz}Hz)")
+        state_item = self.tbl_tx.item(row, 2)
+        if state_item is not None:
+            state_item.setText(self._format_rate_state("주기송신", freq_hz, None))
+            state_item.setForeground(QColor("blue"))
 
     def _stop_periodic_send(self, msg_id: str, row: int):
-        """
-        주기 전송 중지: 해당 msg_id의 QTimer를 멈추고 제거.
-        전송이 중지되면, tbl_tx 상태는 '전송 정지'로, 
-        tbl_rx 상태는 '수신 완료'(파란색) 로 각각 업데이트.
-        """
-        # 1) 주기 전송용 타이머 정지
         timer = self.periodic_timers.get(msg_id)
         if timer:
             timer.stop()
             timer.deleteLater()
             del self.periodic_timers[msg_id]
 
-        # 2) tbl_tx 상태 업데이트
         self.tbl_tx.item(row, 2).setText("전송 정지")
 
-        # 3) 같은 msg_id에 대해 tbl_rx 상태를 '수신 완료'(파란색) 로 변경
         for r in range(self.tbl_rx.rowCount()):
             if self.tbl_rx.item(r, 0).text() == msg_id:
                 recv_item = self.tbl_rx.item(r, 2)
                 recv_item.setText("수신 완료")
-                from PyQt5.QtGui import QColor
                 recv_item.setForeground(QColor("blue"))
                 break
 
     def _build_overridden_body(self, msg_id: str):
-        """
-        0102 전송 시 바디를 표준 스키마로 생성:
-        { "timestamp": ms_since_2000, "source": "MMR|MSM|MOB", "status": 0|1|2 }
-        """
         if str(msg_id).strip() != "0102":
             return None
         return {
@@ -519,10 +653,7 @@ class CSCTabBase(QWidget):
         }
     
     def _periodic_timeout(self, msg_id: str, row: int):
-        """
-        주기 타이머 만료 시 호출. 상태는 '전송중' 유지, 로그만 기록.
-        """
-        body = self._build_overridden_body(msg_id)  # ★ 0102 바디 강제
+        body = self._build_overridden_body(msg_id)
         ok = push_message(
             msg_id, self.messenger,
             on_done=lambda mid, raw: self._log_only(row, mid, raw),
@@ -532,12 +663,8 @@ class CSCTabBase(QWidget):
             self.tbl_tx.item(row, 2).setText("전송 실패")
 
     def _log_only(self, row: int, msg_id: str, raw: bytes | None):
-        """
-        주기 전송 시 상태는 그대로 두고 로그만 기록.
-        RAW 데이터도 셀(UserRole)에 업데이트해 데이터 보기 팝업에서 활용.
-        """
         if raw:
-            self.tbl_tx.item(row, 0).setData(Qt.UserRole, raw)
+            self._append_payload_history(self.tbl_tx.item(row, 0), raw)
         self._write_log(self.log_tx, "SEND", msg_id, raw)
 
     # ──────────── 내부 유틸 ───────────────────────
@@ -552,11 +679,6 @@ class CSCTabBase(QWidget):
                 tag: str,
                 msg_id: str,
                 raw: bytes | None):
-        """
-        로그 출력:
-        - 0102일 때만 BODY JSON을 'Timestamp, Status, SourceModuleName' 순서로 재정렬해서 보기 좋게 표시
-        - 값은 변경하지 않음(재계산/추가 금지), 'sent' 같은 내부 키는 제거
-        """
         ts = datetime.now().strftime("%H:%M:%S")
         line = f"[{ts}] {tag:<4} : {msg_id}"
 
@@ -564,32 +686,26 @@ class CSCTabBase(QWidget):
             try:
                 decoded = raw.decode(errors="ignore")
                 if str(msg_id).strip() == "0102":
-                    import json, re
                     from collections import OrderedDict
                     m = re.search(r"\{.*\}", decoded, flags=re.S)
                     if m:
                         try:
                             obj = json.loads(m.group(0))
-                            # 필요한 값만 그대로 꺼내고, 순서만 보장
                             payload = OrderedDict()
-                            if "Timestamp" in obj:
-                                payload["Timestamp"] = obj["Timestamp"]
-                            elif "timestamp" in obj:
-                                payload["Timestamp"] = obj["timestamp"]
-                            if "Status" in obj:
-                                payload["Status"] = obj["Status"]
-                            elif "status" in obj:
-                                payload["Status"] = obj["status"]
-                            if "SourceModuleName" in obj:
-                                payload["SourceModuleName"] = obj["SourceModuleName"]
-                            elif "source" in obj:
-                                payload["SourceModuleName"] = obj["source"]
-                            elif "requestModuleName" in obj:
-                                payload["SourceModuleName"] = obj["requestModuleName"]
-                            # 불필요한 내부 키 제거
-                            for k in ("sent", ):
-                                payload.pop(k, None)
-
+                            ts_val  = obj.get("timestamp", obj.get("Timestamp", None))
+                            st_val  = obj.get("status",    obj.get("Status",    None))
+                            src_val = (
+                                obj.get("source",
+                                    obj.get("Source",
+                                        obj.get("SourceModuleName",
+                                            obj.get("requestModuleName", None)))))
+                            if ts_val is not None:
+                                payload["timestamp"] = ts_val
+                            if st_val is not None:
+                                payload["status"] = st_val
+                            if src_val is not None:
+                                payload["source"] = src_val
+                            payload.pop("sent", None)
                             new_json = json.dumps(payload, ensure_ascii=False)
                             decoded = decoded[:m.start()] + new_json + decoded[m.end():]
                         except Exception:
@@ -599,3 +715,151 @@ class CSCTabBase(QWidget):
                 line += " (binary)"
 
         log_w.append(line)
+
+    # ────────────────────────────────────────────────────────────────
+    # [신규] 수신 데이터 요약 JSON 프린트 + UDP 모니터 전송
+    # ────────────────────────────────────────────────────────────────
+    def _print_received_summary(self, msg_id: str, raw: bytes | None):
+        """
+        콘솔 프린트 비활성화.
+        UDP 모니터 전송은 _emit_rx_monitor()가 계속 수행함.
+        디버그로 콘솔 로그가 필요하면 KU_MON_RX_PRINT=1 로 일시 활성화.
+        """
+        import os, json  # 상단에 이미 있으면 무시됨
+        if str(os.environ.get("KU_MON_RX_PRINT", "0")).lower() not in ("1", "true", "on", "yes"):
+            return
+        # ── 아래는 디버그용(환경변수로 켰을 때만 동작) ──
+        try:
+            s = str(msg_id)
+            extracted = s.zfill(4) if s.isdigit() and len(s) < 4 else s
+            payload = {"kind": "rx", "msg_id": extracted, "role": self._sw_code()}
+            print(json.dumps(payload, ensure_ascii=False), flush=True)
+        except Exception:
+            pass
+
+    def _extract_msg_id_from_raw(self, raw: bytes, allowed_ids: set) -> Optional[str]:
+        """
+        RAW 바이트 스트림에서 가능한 메시지 ID를 추출한다.
+        1) 포함된 JSON이 있으면 파싱해서 id 후보 키에서 시도
+        2) 실패 시 텍스트 전체에서 4자리 숫자 토큰을 스캔하여 allowed_ids에 존재하는 첫 매칭을 선택
+        """
+        try:
+            txt = raw.decode(errors="ignore")
+            m = re.search(r"\{.*\}", txt, flags=re.S)
+            if m:
+                try:
+                    obj = json.loads(m.group(0))
+                    candidates = [
+                        obj.get("messageId"),
+                        obj.get("message_id"),
+                        obj.get("msg_id"),
+                        obj.get("MessageID"),
+                        obj.get("MessageId"),
+                        obj.get("id"),
+                    ]
+                    for c in candidates:
+                        if isinstance(c, (str, int)):
+                            s = str(c)
+                            s4 = s.zfill(4) if s.isdigit() and len(s) < 4 else s
+                            if s4 in allowed_ids:
+                                return s4
+                except Exception:
+                    pass
+            for m2 in re.finditer(r"\b\d{4}\b", txt):
+                s = m2.group(0)
+                if s in allowed_ids:
+                    return s
+        except Exception:
+            pass
+        return None
+
+    # ────────────────────────────────────────────────────────────────
+    # [신규] UDP 모니터 전송 부분
+    # ────────────────────────────────────────────────────────────────
+    def _resolve_udp_target(self) -> Optional[tuple]:
+        """
+        1) KU_MONITOR_UDP="HOST:PORT" 우선 사용
+        2) 없으면 KU_ROLE 표준화 후 모듈별 포트 환경변수/기본값 적용
+        """
+        # 우선 구버전 호환
+        try:
+            spec = (os.environ.get("KU_MONITOR_UDP") or "").strip()
+            if spec:
+                m = re.match(r"^\s*([^:]+)\s*:\s*(\d{2,5})\s*$", spec)
+                if m:
+                    host, port = m.group(1), int(m.group(2))
+                    return (host, port)
+        except Exception:
+            pass
+
+        # 모듈별 설정
+        try:
+            host = (os.environ.get("KU_MON_HOST") or "127.0.0.1").strip()
+            role = self._role_norm()
+            if role in ("mission", "mission_planning"):
+                port = int(os.environ.get("KU_MON_ASSIGNMENT_PORT", "46981"))
+            elif role == "monitoring":
+                port = int(os.environ.get("KU_MON_MONITORING_PORT", "46982"))
+            elif role in ("decision", "decision_support"):
+                port = int(os.environ.get("KU_MON_DECISION_PORT", "46983"))
+            elif role in ("info", "info_manage"):
+                port = int(os.environ.get("KU_MON_INFO_PORT", "46984"))
+            else:
+                return None
+            return (host, port)
+        except Exception:
+            return None
+
+    def _send_udp_monitor(self, payload: dict):
+        """
+        UDP로 payload(JSON) 전송. 오류는 조용히 무시.
+        """
+        if not self._udp_sock or not self._udp_addr:
+            return
+        try:
+            data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            self._udp_sock.sendto(data, self._udp_addr)
+        except Exception:
+            pass
+
+    def _emit_rx_monitor(self, msg_id: str, raw: bytes | None):
+        """
+        수신 이벤트를 UDP 모니터로 전송. 포맷:
+        {"kind":"rx","msg_id":"0301","role":"MSM"}
+        """
+        try:
+            allowed_ids = set(map(str, self.periodic_config.keys()))
+            for mid, _ in getattr(self, "PUSH_MESSAGES", ()):
+                allowed_ids.add(str(mid).zfill(4) if str(mid).isdigit() else str(mid))
+            for mid, _ in getattr(self, "RECEIVE_MESSAGES", ()):
+                allowed_ids.add(str(mid).zfill(4) if str(mid).isdigit() else str(mid))
+
+            extracted = None
+            if raw:
+                extracted = self._extract_msg_id_from_raw(raw, allowed_ids)
+            if not extracted:
+                s = str(msg_id)
+                extracted = s.zfill(4) if s.isdigit() and len(s) < 4 else s
+
+            role_code = self._sw_code()
+            payload = {
+                "kind": "rx",
+                "msg_id": extracted,
+                "role": role_code
+            }
+            if payload.get("msg_id") == "0901" and role_code == "MOB":
+                try:
+                    host, port = self._udp_addr if self._udp_addr else ("?", "?")
+                    print(f"[UDP SEND RX] addr={host}:{port} data={payload}", flush=True)
+                except Exception:
+                    pass
+            self._send_udp_monitor(payload)
+        except Exception:
+            pass
+
+
+
+
+
+
+

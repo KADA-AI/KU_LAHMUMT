@@ -1,0 +1,28 @@
+int radius:
+ - 길이 : 4
+ - min : 0
+ - Max : 50000
+ - unit : m
+ - 비고 : 선회 반경
+
+uint direction:
+ - 길이 : 4
+ - min : 0
+ - Max : 2
+ - unit : N/A
+ - 비고 : 선회 방향
+ - enum : 0=None, 1=CW, 2=CCW
+
+uint time:
+ - 길이 : 4
+ - min : 0
+ - Max : 2^32-1
+ - unit : sec
+ - 비고 : 선회 시간
+
+float speed:
+ - 길이 : 4
+ - min : 0
+ - Max : 1000
+ - unit : m/s
+ - 비고 : 선회 속도

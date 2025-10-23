@@ -1,0 +1,23 @@
+# MissionID 0304 유인기 비행계획
+
+ulong timestamp:
+ - 길이 : 8
+ - min : 0
+ - Max : 2^64-1
+ - unit : ms
+ - 비고 : 2000년 1월 1일부터 ms
+
+uint pathID:
+ - 길이 : 4
+ - unit : N/A
+ - 비고 : 비행 계획 ID
+
+uint aircraftID:
+ - 길이 : 4
+ - min : 0
+ - Max : 6
+ - unit : N/A
+ - 비고 : 대상 유인기 ID
+ - enum : 0=Not Used, 1=지휘기, 2=편대기1, 3=편대기2, 4~6=Reserved
+
+List<LAHWaypoint> lahWaypointList

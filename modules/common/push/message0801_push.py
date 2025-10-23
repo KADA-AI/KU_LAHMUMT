@@ -75,14 +75,14 @@ def _select_tx_fields(body: dict, fields: list) -> dict:
         out["timestamp"] = int(ts)
 
     s  = _get("source")
-    sm = _get("sourceModuleName") or _get("sourcemodulename")
+    sm = _get("Source") or _get("Source")
     rq = _get("requestModuleName") or _get("requestmodulename")
     src_val = s or sm or rq
     if src_val:
-        out["sourceModuleName"] = str(src_val)
+        out["Source"] = str(src_val)
 
     for f in fields:
-        if f in ("timestamp","source","sourceModuleName","requestModuleName"):
+        if f in ("timestamp","source","Source","requestModuleName"):
             continue
         v = _get(f)
         if v is not None:
@@ -120,10 +120,10 @@ def _list_numeric_ids(dirname: str, prefix_first_char: str | None = None) -> lis
 def _dict_to_InitialPlanCommand(data: dict):
     obj = _new('InitialPlanCommand')
     if "timestamp" in data: _try_set(obj, "timestamp", int(data["timestamp"]))
-    val_src = data.get("source", data.get("source", data.get("sourceModuleName", data.get("requestModuleName", ""))))
+    val_src = data.get("source", data.get("source", data.get("Source", data.get("requestModuleName", ""))))
     if val_src != "":
         if not _try_set(obj, "source", str(val_src)):
-            _try_set(obj, "sourceModuleName", str(val_src))
+            _try_set(obj, "Source", str(val_src))
     if "operatorReplanRequestTime" in data: _try_set(obj, "operatorReplanRequestTime", int(data["operatorReplanRequestTime"]))
     if "inputMissionPackageID" in data: _try_set(obj, "inputMissionPackageID", int(data["inputMissionPackageID"]))
     if "missionReferencePackageID" in data: _try_set(obj, "missionReferencePackageID", int(data["missionReferencePackageID"]))
@@ -160,7 +160,7 @@ def make_random_and_push(node_messenger) -> bytes:
             wl = TX_FIELD_WHITELIST.get(MSG_ID, [])
             body = {
                 "timestamp": int((datetime.utcnow().replace(tzinfo=timezone.utc) - _EPOCH_2000).total_seconds() * 1000),
-                "sourceModuleName": "DSC",
+                "Source": "DSC",
             }
             # ID 필드 결정
             if "inputMissionPackageID" in wl:          body["inputMissionPackageID"] = vid
@@ -179,7 +179,7 @@ def make_random_and_push(node_messenger) -> bytes:
                 body = {
                     "timestamp": int((datetime.utcnow().replace(tzinfo=timezone.utc) - _EPOCH_2000).total_seconds() * 1000),
                     "status": 1,  # 정상
-                    "sourceModuleName": "DSC",
+                    "Source": "DSC",
                 }
         wl = TX_FIELD_WHITELIST.get(MSG_ID)
         if wl and isinstance(body, dict):

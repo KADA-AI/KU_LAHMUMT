@@ -9,7 +9,7 @@
 #
 # 설계 포인트
 #  - 스키마(.nftype/.nfpsh)에서 필드(원시/리스트/컴포지트)를 읽어, CLR 객체→dict 변환 함수를 타입별로 생성
-#  - 대/소문자 안전 접근(_get)과 source 별칭(requestModuleName/sourceModuleName) 처리
+#  - 대/소문자 안전 접근(_get)과 source 별칭(requestModuleName/Source) 처리
 #  - DB 기반(0201/0203)은 수신 시, ID에 해당하는 DB JSON을 읽어 그대로 notify (없으면 최소 바디)
 #  - received_db.set_received_XXXX(data)가 있으면 호출(없으면 무시)
 #  - 0000은 예외적으로 timestamp/source/messageID만 뽑아 알림(샘플과 동일 동작)
@@ -252,7 +252,7 @@ TX_FIELD_WHITELIST = {
     "0304": ["timestamp", "pathID"],
 }
 ID_FIELD_FOR = {
-    mid: next((f for f in fl if f not in ("timestamp","source","sourceModuleName","requestModuleName")), None)
+    mid: next((f for f in fl if f not in ("timestamp","source","Source","requestModuleName")), None)
     for mid, fl in TX_FIELD_WHITELIST.items()
 }
 
@@ -273,13 +273,13 @@ def _emit_to_dict_lines(t: str, reg: Registry) -> List[str]:
         norm  = _normalize_type_token(ftype)
         inner = _list_inner(norm)
 
-        # source / sourceModuleName / requestModuleName 별칭 처리 (문자열만)
-        if _normalize_type_token(norm) == "string" and fname in ("source","sourceModuleName","requestModuleName"):
+        # source / Source / requestModuleName 별칭 처리 (문자열만)
+        if _normalize_type_token(norm) == "string" and fname in ("source","Source","requestModuleName"):
             pas = fname[:1].upper() + fname[1:]
             lines.append(
                 "    _sval = _get(obj, "
                 f"'{fname}', '{pas}', "
-                "'source','Source','sourceModuleName','SourceModuleName','requestModuleName','RequestModuleName')"
+                "'source','Source','Source','Source','requestModuleName','RequestModuleName')"
             )
             lines.append(f"    if _sval is not None and _sval != '': d['{fname}'] = str(_sval)")
             continue
@@ -443,11 +443,11 @@ def _emit_receiver_code(msgid: str, reg: Registry, root_type: str) -> str:
                         bl.append(f"    _v = _get(obj, '{fname}', '{pas}')")
                         bl.append(f"    if _v is not None: d['{fname}'] = bool(_v)")
                     elif base == 'string':
-                        if fname in ('source','sourceModuleName','requestModuleName'):
+                        if fname in ('source','Source','requestModuleName'):
                             bl.append(
                                 "    _sval = _get(obj, "
                                 f"'{fname}', '{pas}', "
-                                "'source','Source','sourceModuleName','SourceModuleName','requestModuleName','RequestModuleName')"
+                                "'source','Source','Source','Source','requestModuleName','RequestModuleName')"
                             )
                             bl.append(f"    if _sval is not None and _sval != '': d['{fname}'] = str(_sval)")
                         else:
@@ -469,7 +469,7 @@ def _emit_receiver_code(msgid: str, reg: Registry, root_type: str) -> str:
         def _to_dict_RequestData_min(obj):
             return {
                 "timestamp": _get(obj, "timestamp","Timestamp"),
-                "source":    _get(obj, "source","Source","requestModuleName","RequestModuleName","sourceModuleName","SourceModuleName"),
+                "source":    _get(obj, "source","Source","requestModuleName","RequestModuleName","Source","Source"),
                 "messageID": _get(obj, "messageID","MessageID"),
             }
         """).strip() + "\n\n"

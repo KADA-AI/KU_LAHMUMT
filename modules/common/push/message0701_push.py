@@ -75,14 +75,14 @@ def _select_tx_fields(body: dict, fields: list) -> dict:
         out["timestamp"] = int(ts)
 
     s  = _get("source")
-    sm = _get("sourceModuleName") or _get("sourcemodulename")
+    sm = _get("Source") or _get("Source")
     rq = _get("requestModuleName") or _get("requestmodulename")
     src_val = s or sm or rq
     if src_val:
-        out["sourceModuleName"] = str(src_val)
+        out["Source"] = str(src_val)
 
     for f in fields:
-        if f in ("timestamp","source","sourceModuleName","requestModuleName"):
+        if f in ("timestamp","source","Source","requestModuleName"):
             continue
         v = _get(f)
         if v is not None:
@@ -117,45 +117,25 @@ def _list_numeric_ids(dirname: str, prefix_first_char: str | None = None) -> lis
     ids.sort()
     return ids
 
-def _dict_to_UAVMissionPlanID(data: dict):
-    obj = _new('UAVMissionPlanID')
-    if "uavMissionPlanID" in data: _try_set(obj, "uavMissionPlanID", int(data["uavMissionPlanID"]))
-    return obj
-
-def _dict_to_LAHMissionPlanID(data: dict):
-    obj = _new('LAHMissionPlanID')
-    if "lahMissionPlanID" in data: _try_set(obj, "lahMissionPlanID", int(data["lahMissionPlanID"]))
-    return obj
-
 def _dict_to_Option(data: dict):
     obj = _new('Option')
     if "optionID" in data: _try_set(obj, "optionID", int(data["optionID"]))
-    if "optionName" in data: _try_set(obj, "optionName", int(data["optionName"]))
+    if "optionName" in data: _try_set(obj, "optionName", str(data["optionName"]))
     if "missionPlanID" in data: _try_set(obj, "missionPlanID", int(data["missionPlanID"]))
     if "survivalRate" in data: _try_set(obj, "survivalRate", int(data["survivalRate"]))
     if "timeContraction" in data: _try_set(obj, "timeContraction", int(data["timeContraction"]))
     if "recogEffectiveness" in data: _try_set(obj, "recogEffectiveness", int(data["recogEffectiveness"]))
     if "distance" in data: _try_set(obj, "distance", int(data["distance"]))
     if "target" in data: _try_set(obj, "target", int(data["target"]))
-    if "uavMissionPlanIDList" in data and isinstance(data["uavMissionPlanIDList"], list):
-        T = _cs('UAVMissionPlanID') or object
-        lst = List[T]()
-        for item in data["uavMissionPlanIDList"]: lst.Add(_dict_to_UAVMissionPlanID(item if isinstance(item, dict) else {}))
-        _try_set(obj, "uavMissionPlanIDList", lst)
-    if "lahMissionPlanIDList" in data and isinstance(data["lahMissionPlanIDList"], list):
-        T = _cs('LAHMissionPlanID') or object
-        lst = List[T]()
-        for item in data["lahMissionPlanIDList"]: lst.Add(_dict_to_LAHMissionPlanID(item if isinstance(item, dict) else {}))
-        _try_set(obj, "lahMissionPlanIDList", lst)
     return obj
 
 def _dict_to_MissionPlanOptionInfo(data: dict):
     obj = _new('MissionPlanOptionInfo')
     if "timestamp" in data: _try_set(obj, "timestamp", int(data["timestamp"]))
-    val_src = data.get("source", data.get("source", data.get("sourceModuleName", data.get("requestModuleName", ""))))
+    val_src = data.get("source", data.get("source", data.get("Source", data.get("requestModuleName", ""))))
     if val_src != "":
         if not _try_set(obj, "source", str(val_src)):
-            _try_set(obj, "sourceModuleName", str(val_src))
+            _try_set(obj, "Source", str(val_src))
     if "autoExecution" in data: _try_set(obj, "autoExecution", bool(data["autoExecution"]))
     if "optionList" in data and isinstance(data["optionList"], list):
         T = _cs('Option') or object
@@ -195,7 +175,7 @@ def make_random_and_push(node_messenger) -> bytes:
             wl = TX_FIELD_WHITELIST.get(MSG_ID, [])
             body = {
                 "timestamp": int((datetime.utcnow().replace(tzinfo=timezone.utc) - _EPOCH_2000).total_seconds() * 1000),
-                "sourceModuleName": "DSC",
+                "Source": "DSC",
             }
             # ID 필드 결정
             if "inputMissionPackageID" in wl:          body["inputMissionPackageID"] = vid
@@ -214,7 +194,7 @@ def make_random_and_push(node_messenger) -> bytes:
                 body = {
                     "timestamp": int((datetime.utcnow().replace(tzinfo=timezone.utc) - _EPOCH_2000).total_seconds() * 1000),
                     "status": 1,  # 정상
-                    "sourceModuleName": "DSC",
+                    "Source": "DSC",
                 }
         wl = TX_FIELD_WHITELIST.get(MSG_ID)
         if wl and isinstance(body, dict):

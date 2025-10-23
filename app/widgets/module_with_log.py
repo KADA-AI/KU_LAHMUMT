@@ -6,7 +6,6 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt
 from .cards import Card
-from .toggle_switch import ToggleSwitch
 
 class ModuleWithLog(Card):
     """
@@ -41,7 +40,7 @@ class ModuleWithLog(Card):
         self.mode_line.setAlignment(Qt.AlignCenter)
         root.addWidget(self.mode_line)
 
-        # (2) 실행 버튼 + Auto 토글
+        # (2) control row: run button + auto indicator
         row_ctrl = QHBoxLayout()
         row_ctrl.setContentsMargins(0, 0, 0, 0)
         row_ctrl.setSpacing(16)
@@ -52,18 +51,13 @@ class ModuleWithLog(Card):
         self.btn_run.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         row_ctrl.addWidget(self.btn_run, 1)
 
-        right = QWidget(self)
-        right_lay = QHBoxLayout(right)
-        right_lay.setContentsMargins(0, 0, 0, 0)
-        right_lay.setSpacing(8)
-        right_lay.addWidget(QLabel("Auto", self))
-        self.toggle = ToggleSwitch(self, checked=False)
-        self.dot = QLabel("●", self)           # 상태점(초록/회색)
-        self.dot.setObjectName("GreenDot")
-        self.dot.setAlignment(Qt.AlignCenter)
-        right_lay.addWidget(self.toggle)
-        right_lay.addWidget(self.dot)
-        row_ctrl.addWidget(right, 1, alignment=Qt.AlignRight)
+        row_ctrl.addStretch(1)
+
+        self.auto_status = QLabel("Auto: OFF", self)
+        self.auto_status.setObjectName("AutoStatus")
+        self.auto_status.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.auto_status.setMinimumHeight(32)
+        row_ctrl.addWidget(self.auto_status, 0, alignment=Qt.AlignRight)
 
         root.addLayout(row_ctrl)
 
@@ -106,9 +100,9 @@ class ModuleWithLog(Card):
 
         self.body_layout.addLayout(root, 1)
 
-        # 토글 상태점 연동
-        self.toggle.toggled.connect(self._on_toggle)
-        self._on_toggle(False)
+        # Auto 상태 표시 초기화
+        self._auto_enabled = False
+        self._update_auto_status(False)
 
         # 예시 데이터(표 형태가 확실히 보이도록 0301~0305 사전 등록)
         for code in ["0301", "0302", "0303", "0304", "0305"]:
@@ -135,11 +129,18 @@ class ModuleWithLog(Card):
         tbl.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)  # 카운트
         return tbl
 
-    def _on_toggle(self, checked: bool):
-        # 상태점 초록/회색 전환
-        self.dot.setProperty("active", checked)
-        self.dot.style().unpolish(self.dot)
-        self.dot.style().polish(self.dot)
+    def _update_auto_status(self, enabled: bool):
+        self._auto_enabled = bool(enabled)
+        if hasattr(self, 'auto_status') and self.auto_status is not None:
+            state_txt = 'ON' if self._auto_enabled else 'OFF'
+            self.auto_status.setText(f"Auto: {state_txt}")
+            self.auto_status.setProperty('active', self._auto_enabled)
+            self.auto_status.style().unpolish(self.auto_status)
+            self.auto_status.style().polish(self.auto_status)
+
+    def set_auto_enabled(self, enabled: bool):
+        """Update auto indicator text/state."""
+        self._update_auto_status(enabled)
 
     def _ensure_row(self, tbl: QTableWidget, code: str, row_map: dict, cnt_map: dict):
         """코드용 행이 없으면 생성(카운트 0으로)"""

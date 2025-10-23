@@ -4,6 +4,13 @@
 from dll_files.nFusionImports import *            # IFusionReceive, IsLocal, IsSingletone
 from nFusion.Model.msg_0101 import *            # C# 모델
 from nFusion.Model.CommonType import *             # 공통 타입
+try:
+    SystemOperationMode
+except NameError:
+    import importlib
+
+    _msg0101 = importlib.import_module("nFusion.Model.msg_0101")
+    SystemOperationMode = getattr(_msg0101, "SystemOperationMode", object)
 from .database import received_db
 from receive_center import notify
 import json, traceback, sys, os, importlib
@@ -65,7 +72,7 @@ def _to_dict_SystemOperationMode(obj):
     d = {}
     _v = _get(obj, 'timestamp', 'Timestamp')
     if _v is not None: d['timestamp'] = int(_v)
-    _sval = _get(obj, 'source', 'Source', 'source','Source','sourceModuleName','SourceModuleName','requestModuleName','RequestModuleName')
+    _sval = _get(obj, 'source', 'Source', 'source','Source','Source','Source','requestModuleName','RequestModuleName')
     if _sval is not None and _sval != '': d['source'] = str(_sval)
     _v = _get(obj, 'systemMode', 'SystemMode')
     if _v is not None: d['systemMode'] = int(_v)

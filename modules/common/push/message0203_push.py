@@ -4,6 +4,7 @@
 
 import json, importlib
 from datetime import datetime, timezone
+from modules.common import db_paths
 from System.Collections.Generic import List
 from nFusion.Model.msg_0203 import *    # C# 모델(우선)
 from nFusion.Model.CommonType import *     # 공통 타입(항상)
@@ -75,14 +76,14 @@ def _select_tx_fields(body: dict, fields: list) -> dict:
         out["timestamp"] = int(ts)
 
     s  = _get("source")
-    sm = _get("sourceModuleName") or _get("sourcemodulename")
+    sm = _get("Source") or _get("Source")
     rq = _get("requestModuleName") or _get("requestmodulename")
     src_val = s or sm or rq
     if src_val:
-        out["sourceModuleName"] = str(src_val)
+        out["Source"] = str(src_val)
 
     for f in fields:
-        if f in ("timestamp","source","sourceModuleName","requestModuleName"):
+        if f in ("timestamp","source","Source","requestModuleName"):
             continue
         v = _get(f)
         if v is not None:
@@ -97,13 +98,17 @@ def _project_root_for_push_file(__file_path: str):
     return Path(__file_path).resolve().parents[3]
 
 def _db_dir_for(msgid: str, __file_path: str) -> str:
-    import os
-    from pathlib import Path
-    env_root = os.getenv("KU_MISSION_DB_ROOT")
     name = DB_DIR_RULES.get(msgid, f"msg_{msgid}")
-    if env_root:
-        return str(Path(env_root) / name)
-    return str(_project_root_for_push_file(__file_path) / "database" / name)
+    try:
+        if msgid in ("0201", "0203"):
+            return str(db_paths.ensure_db_payload(name))
+        root = db_paths.get_active_db_root()
+        target = root / name
+        target.mkdir(parents=True, exist_ok=True)
+        return str(target)
+    except Exception:
+        base = _project_root_for_push_file(__file_path)
+        return str(base / "database" / name)
 
 def _list_numeric_ids(dirname: str, prefix_first_char: str | None = None) -> list[int]:
     import os, glob
@@ -276,7 +281,7 @@ def make_random_and_push(node_messenger) -> bytes:
             wl = TX_FIELD_WHITELIST.get(MSG_ID, [])
             body = {
                 "timestamp": int((datetime.utcnow().replace(tzinfo=timezone.utc) - _EPOCH_2000).total_seconds() * 1000),
-                "sourceModuleName": "DSC",
+                "Source": "DSC",
             }
             # ID 필드 결정
             if "inputMissionPackageID" in wl:          body["inputMissionPackageID"] = vid
@@ -295,7 +300,7 @@ def make_random_and_push(node_messenger) -> bytes:
                 body = {
                     "timestamp": int((datetime.utcnow().replace(tzinfo=timezone.utc) - _EPOCH_2000).total_seconds() * 1000),
                     "status": 1,  # 정상
-                    "sourceModuleName": "DSC",
+                    "Source": "DSC",
                 }
         wl = TX_FIELD_WHITELIST.get(MSG_ID)
         if wl and isinstance(body, dict):

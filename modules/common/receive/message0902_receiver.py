@@ -1,168 +1,271 @@
-# modules/common/receive/message0902_receiver.py
-# auto-generated at 2025-08-24T16:37:13.120885+00:00
+"""Fuel-warning aware ReplanRequest (0902) receiver with graceful CLR fallback."""
 
-from dll_files.nFusionImports import *            # IFusionReceive, IsLocal, IsSingletone
-from nFusion.Model.msg_0902 import *            # C# 모델
-from nFusion.Model.CommonType import *             # 공통 타입
+from __future__ import annotations
+
+import json
+import os
+import sys
+import traceback
+import warnings
+from typing import Any
+
+from dll_files.nFusionImports import *  # IFusionReceive, IsLocal, IsSingletone
+
+try:  # MessageLibrary may omit msg_0902 in some builds
+    from nFusion.Model.msg_0902 import ReplanRequest  # type: ignore
+except Exception:
+    ReplanRequest = None  # type: ignore[assignment]
+    HAS_CLR_REPLANREQUEST = False
+else:
+    HAS_CLR_REPLANREQUEST = True
+
+from nFusion.Model.CommonType import *  # noqa: F401,F403
 from .database import received_db
 from receive_center import notify
-import json, traceback, sys, os, importlib
 
-# 대/소문자 안전 접근
+# ── Shared helpers ──────────────────────────────────────────────────────────────
 _get = lambda obj, *names: next((getattr(obj, n) for n in names if hasattr(obj, n)), None)
 
-# ── Embedded rules (TX/DB 공용) ──────────────────────────────────────────
-TX_FIELD_WHITELIST = {'0201': ['timestamp', 'inputMissionPackageID'], '0203': ['timestamp', 'missionReferencePackageID'], '0301': ['timestamp', 'missionPlanID'], '0302': ['timestamp', 'individualMissionPackageID'], '0303': ['timestamp', 'pathID'], '0304': ['timestamp', 'pathID']}
-DB_DIR_RULES        = {'0201': 'InputMissionPlan', '0203': 'FlightReferenceInfo', '0301': 'MissionPlan', '0302': 'IndividualMissionPlan', '0303': 'UAVFlightPlan', '0304': 'FlightPath'}
-DB_FETCH_ON_RECEIVE = {'0201', '0203'}
-ID_FIELD_FOR        = {'0201': 'inputMissionPackageID', '0203': 'missionReferencePackageID', '0301': 'missionPlanID', '0302': 'individualMissionPackageID', '0303': 'pathID', '0304': 'pathID'}
+TX_FIELD_WHITELIST = {
+    "0201": ["timestamp", "inputMissionPackageID"],
+    "0203": ["timestamp", "missionReferencePackageID"],
+    "0301": ["timestamp", "missionPlanID"],
+    "0302": ["timestamp", "individualMissionPackageID"],
+    "0303": ["timestamp", "pathID"],
+    "0304": ["timestamp", "pathID"],
+}
 
-def _project_root_for_recv_file(__file_path: str):
+DB_DIR_RULES = {
+    "0201": "InputMissionPlan",
+    "0203": "FlightReferenceInfo",
+    "0301": "MissionPlan",
+    "0302": "IndividualMissionPlan",
+    "0303": "UAVFlightPlan",
+    "0304": "FlightPath",
+}
+
+DB_FETCH_ON_RECEIVE = {"0201", "0203"}
+ID_FIELD_FOR = {
+    "0201": "inputMissionPackageID",
+    "0203": "missionReferencePackageID",
+    "0301": "missionPlanID",
+    "0302": "individualMissionPackageID",
+    "0303": "pathID",
+    "0304": "pathID",
+}
+
+
+def _project_root_for_recv_file(__file_path: str) -> str:
     from pathlib import Path
-    return Path(__file_path).resolve().parents[3]
+
+    return str(Path(__file_path).resolve().parents[3])
+
 
 def _db_dir_for(msgid: str, __file_path: str) -> str:
     from pathlib import Path
+
     env_root = os.getenv("KU_MISSION_DB_ROOT")
     name = DB_DIR_RULES.get(msgid)
     if not name:
-        return str(_project_root_for_recv_file(__file_path))
+        return _project_root_for_recv_file(__file_path)
     if env_root:
         return str(Path(env_root) / name)
-    return str(_project_root_for_recv_file(__file_path) / "database" / name)
+    return str(Path(_project_root_for_recv_file(__file_path)) / "database" / name)
 
-def _try_save_received(msgid: str, data_obj):
+
+def _try_save_received(msgid: str, data_obj: Any) -> None:
     try:
-        fn = getattr(received_db, f"set_received_{msgid}")
-        fn(data_obj)
+        setter = getattr(received_db, f"set_received_{msgid}")
+        setter(data_obj)
     except Exception:
         pass
 
-def _try_read_db_body(msgid: str, data_obj):
-    """DB_FETCH_ON_RECEIVE에 포함된 메시지는 ID 필드로 DB JSON을 찾아 반환(없으면 None)."""
+
+def _try_read_db_body(msgid: str, data_obj: Any) -> Any:
     try:
         if msgid not in DB_FETCH_ON_RECEIVE:
             return None
         id_field = ID_FIELD_FOR.get(msgid)
         if not id_field:
             return None
-        # 객체에서 ID 값을 추출(대/소문자 안전)
-        _val = _get(data_obj, id_field, id_field[:1].upper()+id_field[1:])
-        if _val is None:
+        value = _get(data_obj, id_field, id_field[:1].upper() + id_field[1:])
+        if value is None:
             return None
-        vid = int(_val)
-        dbdir = _db_dir_for(msgid, __file__)
-        fpath = os.path.join(dbdir, f"{vid}.json")
-        print(f"[{msgid}] DB 참조! ({fpath})")
+        vid = int(value)
+        fpath = os.path.join(_db_dir_for(msgid, __file__), f"{vid}.json")
+        print(f"[{msgid}] DB lookup! ({fpath})")
         if os.path.exists(fpath):
-            with open(fpath, "r", encoding="utf-8") as f:
-                return json.load(f)
+            with open(fpath, "r", encoding="utf-8") as fh:
+                return json.load(fh)
         return None
     except Exception:
         return None
 
+
+# ── Payload normalisers ─────────────────────────────────────────────────────────
+
 def _to_dict_ReplanRequestTime(obj):
     d = {}
-    _v = _get(obj, 'replanRequestTimestamp', 'ReplanRequestTimestamp')
-    if _v is not None: d['replanRequestTimestamp'] = int(_v)
+    val = _get(obj, "replanRequestTimestamp", "ReplanRequestTimestamp")
+    if val is not None:
+        d["replanRequestTimestamp"] = int(val)
     return d
+
 
 def _to_dict_InputMissionID(obj):
     d = {}
-    _v = _get(obj, 'inputMissionID', 'InputMissionID')
-    if _v is not None: d['inputMissionID'] = int(_v)
+    val = _get(obj, "inputMissionID", "InputMissionID")
+    if val is not None:
+        d["inputMissionID"] = int(val)
     return d
+
 
 def _to_dict_IndividualMissionID(obj):
     d = {}
-    _v = _get(obj, 'individualMissionID', 'IndividualMissionID')
-    if _v is not None: d['individualMissionID'] = int(_v)
+    val = _get(obj, "individualMissionID", "IndividualMissionID")
+    if val is not None:
+        d["individualMissionID"] = int(val)
     return d
+
 
 def _to_dict_Coordinate(obj):
     d = {}
-    _v = _get(obj, 'latitude', 'Latitude')
-    if _v is not None: d['latitude'] = float(_v)
-    _v = _get(obj, 'longitude', 'Longitude')
-    if _v is not None: d['longitude'] = float(_v)
-    _v = _get(obj, 'altitude', 'Altitude')
-    if _v is not None: d['altitude'] = int(_v)
+    lat = _get(obj, "latitude", "Latitude")
+    if lat is not None:
+        d["latitude"] = float(lat)
+    lon = _get(obj, "longitude", "Longitude")
+    if lon is not None:
+        d["longitude"] = float(lon)
+    alt = _get(obj, "altitude", "Altitude")
+    if alt is not None:
+        d["altitude"] = int(alt)
     return d
+
 
 def _to_dict_CoordinateOrientation(obj):
     d = {}
-    _sub = _get(obj, 'coordinate', 'Coordinate')
-    if _sub is not None: d['coordinate'] = _to_dict_Coordinate(_sub)
+    coord = _get(obj, "coordinate", "Coordinate")
+    if coord is not None:
+        d["coordinate"] = _to_dict_Coordinate(coord)
     return d
+
 
 def _to_dict_TargetOrientation(obj):
     d = {}
-    _v = _get(obj, 'targetID', 'TargetID')
-    if _v is not None: d['targetID'] = int(_v)
+    tid = _get(obj, "targetID", "TargetID")
+    if tid is not None:
+        d["targetID"] = int(tid)
     return d
+
 
 def _to_dict_PriorMission(obj):
     d = {}
-    _v = _get(obj, 'priorMissionID', 'PriorMissionID')
-    if _v is not None: d['priorMissionID'] = int(_v)
-    _v = _get(obj, 'missionType', 'MissionType')
-    if _v is not None: d['missionType'] = int(_v)
-    _sub = _get(obj, 'coordinateOrientation', 'CoordinateOrientation')
-    if _sub is not None: d['coordinateOrientation'] = _to_dict_CoordinateOrientation(_sub)
-    _sub = _get(obj, 'targetOrientation', 'TargetOrientation')
-    if _sub is not None: d['targetOrientation'] = _to_dict_TargetOrientation(_sub)
+    pid = _get(obj, "priorMissionID", "PriorMissionID")
+    if pid is not None:
+        d["priorMissionID"] = int(pid)
+    mtype = _get(obj, "missionType", "MissionType")
+    if mtype is not None:
+        d["missionType"] = int(mtype)
+    coord = _get(obj, "coordinateOrientation", "CoordinateOrientation")
+    if coord is not None:
+        d["coordinateOrientation"] = _to_dict_CoordinateOrientation(coord)
+    target = _get(obj, "targetOrientation", "TargetOrientation")
+    if target is not None:
+        d["targetOrientation"] = _to_dict_TargetOrientation(target)
     return d
+
 
 def _to_dict_PendingOption(obj):
     d = {}
-    _v = _get(obj, 'optionID', 'OptionID')
-    if _v is not None: d['optionID'] = int(_v)
-    _v = _get(obj, 'optionName', 'OptionName')
-    if _v is not None and _v != '': d['optionName'] = str(_v)
-    _v = _get(obj, 'missionPlanID', 'MissionPlanID')
-    if _v is not None: d['missionPlanID'] = int(_v)
+    oid = _get(obj, "optionID", "OptionID")
+    if oid is not None:
+        d["optionID"] = int(oid)
+    name = _get(obj, "optionName", "OptionName")
+    if name:
+        d["optionName"] = str(name)
+    mid = _get(obj, "missionPlanID", "MissionPlanID")
+    if mid is not None:
+        d["missionPlanID"] = int(mid)
     return d
 
-def _to_dict_ReplanRequest(obj):
-    d = {}
-    _v = _get(obj, 'timestamp', 'Timestamp')
-    if _v is not None: d['timestamp'] = int(_v)
-    _sval = _get(obj, 'source', 'Source', 'source','Source','sourceModuleName','SourceModuleName','requestModuleName','RequestModuleName')
-    if _sval is not None and _sval != '': d['source'] = str(_sval)
-    _sub = _get(obj, 'replanRequestTime', 'ReplanRequestTime')
-    if _sub is not None: d['replanRequestTime'] = _to_dict_ReplanRequestTime(_sub)
-    _v = _get(obj, 'replanLevel', 'ReplanLevel')
-    if _v is not None: d['replanLevel'] = int(_v)
-    _coll = _get(obj, 'inputMissionIDList', 'InputMissionIDList') or []
-    if _coll:
-        d['inputMissionIDList'] = [_to_dict_InputMissionID(it) for it in _coll]
-    _coll = _get(obj, 'individualMissionIDList', 'IndividualMissionIDList') or []
-    if _coll:
-        d['individualMissionIDList'] = [_to_dict_IndividualMissionID(it) for it in _coll]
-    _coll = _get(obj, 'priorMissionList', 'PriorMissionList') or []
-    if _coll:
-        d['priorMissionList'] = [_to_dict_PriorMission(it) for it in _coll]
-    _v = _get(obj, 'replanReason', 'ReplanReason')
-    if _v is not None and _v != '': d['replanReason'] = str(_v)
-    _coll = _get(obj, 'pendingOptionList', 'PendingOptionList') or []
-    if _coll:
-        d['pendingOptionList'] = [_to_dict_PendingOption(it) for it in _coll]
+
+def _to_dict_ReplanRequest(obj: Any) -> dict:
+    d: dict = {}
+
+    ts = _get(obj, "timestamp", "Timestamp")
+    if ts is not None:
+        d["timestamp"] = int(ts)
+
+    src = _get(
+        obj,
+        "source",
+        "Source",
+        "requestModuleName",
+        "RequestModuleName",
+    )
+    if src:
+        d["source"] = str(src)
+
+    req_time = _get(obj, "replanRequestTime", "ReplanRequestTime")
+    if req_time is not None:
+        d["replanRequestTime"] = _to_dict_ReplanRequestTime(req_time)
+
+    level = _get(obj, "replanLevel", "ReplanLevel")
+    if level is not None:
+        d["replanLevel"] = int(level)
+
+    missions = _get(obj, "inputMissionIDList", "InputMissionIDList") or []
+    if missions:
+        d["inputMissionIDList"] = [_to_dict_InputMissionID(it) for it in missions]
+
+    indiv = _get(obj, "individualMissionIDList", "IndividualMissionIDList") or []
+    if indiv:
+        d["individualMissionIDList"] = [_to_dict_IndividualMissionID(it) for it in indiv]
+
+    prior = _get(obj, "priorMissionList", "PriorMissionList") or []
+    if prior:
+        d["priorMissionList"] = [_to_dict_PriorMission(it) for it in prior]
+
+    reason = _get(obj, "replanReason", "ReplanReason")
+    if reason:
+        d["replanReason"] = str(reason)
+
+    pending = _get(obj, "pendingOptionList", "PendingOptionList") or []
+    if pending:
+        d["pendingOptionList"] = [_to_dict_PendingOption(it) for it in pending]
+
     return d
 
-class ReplanRequestReceiver_0902(IFusionReceive[ReplanRequest], IsLocal, IsSingletone):
-    """0902 ReplanRequest 메시지 수신 리시버"""
-    __namespace__ = "ReplanRequestReceiver_0902"
 
-    def Receive(self, data: ReplanRequest, src):
-        try:
-            _try_save_received('0902', data)
+# ── Receiver definition ─────────────────────────────────────────────────────────
 
-            body = _try_read_db_body('0902', data)
-            if body is None:
-                body = _to_dict_ReplanRequest(data)
+if HAS_CLR_REPLANREQUEST:
 
-            notify("0902", json.dumps(body, ensure_ascii=False).encode("utf-8","ignore"))
+    class ReplanRequestReceiver_0902(IFusionReceive[ReplanRequest], IsLocal, IsSingletone):
+        """Receive ReplanRequest messages and dispatch them via notify."""
 
-        except Exception:
-            print("[ERROR][Receive-0902] traceback ↓↓↓")
-            traceback.print_exc(file=sys.stderr)
+        __namespace__ = "ReplanRequestReceiver_0902"
+
+        def Receive(self, data: ReplanRequest, src):  # noqa: N802
+            try:
+                _try_save_received("0902", data)
+
+                body = _try_read_db_body("0902", data)
+                if body is None:
+                    body = _to_dict_ReplanRequest(data)
+
+                payload = json.dumps(body, ensure_ascii=False).encode("utf-8", "ignore")
+                notify("0902", payload)
+
+            except Exception:
+                sys.stderr.write("[ERROR][Receive-0902] traceback below\n")
+                traceback.print_exc(file=sys.stderr)
+
+else:
+    ReplanRequestReceiver_0902 = None  # type: ignore
+    warnings.warn(
+        "MessageLibrary does not expose msg_0902.ReplanRequest; disabling 0902 receiver",
+        ImportWarning,
+    )
+
+__all__ = ["ReplanRequestReceiver_0902", "HAS_CLR_REPLANREQUEST"]

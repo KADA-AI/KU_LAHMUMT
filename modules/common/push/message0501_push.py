@@ -1,20 +1,24 @@
 # modules/common/push/message0501_push.py
-# auto-generated at 2025-08-24T20:13:14.023447+00:00
-
+# MissionProgress(0501) 푸시 - 제너레이터 fallback & 엄격 매핑
 
 import json, importlib
 from datetime import datetime, timezone
 from System.Collections.Generic import List
-from nFusion.Model.msg_0501 import *    # C# 모델(우선)
-from nFusion.Model.CommonType import *     # 공통 타입(항상)
-from System import String, UInt32, UInt64
-from generator.message0501_generator import make_msg0501_body
+from nFusion.Model.msg_0501 import *       # C# 모델 우선 검색
+from nFusion.Model.CommonType import *     # 공통 타입
+from System import String                  # (필요 시 사용)
+MSG_ID = "0501"
+
+# ────────────────────────── 시간/Epoch ──────────────────────────
 _EPOCH_2000 = datetime(2000, 1, 1, tzinfo=timezone.utc)
 _now_ms = lambda: int((datetime.utcnow().replace(tzinfo=timezone.utc) - _EPOCH_2000).total_seconds() * 1000)
-MSG_ID = "0501"
+
+# ────────────────────────── 유틸(리플렉션) ──────────────────────────
 def _try_set(obj, name: str, value) -> bool:
-    # lowerCamel 또는 PascalCase 둘 다 시도
-    for k in (name, name[:1].upper()+name[1:] if name else name):
+    """lowerCamel / PascalCase 양쪽으로 시도"""
+    if not name:
+        return False
+    for k in (name, name[:1].upper()+name[1:]):
         try:
             if hasattr(obj, k):
                 setattr(obj, k, value)
@@ -22,183 +26,189 @@ def _try_set(obj, name: str, value) -> bool:
         except Exception:
             pass
     return False
+
 def _cs(name: str):
-    # 현재 전역 → msg_ID 모듈 → CommonType → 루트 순으로 검색
+    """현재 전역 → msg_0501 → CommonType → 루트 순서로 타입 검색"""
     t = globals().get(name)
-    if t is not None: return t
-    for modname in (f'nFusion.Model.msg_{MSG_ID}', 'nFusion.Model.CommonType', 'nFusion.Model'):
+    if t is not None:
+        return t
+    for modname in ('nFusion.Model.msg_0501', 'nFusion.Model.CommonType', 'nFusion.Model'):
         try:
             mod = importlib.import_module(modname)
             t = getattr(mod, name, None)
-            if t is not None: return t
+            if t is not None:
+                return t
         except Exception:
             pass
     return None
+
 def _new(name: str):
     t = _cs(name)
     if t is None:
         raise NameError(f'type not found: {name}')
     return t()
 
-# ── Embedded TX/DB rules (self-contained) ──────────────────────────────────
-TX_FIELD_WHITELIST = {
-    "0201": ["timestamp", "inputMissionPackageID"],
-    "0203": ["timestamp", "missionReferencePackageID"],
-    "0301": ["timestamp", "missionPlanID"],
-    "0302": ["timestamp", "individualMissionPackageID"],
-    "0303": ["timestamp", "pathID"],
-    "0304": ["timestamp", "pathID"],
-}
+def _as_int(v, default=None):
+    try:
+        return int(str(v))
+    except Exception:
+        return default
 
-DB_DIR_RULES = {
-    "0201": "InputMissionPlan",
-    "0203": "FlightReferenceInfo",
-    "0301": "MissionPlan",
-    "0302": "IndividualMissionPlan",
-    "0303": "FlightPath",
-    "0304": "FlightPath",
-}
-
-def _select_tx_fields(body: dict, fields: list) -> dict:
-    """화이트리스트로 선별: timestamp / source 계열 폴백 / 나머지 ID류만 남김"""
-    out = {}
-    low = {k.lower(): k for k in body.keys()}
-
-    def _get(key: str):
-        kl = key.lower()
-        if kl in low:
-            return body[low[kl]]
-        return None
-
-    ts = _get("timestamp")
-    if ts is not None:
-        out["timestamp"] = int(ts)
-
-    s  = _get("source")
-    sm = _get("sourceModuleName") or _get("sourcemodulename")
-    rq = _get("requestModuleName") or _get("requestmodulename")
-    src_val = s or sm or rq
-    if src_val:
-        out["sourceModuleName"] = str(src_val)
-
-    for f in fields:
-        if f in ("timestamp","source","sourceModuleName","requestModuleName"):
-            continue
-        v = _get(f)
-        if v is not None:
-            try:
-                out[f] = int(v)
-            except Exception:
-                out[f] = v
-    return out
-
-def _project_root_for_push_file(__file_path: str):
-    from pathlib import Path
-    return Path(__file_path).resolve().parents[3]
-
-def _db_dir_for(msgid: str, __file_path: str) -> str:
-    import os
-    from pathlib import Path
-    env_root = os.getenv("KU_MISSION_DB_ROOT")
-    name = DB_DIR_RULES.get(msgid, f"msg_{msgid}")
-    if env_root:
-        return str(Path(env_root) / name)
-    return str(_project_root_for_push_file(__file_path) / "database" / name)
-
-def _list_numeric_ids(dirname: str, prefix_first_char: str | None = None) -> list[int]:
-    import os, glob
-    ids = []
-    for p in glob.glob(os.path.join(dirname, "*.json")):
-        stem = os.path.splitext(os.path.basename(p))[0]
-        if stem.isdigit():
-            if prefix_first_char and stem[0] not in prefix_first_char:
-                continue
-            ids.append(int(stem))
-    ids.sort()
-    return ids
-
-def _dict_to_CurrentIndividualMission(data: dict):
+# ───────────────────── dict → C# 객체 매핑 ─────────────────────
+def _dict_to_CurrentIndividualMission(d: dict):
     obj = _new('CurrentIndividualMission')
-    if "individualMissionID" in data: _try_set(obj, "individualMissionID", int(data["individualMissionID"]))
+    if 'individualMissionID' in d:
+        _try_set(obj, 'individualMissionID', _as_int(d['individualMissionID'], 0))
     return obj
 
-def _dict_to_IndividualMissionProgressStatus(data: dict):
+def _dict_to_IndividualMissionProgressStatus(d: dict):
     obj = _new('IndividualMissionProgressStatus')
-    if "aircraftID" in data: _try_set(obj, "aircraftID", int(data["aircraftID"]))
-    if "currentIndividualMission" in data and isinstance(data["currentIndividualMission"], dict):
-        _try_set(obj, "currentIndividualMission", _dict_to_CurrentIndividualMission(data["currentIndividualMission"]))
-    if "currentIndividualMissionProgress" in data: _try_set(obj, "currentIndividualMissionProgress", int(data["currentIndividualMissionProgress"]))
+    if 'aircraftID' in d:
+        _try_set(obj, 'aircraftID', _as_int(d['aircraftID'], 0))
+    if 'currentIndividualMission' in d and isinstance(d['currentIndividualMission'], dict):
+        _try_set(obj, 'currentIndividualMission', _dict_to_CurrentIndividualMission(d['currentIndividualMission']))
+    if 'currentIndividualMissionProgress' in d:
+        _try_set(obj, 'currentIndividualMissionProgress', _as_int(d['currentIndividualMissionProgress'], 0))
     return obj
 
-def _dict_to_MissionProgress(data: dict):
+def _dict_to_MissionProgress(d: dict):
     obj = _new('MissionProgress')
-    if "timestamp" in data: _try_set(obj, "timestamp", int(data["timestamp"]))
-    val_src = data.get("source", data.get("source", data.get("sourceModuleName", data.get("requestModuleName", ""))))
-    if val_src != "":
-        if not _try_set(obj, "source", str(val_src)):
-            _try_set(obj, "sourceModuleName", str(val_src))
-    if "currentMissionPlanID" in data: _try_set(obj, "currentMissionPlanID", int(data["currentMissionPlanID"]))
-    if "currentInputMissionID" in data: _try_set(obj, "currentInputMissionID", int(data["currentInputMissionID"]))
-    if "individualMissionProgressStatusList" in data and isinstance(data["individualMissionProgressStatusList"], list):
+
+    # timestamp/source
+    _try_set(obj, 'timestamp', _as_int(d.get('timestamp', _now_ms()), _now_ms()))
+    src_val = d.get('source', d.get('Source', d.get('requestModuleName', '')))
+    if str(src_val).strip() != '':
+        if not _try_set(obj, 'source', str(src_val)):
+            _try_set(obj, 'Source', str(src_val))
+
+    # 상위 ID들(옵션)
+    if 'currentMissionPlanID' in d:
+        _try_set(obj, 'currentMissionPlanID', _as_int(d['currentMissionPlanID'], 0))
+    if 'currentInputMissionID' in d:
+        _try_set(obj, 'currentInputMissionID', _as_int(d['currentInputMissionID'], 0))
+
+    # 하위 리스트(List<IndividualMissionProgressStatus>)
+    items = d.get('individualMissionProgressStatusList', [])
+    if isinstance(items, list):
         T = _cs('IndividualMissionProgressStatus') or object
-        lst = List[T]()
-        for item in data["individualMissionProgressStatusList"]: lst.Add(_dict_to_IndividualMissionProgressStatus(item if isinstance(item, dict) else {}))
-        _try_set(obj, "individualMissionProgressStatusList", lst)
+        lst = List[T]()  # .NET 제네릭 리스트
+        for it in items:
+            try:
+                lst.Add(_dict_to_IndividualMissionProgressStatus(it if isinstance(it, dict) else {}))
+            except Exception:
+                # 개별 항목 오류는 스킵
+                pass
+        _try_set(obj, 'individualMissionProgressStatusList', lst)
+
     return obj
 
+# ──────────────────────── 제너레이터 로딩 ────────────────────────
+def _resolve_body_generator():
+    """
+    가능한 경로를 순서대로 시도:
+      1) generator.message0501_generator.make_msg0501_body
+      2) make_message_generator.make_msg0501_body
+      3) nf_example_gen.make_msg0501_body
+      4) make_message_generator.make_body(msg_id)  # 범용 시그니처
+    """
+    candidates = [
+        ('generator.message0501_generator', 'make_msg0501_body', False),
+        ('make_message_generator',         'make_msg0501_body', False),
+        ('nf_example_gen',                 'make_msg0501_body', False),
+        ('make_message_generator',         'make_body',         True),  # needs msg_id
+    ]
+    for modname, funcname, needs_id in candidates:
+        try:
+            mod = importlib.import_module(modname)
+            fn = getattr(mod, funcname, None)
+            if fn is None:
+                continue
+            return (fn, needs_id)
+        except Exception:
+            continue
+    return (None, False)
 
+_GEN_FN, _GEN_NEEDS_ID = _resolve_body_generator()
 
+def _gen_body():
+    """제너레이터를 통해 body 생성. 실패 시 안전한 최소 본문 반환."""
+    try:
+        if _GEN_FN:
+            return _GEN_FN(MSG_ID) if _GEN_NEEDS_ID else _GEN_FN()
+    except Exception:
+        pass
+    # 안전 폴백(빈 리스트 허용)
+    return {
+        "timestamp": _now_ms(),
+        "Source": "DSC",
+        "currentMissionPlanID": 0,
+        "currentInputMissionID": 0,
+        "individualMissionProgressStatusList": []
+    }
+
+# ──────────────────────── 외부 API ────────────────────────
+def _normalize_body(d: dict) -> dict:
+    """누락 필드 기본값 채우기 / 타입 코어싱"""
+    if not isinstance(d, dict):
+        return _gen_body()
+
+    out = {}
+    out['timestamp'] = _as_int(d.get('timestamp', _now_ms()), _now_ms())
+    src = d.get('source', d.get('Source', d.get('requestModuleName', 'DSC')))
+    out['source'] = str(src) if str(src).strip() != '' else 'DSC'
+
+    if 'currentMissionPlanID' in d:
+        out['currentMissionPlanID'] = _as_int(d['currentMissionPlanID'], 0)
+    if 'currentInputMissionID' in d:
+        out['currentInputMissionID'] = _as_int(d['currentInputMissionID'], 0)
+
+    items = d.get('individualMissionProgressStatusList', [])
+    norm_items = []
+    if isinstance(items, list):
+        for it in items:
+            if isinstance(it, dict):
+                # 필수/중요 필드만 정돈
+                one = {}
+                if 'aircraftID' in it:
+                    one['aircraftID'] = _as_int(it['aircraftID'], 0)
+                if 'currentIndividualMission' in it and isinstance(it['currentIndividualMission'], dict):
+                    sub = {}
+                    if 'individualMissionID' in it['currentIndividualMission']:
+                        sub['individualMissionID'] = _as_int(it['currentIndividualMission']['individualMissionID'], 0)
+                    one['currentIndividualMission'] = sub
+                if 'currentIndividualMissionProgress' in it:
+                    one['currentIndividualMissionProgress'] = _as_int(it['currentIndividualMissionProgress'], 0)
+                norm_items.append(one)
+    out['individualMissionProgressStatusList'] = norm_items
+    return out
 
 def _dict_to_obj(body_dict: dict):
     return _dict_to_MissionProgress(body_dict)
 
 def make_and_push(body_dict: dict, node_messenger) -> bytes:
-    # TX 화이트리스트가 있으면 최종 전송 전 선별(제너레이터가 풍부하게 만들어도 최소필드만 보냄)
-    wl = TX_FIELD_WHITELIST.get(MSG_ID)
-    if wl and isinstance(body_dict, dict):
-        body_dict = _select_tx_fields(body_dict, wl)
+    """
+    외부에서 body_dict를 주면 .NET 모델로 변환 후 Push.
+    반환값: 로그(UTF-8 bytes)
+    """
+    body_dict = _normalize_body(body_dict)
     msg = _dict_to_obj(body_dict)
     node_messenger.Push(msg)
     log_line = (
-        f"[0501] BODY  : {json.dumps(body_dict, ensure_ascii=False)}\n"
-        f"[0501] PUSH 완료"
+        f"[{MSG_ID}] BODY  : {json.dumps(body_dict, ensure_ascii=False)}\n"
+        f"[{MSG_ID}] PUSH 완료"
     )
     return log_line.encode("utf-8", "ignore")
 
 def make_random_and_push(node_messenger) -> bytes:
-    # DB 기반 메시지는 DB의 파일명(숫자).json을 ID로 사용하여 최소 필드만 전송
-    if MSG_ID in DB_DIR_RULES:
-        dbdir = _db_dir_for(MSG_ID, __file__)
-        # 0304(유인기 pathID)는 1/2/3 시작만 전송(기존 규칙 유지)
-        needs_prefix = "123" if MSG_ID == "0304" else None
-        ids = _list_numeric_ids(dbdir, needs_prefix)
-        logs = []
-        for vid in ids:
-            wl = TX_FIELD_WHITELIST.get(MSG_ID, [])
-            body = {
-                "timestamp": int((datetime.utcnow().replace(tzinfo=timezone.utc) - _EPOCH_2000).total_seconds() * 1000),
-                "sourceModuleName": "DSC",
-            }
-            # ID 필드 결정
-            if "inputMissionPackageID" in wl:          body["inputMissionPackageID"] = vid
-            if "missionReferencePackageID" in wl:      body["missionReferencePackageID"] = vid
-            if "missionPlanID" in wl:                  body["missionPlanID"] = vid
-            if "individualMissionPackageID" in wl:     body["individualMissionPackageID"] = vid
-            if "pathID" in wl:                         body["pathID"] = vid
-            logs.append(make_and_push(body, node_messenger))
-        return b"\n".join(logs) if logs else b""
+    """
+    랜덤/샘플 본문을 제너레이터로 만들고 Push.
+    제너레이터가 리스트를 반환해도 처리 가능(여러 건 전송).
+    """
+    got = _gen_body()
+    logs = []
+    if isinstance(got, list):
+        for d in got:
+            logs.append(make_and_push(d if isinstance(d, dict) else {}, node_messenger))
     else:
-        # 비 DB 메시지는 제너레이터 → 필요 시 화이트리스트로 선별
-        body = make_msg0501_body()
-        # ★ 0102 방어: body가 비거나 dict가 아니면 최소 세트로 채움
-        if MSG_ID == "0102":
-            if not isinstance(body, dict) or not body:
-                body = {
-                    "timestamp": int((datetime.utcnow().replace(tzinfo=timezone.utc) - _EPOCH_2000).total_seconds() * 1000),
-                    "status": 1,  # 정상
-                    "sourceModuleName": "DSC",
-                }
-        wl = TX_FIELD_WHITELIST.get(MSG_ID)
-        if wl and isinstance(body, dict):
-            body = _select_tx_fields(body, wl)
-        return make_and_push(body, node_messenger)
+        logs.append(make_and_push(got if isinstance(got, dict) else {}, node_messenger))
+    return b"\n".join(logs)

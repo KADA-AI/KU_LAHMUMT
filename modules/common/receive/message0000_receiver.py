@@ -65,7 +65,7 @@ def _to_dict_RequestData(obj):
     d = {}
     _v = _get(obj, 'timestamp', 'Timestamp')
     if _v is not None: d['timestamp'] = int(_v)
-    _sval = _get(obj, 'source', 'Source', 'source','Source','sourceModuleName','SourceModuleName','requestModuleName','RequestModuleName')
+    _sval = _get(obj, 'source', 'Source', 'source','Source','Source','Source','requestModuleName','RequestModuleName')
     if _sval is not None and _sval != '': d['source'] = str(_sval)
     _v = _get(obj, 'messageID', 'MessageID')
     if _v is not None: d['messageID'] = int(_v)
@@ -74,7 +74,7 @@ def _to_dict_RequestData(obj):
 def _to_dict_RequestData_min(obj):
     return {
         "timestamp": _get(obj, "timestamp","Timestamp"),
-        "source":    _get(obj, "source","Source","requestModuleName","RequestModuleName","sourceModuleName","SourceModuleName"),
+        "source":    _get(obj, "source","Source","requestModuleName","RequestModuleName","Source","Source"),
         "messageID": _get(obj, "messageID","MessageID"),
     }
 

@@ -26,6 +26,7 @@ from .message0402_receiver import SituationAwarenessInfoReceiver_0402
 from .message0501_receiver import MissionProgressReceiver_0501
 from .message0502_receiver import EndMissionRequestReceiver_0502     # 클래스명은 네 구현에 맞게
 from .message0503_receiver import MissionResultReceiver_0503     # 클래스명은 네 구현에 맞게
+from .message0504_receiver import FuelWarningReceiver_0504     # 클래스명은 네 구현에 맞게
 
 from .message0601_receiver import BasicActionReceiver_0601           # 클래스명은 네 구현에 맞게
 

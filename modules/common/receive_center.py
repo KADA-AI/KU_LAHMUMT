@@ -1,38 +1,112 @@
-from typing import Dict, List, Optional
+"""Common receive center bridging Qt tabs and Python handlers.
+
+This module unifies the listener model so legacy tabs that expect
+`mark_received` callbacks and newer code that registers plain Python
+callables can coexist. Incoming notifications are also propagated
+through a Qt `SignalEmitter` for GUI updates.
+"""
+
+from __future__ import annotations
+
 from functools import partial
-from PyQt5.QtCore import QTimer
+import json
+from typing import Callable, Dict, List, Optional
 
-# msg_id 별 리스너(탭 인스턴스) 보관
-_listener_registry: Dict[str, List] = {}
+from PyQt5.QtCore import QObject, QTimer, pyqtSignal
 
-def _norm(mid) -> str:
-    s = str(mid)
+# ── Listener registries ─────────────────────────────────────────────────────
+
+_tab_registry: Dict[str, List[object]] = {}
+_handler_registry: Dict[str, List[Callable[[str, object], None]]] = {}
+
+
+class SignalEmitter(QObject):
+    """Qt signal wrapper to deliver message updates on the GUI thread."""
+
+    message_received = pyqtSignal(str, object)
+
+
+_global_signal_emitter: Optional[SignalEmitter] = None
+
+
+def set_global_signal_emitter(emitter: SignalEmitter) -> None:
+    """Register the emitter used to broadcast message updates."""
+
+    global _global_signal_emitter
+    _global_signal_emitter = emitter
+
+
+def get_global_signal_emitter() -> Optional[SignalEmitter]:
+    return _global_signal_emitter
+
+
+def _norm(msg_id: object) -> str:
+    s = str(msg_id)
     return s.zfill(4) if s.isdigit() and len(s) < 4 else s
 
-# ── 교체: register_listener ──
-def register_listener(msg_id: str, tab) -> None:
-    key = _norm(msg_id)
-    _listener_registry.setdefault(key, []).append(tab)
 
-# ── 교체: unregister_listener ──
-def unregister_listener(msg_id: str, tab_instance) -> None:
+def register_listener(msg_id: str, listener) -> None:
+    """Register either a tab (with mark_received) or a callable handler."""
+
     key = _norm(msg_id)
-    lst = _listener_registry.get(key)
-    if not lst:
+    if callable(listener):
+        _handler_registry.setdefault(key, []).append(listener)
+    else:
+        _tab_registry.setdefault(key, []).append(listener)
+
+    # print(
+    #     f"[receive_center] registered listener for {key}: handlers={len(_handler_registry.get(key, []))}, tabs={len(_tab_registry.get(key, []))}",
+    #     flush=True,
+    # )
+
+
+def unregister_listener(msg_id: str, listener) -> None:
+    key = _norm(msg_id)
+    registry = _handler_registry if callable(listener) else _tab_registry
+    listeners = registry.get(key)
+    if not listeners:
         return
     try:
-        lst.remove(tab_instance)
-        if not lst:
-            del _listener_registry[key]
+        listeners.remove(listener)
+        if not listeners:
+            del registry[key]
     except ValueError:
         pass
 
-# ── 교체: notify ──
+
+def _decode_payload(raw: Optional[bytes]):
+    if raw is None:
+        return None
+    if isinstance(raw, bytes):
+        try:
+            return json.loads(raw.decode("utf-8"))
+        except Exception:
+            return raw
+    return raw
+
+
 def notify(msg_id: str, raw: Optional[bytes] = None) -> None:
-    """
-    다른 스레드(C# 콜백) → GUI 스레드로 안전 큐잉.
-    각 탭은 mark_received(msg_id, raw) 메서드를 구현해야 함.
-    """
-    key = _norm(msg_id)  # ← 여기서 4자리로 통일 (예: '502' → '0502')
-    for tab in _listener_registry.get(key, []):
+    """Fan-out notification to registered listeners on the GUI thread."""
+
+    key = _norm(msg_id)
+    payload = _decode_payload(raw)
+
+    tabs = _tab_registry.get(key, [])
+    handlers = _handler_registry.get(key, [])
+
+    for tab in tabs:
         QTimer.singleShot(0, partial(tab.mark_received, key, raw))
+
+    for handler in handlers:
+        QTimer.singleShot(0, partial(handler, key, payload))
+
+    # print(
+    #     f"[receive_center] notify {key}: handlers={len(handlers)}, tabs={len(tabs)}, emitter={'set' if _global_signal_emitter else 'none'}",
+    #     flush=True,
+    # )
+
+    if _global_signal_emitter is not None:
+        QTimer.singleShot(0, lambda: _global_signal_emitter.message_received.emit(key, payload))
+
+    if not tabs and not handlers and _global_signal_emitter is None:
+        print(f"[receive_center] notify dropped: msg_id={key}, no listeners", flush=True)

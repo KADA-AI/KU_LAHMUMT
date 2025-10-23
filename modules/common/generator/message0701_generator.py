@@ -6,7 +6,15 @@ import os, re, json, random
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+from modules.common import db_paths
+
 HERE = os.path.dirname(os.path.abspath(__file__))
+
+PROJECT_ROOT = os.path.normpath(os.path.join(HERE, "..", "..", ".."))
+
+
+def _cache_file_0901() -> str:
+    return os.path.join(db_paths.get_active_db_root_str(), "cache", "latest_0901.json")
 RULES_DIR = os.path.normpath(os.path.join(HERE, "..", "nFusion_MessageLIbrary", "rules"))
 FIELD_PROFILES_PATH = os.path.join(RULES_DIR, "field_profiles.txt")
 CONDITIONS_PATH     = os.path.join(RULES_DIR, "conditions.txt")
@@ -21,7 +29,104 @@ PRIMS = {"uint","ulong","int","float","double","bool","string",
          "uint32","uint64","int32","int64","float32","float64"}
 TYPE_MAP = {"uint":"uint32","ulong":"uint64","int":"int32","float":"float32","double":"float64"}
 SOURCE_ENUM_DEFAULT = ["DSC","IDM","MSM","MMR","UCC","MOB","CSP"]
-LIST_LEN = 2
+LIST_LEN = 3
+
+def _load_cached_0901() -> dict | None:
+    cache_path = _cache_file_0901()
+    if not os.path.exists(cache_path):
+        return None
+    try:
+        with open(cache_path, "r", encoding="utf-8") as fp:
+            data = json.load(fp)
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        pass
+    return None
+
+
+POSITIVE_WORDS = ("증가", "향상", "강화", "최대", "UP", "향상", "증가", "plus", "up", "increase", "improve", "boost")
+NEGATIVE_WORDS = ("감소", "저하", "약화", "최소", "DOWN", "down", "reduce", "decrease", "cut", "줄어", "축소")
+TIME_REDUCE_WORDS = ("단축", "최소", "감소", "축소", "줄", "절감", "축약", "short", "less", "reduced")
+TIME_INCREASE_WORDS = ("증가", "연장", "늘", "확대", "long", "longer", "extend", "increase")
+REC_POS_WORDS = ("촬영효과", "촬영", "정찰", "감시", "인식", "정확", "탐지", "효율", "효과", "recognition", "recog", "sensor", "imaging")
+SURVIVAL_KEYWORDS = ("생존", "survival", "안전", "피해")
+TIME_KEYWORDS = ("시간", "소요", "duration", "time")
+REC_KEYWORDS = ("촬영", "정찰", "감시", "인식", "탐지", "영상", "효과", "recog", "recognition", "sensor")
+
+EXACT_EFFECT_OVERRIDES = {
+    "시스템추천": (0, 0, 0),
+    "임무시간최소화": (0, 1, -1),
+    "촬영효과최대": (-1, 0, 1),
+}
+
+
+def _contains_any(text: str, keywords: tuple[str, ...]) -> bool:
+    lower = text.lower()
+    for kw in keywords:
+        if kw in text or kw.lower() in lower:
+            return True
+    return False
+
+
+def _derive_effects(option_name: str) -> tuple[int, int, int]:
+    name = str(option_name or "")
+    normalized = name.strip().lower()
+    if normalized in EXACT_EFFECT_OVERRIDES:
+        return EXACT_EFFECT_OVERRIDES[normalized]
+    survival = 0
+    time = 0
+    recog = 0
+    if _contains_any(name, SURVIVAL_KEYWORDS):
+        if _contains_any(name, POSITIVE_WORDS):
+            survival = 1
+        elif _contains_any(name, NEGATIVE_WORDS):
+            survival = -1
+    if _contains_any(name, TIME_KEYWORDS):
+        if _contains_any(name, TIME_REDUCE_WORDS):
+            time = 1
+        elif _contains_any(name, TIME_INCREASE_WORDS):
+            time = -1
+    if _contains_any(name, REC_KEYWORDS) or _contains_any(name, REC_POS_WORDS):
+        if _contains_any(name, POSITIVE_WORDS) or _contains_any(name, REC_POS_WORDS):
+            recog = 1
+        elif _contains_any(name, NEGATIVE_WORDS):
+            recog = -1
+    return survival, time, recog
+
+
+def _build_option_list_from_cached() -> list[dict]:
+    src = _load_cached_0901()
+    if not src:
+        return []
+    options: list[dict] = []
+    for idx, item in enumerate(src.get("pendingOptionList") or []):
+        if not isinstance(item, dict):
+            continue
+        try:
+            option_id = int(item.get("optionID", idx + 1))
+        except Exception:
+            option_id = idx + 1
+        try:
+            mission_plan_id = int(item.get("missionPlanID"))
+        except Exception:
+            continue
+        raw_name = item.get("optionName")
+        option_name = str(raw_name).strip() if raw_name is not None else ""
+        if not option_name:
+            option_name = f"option{option_id}"
+        survival, time, recog = _derive_effects(option_name)
+        options.append({
+            "optionID": option_id,
+            "optionName": option_name,
+            "missionPlanID": mission_plan_id,
+            "survivalRate": survival,
+            "timeContraction": time,
+            "recogEffectiveness": recog,
+            "distance": 15000,
+            "target": 0,
+        })
+    return options
 
 def _parse_kv_list(s: str) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
@@ -163,6 +268,10 @@ DEFAULT_BINDINGS = {
     "mainSensor":"mainSensor_v1",
     "missionType":"missionType_v1",
     "flightMode":"flightMode_v1",
+    "optionName": "optionName_v1",
+    "survivalRate": "survivalRate_v1",
+    "timeContraction": "timeContraction_v1",
+    "recogEffectiveness": "recogEffectiveness_v1",
 }
 
 class GenCtx:
@@ -421,28 +530,16 @@ def _apply_constraints(obj: dict):
 MSG_ID = "0701"
 
 
-def _gen_UAVMissionPlanID(source: str = "DS"):
-    obj = {}
-    obj["uavMissionPlanID"] = gen_value("uavMissionPlanID", "uint32", MSG_ID, obj, 0)
-    return obj
-
-def _gen_LAHMissionPlanID(source: str = "DS"):
-    obj = {}
-    obj["lahMissionPlanID"] = gen_value("lahMissionPlanID", "uint32", MSG_ID, obj, 0)
-    return obj
-
 def _gen_Option(source: str = "DS"):
     obj = {}
     obj["optionID"] = gen_value("optionID", "uint32", MSG_ID, obj, 0)
-    obj["optionName"] = gen_value("optionName", "uint32", MSG_ID, obj, 0)
+    obj["optionName"] = f"option{random.randint(1, 5)}"
     obj["missionPlanID"] = gen_value("missionPlanID", "uint32", MSG_ID, obj, 0)
-    obj["survivalRate"] = gen_value("survivalRate", "int32", MSG_ID, obj, 0)
-    obj["timeContraction"] = gen_value("timeContraction", "int32", MSG_ID, obj, 0)
-    obj["recogEffectiveness"] = gen_value("recogEffectiveness", "int32", MSG_ID, obj, 0)
-    obj["distance"] = gen_value("distance", "uint32", MSG_ID, obj, 0)
-    obj["target"] = gen_value("target", "uint32", MSG_ID, obj, 0)
-    obj["uavMissionPlanIDList"] = [ _gen_UAVMissionPlanID(source=source) for _ in range(LIST_LEN) ]
-    obj["lahMissionPlanIDList"] = [ _gen_LAHMissionPlanID(source=source) for _ in range(LIST_LEN) ]
+    obj["survivalRate"] = random.choice([-1, 0, 1])
+    obj["timeContraction"] = random.choice([-1, 0, 1])
+    obj["recogEffectiveness"] = random.choice([-1, 0, 1])
+    obj["distance"] = random.randint(0, 200_000)
+    obj["target"] = random.randint(0, 20)
     return obj
 
 def _gen_MissionPlanOptionInfo(source: str = "DS"):
@@ -458,6 +555,15 @@ def _gen_MissionPlanOptionInfo(source: str = "DS"):
 
 def make_msg0701_body(source: str = "DS"):
     """자동 생성된 메시지 바디 — MessageID: 0701, RootType: MissionPlanOptionInfo"""
+    cached_options = _build_option_list_from_cached()
+    if cached_options:
+        return {
+            "timestamp": now_ms_2000(),
+            "source": "CSP",
+            "autoExecution": False,
+            "optionList": cached_options,
+        }
+
     ex = _gen_MissionPlanOptionInfo(source=source)
     _apply_use_profile(ex, MSG_ID)
     _apply_required_if(ex, MSG_ID)
