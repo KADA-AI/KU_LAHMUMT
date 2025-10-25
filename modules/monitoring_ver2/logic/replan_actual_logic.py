@@ -1,114 +1,109 @@
-# logic/replan_actual_logic.py: 실제 재계획 판단 로직을 수행하는 함수를 정의합니다.
-from datetime import datetime, timezone
-import random
+import time
 
-# from logic.Replan.replan_management import ReplanManager
-import udp_reporter
-from data.message_models import (
-    ReplanRequestBodyModel,
-    ReplanRequestTimeStampModel,
-    InputMissionIDModel,
-    IndividualMissionIDListModel,
-    PriorMissionListModel,
-    OptionListModel,
-)
-from push.message0902_push import make_and_push as push_message_0902
-from push.push_center import push_message
+def judge_replan_situation(manager) -> list:
+    """
+    Manager로부터 데이터를 받아 재계획 상황을 판단합니다.
+    `get_data`는 데이터를 store에서 가져온 후 비운다고 가정합니다.
+    """
+    replan_situations = []
+    # ... (이전 단계에서 작성한 내용과 동일) ...
+    msg_0202 = manager.receive_store.get_data("0202")
+    msg_0402 = manager.receive_store.get_data("0402")
+    msg_0801 = manager.receive_store.get_data("0801")
+    msg_0802 = manager.receive_store.get_data("0802")
 
+    operator_inputs = {
+        "0202": msg_0202, "0801": msg_0801, "0802": msg_0802
+    }
+
+    for msg_id, reason_data in operator_inputs.items():
+        if reason_data:
+            replan_info = {
+                "재계획 상황": "운용자 입력에 의한 재계획",
+                "재계획 근거": reason_data.get("replan_reason", f"운용자 입력 ({msg_id})"),
+                "재계획 세부 근거": reason_data.get("replan_details", reason_data),
+                "original_message_id": msg_id
+            }
+            replan_situations.append(replan_info)
+
+    if msg_0402 and msg_0402.get("ROIInfo"):
+        replan_info = {
+            "재계획 상황": "추적 재계획",
+            "재계획 유형": "임무 일시 제외 임무 재계획",
+            "재계획 근거": "신규 ROI 탐지",
+            "재계획 세부 근거": msg_0402["ROIInfo"],
+            "original_message_id": "0402"
+        }
+        replan_situations.append(replan_info)
+        msg_0402["ROIInfo"] = []
+    
+    return replan_situations
+
+def manage_replan_triggers(manager):
+    """
+    재계획 상황을 관리하고, 우선순위에 따라 실제 재계획을 트리거할지 결정합니다.
+    (쿨다운 로직 제외됨)
+    """
+    # 1. 저장된 재계획 상황 목록 가져오기
+    situations = manager.logic_store.get_data('ReplanSituations')
+    if not situations:
+        return
+
+    # 2. 우선순위 기반으로 가장 중요한 상황 하나를 선택 (운용자 입력 > 추적 재계획)
+    situations.sort(key=lambda s: 0 if '운용자' in s.get('재계획 상황', '') else 1)
+    chosen_situation = situations[0]
+
+    # 3. 최종 재계획 요청 확정 및 저장
+    manager.logic_store.set_data('ConfirmedReplanRequest', chosen_situation)
+    print(f"### 재계획 트리거 확정 ###: {chosen_situation}")
+
+    # 4. 처리된 상황 목록 비우기
+    manager.logic_store.set_data('ReplanSituations', [])
+
+def determine_level_and_send_request(manager):
+    """
+    확정된 재계획 요청을 바탕으로 재계획 수준을 결정하고,
+    실제 재계획 수행 모듈에 요청 메시지를 전송합니다.
+    """
+    confirmed_request = manager.logic_store.get_data('ConfirmedReplanRequest')
+    if not confirmed_request:
+        return
+
+    # 재계획 수준 결정 (1: 전체 재계획, 2: 부분 재계획)
+    replan_level = 1 if confirmed_request['재계획 상황'] == '운용자 입력에 의한 재계획' else 2
+    
+    # 재계획 요청 메시지 생성 (0902 메시지)
+    replan_request_message = {
+        "MsgID": "0902",
+        "TimeStamp": int(time.time()),
+        "ReplanLevel": replan_level,
+        "ReplanReason": confirmed_request
+    }
+
+    # 메시지 전송 (manager의 push_center를 사용한다고 가정)
+    try:
+        # manager.push_center.push_message("0902", replan_request_message)
+        print(f"### 재계획 요청 메시지 전송 (0902) ###: {replan_request_message}")
+    except Exception as e:
+        print(f"Error sending replan request message: {e}")
+
+    # 처리된 요청 비우기
+    manager.logic_store.set_data('ConfirmedReplanRequest', None)
 
 def run_replan_procedure(manager):
     """
-    실제 재계획 판단 로직의 시작점입니다.
-    ReplanManager를 사용하여 재계획 프로세스를 관리합니다。
+    재계획 판단, 트리거 관리, 요청 전송까지의 전체 절차를 실행합니다.
     """
-    manager._log("REPLAN_PROCEDURE", "INFO", "실제 재계획 판단 로직 실행 시작.")
+    # 1. 재계획 상황 판단
+    judged_situations = judge_replan_situation(manager)
+    if judged_situations:
+        existing_situations = manager.logic_store.get_data('ReplanSituations') or []
+        existing_situations.extend(judged_situations)
+        manager.logic_store.set_data('ReplanSituations', existing_situations)
+        print(f"### 재계획 상황 판단 ###: {judged_situations}")
 
-    # 1. Manager의 receive_store에서 실제 수신 데이터 가져오기
-    agent_state = manager.receive_store.get_data("0401")
-    situationAwarenessInfo = manager.receive_store.get_data("0402")
-    mandatory_command = manager.receive_store.get_data("0802")
-    prior_mission_info = manager.receive_store.get_data("0202")
+    # 2. 재계획 트리거 관리
+    manage_replan_triggers(manager)
 
-    # 2. 필수 데이터 존재 여부 확인
-    if not agent_state:
-        manager._log(
-            "REPLAN_PROCEDURE",
-            "INFO",
-            "필수 데이터(0401)가 없어 재계획 판단을 건너뜁니다.",
-        )
-        return
-
-    # # ReplanManager 인스턴스 생성
-    # replan_manager = ReplanManager()
-
-    # # 3. 실제 데이터를 인자로 전달하여 재계획 프로세스 실행
-    # final_replan_output, trigger = replan_manager.manage_replan(
-    #     agent_state=agent_state,
-    #     mandatory_command=mandatory_command,
-    #     prior_mission_info=prior_mission_info,
-    # )
-
-    # # 4. 최종 결과를 logic_store에 저장
-    # manager.logic_store.set_data(
-    #     "final_replan_output",
-    #     final_replan_output,
-    # )
-    # # 5. 트리거 결과를 logic_store에 저장 (GUI 표시용)
-    # if trigger is None:
-    #     manager.logic_store.set_data(
-    #         "replan_triggers",
-    #         [],
-    #     )
-    # else:
-    #     manager.logic_store.set_data(
-    #         "replan_triggers",
-    #         [trigger],
-    #     )
-
-    # 0902 ReplanRequest 메시지 본문 생성
-    ## 0918 적 발견으로 인한 유인기 경로 재계획 명령 확인용 더미 데이터
-    final_replan_output = "적 탐지로 인한 유인기 공격 판단 필요"
-    if situationAwarenessInfo:
-        timestamp = int(
-            (
-                datetime.now(timezone.utc) - datetime(2000, 1, 1, tzinfo=timezone.utc)
-            ).total_seconds()
-            * 1000
-        )
-        replan_body = ReplanRequestBodyModel(
-            timestamp=timestamp,
-            source="MonitoringModule",
-            replanRequestTime=ReplanRequestTimeStampModel(
-                replanRequestTimestamp=timestamp
-            ),
-            replanLevel=3,  # 유인기 공격 모델 호출 / 경로 및 촬영 재계획
-            inputMissionIDList=[
-                InputMissionIDModel(inputMissionID=random.randint(1, 10))
-            ],
-            IndividualMissionIDList=[
-                IndividualMissionIDListModel(
-                    individualMissionID=random.randint(101, 110)
-                )
-            ],
-            priorMissionList=[
-                PriorMissionListModel(priorMissionID=random.randint(201, 210))
-            ],
-            replanRequest=final_replan_output,  # final_replan_output을 replanRequest 필드에 사용
-            optionList=[
-                OptionListModel(
-                    optionID=random.randint(1, 5),
-                    optionName="Option" + str(random.randint(1, 5)),
-                    missionPlanID=random.randint(1, 10),
-                )
-            ],
-        )
-
-        push_message_0902(replan_body, manager.node_messenger)
-        print(f"replan_body: {replan_body}")
-        manager.receive_store.set_data("0402", None)
-
-        # PushStorage에 저장
-        manager.push_store.add_data("0902", replan_body)
-
-        # 재계획 결과가 저장되었음을 UDP로 통지
-        udp_reporter.notify_tx("0902")
+    # 3. 재계획 수준 결정 및 요청 전송
+    determine_level_and_send_request(manager)

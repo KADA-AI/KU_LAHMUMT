@@ -1,88 +1,72 @@
-import time
-
-from .rule_based_replan import RuleBasedReplan
-from .priority_based_replan import PriorityBasedReplan
-from .trigger_management import TriggerManagement
-from .statistical_replan import StatisticalReplan
-from data.logic_model import FinalReplanOutput
-
+# logic/Replan/replan_management.py
 
 class ReplanManager:
     def __init__(self):
-        self.rule_based_replan = RuleBasedReplan()
-        self.priority_based_replan = PriorityBasedReplan()
-        self.statistical_replan = StatisticalReplan()
+        # 필요한 초기화 수행
+        self.triggers = []
 
     def manage_replan(self, agent_state, mandatory_command, prior_mission_info):
-        """Manages the replanning process using actual data passed as arguments."""
+        """
+        재계획 프로세스를 관리하는 메인 메서드
+        """
+        # 1. 재계획 판단
+        is_replan_needed, judgment_reason = self._judge_replan_necessity(agent_state, mandatory_command)
 
-        # 1. 규칙 기반 재계획에 필요한 모든 데이터를 하나의 딕셔너리로 통합
-        combined_data = {
-            "agent_state": agent_state,
-            "mandatory_command": mandatory_command,
-            "prior_mission_info": prior_mission_info,
+        if not is_replan_needed:
+            return None, None
+
+        # 2. 재계획 트리거 관리
+        trigger = self._manage_triggers(judgment_reason)
+        self.triggers.append(trigger)
+
+        # 3. 재계획 수준 결정 및 재계획 요청 메시지 생성 (여기서는 요청 내용만 반환)
+        replan_request_content, replan_level = self._determine_replan_level_and_request(trigger)
+
+        return replan_request_content, trigger, replan_level
+
+    def _judge_replan_necessity(self, agent_state, mandatory_command):
+        """
+        규칙 기반으로 재계획 필요성을 판단합니다.
+        - 예: 유인기/무인기 상태, 임무 수행 상태, 위협 정보 등을 기반으로 판단
+        """
+        # === 규칙 기반 판단 로직 구현 ===
+        # 예시: 강제 명령(0802)이 있으면 재계획 필요
+        if mandatory_command:
+            return True, "Mandatory command received"
+
+        # 예시: 에이전트 상태가 특정 임계값을 넘으면 재계획 필요
+        # if agent_state['health'] < 50:
+        #     return True, "Agent health critical"
+
+        return False, None
+
+    def _manage_triggers(self, reason):
+        """
+        재계획 트리거를 생성하고 관리합니다.
+        """
+        # === 트리거 관리 로직 구현 ===
+        # 예시: 판단 이유를 기반으로 트리거 객체 생성
+        trigger = {
+            "timestamp": "...",
+            "reason": reason,
+            "type": "RuleBased"
         }
+        return trigger
 
-        # 2. 규칙 기반 재계획 여부 판단
-        rule_trigger = self.rule_based_replan.check_all_rules(combined_data)
-
-        # 3. 통계적 기반 재계획 판단 (현재는 더미 데이터 사용)
-        dummy_dbnn_result = {
-            "Schedule_Adherence_Risk": 0.1,
-            "Sustainability_Risk": 0.1,
-            "Operational_Risk": 0.1,
-            "Collision_Risk": 0.1,
-            "Enemy_Risk": 0.1,
-            "Probability_to_Kill": 0.1,
-            "Mission_Success_Rate": 0.1,
-        }
-        stats_trigger = self.statistical_replan.analyze_statistics(
-            dummy_dbnn_result
-        )
-
-        # 4. 우선순위 기반 재계획
-        final_trigger = self.priority_based_replan.determine_priority(
-            rule_trigger, stats_trigger
-        )
-        
-        final_replan_type = final_trigger.get("ReplanType") if final_trigger else None
-
-        # 5. 최종 재계획 결과 생성
-        if final_trigger:
-            final_replan_output = FinalReplanOutput(
-                new_plan={"status": "replan_needed"},
-                replan_status="TRIGGERED",
-                final_replan_type=final_replan_type,
-            )
+    def _determine_replan_level_and_request(self, trigger):
+        """
+        트리거에 따라 재계획 수준을 결정하고,
+        송신할 재계획 요청 메시지의 내용을 생성합니다.
+        """
+        # === 재계획 수준 결정 및 요청 생성 로직 ===
+        # 예시: 트리거 이유에 따라 다른 재계획 수준과 요청 내용 결정
+        if "Mandatory command" in trigger['reason']:
+            replan_level = 1 # 예: 상위 수준 재계획
+            request_content = "Executing mandatory command."
         else:
-            final_replan_output = FinalReplanOutput(
-                new_plan={"status": "no_change"},
-                replan_status="COMPLETED",
-                final_replan_type=None,
-            )
-        
-        return final_replan_output, final_trigger
+            replan_level = 3 # 예: 하위 수준 재계획
+            request_content = "Responding to critical agent state."
 
-
-class RPCSUManagementModule:
-
-    def __init__(self):
-        # This part uses the old manage_replan, it needs to be updated or removed
-        # For now, we focus on the main app logic, so this standalone part is not critical
-        self.replan_manager = ReplanManager()
-        self.trigger_management = TriggerManagement()
-        print("🚀 재계획 관리 모듈 실행 시작. (종료하려면 Ctrl+C를 누르세요)")
-
-    def execute(self):
-        # This loop will fail as manage_replan now requires arguments.
-        # This indicates that this class was for standalone testing and should not be used in the main app.
-        print("WARNING: RPCSUManagementModule.execute is designed for standalone testing and is not functional with the new data flow.")
-        pass
-        # try:
-        #     while True:
-        #         final_output, final_trigger = self.replan_manager.manage_replan()
-        #         if final_trigger:
-        #             self.trigger_management.manage_triggers(final_trigger)
-        #         time.sleep(0.5)
-        # except KeyboardInterrupt:
-        #     print("\n🛑 프로그램 실행이 중단되었습니다.")
+        # 실제 0902 메시지 생성은 replan_actual_logic.py에서 처리하도록
+        # 여기서는 재계획 요청에 들어갈 핵심 내용과 재계획 수준을 반환
+        return request_content, replan_level
