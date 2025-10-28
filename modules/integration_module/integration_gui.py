@@ -18,7 +18,12 @@ from modules.common.qt_env import ensure_qt_platform
 ensure_qt_platform()
 
 from PyQt5.QtCore import qInstallMessageHandler, QtMsgType, pyqtSignal, QTimer, Qt, QEvent, QObject, QPointF
-from PyQt5.QtWidgets import QApplication, QMainWindow, QTabWidget, QWidget, QLabel, QHBoxLayout, QVBoxLayout, QSlider, QLineEdit, QPushButton, QFileDialog, QGroupBox, QMessageBox, QSizePolicy, QTableWidget, QHeaderView, QTableWidgetItem, QCheckBox
+from PyQt5.QtWidgets import (
+    QApplication, QMainWindow, QTabWidget, QWidget, QLabel,
+    QHBoxLayout, QVBoxLayout, QSlider, QLineEdit, QPushButton, QFileDialog,
+    QGroupBox, QMessageBox, QSizePolicy, QTableWidget, QHeaderView, QTableWidgetItem,
+    QCheckBox, QDialog, QFormLayout, QDialogButtonBox, QComboBox, QSpinBox, QDoubleSpinBox
+)
 from PyQt5.QtGui import QPainter, QColor, QPen
 
 # ───────── Qt 경고 필터 ─────────
@@ -107,6 +112,113 @@ from modules.common.ctrl_listener import start_ctrl_listener, env_ctrl_port
 
 from push_center import push_message
 from modules.common import db_paths
+
+
+# ───────── 유틸: ms since 2000-01-01 ─────────
+_EPOCH_2000_MS = 946684800000  # 2000-01-01 00:00:00 UTC
+def _now_ms_since_2000() -> int:
+    return int(time.time() * 1000) - _EPOCH_2000_MS
+
+
+# ───────── 비주기 전송 다이얼로그들 ─────────
+class _Dlg0202_PriorMissionInfo(QDialog):
+    """0202 선행임무정보 입력."""
+    def __init__(self, parent=None, default_source="DSC"):
+        super().__init__(parent)
+        self.setWindowTitle("0202 선행임무정보 보내기")
+        lay = QFormLayout(self)
+        self.ed_src = QLineEdit(default_source); lay.addRow("Source", self.ed_src)
+        self.sp_mission_id = QSpinBox(); self.sp_mission_id.setRange(1, 2**31 - 1); lay.addRow("PriorMissionID", self.sp_mission_id)
+        self.cb_type = QComboBox(); self.cb_type.addItem("1: 좌표지향", 1); self.cb_type.addItem("2: 표적추적", 2); lay.addRow("MissionType", self.cb_type)
+        # type=1: 좌표
+        self.sb_lat = QDoubleSpinBox(); self.sb_lat.setRange(-90.0, 90.0); self.sb_lat.setDecimals(6)
+        self.sb_lon = QDoubleSpinBox(); self.sb_lon.setRange(-180.0, 180.0); self.sb_lon.setDecimals(6)
+        self.sp_alt = QSpinBox(); self.sp_alt.setRange(0, 50000)
+        lay.addRow("Latitude", self.sb_lat); lay.addRow("Longitude", self.sb_lon); lay.addRow("Altitude(m)", self.sp_alt)
+        # type=2: 표적
+        self.sp_target = QSpinBox(); self.sp_target.setRange(0, 2**31 - 1); lay.addRow("TargetID", self.sp_target)
+        def _toggle(_=None):
+            # 항상 편집 가능. MissionType에 따라 payload 구성만 달라짐.
+            return
+        self.cb_type.currentIndexChanged.connect(_toggle); _toggle()
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=self)
+        btns.accepted.connect(self.accept); btns.rejected.connect(self.reject); lay.addRow(btns)
+    def build_body(self, ts_ms: int) -> dict:
+        src = (self.ed_src.text() or "DSC").strip()
+        pid = int(self.sp_mission_id.value()); mtype = int(self.cb_type.currentData())
+        entry = {"priorMissionID": pid, "missionType": mtype}
+        if mtype == 1:
+            entry["coordinateOrientation"] = {
+                "coordinate": {"latitude": float(self.sb_lat.value()),
+                               "longitude": float(self.sb_lon.value()),
+                               "altitude": int(self.sp_alt.value())}
+            }
+        else:
+            entry["targetOrientation"] = {"targetID": int(self.sp_target.value())}
+        return {"timestamp": int(ts_ms), "source": src, "priorMissionList": [entry]}
+
+
+class _Dlg0801_InitialPlanCommand(QDialog):
+    """0801 운용자 임무재계획 명령 입력."""
+    def __init__(self, parent=None, default_source="DSC"):
+        super().__init__(parent)
+        self.setWindowTitle("0801 임무재계획 명령 보내기")
+        lay = QFormLayout(self)
+        self.ed_src = QLineEdit(default_source); lay.addRow("Source", self.ed_src)
+
+        self.ed_replan_ts = QLineEdit(self)
+        self.ed_replan_ts.setPlaceholderText("ms since 2000-01-01 (기본: 현재 시뮬레이션 시각)")
+        lay.addRow("OperatorReplanRequestTime", self.ed_replan_ts)
+
+        self.sp_input_pkg = QSpinBox(); self.sp_input_pkg.setRange(0, 2**31 - 1); lay.addRow("InputMissionPackageID", self.sp_input_pkg)
+        self.sp_ref_pkg = QSpinBox(); self.sp_ref_pkg.setRange(0, 2**31 - 1); lay.addRow("MissionReferencePackageID", self.sp_ref_pkg)
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=self)
+        btns.accepted.connect(self.accept); btns.rejected.connect(self.reject); lay.addRow(btns)
+
+    def prefill(self, ts_ms: int):
+        try:
+            self.ed_replan_ts.setText(str(int(ts_ms)))
+        except Exception:
+            self.ed_replan_ts.clear()
+
+    def build_body(self, ts_ms: int) -> dict:
+        src = (self.ed_src.text() or "DSC").strip()
+        try:
+            op_ts = int((self.ed_replan_ts.text() or "").strip() or int(ts_ms))
+        except Exception:
+            op_ts = int(ts_ms)
+        return {
+            "timestamp": int(ts_ms),
+            "source": src,
+            "operatorReplanRequestTime": op_ts,
+            "inputMissionPackageID": int(self.sp_input_pkg.value()),
+            "missionReferencePackageID": int(self.sp_ref_pkg.value()),
+        }
+
+
+class _Dlg0802_MandatoryCommand(QDialog):
+    """0802 강제명령 입력."""
+    def __init__(self, parent=None, default_source="DSC"):
+        super().__init__(parent)
+        self.setWindowTitle("0802 강제명령 보내기")
+        lay = QFormLayout(self)
+        self.ed_src = QLineEdit(default_source); lay.addRow("Source", self.ed_src)
+        self.cb_air = QComboBox()
+        self.cb_air.addItem("4: 무인기1", 4); self.cb_air.addItem("5: 무인기2", 5); self.cb_air.addItem("6: 무인기3", 6)
+        lay.addRow("AircraftID", self.cb_air)
+        self.cb_type = QComboBox()
+        self.cb_type.addItem("1: 강제 대기", 1); self.cb_type.addItem("2: 강제 귀환", 2); self.cb_type.addItem("3: 강제 임무복귀", 3)
+        lay.addRow("MandatoryType", self.cb_type)
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=self)
+        btns.accepted.connect(self.accept); btns.rejected.connect(self.reject); lay.addRow(btns)
+    def build_body(self, ts_ms: int) -> dict:
+        src = (self.ed_src.text() or "DSC").strip()
+        return {
+            "timestamp": int(ts_ms),
+            "source": src,
+            "aircraftID": int(self.cb_air.currentData()),
+            "mandatoryType": int(self.cb_type.currentData()),
+        }
 
 
 # ───────── 0401 이동 미니맵 위젯 ─────────
@@ -378,6 +490,14 @@ class _MissionSidePanel(QGroupBox):
         self._chk_use_mission.setToolTip("임무 계획에 저장된 각 무인기의 비행 경로를 따라 currentWaypointID와 연료를 자동으로 갱신합니다.")
         lay.addWidget(self._chk_use_mission)
 
+        # 비주기 명령 버튼 묶음
+        self.grp_manual = QGroupBox("비주기 명령", self)
+        manual_layout = QVBoxLayout(self.grp_manual); manual_layout.setContentsMargins(8,6,8,6); manual_layout.setSpacing(6)
+        self.btn_0202 = QPushButton("0202 선행임무정보 보내기", self.grp_manual); manual_layout.addWidget(self.btn_0202)
+        self.btn_0801 = QPushButton("0801 임무재계획 명령 보내기", self.grp_manual); manual_layout.addWidget(self.btn_0801)
+        self.btn_0802 = QPushButton("0802 강제명령 보내기", self.grp_manual); manual_layout.addWidget(self.btn_0802)
+        lay.addWidget(self.grp_manual)
+
         # 시작 버튼
         self.btn_start = QPushButton("임무 수행 모사 시작", self)
         self.btn_start.setMinimumHeight(90)
@@ -423,6 +543,12 @@ class _MissionSidePanel(QGroupBox):
 
     def use_mission_overlay(self) -> bool:
         return bool(self._chk_use_mission.isChecked())
+
+    def set_extra_buttons_enabled(self, enabled: bool):
+        try:
+            self.grp_manual.setEnabled(bool(enabled))
+        except Exception:
+            pass
 
 
 
@@ -790,6 +916,8 @@ class _ReplayManager(QObject):
         self._anchor_all = 0.0
         self._current_mission_start_idx = 0
         self._current_mission_base_ts = 0.0
+        self._anchor_ms: float | None = None
+        self._t0_mono: float | None = None
 
     def stop(self):
         for t in self._timers:
@@ -798,6 +926,8 @@ class _ReplayManager(QObject):
             except Exception:
                 pass
         self._timers.clear()
+        self._anchor_ms = None
+        self._t0_mono = None
         if self._mission_timer is not None:
             try:
                 self._mission_timer.stop()
@@ -810,6 +940,17 @@ class _ReplayManager(QObject):
         self._overlay_active = False
         if callable(self._log):
             self._log("[REPLAY] 재생 중단")
+
+    def _start_clock(self, anchor_ms: float):
+        self._anchor_ms = float(anchor_ms)
+        self._t0_mono = time.monotonic()
+        if callable(self._log):
+            self._log(f"[CLOCK] sim anchor={self._anchor_ms}")
+
+    def now_timestamp_ms(self) -> int:
+        if self._anchor_ms is not None and self._t0_mono is not None:
+            return int(self._anchor_ms + (time.monotonic() - self._t0_mono) * 1000.0)
+        return _now_ms_since_2000()
 
     def _row_of(self, msg_id: str) -> int:
         try:
@@ -882,7 +1023,7 @@ class _ReplayManager(QObject):
                         if code_item and code_item.text().strip() == msg_id:
                             state_item = tbl.item(row, 2)
                             if state_item:
-                                state_item.setText("수동 전송(재생)")
+                                state_item.setText("전송 정지(리플레이)")
                             break
             except Exception:
                 pass
@@ -941,6 +1082,7 @@ class _ReplayManager(QObject):
             anchor = 0.0
         if callable(self._log):
             self._log(f"[REPLAY] anchor = {anchor} (0401_first={anchor_0401})")
+        self._start_clock(anchor)
 
         rows_0401 = sorted(buckets["0401"], key=lambda x: (float('inf') if x[0] is None else x[0]))
         rows_0402 = sorted(buckets["0402"], key=lambda x: (float('inf') if x[0] is None else x[0]))
@@ -1241,6 +1383,9 @@ class MainWindow(QMainWindow):
         # ── 좌측 보조 패널
         self._side = _MissionSidePanel(on_log=self._append_log_line, parent=self)
         self._side.btn_start.clicked.connect(self._on_click_start_sim)
+        self._side.btn_0202.clicked.connect(self._act_send_0202)
+        self._side.btn_0801.clicked.connect(self._act_send_0801)
+        self._side.btn_0802.clicked.connect(self._act_send_0802)
 
         # (우측) 기존 상단/탭을 세로 배치
         right = QWidget(); v = QVBoxLayout(right); v.setContentsMargins(0,0,0,0)
@@ -1309,12 +1454,14 @@ class MainWindow(QMainWindow):
             tab = self._tab
             tbl = getattr(tab, "tbl_tx", None)
             if tbl is None:
+                self._side.set_extra_buttons_enabled(enabled)
                 return
             tbl.setEnabled(enabled)
             for r in range(tbl.rowCount()):
                 w = tbl.cellWidget(r, 3)   # '발신' 버튼 컬럼
                 if w is not None and hasattr(w, "setEnabled"):
                     w.setEnabled(enabled)
+            self._side.set_extra_buttons_enabled(enabled)
         except Exception:
             pass
 
@@ -1454,11 +1601,64 @@ class MainWindow(QMainWindow):
     def _append_log_line(self, text: str):
         try:
             if getattr(self, "_tab", None) and hasattr(self._tab, "append_log"):
-                self._tab.append_log(text); return
+                QTimer.singleShot(0, lambda t=str(text): self._tab.append_log(t))
+                try:
+                    print(text)
+                except Exception:
+                    pass
+                return
         except Exception:
             pass
-        try: print(text)
-        except Exception: pass
+        try:
+            print(text)
+        except Exception:
+            pass
+
+    def _sim_now(self) -> int:
+        try:
+            return int(self._replay.now_timestamp_ms())
+        except Exception:
+            return _now_ms_since_2000()
+
+    def _send_and_mark(self, msg_id: str, body: dict):
+        row = self._replay._row_of(msg_id)
+        self._append_log_line(f"[SEND] : {msg_id}")
+        try:
+            self._append_log_line(f"[{msg_id}] BODY  : {json.dumps(body, ensure_ascii=False)}")
+        except Exception:
+            pass
+
+        def _on_done(mid, raw):
+            if row >= 0:
+                try:
+                    self._tab._mark_single_sent(row, mid, raw)
+                except Exception:
+                    pass
+            self._append_log_line(f"[{mid}] PUSH 완료")
+
+        try:
+            push_message(msg_id, NodeMessenger, on_done=_on_done, body_dict=body)
+        except Exception as exc:
+            self._append_log_line(f"[SEND] {msg_id} 실패: {exc}")
+
+    def _act_send_0202(self):
+        dlg = _Dlg0202_PriorMissionInfo(self, default_source="DSC")
+        if dlg.exec_() == QDialog.Accepted:
+            ts = self._sim_now()
+            self._send_and_mark("0202", dlg.build_body(ts))
+
+    def _act_send_0801(self):
+        dlg = _Dlg0801_InitialPlanCommand(self, default_source="DSC")
+        ts = self._sim_now()
+        dlg.prefill(ts)
+        if dlg.exec_() == QDialog.Accepted:
+            self._send_and_mark("0801", dlg.build_body(ts))
+
+    def _act_send_0802(self):
+        dlg = _Dlg0802_MandatoryCommand(self, default_source="DSC")
+        if dlg.exec_() == QDialog.Accepted:
+            ts = self._sim_now()
+            self._send_and_mark("0802", dlg.build_body(ts))
 
     # ───────── 임무 수행 모사 시작 핸들러 ─────────
     def _on_click_start_sim(self):
