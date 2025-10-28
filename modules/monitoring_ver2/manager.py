@@ -15,7 +15,7 @@ from data.message_models import ModuleStatusModelModel
 
 from logic.monitoring_logic import MonitoringLogicHandler
 from receive.receive_center import register_listener
-from push import message0102_push
+from push import message0102_push, push_center
 from udp_reporter import notify_mode
 
 
@@ -35,6 +35,9 @@ class MonitoringManager:
 
         # 2. 시스템 모드 기본값 설정
         self.logic_store.set_data("SystemMode", 0)  # 0: 초기화 모드
+
+        # 2.1. 푸시 센터 등록
+        self.push_center = push_center
 
         # 3. 로직 핸들러 초기화 (스레드 시작은 마지막에)
         self.logic_handler = MonitoringLogicHandler(manager=self)

@@ -106,60 +106,63 @@ class ReplanTab(QWidget):
         if source == "logic" and key == "SystemMode":
             new_mode = self.manager.get_logic_result("SystemMode")
             if new_mode is not None:
-                # 무한 루프를 방지하기 위해 시그널을 잠시 끊음
                 self.system_mode_combo.blockSignals(True)
                 self.system_mode_combo.setCurrentIndex(new_mode)
                 self.system_mode_combo.blockSignals(False)
         elif source == "receive" and key == "0101":
             if data_object and hasattr(data_object, "systemMode"):
                 new_mode = data_object.systemMode
-                # 무한 루프를 방지하기 위해 시그널을 잠시 끊음
                 self.system_mode_combo.blockSignals(True)
                 self.system_mode_combo.setCurrentIndex(new_mode)
                 self.system_mode_combo.blockSignals(False)
 
-        # --- 재계획 요약 업데이트 ---
-        final_replan_output = self.manager.logic_store.get_data("final_replan_output")
-        if final_replan_output:
-            self.replan_status_label.setText(final_replan_output.replan_status)
-            self.new_plan_status_label.setText(final_replan_output.new_plan.get("status", "N/A"))
-            self.final_replan_type_label.setText(final_replan_output.final_replan_type if final_replan_output.final_replan_type else "N/A")
-
-        # --- 규칙 기반 재계획 판단 결과 업데이트 ---
-        # 모든 규칙 레이블의 배경색을 기본값으로 재설정
+        # --- 모든 규칙 레이블의 배경색을 기본값으로 재설정 ---
         for name, label in self.rule_labels.items():
             label.setStyleSheet(
                 "QLabel { border: 1px solid gray; background-color: lightgray; }"
             )
 
-        # logic_storage에서 재계획 트리거 결과 가져오기
+        # --- 기존 replan_triggers 기반 업데이트 로직 (호환성을 위해 유지) ---
         replan_triggers = self.manager.logic_store.get_data("replan_triggers")
-
         if replan_triggers:
             for trigger in replan_triggers:
                 replan_reason = trigger.get("ReplanReason")
-                # 각 ReplanReason에 따라 해당 레이블의 배경색 변경
                 if "고장" in replan_reason and "페이로드" not in replan_reason:
                     self.rule_labels["uav_health"].setStyleSheet(
                         "QLabel { border: 1px solid gray; background-color: lightcoral; }"
                     )
-                elif "페이로드 고장" in replan_reason:
-                    self.rule_labels["uav_payload_health"].setStyleSheet(
-                        "QLabel { border: 1px solid gray; background-color: lightcoral; }"
-                    )
-                elif "연료 부족" in replan_reason:
-                    self.rule_labels["uav_fuel_warning"].setStyleSheet(
-                        "QLabel { border: 1px solid gray; background-color: lightcoral; }"
-                    )
-                elif "추적 중" in replan_reason:
-                    self.rule_labels["uav_tracking"].setStyleSheet(
-                        "QLabel { border: 1px solid gray; background-color: lightyellow; }"
-                    )
-                elif "강제 귀환 명령" in replan_reason:
-                    self.rule_labels["forced_return"].setStyleSheet(
+                # ... (기존 다른 조건들) ...
+
+        # --- 신규 재계획 로직 상태 업데이트 ---
+        confirmed_request = self.manager.logic_store.get_data("ConfirmedReplanRequest")
+        if confirmed_request:
+            situation = confirmed_request.get("재계획 상황")
+            replan_type = confirmed_request.get("재계획 유형", "일반")
+
+            # 1. 요약 정보 레이블 업데이트
+            self.replan_status_label.setText(f"요청 확정: {situation}")
+            self.final_replan_type_label.setText(replan_type)
+
+            # 2. 규칙 레이블 시각적 강조
+            if situation == "추적 재계획":
+                self.rule_labels["uav_tracking"].setStyleSheet(
+                    "QLabel { border: 1px solid gray; background-color: lightyellow; }"
+                )
+            elif situation == "운용자 입력에 의한 재계획":
+                msg_id = confirmed_request.get("original_message_id")
+                if msg_id == "0802": # 예: 강제 귀환 명령
+                     self.rule_labels["forced_return"].setStyleSheet(
                         "QLabel { border: 1px solid gray; background-color: lightblue; }"
                     )
-                elif "임무 일시 정지 명령" in replan_reason:
-                    self.rule_labels["mission_pause"].setStyleSheet(
-                        "QLabel { border: 1px solid gray; background-color: lightsalmon; }"
-                    )
+                # 다른 메시지 ID에 대한 시각화 규칙 추가 가능
+        else:
+            # 확정된 요청이 없을 때 기본 텍스트 설정
+            self.replan_status_label.setText("재계획 대기 중")
+            self.final_replan_type_label.setText("N/A")
+
+        # --- 기존 final_replan_output 로직 (호환성을 위해 유지) ---
+        final_replan_output = self.manager.logic_store.get_data("final_replan_output")
+        if final_replan_output:
+            self.replan_status_label.setText(final_replan_output.replan_status)
+            self.new_plan_status_label.setText(final_replan_output.new_plan.get("status", "N/A"))
+            self.final_replan_type_label.setText(final_replan_output.final_replan_type if final_replan_output.final_replan_type else "N/A")

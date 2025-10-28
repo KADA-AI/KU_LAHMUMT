@@ -82,14 +82,14 @@ def initialize_nfusion_and_get_messenger(init_completed_event: threading.Event):
 
 # --- 메인 실행 함수 ---
 def main():
-    print("--- 모니터링 모듈 메인 실행 ---" )
+    print("--- 모니터링 모듈 메인 실행 ---")
 
     # 1. nFusion 통신 컴포넌트 초기화
     nfusion_init_completed = threading.Event()
     init_thread = threading.Thread(
-        target=initialize_nfusion_and_get_messenger, 
+        target=initialize_nfusion_and_get_messenger,
         args=(nfusion_init_completed,),
-        daemon=True
+        daemon=True,
     )
     init_thread.start()
 

@@ -93,13 +93,18 @@ class MonitoringTab(QWidget):
         # 0501 메시지 수신 시 진행률 업데이트
         if key == "0501":
             mission_progress_data = self.manager.get_logic_result("0501_data")
-            if mission_progress_data and "individualMissionProgressStatusList" in mission_progress_data:
+            if (
+                mission_progress_data
+                and "individualMissionProgressStatusList" in mission_progress_data
+            ):
                 for i, progress_status_dict in enumerate(
                     mission_progress_data["individualMissionProgressStatusList"]
                 ):
                     if i < len(self.progress_bars):
-                        progress_value = progress_status_dict["currentIndividualMissionProgress"]
-                        print(f"UAV {i+1} Progress: {progress_value}%")
+                        progress_value = progress_status_dict[
+                            "currentIndividualMissionProgress"
+                        ]
+                        # print(f"UAV {i+1} Progress: {progress_value}%")
                         self.progress_bars[i].setValue(progress_value)
                         self.progress_bars[i].setText(f"UAV {i+1}: {progress_value}%")
 
@@ -110,14 +115,16 @@ class MonitoringTab(QWidget):
                 for i, fuel_item in enumerate(fuel_data):
                     if i < len(self.progress_bars):
                         # fuel_item이 딕셔너리라고 가정하고 'warning' 키를 사용
-                        warning_text = fuel_item.get("warning", "green") # 기본값은 green
-                        aircraft_id = fuel_item.get("id", i+1) # 기본값은 인덱스 + 1
+                        warning_text = fuel_item.get(
+                            "warning", "green"
+                        )  # 기본값은 green
+                        aircraft_id = fuel_item.get("id", i + 1)  # 기본값은 인덱스 + 1
 
                         # warning_text에 따라 색상 설정
                         if warning_text == "red":
                             color = QColor(255, 0, 0)  # Red
                         elif warning_text == "yellow":
-                            color = QColor(255, 255, 0) # Yellow
+                            color = QColor(255, 255, 0)  # Yellow
                         else:
                             color = QColor(0, 255, 0)  # Green
 
@@ -125,7 +132,9 @@ class MonitoringTab(QWidget):
                         # fuel_data에는 진행률 값이 직접 없으므로, 텍스트만 업데이트하거나
                         # 필요하다면 다른 방식으로 진행률 값을 가져와야 합니다.
                         # 여기서는 단순히 텍스트와 색상만 업데이트합니다.
-                        self.progress_bars[i].setText(f"UAV {aircraft_id} Fuel: {warning_text}")
+                        self.progress_bars[i].setText(
+                            f"UAV {aircraft_id} Fuel: {warning_text}"
+                        )
                         self.progress_bars[i].setColor(color)
 
         # 기존의 데이터 로깅 로직

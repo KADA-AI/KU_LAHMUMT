@@ -139,16 +139,16 @@ class _Dlg0202_PriorMissionInfo(QDialog):
     def build_body(self, ts_ms: int) -> dict:
         src = (self.ed_src.text() or "DSC").strip()
         pid = int(self.sp_mission_id.value()); mtype = int(self.cb_type.currentData())
-        entry = {"PriorMissionID": pid, "MissionType": mtype}
+        entry = {"priorMissionID": pid, "missionType": mtype}
         if mtype == 1:
-            entry["CoordinateOrientation"] = {
-                "Coordinate": {"Latitude": float(self.sb_lat.value()),
-                               "Longitude": float(self.sb_lon.value()),
-                               "Altitude": int(self.sp_alt.value())}
+            entry["coordinateOrientation"] = {
+                "coordinate": {"latitude": float(self.sb_lat.value()),
+                               "longitude": float(self.sb_lon.value()),
+                               "altitude": int(self.sp_alt.value())}
             }
         else:
-            entry["TargetOrientation"] = {"TargetID": int(self.sp_target.value())}
-        return {"Timestamp": int(ts_ms), "Source": src, "PriorMissionList": [entry]}
+            entry["targetOrientation"] = {"targetID": int(self.sp_target.value())}
+        return {"timestamp": int(ts_ms), "source": src, "priorMissionList": [entry]}
 
 # (기존) _Dlg0801_InitialPlanCommand.__init__ 수정
 class _Dlg0801_InitialPlanCommand(QDialog):
@@ -184,12 +184,11 @@ class _Dlg0801_InitialPlanCommand(QDialog):
         except Exception:
             op_ts = int(ts_ms)
         return {
-            "Timestamp": int(ts_ms),
-            "Source": src,
-            # "OperatorReplanRequestTime": op_ts,
-            "OperatorReplanRequestTime": int(ts_ms),
-            "InputMissionPackageID": int(self.sp_input_pkg.value()),
-            "MissionReferencePackageID": int(self.sp_ref_pkg.value()),
+            "timestamp": int(ts_ms),
+            "source": src,
+            "operatorReplanRequestTime": op_ts,
+            "inputMissionPackageID": int(self.sp_input_pkg.value()),
+            "missionReferencePackageID": int(self.sp_ref_pkg.value()),
         }
 
 
@@ -210,10 +209,10 @@ class _Dlg0802_MandatoryCommand(QDialog):
     def build_body(self, ts_ms: int) -> dict:
         src = (self.ed_src.text() or "DSC").strip()
         return {
-            "Timestamp": int(ts_ms),
-            "Source": src,
-            "AircraftID": int(self.cb_air.currentData()),
-            "MandatoryType": int(self.cb_type.currentData()),
+            "timestamp": int(ts_ms),
+            "source": src,
+            "aircraftID": int(self.cb_air.currentData()),
+            "mandatoryType": int(self.cb_type.currentData()),
         }
 
 

@@ -1,40 +1,33 @@
-# modules/monitoring/push/message0902_push.py
-from nFusion.Model.msg_0902 import ReplanRequest
-from data.message_models import ReplanRequestBodyModel, ReplanRequestTimeStampModel
-from .push_utils import cs_new, try_set
+# modules/monitoring_ver2/push/message0902_push.py
+from typing import Any, Dict
 
-MSG_ID = "0902"
+# 0501 push 모듈과 동일한 구조로, common 모듈의 push 기능에 작업을 위임합니다.
+try:
+    from modules.common.push import message0902_push as _common_push
+except (ModuleNotFoundError, ImportError):
+    import importlib
+    _common_push = importlib.import_module('modules.common.push.message0902_push')
 
-
-def _model_to_cs_object(body: ReplanRequestBodyModel) -> ReplanRequest:
-    """Converts a ReplanRequestBodyModel object to a C# ReplanRequest object."""
-    obj = cs_new("ReplanRequest", MSG_ID)
-
-    try_set(obj, "timestamp", body.timestamp)
-    # try_set(obj, "source", body.source)
-    # The dataclass has `replanRequest`, which seems to map to `replanReason` in the C# model.
-    try_set(obj, "replanReason", body.replanRequest)
-
-    return obj
-
-
-def make_and_push(body: ReplanRequestBodyModel, node_messenger) -> bytes:
-    """Creates and pushes a message from a ReplanRequestBodyModel object or a compatible dict."""
+def _prepare_body(body: Any) -> Dict[str, Any]:
+    """
+    replan_actual_logic에서 생성된 간단한 dict를
+    common push 헬퍼가 이해할 수 있도록 그대로 반환합니다.
+    """
     if isinstance(body, dict):
-        # 중첩된 dataclass가 dict로 들어올 경우, 수동으로 변환해줘야 합니다.
-        if "replanRequestTime" in body and isinstance(body["replanRequestTime"], dict):
-            body["replanRequestTime"] = ReplanRequestTimeStampModel(
-                **body["replanRequestTime"]
-            )
-        # 다른 중첩 구조들도 필요시 여기에 추가합니다.
-        body = ReplanRequestBodyModel(**body)
-    elif not isinstance(body, ReplanRequestBodyModel):
-        raise TypeError(
-            f"body must be a ReplanRequestBodyModel object or a dict, not {type(body).__name__}"
-        )
+        return body
+    
+    # dataclass 등 다른 타입에 대한 처리 로직이 필요하다면 여기에 추가할 수 있습니다.
+    # 예: if is_dataclass(body): return asdict(body)
+    
+    raise TypeError(f"body must be a dict, not {type(body).__name__}")
 
-    msg = _model_to_cs_object(body)
-    node_messenger.Push(msg)
 
-    log_line = f"[{MSG_ID}] PUSH 완료"
-    return log_line.encode("utf-8", "ignore")
+def make_and_push(body: Any, node_messenger) -> bytes:
+    """ReplanRequest(0902) 메시지 전송을 공용 push 구현에 위임합니다."""
+    # _prepare_body를 통과한 딕셔너리를 common push 모듈로 전달합니다.
+    return _common_push.make_and_push(_prepare_body(body), node_messenger)
+
+
+def make_random_and_push(node_messenger) -> bytes:
+    """필요 시, 공용 랜덤 메시지 생성기에 작업을 위임합니다."""
+    return _common_push.make_random_and_push(node_messenger)

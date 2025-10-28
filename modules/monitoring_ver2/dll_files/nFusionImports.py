@@ -1,100 +1,77 @@
-# modules/monitoring_ver2/dll_files/nFusionImports.py
-# Load nFusion + message assemblies for the monitoring module (pythonnet).
-
-from __future__ import annotations
-
+#파이선에서 C#을 이용 pip로 pythonnet 설치 필요
+from pythonnet import load
+load("coreclr")
+import clr
 import sys
 from pathlib import Path
+from System.Threading.Tasks import Task
+from System import Exception, Action, Attribute, Type
+from System.Reflection import Assembly
+from System import Array, String
+from System.Threading.Tasks import Task
+from System import Boolean
 
-from pythonnet import load
+# Ensure references are loaded relative to this file so callers can import from any cwd.
+_DLL_DIR = Path(__file__).resolve().parent
+_MODULES_PARENT = _DLL_DIR.parents[1]  # modules
+_MODULES_DIR = _DLL_DIR.parent  # modules/common
+_MSG_DIR = _MODULES_DIR / "msg_files"
 
-# Ensure pythonnet uses CoreCLR before any clr.AddReference calls.
-load("coreclr")
-
-import clr  # type: ignore
-
-# --- Resolve important directories -------------------------------------------------
-
-_CURRENT_DIR = Path(__file__).resolve().parent  # modules/monitoring_ver2/dll_files
-_MONITORING_DIR = _CURRENT_DIR.parent           # modules/monitoring_ver2
-_MODULES_ROOT = _MONITORING_DIR.parent          # modules/
-_COMMON_DIR = _MODULES_ROOT / "common"
-_MSG_DIRS = (
-    _MONITORING_DIR / "msg_files",
-    _COMMON_DIR / "msg_files",
-)
-
-# Keep sys.path aware of the directories that expose managed assemblies and helpers.
-for candidate in (_MODULES_ROOT, _MONITORING_DIR, _CURRENT_DIR, *_MSG_DIRS, _COMMON_DIR):
-    if candidate.exists():
-        candidate_str = str(candidate)
-        if candidate_str not in sys.path:
-            sys.path.append(candidate_str)
-
-# --- Helper -----------------------------------------------------------------------
-
-def _add_reference(name):
-    try:
-        clr.AddReference(str(name))
-    except Exception:
-        try:
-            clr.AddReference(Path(name).stem)
-        except Exception:
-            pass
-
-# --- Framework & nFusion assemblies ------------------------------------------------
+for _path in (_MODULES_PARENT, _MODULES_DIR, _DLL_DIR, _MSG_DIR):
+    if _path.exists() and str(_path) not in sys.path:
+        sys.path.append(str(_path))
 
 _DLL_REFERENCES = (
-    "Microsoft.Bcl.AsyncInterfaces",
-    "Microsoft.Extensions.Configuration.Abstractions",
-    "Microsoft.Extensions.Configuration",
-    "Microsoft.Extensions.Configuration.FileExtensions",
-    "Microsoft.Extensions.Configuration.Json",
-    "Microsoft.Extensions.DependencyInjection.Abstractions",
-    "Microsoft.Extensions.DependencyInjection",
-    "Microsoft.Extensions.FileProviders.Abstractions",
-    "Microsoft.Extensions.FileProviders.Physical",
-    "Microsoft.Extensions.FileSystemGlobbing",
-    "Microsoft.Extensions.Primitives",
-    "nFusion.Core",
     "nFusion.Interface.Contracts",
     "nFusion.Nodes.Core",
+    "nFusion.Core",
     "nFusion.SimpleMiddleware",
 )
 
-for dll in _DLL_REFERENCES:
-    dll_path = _CURRENT_DIR / f"{dll}.dll"
-    if dll_path.exists():
-        _add_reference(dll_path)
-    else:
-        _add_reference(dll)
+for _dll in _DLL_REFERENCES:
+    try:
+        _dll_path = _DLL_DIR / f"{_dll}.dll"
+        clr.AddReference(str(_dll_path if _dll_path.exists() else _dll))
+    except Exception:
+        pass
 
-# Message library (contains nFusion.Model.msg_xxxx types)
-for msg_dir in _MSG_DIRS:
-    dll_path = msg_dir / "MessageLibrary.dll"
-    if dll_path.exists():
-        _add_reference(dll_path)
+_MSG_ASM = _MSG_DIR / "MessageLibrary.dll"
+if _MSG_ASM.exists():
+    try:
+        clr.AddReference(str(_MSG_ASM.resolve()))
+    except Exception:
+        try:
+            clr.AddReference("MessageLibrary")
+        except Exception:
+            pass
+else:
+    try:
+        clr.AddReference("MessageLibrary")
+    except Exception:
+        pass
 
-_add_reference("MessageLibrary")  # fallback if directory scan above failed
-
-# Attempt to pre-import a few frequently used namespaces so later imports succeed.
+# Optional: attempt to preload frequently used message namespaces so that
+# subsequent `from nFusion.Model.msg_xxxx import *` succeeds even if the
+# assemblies are not yet referenced by name.
 try:
     import importlib
 
-    for module_name in (
+    for _mod in (
         "nFusion.Model.msg_0101",
         "nFusion.Model.msg_0102",
-        "nFusion.Model.msg_0401",
-        "nFusion.Model.msg_0504",
+        "nFusion.Model.msg_0103",
     ):
-        if module_name not in sys.modules:
-            importlib.import_module(module_name)
+        if _mod not in sys.modules:
+            importlib.import_module(_mod)
 except Exception:
     pass
 
-# Re-export commonly used types so legacy imports ("from dll_files.nFusionImports import *") keep working.
-from nFusion.Nodes.Core import *  # type: ignore  # noqa: F401,F403
-from nFusion.Interface.Contracts import *  # type: ignore  # noqa: F401,F403
-from nFusion.Nodes.Core.Ioc import *  # type: ignore  # noqa: F401,F403
-from nFusion.Nodes.Core.Consumer import *  # type: ignore  # noqa: F401,F403
-from nFusion.Nodes.Core.Provider import *  # type: ignore  # noqa: F401,F403
+from nFusion.Nodes.Core import *
+from nFusion.Interface.Contracts import *
+from nFusion.Nodes.Core.Ioc import *
+
+#소비를 위한 인터페이스
+from nFusion.Nodes.Core.Consumer import *
+
+#공급을 위한 인터페이스
+from nFusion.Nodes.Core.Provider import *
