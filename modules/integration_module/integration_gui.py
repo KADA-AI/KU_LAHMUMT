@@ -1,9 +1,10 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 # modules/integration_module/integration_gui.py
 # Integration GUI – 연동 모듈 전용 GUI
 from __future__ import annotations
 
 import sys, os, threading, json, re, time
+from datetime import datetime, timezone
 os.environ["KU_ROLE"] = "integration"
 from pathlib import Path
 
@@ -424,22 +425,29 @@ class _MissionSidePanel(QGroupBox):
         return bool(self._chk_use_mission.isChecked())
 
 
+
 class _MissionPlanWaypointOverlay:
     """MissionPlan/IndividualMissionPlan/FlightPath을 이용해 0401 메시지를 보정한다."""
 
     def __init__(self, logger):
         self._log = logger
-        self._waypoints: dict[int, list[int]] = {}
-        self._cursor: dict[int, int] = {}
-        self._fuel: dict[int, float] = {}
-        self._fuel_step: dict[int, float] = {}
-        self._ticks: dict[int, int] = {}
+        self._missions_by_input = {}
+        self._input_order = []
+        self._current_input_index = -1
+        self._current_input_id = None
+        self._cursor = {}
+        self._ticks = {}
+        self._fuel = {}
+        self._fuel_step = {}
         self._plan_key = None
         self._prepared = False
+        self._mission_done = False
+        self._current_mission_start_idx = 0
+        self._current_mission_base_ts = 0.0
         try:
             self._advance_every = max(1, int(os.environ.get("KU_0401_WP_STEP", "10")))
         except Exception:
-            self._advance_every = 20  # waypoint 전환 간격 (메시지 수)
+            self._advance_every = 20
 
     def _log_info(self, text: str) -> None:
         if callable(self._log):
@@ -447,12 +455,16 @@ class _MissionPlanWaypointOverlay:
 
     def disable(self) -> None:
         self._prepared = False
-        self._plan_key = None
-        self._waypoints.clear()
+        self._missions_by_input.clear()
+        self._input_order = []
+        self._current_input_index = -1
+        self._current_input_id = None
         self._cursor.clear()
+        self._ticks.clear()
         self._fuel.clear()
         self._fuel_step.clear()
-        self._ticks.clear()
+        self._mission_done = False
+        self._plan_key = None
 
     def prepare(self, *, force: bool = False) -> bool:
         mission_plan_path = self._find_latest_mission_plan()
@@ -463,10 +475,7 @@ class _MissionPlanWaypointOverlay:
 
         plan_key = (str(mission_plan_path), mission_plan_path.stat().st_mtime)
         if not force and self._prepared and self._plan_key == plan_key:
-            self._cursor = {aid: 0 for aid in self._waypoints}
-            self._fuel.clear()
-            self._fuel_step.clear()
-            self._ticks = {aid: 0 for aid in self._waypoints}
+            self._reset_progress()
             return True
 
         if not self._load_from_plan(mission_plan_path):
@@ -474,18 +483,71 @@ class _MissionPlanWaypointOverlay:
             return False
 
         self._plan_key = plan_key
-        self._cursor = {aid: 0 for aid in self._waypoints}
-        self._fuel.clear()
-        self._fuel_step.clear()
-        self._ticks = {aid: 0 for aid in self._waypoints}
         self._prepared = True
-        summary = ", ".join(f"UAV{aid}:{len(seq)}개" for aid, seq in sorted(self._waypoints.items()))
-        self._log_info(f"[REPLAY] 임무 기반 0401 덮어쓰기 준비 완료 ({summary}, step={self._advance_every})")
+        self._reset_progress()
+
+        summary_items = []
+        for input_id in self._input_order:
+            mapping = self._missions_by_input.get(input_id) or {}
+            summary_items.append(f"{input_id}({len(mapping)}대)")
+        summary = ", ".join(summary_items) if summary_items else "없음"
+        self._log_info(f"[REPLAY] 임무 기반 0401 덮어쓰기 준비 완료 (입력임무: {summary}, step={self._advance_every})")
         return True
 
-    def apply(self, body: dict) -> None:
-        if not self._prepared or not self._waypoints:
+    def has_inputs(self) -> bool:
+        return bool(self._input_order)
+
+    def current_input_id(self):
+        return self._current_input_id
+
+    def peek_next_input_id(self):
+        next_idx = self._current_input_index + 1
+        if 0 <= next_idx < len(self._input_order):
+            return self._input_order[next_idx]
+        return None
+
+    def advance_to_next_input(self):
+        if not self._prepared or not self._input_order:
+            return None
+        if self._current_input_index + 1 >= len(self._input_order):
+            self._current_input_id = None
+            self._mission_done = True
+            return None
+        self._current_input_index += 1
+        self._current_input_id = self._input_order[self._current_input_index]
+        seq_map = self._missions_by_input.get(self._current_input_id, {})
+        self._cursor = {aid: 0 for aid in seq_map}
+        self._ticks = {aid: 0 for aid in seq_map}
+        self._mission_done = False
+        for aid in seq_map:
+            self._fuel.pop(aid, None)
+            self._fuel_step.pop(aid, None)
+        return self._current_input_id
+
+    def has_next_input(self) -> bool:
+        return self._prepared and (self._current_input_index + 1) < len(self._input_order)
+
+    def reset_current_input(self) -> None:
+        if not self._prepared or self._current_input_id is None:
             return
+        seq_map = self._missions_by_input.get(self._current_input_id, {})
+        self._cursor = {aid: 0 for aid in seq_map}
+        self._ticks = {aid: 0 for aid in seq_map}
+        for aid in seq_map:
+            self._fuel.pop(aid, None)
+            self._fuel_step.pop(aid, None)
+        self._mission_done = False
+
+    def apply(self, body: dict) -> bool:
+        if not self._prepared or self._current_input_id is None:
+            return False
+        seq_map = self._missions_by_input.get(self._current_input_id, {})
+        if not seq_map:
+            if not self._mission_done:
+                self._mission_done = True
+                return True
+            return True
+
         agent_list = None
         if isinstance(body, dict):
             for key in ("agentStateList", "AgentStateList"):
@@ -494,44 +556,63 @@ class _MissionPlanWaypointOverlay:
                     agent_list = val
                     break
         if not isinstance(agent_list, list):
-            return
+            return False
+
+        advance_every = max(1, int(self._advance_every))
         for agent in agent_list:
             if not isinstance(agent, dict):
                 continue
             aid = self._get_int(agent, "aircraftID")
             if aid is None:
                 continue
-            is_unmanned = self._get_int(agent, "isUnmanned")
-            if is_unmanned != 1:
-                continue
-            seq = self._waypoints.get(aid)
+            seq = seq_map.get(aid)
             if not seq:
                 continue
             idx = self._cursor.get(aid, 0)
-            if idx < 0:
-                idx = 0
-            if idx >= len(seq):
-                idx = len(seq) - 1
             tick = self._ticks.get(aid, 0) + 1
-            advance_every = max(1, int(self._advance_every))
-            if tick >= advance_every:
-                if idx < len(seq) - 1:
+            if idx < len(seq):
+                if tick >= advance_every:
                     idx += 1
+                    tick = 0
+                if idx > len(seq):
+                    idx = len(seq)
+            else:
+                idx = len(seq)
                 tick = 0
-            self._ticks[aid] = tick
             self._cursor[aid] = idx
-            if 0 <= idx < len(seq):
-                waypoint_id = seq[idx]
+            self._ticks[aid] = tick
+            if seq:
+                cur_idx = min(idx, len(seq) - 1)
                 info = self._ensure_unmanned_info(agent)
                 current = info.get("currentWaypointID")
                 if not isinstance(current, dict):
                     current = {}
                     info["currentWaypointID"] = current
-                current["waypointID"] = waypoint_id
+                current["waypointID"] = seq[cur_idx]
             self._apply_fuel_decay(agent, aid)
 
-    # ── 내부 헬퍼 ─────────────────────────────────────────
-    def _find_latest_mission_plan(self) -> Path | None:
+        completed = True
+        for aid, seq in seq_map.items():
+            if seq and self._cursor.get(aid, 0) < len(seq):
+                completed = False
+                break
+        if completed and not self._mission_done:
+            self._mission_done = True
+            return True
+        return False
+
+    def _reset_progress(self) -> None:
+        self._current_input_index = -1
+        self._current_input_id = None
+        self._cursor = {}
+        self._ticks = {}
+        self._fuel.clear()
+        self._fuel_step.clear()
+        self._mission_done = False
+        self._current_mission_start_idx = 0
+        self._current_mission_base_ts = 0.0
+
+    def _find_latest_mission_plan(self):
         try:
             mission_plan_dir = db_paths.get_db_subpath("MissionPlan")
         except Exception:
@@ -542,8 +623,7 @@ class _MissionPlanWaypointOverlay:
             entries = []
         if not entries:
             return None
-        latest = max(entries, key=lambda p: p.stat().st_mtime)
-        return latest
+        return max(entries, key=lambda p: p.stat().st_mtime)
 
     def _load_from_plan(self, plan_path: Path) -> bool:
         try:
@@ -552,7 +632,7 @@ class _MissionPlanWaypointOverlay:
             self._log_info(f"[REPLAY] MissionPlan 로드 실패: {exc}")
             return False
 
-        waypoints: dict[int, list[int]] = {}
+        missions_by_input: dict[int, dict[int, list[int]]] = {}
         for entry in data.get("aircraftList", []):
             if not isinstance(entry, dict):
                 continue
@@ -560,28 +640,50 @@ class _MissionPlanWaypointOverlay:
             imp_id = self._safe_int(entry.get("individualMissionPackageID"))
             if aid is None or imp_id is None:
                 continue
-            seq = self._collect_waypoints(imp_id)
-            if seq:
-                waypoints[aid] = seq
-        if not waypoints:
-            self._log_info("[REPLAY] MissionPlan에 사용할 UAV 임무가 없습니다.")
+            imp_data = self._read_individual_plan(imp_id)
+            if not imp_data:
+                continue
+            for mission in imp_data.get("individualMissionList", []):
+                if not isinstance(mission, dict):
+                    continue
+                related = mission.get("relatedMission") or {}
+                input_id = self._safe_int(related.get("inputMissionID"))
+                if input_id is None:
+                    continue
+                path_id = self._safe_int(mission.get("pathID"))
+                if path_id is None:
+                    continue
+                seq = self._read_waypoint_ids(path_id)
+                if not seq:
+                    continue
+                mapping = missions_by_input.setdefault(input_id, {})
+                mapping.setdefault(aid, [])
+                mapping[aid].extend(seq)
+        if not missions_by_input:
+            self._log_info("[REPLAY] MissionPlan에서 활용할 협업기저임무를 찾지 못했습니다.")
             return False
-        self._waypoints = waypoints
+        self._missions_by_input = {k: missions_by_input[k] for k in sorted(missions_by_input)}
+        self._input_order = list(self._missions_by_input.keys())
         return True
 
-    def _collect_waypoints(self, imp_id: int) -> list[int]:
+    def _read_individual_plan(self, imp_id: int):
         try:
             imp_path = db_paths.get_db_subpath("IndividualMissionPlan", f"{imp_id}.json")
         except Exception:
-            return []
+            return None
         imp_path = Path(imp_path)
         if not imp_path.exists():
-            self._log_info(f"[REPLAY] IndividualMissionPlan 파일 없음: {imp_id}")
-            return []
+            self._log_info(f"[REPLAY] IndividualMissionPlan 파일이 없습니다: {imp_id}")
+            return None
         try:
-            data = json.loads(imp_path.read_text(encoding="utf-8"))
+            return json.loads(imp_path.read_text(encoding="utf-8"))
         except Exception as exc:
             self._log_info(f"[REPLAY] IndividualMissionPlan 로드 실패({imp_id}): {exc}")
+            return None
+
+    def _collect_waypoints(self, imp_id: int) -> list[int]:
+        data = self._read_individual_plan(imp_id)
+        if not data:
             return []
         seq: list[int] = []
         for mission in data.get("individualMissionList", []):
@@ -600,7 +702,7 @@ class _MissionPlanWaypointOverlay:
             return []
         fp_path = Path(fp_path)
         if not fp_path.exists():
-            self._log_info(f"[REPLAY] FlightPath 파일 없음: {path_id}")
+            self._log_info(f"[REPLAY] FlightPath 파일이 없습니다: {path_id}")
             return []
         try:
             data = json.loads(fp_path.read_text(encoding="utf-8"))
@@ -642,7 +744,6 @@ class _MissionPlanWaypointOverlay:
             warn = 1
         info["fuelWarning"] = warn
 
-    # ── 유틸 ────────────────────────────────────────────────
     def _safe_int(self, value) -> int | None:
         try:
             if value is None:
@@ -668,8 +769,6 @@ class _MissionPlanWaypointOverlay:
         agent["unmannedInfo"] = info
         return info
 
-
-# ───────── 리플레이 매니저 ─────────
 class _ReplayManager(QObject):
     def __init__(self, tab: IntegrationTab, messenger, logger, side_panel: _MissionSidePanel):
         super().__init__(tab)
@@ -680,15 +779,37 @@ class _ReplayManager(QObject):
         self._tracker = side_panel.tracker_0401
         self._overlay = _MissionPlanWaypointOverlay(logger)
         self._overlay_active = False
-        self._timers: list[QTimer] = []
+        self._timers = []
+        self._rows_0401 = []
+        self._row_idx_0401 = 0
+        self._prev_sim_ts_0401 = 0.0
+        self._mission_timer = None
+        self._awaiting_user = False
+        self._pending_target_ts = 0.0
+        self._anchor_0401 = 0.0
+        self._anchor_all = 0.0
+        self._current_mission_start_idx = 0
+        self._current_mission_base_ts = 0.0
 
     def stop(self):
         for t in self._timers:
-            try: t.stop()
-            except Exception: pass
+            try:
+                t.stop()
+            except Exception:
+                pass
         self._timers.clear()
+        if self._mission_timer is not None:
+            try:
+                self._mission_timer.stop()
+            except Exception:
+                pass
+            self._mission_timer = None
+        self._rows_0401 = []
+        self._row_idx_0401 = 0
+        self._awaiting_user = False
         self._overlay_active = False
-        if callable(self._log): self._log("[REPLAY] 중지됨")
+        if callable(self._log):
+            self._log("[REPLAY] 재생 중단")
 
     def _row_of(self, msg_id: str) -> int:
         try:
@@ -701,60 +822,67 @@ class _ReplayManager(QObject):
         return -1
 
     def _extract_ts(self, obj) -> float | None:
-        keys = ("timestamp","time","ts","Timestamp","Time","Ts")
-        def walk(n):
-            if isinstance(n, dict):
-                for k,v in n.items():
-                    yield k,v
+        keys = ("timestamp", "time", "ts", "Timestamp", "Time", "Ts")
+
+        def walk(node):
+            if isinstance(node, dict):
+                for k, v in node.items():
+                    yield k, v
                     yield from walk(v)
-            elif isinstance(n, list):
-                for it in n:
-                    yield from walk(it)
-        for k,v in walk(obj):
+            elif isinstance(node, list):
+                for item in node:
+                    yield from walk(item)
+
+        for key, val in walk(obj):
             try:
-                if any(k.lower()==kk.lower() for kk in keys):
-                    return float(v)
+                if any(key.lower() == kk.lower() for kk in keys):
+                    return float(val)
             except Exception:
                 pass
         return None
 
     def _iter_ndjson(self, path: str):
-        with open(path, "r", encoding="utf-8", errors="ignore") as f:
-            for line in f:
-                line=line.strip()
-                if not line: continue
+        with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
                 try:
                     yield json.loads(line)
                 except Exception:
-                    m = re.search(r"\{.*\}", line)
-                    if m:
-                        try: yield json.loads(m.group(0))
-                        except Exception: pass
-
-    # modules/integration_module/integration_gui.py
-    # (_ReplayManager.start_from_two 교체)
+                    match = re.search(r"\{.*\}", line)
+                    if match:
+                        try:
+                            yield json.loads(match.group(0))
+                        except Exception:
+                            pass
 
     def _stop_periodic_for(self, msg_id: str):
         try:
             timers = getattr(self._tab, "periodic_timers", {})
-            t = timers.get(msg_id)
-            if t:
-                try: t.stop()
-                except Exception: pass
-                try: t.deleteLater()
-                except Exception: pass
-                try: del timers[msg_id]
-                except Exception: pass
-            # TX 테이블 상태 표시도 정리(있을 때만)
+            timer = timers.get(msg_id)
+            if timer:
+                try:
+                    timer.stop()
+                except Exception:
+                    pass
+                try:
+                    timer.deleteLater()
+                except Exception:
+                    pass
+                try:
+                    del timers[msg_id]
+                except Exception:
+                    pass
             try:
                 tbl = getattr(self._tab, "tbl_tx", None)
                 if tbl is not None:
-                    for r in range(tbl.rowCount()):
-                        it_code = tbl.item(r, 0)
-                        if it_code and it_code.text().strip() == msg_id:
-                            it_state = tbl.item(r, 2)
-                            if it_state:
-                                it_state.setText("전송 정지(리플레이)")
+                    for row in range(tbl.rowCount()):
+                        code_item = tbl.item(row, 0)
+                        if code_item and code_item.text().strip() == msg_id:
+                            state_item = tbl.item(row, 2)
+                            if state_item:
+                                state_item.setText("수동 전송(재생)")
                             break
             except Exception:
                 pass
@@ -762,8 +890,6 @@ class _ReplayManager(QObject):
             pass
 
     def start_from_two(self, paths_0401: list[str], paths_0402: list[str]):
-        """0402를 0401의 최솟값 ts(=anchor) 기준으로 상대 지연을 잡아 재생."""
-        # 중복 방지: 기존 주기 전송 중지
         try:
             self._stop_periodic_for("0401")
             self._stop_periodic_for("0402")
@@ -771,35 +897,38 @@ class _ReplayManager(QObject):
             pass
 
         self.stop()
-        try: self._tracker._map.clear()
-        except Exception: pass
+        try:
+            self._tracker._map.clear()
+        except Exception:
+            pass
 
         self._overlay_active = False
         if self._side.use_mission_overlay():
-            if self._overlay.prepare(force=True):
+            if self._overlay.prepare(force=True) and self._overlay.has_inputs():
                 self._overlay_active = True
             else:
                 if callable(self._log):
-                    self._log("[REPLAY] 임무 데이터 덮어쓰기 준비 실패 → 기본 데이터 사용")
+                    self._log("[REPLAY] 임무 기반 덮어쓰기를 사용할 수 없어 기본 모드로 진행합니다.")
                 self._overlay.disable()
         else:
             self._overlay.disable()
 
         buckets = {"0401": [], "0402": []}
-        for p in paths_0401:
-            for obj in self._iter_ndjson(p):
+        for path in paths_0401:
+            for obj in self._iter_ndjson(path):
                 buckets["0401"].append((self._extract_ts(obj), obj))
-        for p in paths_0402:
-            for obj in self._iter_ndjson(p):
+        for path in paths_0402:
+            for obj in self._iter_ndjson(path):
                 buckets["0402"].append((self._extract_ts(obj), obj))
 
         if not buckets["0401"] and not buckets["0402"]:
-            if callable(self._log): self._log("[REPLAY] 선택된 0401/0402 레코드가 없습니다.")
+            if callable(self._log):
+                self._log("[REPLAY] 선택된 0401/0402 레코드가 없습니다.")
             return
 
-        # ---- anchor: 0401의 최솟값 ts (없으면 0402의 최솟값으로 대체) ----
         def first_ts(rows):
-            if not rows: return None
+            if not rows:
+                return None
             rows_sorted = sorted(rows, key=lambda x: (float('inf') if x[0] is None else x[0]))
             for ts, _ in rows_sorted:
                 if ts is not None:
@@ -809,132 +938,279 @@ class _ReplayManager(QObject):
         anchor_0401 = first_ts(buckets["0401"])
         anchor = anchor_0401 if anchor_0401 is not None else first_ts(buckets["0402"])
         if anchor is None:
-            anchor = 0.0   # 전부 ts 없으면 0 기준 보간
-
+            anchor = 0.0
         if callable(self._log):
             self._log(f"[REPLAY] anchor = {anchor} (0401_first={anchor_0401})")
 
-        # ---- 각 스트림 예약: sim_ts - anchor ----
-        for msg_id, rows in buckets.items():
-            if not rows:
+        rows_0401 = sorted(buckets["0401"], key=lambda x: (float('inf') if x[0] is None else x[0]))
+        rows_0402 = sorted(buckets["0402"], key=lambda x: (float('inf') if x[0] is None else x[0]))
+
+        self._anchor_all = anchor
+        self._anchor_0401 = anchor_0401 if anchor_0401 is not None else anchor
+
+        if self._overlay_active and rows_0401:
+            if self._overlay.advance_to_next_input() is None:
+                self._overlay_active = False
+            else:
+                self._rows_0401 = rows_0401
+                self._row_idx_0401 = 0
+                self._prev_sim_ts_0401 = anchor
+                self._awaiting_user = False
+                if callable(self._log):
+                    self._log(f"[REPLAY] 협업기저임무 {self._overlay.current_input_id()}부터 재생합니다.")
+                self._schedule_next_overlay_row(initial=True)
+        if not self._overlay_active:
+            self._fallback_schedule(rows_0401, anchor, anchor_0401)
+
+        self._schedule_0402_rows(rows_0402, anchor)
+
+    def _fallback_schedule(self, rows_0401, anchor, anchor_0401):
+        step = 200
+        if rows_0401:
+            last_sim_ts = anchor
+            for ts, obj in rows_0401:
+                sim_ts = ts if ts is not None else (last_sim_ts + step)
+                if sim_ts < last_sim_ts:
+                    sim_ts = last_sim_ts
+                delay = int(max(0, sim_ts - anchor))
+                last_sim_ts = sim_ts
+                self._schedule_send("0401", obj, delay)
+            if callable(self._log):
+                self._log(f"[REPLAY] 0401 {len(rows_0401)}건 재생 완료 (5Hz, anchor={anchor})")
+
+    def _schedule_0402_rows(self, rows_0402, anchor):
+        if not rows_0402:
+            return
+        count = 0
+        for ts, obj in rows_0402:
+            if ts is None:
+                if callable(self._log):
+                    self._log("[REPLAY] 0402: ts가 없어 skip")
                 continue
-            rows.sort(key=lambda x: (float('inf') if x[0] is None else x[0]))
+            delay = int(max(0, ts - anchor))
+            self._schedule_send("0402", obj, delay)
+            count += 1
+        if callable(self._log):
+            self._log(f"[REPLAY] 0402 {count}건 재생 완료 (event, anchor={anchor})")
 
-            if msg_id == "0401":
-                # 0401: 5Hz(200ms) 복원, ts 없으면 보간
-                step = 200  # ms
-                last_sim_ts = anchor
-                for ts, obj in rows:
-                    sim_ts = ts if (ts is not None) else (last_sim_ts + step)
-                    if sim_ts < last_sim_ts:
-                        sim_ts = last_sim_ts
-                    delay = int(max(0, sim_ts - anchor))
-                    last_sim_ts = sim_ts
-                    self._schedule_send(msg_id, obj, delay)
-                if callable(self._log):
-                    self._log(f"[REPLAY] 0401 {len(rows)}건 예약 완료 (5Hz, anchor={anchor})")
-
-            elif msg_id == "0402":
-                # 0402: 비주기 이벤트 → ts가 있는 건만 anchor 기준으로 스케줄
-                cnt = 0
-                for ts, obj in rows:
-                    if ts is None:
-                        if callable(self._log):
-                            self._log("[REPLAY] 0402: ts 없음 → skip")
-                        continue
-                    delay = int(max(0, ts - anchor))  # ← 핵심: 0401 최솟값 기준
-                    self._schedule_send(msg_id, obj, delay)
-                    cnt += 1
-                if callable(self._log):
-                    self._log(f"[REPLAY] 0402 {cnt}건 예약 완료 (event, anchor={anchor})")
-
-
-    # modules/integration_module/integration_gui.py  (_ReplayManager._schedule_send 내부 iter_states/do_send 교체)
     def _schedule_send(self, msg_id: str, body: dict, delay_ms: int):
         row = self._row_of(msg_id)
 
-        if msg_id == "0401" and self._overlay_active:
+        def do_send():
+            self._emit_message(msg_id, body, row)
+
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+        timer.setInterval(int(max(0, delay_ms)))
+        timer.timeout.connect(do_send)
+        timer.start()
+        self._timers.append(timer)
+
+    def _iter_agent_states(self, obj):
+        def get_ci(d, k):
+            if not isinstance(d, dict):
+                return None
+            kl = k.lower()
+            for kk, vv in d.items():
+                if kk.lower() == kl:
+                    return vv
+            return None
+
+        lst = get_ci(obj, "AgentStateList")
+        if isinstance(lst, list) and lst:
+            for item in lst:
+                aid = get_ci(item, "AircraftID") or get_ci(item, "agentID") or get_ci(item, "vehicleID") or get_ci(item, "id")
+                coord = get_ci(item, "Coordinate") or {}
+                lat = get_ci(coord, "Latitude") or get_ci(coord, "latitude")
+                lon = get_ci(coord, "Longitude") or get_ci(coord, "longitude")
+                typ = None
+                try:
+                    is_unm = get_ci(item, "IsUnmaned")
+                    if is_unm is not None:
+                        typ = "UAV" if int(is_unm) == 1 else "LAH"
+                except Exception:
+                    pass
+                if aid is None or lat is None or lon is None:
+                    continue
+                yield int(aid), float(lat), float(lon), typ
+        else:
+            aid = lat = lon = None
+
+            def walk(node):
+                if isinstance(node, dict):
+                    for k, v in node.items():
+                        yield k, v
+                        yield from walk(v)
+                elif isinstance(node, list):
+                    for child in node:
+                        yield from walk(child)
+
+            for key, value in walk(obj):
+                kl = key.lower()
+                try:
+                    if aid is None and kl in ("aircraftid", "agentid", "vehicleid", "id"):
+                        aid = int(value)
+                    elif lat is None and kl == "latitude":
+                        lat = float(value)
+                    elif lon is None and kl == "longitude":
+                        lon = float(value)
+                except Exception:
+                    pass
+            if aid is not None and lat is not None and lon is not None:
+                yield aid, lat, lon, None
+
+    def _emit_message(self, msg_id: str, body: dict, row: int):
+        if msg_id == "0401":
             try:
-                self._overlay.apply(body)
+                for aid, lat, lon, typ in self._iter_agent_states(body):
+                    self._tracker._map.set_pos(aid, lat, lon, typ)
+                    self._tracker._upsert_row(aid, lat, lon, None, None)
+            except Exception:
+                pass
+        try:
+            push_message(
+                msg_id,
+                self._msgr,
+                on_done=(lambda mid, raw: self._tab._mark_single_sent(row, mid, raw)) if row >= 0 else None,
+                body_dict=body,
+            )
+        except Exception as exc:
+            if callable(self._log):
+                self._log(f"[REPLAY] {msg_id} push 실패: {exc}")
+
+    def _push_0803(self, execute: int) -> None:
+        timestamp = int(
+            (datetime.now(timezone.utc) - datetime(2000, 1, 1, tzinfo=timezone.utc)).total_seconds() * 1000
+        )
+        body_0803 = {
+            "timestamp": timestamp,
+            "source": "CSP",
+            "execute": int(execute),
+        }
+        try:
+            push_message("0803", self._msgr, body_dict=body_0803)
+            if callable(self._log):
+                self._log(f"[REPLAY] 0803 전송 (execute={execute})")
+        except Exception as exc:
+            if callable(self._log):
+                self._log(f"[REPLAY] 0803 push 실패: {exc}")
+
+    def _schedule_next_overlay_row(self, initial: bool = False):
+        if self._awaiting_user:
+            return
+        if self._row_idx_0401 >= len(self._rows_0401):
+            self._prompt_next_input_mission()
+            return
+        if initial:
+            self._current_mission_start_idx = self._row_idx_0401
+            self._current_mission_base_ts = self._prev_sim_ts_0401
+        delay, target_ts = self._compute_delay_for_overlay_row(self._row_idx_0401, initial)
+        self._pending_target_ts = target_ts
+        if self._mission_timer is None:
+            self._mission_timer = QTimer(self)
+            self._mission_timer.setSingleShot(True)
+            self._mission_timer.timeout.connect(self._send_overlay_row)
+        else:
+            self._mission_timer.stop()
+        self._mission_timer.setInterval(int(max(0, delay)))
+        self._mission_timer.start()
+
+    def _compute_delay_for_overlay_row(self, idx: int, initial: bool):
+        ts, _ = self._rows_0401[idx]
+        step = 200
+        prev = self._prev_sim_ts_0401
+        if ts is None:
+            target = prev + step
+        else:
+            target = ts
+            if target < prev:
+                target = prev
+        delay = target - prev if (idx > 0 or not initial) else max(0, target - prev)
+        if initial and idx == 0 and delay < 0:
+            delay = 0
+        return delay, target
+
+    def _send_overlay_row(self):
+        if self._awaiting_user:
+            return
+        if self._row_idx_0401 >= len(self._rows_0401):
+            self._prompt_next_input_mission()
+            return
+        ts, body = self._rows_0401[self._row_idx_0401]
+        self._prev_sim_ts_0401 = self._pending_target_ts
+        finished = self._emit_overlay_entry(body)
+        self._row_idx_0401 += 1
+        if finished:
+            self._prompt_next_input_mission()
+        else:
+            self._schedule_next_overlay_row()
+
+    def _emit_overlay_entry(self, body: dict) -> bool:
+        finished = False
+        if self._overlay_active:
+            try:
+                finished = self._overlay.apply(body)
             except Exception as exc:
                 self._overlay_active = False
                 if callable(self._log):
-                    self._log(f"[REPLAY] 임무 데이터 덮어쓰기 오류: {exc}")
+                    self._log(f"[REPLAY] 임무 덮어쓰기 중 오류: {exc}")
+                finished = False
+        row = self._row_of("0401")
+        self._emit_message("0401", body, row)
+        return finished
 
-        def get_ci(d, k):
-            if not isinstance(d, dict): return None
-            kl = k.lower()
-            for kk, vv in d.items():
-                if kk.lower() == kl: return vv
-            return None
+    def _prompt_next_input_mission(self):
+        if not self._overlay_active:
+            return
+        self._awaiting_user = True
+        current_id = self._overlay.current_input_id()
+        next_id = self._overlay.peek_next_input_id()
+        if next_id is None:
+            self._overlay_active = False
+            self._awaiting_user = False
+            if callable(self._log):
+                self._log("[REPLAY] 모든 협업기저임무 재생 완료")
+            return
 
-        def iter_states(obj):
-            """0401 본문에서 (aid, lat, lon, type_label) 생성"""
-            lst = get_ci(obj, "AgentStateList")
-            if isinstance(lst, list) and lst:
-                for it in lst:
-                    aid = get_ci(it, "AircraftID") or get_ci(it, "agentID") or get_ci(it, "vehicleID") or get_ci(it, "id")
-                    coord = get_ci(it, "Coordinate") or {}
-                    lat = get_ci(coord, "Latitude") or get_ci(coord, "latitude")
-                    lon = get_ci(coord, "Longitude") or get_ci(coord, "longitude")
-                    typ = None
-                    try:
-                        is_unm = get_ci(it, "IsUnmaned")
-                        if is_unm is not None:
-                            typ = "UAV" if int(is_unm) == 1 else "LAH"
-                    except Exception:
-                        pass
-                    if aid is None or lat is None or lon is None: continue
-                    yield int(aid), float(lat), float(lon), typ
-            else:
-                # 단일형
-                aid=lat=lon=None
-                def walk(n):
-                    if isinstance(n, dict):
-                        for k,v in n.items():
-                            yield k,v
-                            yield from walk(v)
-                    elif isinstance(n, list):
-                        for x in n: yield from walk(x)
-                for k,v in walk(obj):
-                    kl=k.lower()
-                    try:
-                        if aid is None and kl in ("aircraftid","agentid","vehicleid","id"): aid=int(v)
-                        elif lat is None and kl=="latitude": lat=float(v)
-                        elif lon is None and kl=="longitude": lon=float(v)
-                    except Exception:
-                        pass
-                if aid is not None and lat is not None and lon is not None:
-                    yield aid, lat, lon, None
-
-        def do_send():
-            if msg_id == "0401":
-                # 리플레이 경로에서도 지도+표 동기 갱신
-                try:
-                    for aid, lat, lon, typ in iter_states(body):
-                        self._tracker._map.set_pos(aid, lat, lon, typ)
-                        self._tracker._upsert_row(aid, lat, lon, None, None)
-                except Exception:
-                    pass
-            try:
-                push_message(
-                    msg_id, self._msgr,
-                    on_done=(lambda mid, raw: self._tab._mark_single_sent(row, mid, raw)) if row >= 0 else None,
-                    body_dict=body
-                )
-            except Exception as e:
-                if callable(self._log): self._log(f"[REPLAY] {msg_id} push 실패: {e}")
-
-
-
-        t = QTimer(self)
-        t.setSingleShot(True)
-        t.setInterval(int(delay_ms))
-        t.timeout.connect(do_send)
-        t.start()
-        self._timers.append(t)
-
-
+        box = QMessageBox(self._tab)
+        box.setWindowTitle("Input Mission Complete")
+        box.setText(f"Input mission {current_id} finished.\nProceed to the next mission?")
+        next_button = box.addButton("Next mission (execute=1)", QMessageBox.AcceptRole)
+        repeat_button = box.addButton("Repeat mission (execute=2)", QMessageBox.ActionRole)
+        stop_button = box.addButton("Stop", QMessageBox.RejectRole)
+        box.exec_()
+        clicked = box.clickedButton()
+        if clicked == next_button:
+            self._push_0803(1)
+            self._awaiting_user = False
+            new_id = self._overlay.advance_to_next_input()
+            if new_id is None:
+                self._overlay_active = False
+                if callable(self._log):
+                    self._log("[REPLAY] 모든 협업기저임무 재생 완료")
+                return
+            if callable(self._log):
+                self._log(f"[REPLAY] 협업기저임무 {new_id} 재생 시작")
+            self._schedule_next_overlay_row(initial=True)
+        elif clicked == repeat_button:
+            self._push_0803(2)
+            self._awaiting_user = False
+            if callable(self._log):
+                self._log("[REPLAY] execute=2 선택 - 시뮬레이션 일시 정지")
+            if self._mission_timer is not None:
+                try: self._mission_timer.stop()
+                except Exception: pass
+                self._mission_timer = None
+            for timer in list(self._timers):
+                try: timer.stop()
+                except Exception: pass
+            self._timers.clear()
+            self._overlay_active = False
+            return
+        else:
+            if callable(self._log):
+                self._log("[REPLAY] 사용자 요청으로 재생을 중단합니다.")
+            self.stop()
 class MainWindow(QMainWindow):
     ctrl_payload = pyqtSignal(dict)  # 백그라운드 → UI 스레드
 
@@ -1143,7 +1419,38 @@ class MainWindow(QMainWindow):
             self._append_log_line(f"[CTRL] MODE change request: {text}")
             self._set_mode_slider_by_text(text)
 
+    def mark_received(self, msg_id: str, raw: bytes | None = None):
+        if str(msg_id).zfill(4) != "0803":
+            return
+        data = self._parse_json_body(raw)
+        if not isinstance(data, dict):
+            return
+        execute = data.get("execute") or data.get("Execute")
+        try:
+            execute_val = int(execute)
+        except Exception:
+            return
+        if execute_val == 2:
+            self._append_log_line("[REPLAY] 0803 execute=2 received - stop simulation")
+            self._replay.stop()
+
     # ───────── 로깅 ─────────
+    def _parse_json_body(self, raw: bytes | None):
+        if not raw:
+            return None
+        try:
+            txt = raw.decode("utf-8", "ignore")
+        except Exception:
+            txt = ""
+        try:
+            return json.loads(txt)
+        except Exception:
+            try:
+                m = re.search(r"\{.*\}", txt, flags=re.S)
+                return json.loads(m.group(0)) if m else None
+            except Exception:
+                return None
+
     def _append_log_line(self, text: str):
         try:
             if getattr(self, "_tab", None) and hasattr(self._tab, "append_log"):

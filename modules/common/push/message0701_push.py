@@ -2,8 +2,16 @@
 # auto-generated at 2025-08-24T20:13:14.031500+00:00
 
 
-import json, importlib
+import os, sys, json, importlib
 from datetime import datetime, timezone
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+COMMON_ROOT = os.path.normpath(os.path.join(HERE, ".."))
+PROJECT_ROOT = os.path.normpath(os.path.join(HERE, "..", "..", ".."))
+for path in (COMMON_ROOT, PROJECT_ROOT):
+    if path not in sys.path:
+        sys.path.insert(0, path)
+
 from System.Collections.Generic import List
 from nFusion.Model.msg_0701 import *    # C# 모델(우선)
 from nFusion.Model.CommonType import *     # 공통 타입(항상)
@@ -120,7 +128,13 @@ def _list_numeric_ids(dirname: str, prefix_first_char: str | None = None) -> lis
 def _dict_to_Option(data: dict):
     obj = _new('Option')
     if "optionID" in data: _try_set(obj, "optionID", int(data["optionID"]))
-    if "optionName" in data: _try_set(obj, "optionName", str(data["optionName"]))
+    if "optionName" in data:
+        value = data["optionName"]
+        if value is not None:
+            try:
+                _try_set(obj, "optionName", int(value))
+            except Exception:
+                _try_set(obj, "optionName", value)
     if "missionPlanID" in data: _try_set(obj, "missionPlanID", int(data["missionPlanID"]))
     if "survivalRate" in data: _try_set(obj, "survivalRate", int(data["survivalRate"]))
     if "timeContraction" in data: _try_set(obj, "timeContraction", int(data["timeContraction"]))

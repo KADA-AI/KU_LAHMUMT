@@ -99,7 +99,7 @@ class DecisionSupportTab(CSCTabBase):
             owner = getattr(self, '_owner', None)
             if owner is not None:
                 try:
-                    owner.mark_received('0901', raw)
+                    owner._on_rx_0901(raw)
                 except Exception as exc:
                     try:
                         owner._append_log_line(f"[ERR] 0901 처리 실패: {exc}")

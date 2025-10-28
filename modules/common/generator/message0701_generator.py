@@ -3,14 +3,18 @@
 
 
 import os, re, json, random
+import sys
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
-
-from modules.common import db_paths
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 PROJECT_ROOT = os.path.normpath(os.path.join(HERE, "..", "..", ".."))
+
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
+from modules.common import db_paths
 
 
 def _cache_file_0901() -> str:
@@ -30,6 +34,13 @@ PRIMS = {"uint","ulong","int","float","double","bool","string",
 TYPE_MAP = {"uint":"uint32","ulong":"uint64","int":"int32","float":"float32","double":"float64"}
 SOURCE_ENUM_DEFAULT = ["DSC","IDM","MSM","MMR","UCC","MOB","CSP"]
 LIST_LEN = 3
+OPTION_NAME_LABELS = {
+    1: "시스템 추천",
+    2: "공격 특화",
+    3: "공격 배제",
+    4: "정찰 특화",
+    5: "최소 시간",
+}
 
 def _load_cached_0901() -> dict | None:
     cache_path = _cache_file_0901()
@@ -67,6 +78,39 @@ def _contains_any(text: str, keywords: tuple[str, ...]) -> bool:
         if kw in text or kw.lower() in lower:
             return True
     return False
+
+
+def _normalize_option_name(raw: Any) -> tuple[Optional[int], str]:
+    code: Optional[int] = None
+    label = ""
+    if isinstance(raw, int):
+        code = raw
+    elif isinstance(raw, str):
+        s = raw.strip()
+        if s:
+            if s.isdigit():
+                code = int(s)
+            else:
+                m = re.search(r'\d+', s)
+                if m:
+                    try:
+                        code = int(m.group())
+                    except Exception:
+                        code = None
+                if code is None:
+                    norm = s.replace(" ", "")
+                    for val, lbl in OPTION_NAME_LABELS.items():
+                        if lbl.replace(" ", "") in norm:
+                            code = val
+                            break
+            label = s
+    if code is not None and not label:
+        label = OPTION_NAME_LABELS.get(code, str(code))
+    if not label and isinstance(raw, str):
+        label = raw.strip()
+    if not label and code is not None:
+        label = OPTION_NAME_LABELS.get(code, str(code))
+    return code, label
 
 
 def _derive_effects(option_name: str) -> tuple[int, int, int]:
@@ -112,13 +156,21 @@ def _build_option_list_from_cached() -> list[dict]:
         except Exception:
             continue
         raw_name = item.get("optionName")
-        option_name = str(raw_name).strip() if raw_name is not None else ""
-        if not option_name:
-            option_name = f"option{option_id}"
-        survival, time, recog = _derive_effects(option_name)
+        opt_code, opt_label = _normalize_option_name(raw_name)
+        if opt_code is None:
+            if isinstance(option_id, int) and option_id in OPTION_NAME_LABELS:
+                opt_code = option_id
+            else:
+                opt_code = ((idx % len(OPTION_NAME_LABELS)) + 1) if OPTION_NAME_LABELS else option_id
+        display_name = opt_label or OPTION_NAME_LABELS.get(opt_code, "")
+        if not display_name:
+            display_name = str(raw_name).strip() if raw_name is not None else ""
+        if not display_name:
+            display_name = f"option{option_id}"
+        survival, time, recog = _derive_effects(display_name)
         options.append({
             "optionID": option_id,
-            "optionName": option_name,
+            "optionName": opt_code,
             "missionPlanID": mission_plan_id,
             "survivalRate": survival,
             "timeContraction": time,
@@ -533,11 +585,18 @@ MSG_ID = "0701"
 def _gen_Option(source: str = "DS"):
     obj = {}
     obj["optionID"] = gen_value("optionID", "uint32", MSG_ID, obj, 0)
-    obj["optionName"] = f"option{random.randint(1, 5)}"
+    opt_val = gen_value("optionName", "uint32", MSG_ID, obj, 0)
+    if isinstance(opt_val, int):
+        obj["optionName"] = opt_val
+    else:
+        code, _ = _normalize_option_name(opt_val)
+        if code is None:
+            code = random.randint(1, len(OPTION_NAME_LABELS)) if OPTION_NAME_LABELS else 1
+        obj["optionName"] = code
     obj["missionPlanID"] = gen_value("missionPlanID", "uint32", MSG_ID, obj, 0)
-    obj["survivalRate"] = random.choice([-1, 0, 1])
-    obj["timeContraction"] = random.choice([-1, 0, 1])
-    obj["recogEffectiveness"] = random.choice([-1, 0, 1])
+    obj["survivalRate"] = gen_value("survivalRate", "int32", MSG_ID, obj, 0)
+    obj["timeContraction"] = gen_value("timeContraction", "int32", MSG_ID, obj, 0)
+    obj["recogEffectiveness"] = gen_value("recogEffectiveness", "int32", MSG_ID, obj, 0)
     obj["distance"] = random.randint(0, 200_000)
     obj["target"] = random.randint(0, 20)
     return obj

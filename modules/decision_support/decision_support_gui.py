@@ -48,6 +48,7 @@ PROJECT_ROOT, COMMON_DIR = _bootstrap_paths()
 
 from modules.common.status_reporter import send_status_ok
 from modules.common.ctrl_listener import start_ctrl_listener, env_ctrl_port
+from modules.common import db_paths
 from receive_center import register_listener
 
 _EPOCH2000_MS = 946_684_800_000
@@ -109,6 +110,11 @@ _ = _load_msglib_and_deps()
 from receive import *  # modules/common/receive
 from Tabs.decision_support_tab import DecisionSupportTab
 
+try:
+    from modules.common.generator import message0701_generator as _message0701
+except Exception:
+    _message0701 = None
+
 # ───────── 모듈별 모니터링 포트(의사결정) ─────────
 def _mon_port() -> int:
     """Decision Support GUI (MOB - Mission Option Builder) → 대시보드(run.py) 모니터링 전송 포트"""
@@ -156,6 +162,10 @@ _MODE_TEXT_ALIASES = {
     "\ucd08\uae30\ud654\ubaa8\ub4dc": 1,
 }
 
+_SLIDER_TO_SYSTEM_MODE = {1: 0, 2: 1, 3: 2, 4: 3}
+_SYSTEM_MODE_TO_SLIDER = {code: slider for slider, code in _SLIDER_TO_SYSTEM_MODE.items()}
+_MISSION_EXECUTE_CODE = 3
+
 # ───────── 고정 0102 PUSH (단발/폴백 용) ─────────
 def _push_0102_fixed(status: int = 1):
     """버스 준비 이후 MOB/Status 고정 바디 단발 0102."""
@@ -190,10 +200,12 @@ class MainWindow(QMainWindow):
         # 전원/버스/디듀프 상태
         self._power_on = False
         self._bus_ready = False
+        self._pending_option_entries: list[dict] = []
         self._last_ctrl_ts: dict[str, float] = {}
         self._last_0102_sent_ms = 0
         self._rx_counts = {}
         self._self_check_sent = False
+        self._system_mode_code: int | None = None
 
         # 탭
         tabs = QTabWidget()
@@ -252,6 +264,7 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(120, self._send_0102_when_ready)
 
         # ★★★ 0101 수신 → 모드 반영 리스너 & 폴링 보강
+        self._install_option_request_listener()
         self._install_0101_mode_listener()
         self._start_0101_rx_poller()
 
@@ -332,6 +345,21 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
+    def _is_mission_execute_mode(self) -> bool:
+        return self._system_mode_code == _MISSION_EXECUTE_CODE
+
+    def _update_system_mode_state_from_slider(self, slider_value: int) -> None:
+        try:
+            slider_idx = int(slider_value)
+        except Exception:
+            slider_idx = -1
+        code = _SLIDER_TO_SYSTEM_MODE.get(slider_idx)
+        if code == self._system_mode_code:
+            return
+        self._system_mode_code = code
+        if code == _MISSION_EXECUTE_CODE:
+            QTimer.singleShot(0, self._flush_pending_option_entries)
+
     def _set_mode_slider_by_text(self, text: str):
         labels = _MODE_LABELS
         norm = re.sub(r"\s+", "", str(text)).lower()
@@ -346,6 +374,7 @@ class MainWindow(QMainWindow):
             self._send_mon("mode", text=labels[val], role="MOB")
         except Exception:
             pass
+        self._update_system_mode_state_from_slider(val)
         self._power_on = (val != 0)
         self._apply_power_state()
         if self._power_on:
@@ -361,6 +390,7 @@ class MainWindow(QMainWindow):
             self.mode_now.setText(labels[int(val)])
         except Exception:
             pass
+        self._update_system_mode_state_from_slider(val)
         self._power_on = (int(val) != 0)
         label = labels[int(val)] if 0 <= val < len(labels) else str(val)
         self._append_log_line(f"[MODE] 모드 변경 → {label}")
@@ -514,6 +544,7 @@ class MainWindow(QMainWindow):
             NodeMessenger.RegistAllProviderFromFusionNodeIoc()
             self._bus_ready = True
             self._append_log_line("[BUS] MOB NodeMessenger 초기화 완료")
+            self._flush_pending_option_entries()
         except Exception as exc:
             self._append_log_line(f"[WARN] RX setup 실패: {exc}")
             self._bus_ready = False
@@ -598,6 +629,149 @@ class MainWindow(QMainWindow):
                 self._append_log_line("[WARN] 0102 송신 재시도 한계 도달")
 
     # ───────── 0101 모드 수신 리스너 ─────────
+    def _install_option_request_listener(self):
+        """0901 옵션 요청 수신 시 0701을 생성하도록 리스너를 등록합니다."""
+        class _Rx0901:
+            def __init__(self, host):
+                self.host = host
+            def mark_received(self, msg_id: str, raw: bytes | None = None):
+                try:
+                    self.host._on_rx_0901(raw)
+                except Exception:
+                    pass
+        try:
+            self._rx0901 = _Rx0901(self)
+            register_listener("0901", self._rx0901)
+            self._append_log_line("[0901] 옵션 요청 리스너 등록 완료")
+        except Exception as e:
+            self._append_log_line(f"[0901] 리스너 등록 실패: {e}")
+
+    def _on_rx_0901(self, raw: bytes | None):
+        payload = self._decode_json_payload(raw)
+        if not isinstance(payload, dict):
+            self._append_log_line("[0901] payload decode 실패")
+            return
+        option_entries = []
+        for item in payload.get("pendingOptionList") or []:
+            if not isinstance(item, dict):
+                continue
+            try:
+                option_id = int(item.get("optionID"))
+                mission_plan_id = int(item.get("missionPlanID"))
+            except Exception:
+                continue
+            name = item.get("optionName")
+            option_entries.append({
+                "optionID": option_id,
+                "missionPlanID": mission_plan_id,
+                "optionName": str(name) if name is not None else f"option{option_id}",
+            })
+        if not option_entries:
+            self._append_log_line("[0901] 옵션 목록이 비어 있어 0701 생성 생략")
+            return
+        self._send_mon("rx", msg_id=_z4("0901"), optionCount=len(option_entries))
+        self._latest_option_entries = option_entries
+        if not self._bus_ready:
+            self._append_log_line("[0701] NodeMessenger 초기화 대기 중 – 옵션 정보를 큐에 보관")
+            self._pending_option_entries = list(option_entries)
+            QTimer.singleShot(300, self._flush_pending_option_entries)
+            return
+        self._push_0701_from_entries(option_entries)
+
+    def _flush_pending_option_entries(self):
+        if not self._pending_option_entries:
+            return
+        if not self._bus_ready or not self._is_mission_execute_mode():
+            QTimer.singleShot(300, self._flush_pending_option_entries)
+            return
+        entries = list(self._pending_option_entries)
+        self._pending_option_entries = []
+        self._push_0701_from_entries(entries)
+
+
+    def _decode_json_payload(self, raw: bytes | None) -> dict | None:
+        if not raw:
+            return None
+        try:
+            text = raw.decode('utf-8', 'ignore')
+        except Exception:
+            return None
+        m = re.search(r"{.*}", text, flags=re.S)
+        target = m.group(0) if m else text.strip()
+        if not target:
+            return None
+        try:
+            return json.loads(target)
+        except Exception:
+            return None
+
+    def _push_0701_from_entries(self, option_entries: list[dict]) -> None:
+        try:
+            from push_center import push_message
+        except Exception as e:
+            self._append_log_line(f"[0701] push unavailable: {e}")
+            return
+        templates = [
+            {"survivalRate": 0, "timeContraction": 0, "recogEffectiveness": 0},
+            {"survivalRate": -1, "timeContraction": 0, "recogEffectiveness": 1},
+            {"survivalRate": 0, "timeContraction": 1, "recogEffectiveness": -1},
+        ]
+        option_list = []
+        for idx, entry in enumerate(option_entries):
+            metrics = templates[idx] if idx < len(templates) else templates[-1]
+            option_list.append({
+                "optionID": int(entry["optionID"]),
+                "optionName": entry["optionName"],
+                "missionPlanID": int(entry["missionPlanID"]),
+                "survivalRate": int(metrics["survivalRate"]),
+                "timeContraction": int(metrics["timeContraction"]),
+                "recogEffectiveness": int(metrics["recogEffectiveness"]),
+                "distance": 50000,
+                "target": 0,
+            })
+        if not option_list:
+            self._append_log_line("[0701] optionList 비어 전송 생략")
+            return
+        body = {
+            "timestamp": _now_ms_since_2000(),
+            "source": "MOB",
+            "autoExecution": False,
+            "optionList": option_list,
+        }
+        try:
+            info = db_paths.get_info()
+            scenario_dir = info.get("scenario_dir")
+            agency_code = info.get("agency") or os.environ.get("KU_AGENCY_CODE") or "SBC3"
+            if scenario_dir:
+                save_dir = Path(scenario_dir) / agency_code / "MissionPlanOptionInfo"
+                save_dir.mkdir(parents=True, exist_ok=True)
+            else:
+                save_dir = db_paths.ensure_db_payload("MissionPlanOptionInfo")
+
+            next_id = 1
+            try:
+                existing = [
+                    int(p.stem)
+                    for p in save_dir.glob("*.json")
+                    if p.is_file() and p.stem.isdigit()
+                ]
+                if existing:
+                    next_id = max(existing) + 1
+            except Exception:
+                pass
+
+            output_path = save_dir / f"{next_id}.json"
+            output_path.write_text(json.dumps(body, ensure_ascii=False, indent=2), encoding="utf-8")
+            self._append_log_line(f"[0701] option info saved: {output_path.name}")
+        except Exception as e:
+            self._append_log_line(f"[0701] file save failed: {e}")
+        try:
+            push_message("0701", NodeMessenger, body_dict=body)
+            self._append_log_line(f"[0701] option info sent (count={len(option_list)})")
+            self._send_mon("tx", msg_id=_z4("0701"), optionCount=len(option_list))
+        except Exception as e:
+            self._append_log_line(f"[0701] push failed: {e}")
+
     def _install_0101_mode_listener(self):
         """
         receive_center.notify('0101', raw)를 직접 수신해
@@ -675,15 +849,14 @@ class MainWindow(QMainWindow):
         내부 슬라이더(0~4): [0=전원 OFF, 1=전원 ON, 2=대기모드, 3=초기 임무 계획, 4=임무 수행]
         매핑: 0→1, 1→2, 2→3, 3→4
         """
-        code_to_slider = {0: 1, 1: 2, 2: 3, 3: 4}
-        if code not in code_to_slider:
+        slider_val = _SYSTEM_MODE_TO_SLIDER.get(code)
+        if slider_val is None:
             return False
-        val = code_to_slider[code]
         try:
             self.mode_slider.blockSignals(True)
-            self.mode_slider.setValue(val)
+            self.mode_slider.setValue(slider_val)
             self.mode_slider.blockSignals(False)
-            self._on_mode_slider_changed(val)
+            self._on_mode_slider_changed(slider_val)
             return True
         except Exception:
             return False

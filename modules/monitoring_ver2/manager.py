@@ -74,6 +74,12 @@ class MonitoringManager:
         """수신된 데이터 클래스 객체를 저장소에 저장하고, GUI에 변경 사실을 알립니다."""
         self._log("MON_MGR", "RECV", f"Parsed object received: {msg_id}")
         self.receive_store.set_data(msg_id, data_object)
+        try:
+            self.logic_handler.monitoring_logic.handle_message(msg_id, data_object)
+        except AttributeError:
+            pass
+        except Exception as exc:
+            self._log("MON_MGR", "ERROR", f"logic message hook failed: {exc}")
 
         # 메시지 ID에 따라 시스템 모드를 업데이트
         if msg_id == "0101" and hasattr(data_object, "systemMode"):
@@ -94,6 +100,10 @@ class MonitoringManager:
         """시스템 실행 모드를 변경합니다. (0:초기화, 1:대기, 2:초기임무재계획, 3:임무수행)"""
         self._log("MON_MGR", "MODE_CHANGE", f"System mode set to '{mode}'.")
         self.logic_store.set_data("SystemMode", mode)
+        try:
+            self.logic_handler.monitoring_logic.on_system_mode_changed(mode)
+        except Exception:
+            pass
 
         mode_map = {
             0: "초기화 모드",

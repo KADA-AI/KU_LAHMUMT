@@ -43,6 +43,7 @@ class MainWindow(QMainWindow):
         self.btn_module_shutdown = None
         self.btn_info_module = None
         self.btn_integration_module = None
+        self.btn_collab_base_replan = None
         self._auto_enabled = False
         self._role_processes = {}
 
@@ -566,6 +567,12 @@ class MainWindow(QMainWindow):
             self.btn_integration_module.clicked.connect(lambda: self._launch_role("integration"))
             body.addWidget(self.btn_integration_module)
 
+            self.btn_collab_base_replan = QPushButton("협업기저임무 재계획", placeholder)
+            self.btn_collab_base_replan.setObjectName("BtnCollabBaseReplan")
+            self.btn_collab_base_replan.setMinimumHeight(34)
+            self.btn_collab_base_replan.clicked.connect(self._handle_collab_base_replan)
+            body.addWidget(self.btn_collab_base_replan)
+
             body.addStretch(1)
 
         grid.addWidget(placeholder, row0, col0, row_end - row0, col_end - col0)
@@ -731,6 +738,13 @@ class MainWindow(QMainWindow):
                     mod.append_log('[RUN] module shutdown requested')
                 except Exception:
                     pass
+
+    def _handle_collab_base_replan(self) -> None:
+        if self.module_mission and hasattr(self.module_mission, "append_log"):
+            try:
+                self.module_mission.append_log("[UI] 협업기저임무 재계획 버튼 클릭")
+            except Exception:
+                pass
 
     def _add_placeholder(self, grid: QGridLayout, zone_key: str) -> None:
         placeholder = Card("", self)

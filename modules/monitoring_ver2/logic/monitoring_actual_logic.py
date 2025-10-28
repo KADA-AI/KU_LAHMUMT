@@ -112,7 +112,7 @@ def run_monitoring_procedure(
         current_idx = None
         current_pos = None
         if current_wp is None:
-            current_idx = len(missions)
+            current_idx = 0
         elif current_wp in waypoint_map:
             current_idx, current_pos = waypoint_map[current_wp]
 

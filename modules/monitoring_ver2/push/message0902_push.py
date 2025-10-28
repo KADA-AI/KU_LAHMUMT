@@ -1,40 +1,42 @@
 # modules/monitoring/push/message0902_push.py
-from nFusion.Model.msg_0902 import ReplanRequest
-from data.message_models import ReplanRequestBodyModel, ReplanRequestTimeStampModel
-from .push_utils import cs_new, try_set
+from dataclasses import asdict, is_dataclass
+from typing import Any, Dict
+
+from data.message_models import ReplanRequestBodyModel
+
+try:
+    from modules.common.push import message0902_push as _common_push
+except ModuleNotFoundError:
+    import importlib
+
+    _common_push = importlib.import_module("modules.common.push.message0902_push")
 
 MSG_ID = "0902"
 
 
-def _model_to_cs_object(body: ReplanRequestBodyModel) -> ReplanRequest:
-    """Converts a ReplanRequestBodyModel object to a C# ReplanRequest object."""
-    obj = cs_new("ReplanRequest", MSG_ID)
-
-    try_set(obj, "timestamp", body.timestamp)
-    # try_set(obj, "source", body.source)
-    # The dataclass has `replanRequest`, which seems to map to `replanReason` in the C# model.
-    try_set(obj, "replanReason", body.replanRequest)
-
-    return obj
-
-
-def make_and_push(body: ReplanRequestBodyModel, node_messenger) -> bytes:
-    """Creates and pushes a message from a ReplanRequestBodyModel object or a compatible dict."""
+def _normalize_body(body: Any) -> Dict[str, Any]:
+    """Convert payloads into a dict understood by the shared 0902 push helper."""
     if isinstance(body, dict):
-        # 중첩된 dataclass가 dict로 들어올 경우, 수동으로 변환해줘야 합니다.
-        if "replanRequestTime" in body and isinstance(body["replanRequestTime"], dict):
-            body["replanRequestTime"] = ReplanRequestTimeStampModel(
-                **body["replanRequestTime"]
-            )
-        # 다른 중첩 구조들도 필요시 여기에 추가합니다.
-        body = ReplanRequestBodyModel(**body)
-    elif not isinstance(body, ReplanRequestBodyModel):
+        body_dict = dict(body)
+    elif is_dataclass(body):
+        body_dict = asdict(body)
+    elif isinstance(body, ReplanRequestBodyModel):
+        body_dict = asdict(body)
+    else:
         raise TypeError(
-            f"body must be a ReplanRequestBodyModel object or a dict, not {type(body).__name__}"
+            f"body must be a ReplanRequestBodyModel, dataclass, or dict, not {type(body).__name__}"
         )
 
-    msg = _model_to_cs_object(body)
-    node_messenger.Push(msg)
+    if "replanRequest" in body_dict and "replanReason" not in body_dict:
+        body_dict["replanReason"] = body_dict.pop("replanRequest")
+    if "optionList" in body_dict and "pendingOptionList" not in body_dict:
+        body_dict["pendingOptionList"] = body_dict.pop("optionList")
+    if "IndividualMissionIDList" in body_dict:
+        body_dict["individualMissionIDList"] = body_dict.pop("IndividualMissionIDList")
 
-    log_line = f"[{MSG_ID}] PUSH 완료"
-    return log_line.encode("utf-8", "ignore")
+    return body_dict
+
+
+def make_and_push(body: Any, node_messenger) -> bytes:
+    """Delegate 0902 pushes to the shared common implementation."""
+    return _common_push.make_and_push(_normalize_body(body), node_messenger)

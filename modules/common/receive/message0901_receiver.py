@@ -6,6 +6,7 @@ from nFusion.Model.msg_0901 import *            # C# 모델
 from nFusion.Model.CommonType import *             # 공통 타입
 from .database import received_db
 from receive_center import notify
+from modules.common import db_paths
 import json, traceback, sys, os, importlib
 
 # 대/소문자 안전 접근
@@ -21,7 +22,17 @@ def _project_root_for_recv_file(__file_path: str):
     from pathlib import Path
     return Path(__file_path).resolve().parents[3]
 
-CACHE_FILE_0901 = os.path.join(_project_root_for_recv_file(__file__), "database", "cache", "latest_0901.json")
+_CACHE_FALLBACK_0901 = os.path.join(_project_root_for_recv_file(__file__), "database", "cache", "latest_0901.json")
+
+def _cache_file_0901() -> str:
+    """Return the cache path for 0901, aligned with the active scenario DB when possible."""
+    try:
+        root = db_paths.get_active_db_root_str()
+    except Exception:
+        root = ""
+    if root:
+        return os.path.join(root, "cache", "latest_0901.json")
+    return _CACHE_FALLBACK_0901
 
 def _db_dir_for(msgid: str, __file_path: str) -> str:
     from pathlib import Path
@@ -99,8 +110,9 @@ class RequestOptionInfoReceiver_0901(IFusionReceive[RequestOptionInfo], IsLocal,
                 body = _to_dict_RequestOptionInfo(data)
 
             try:
-                os.makedirs(os.path.dirname(CACHE_FILE_0901), exist_ok=True)
-                with open(CACHE_FILE_0901, "w", encoding="utf-8") as fp:
+                cache_path = _cache_file_0901()
+                os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+                with open(cache_path, "w", encoding="utf-8") as fp:
                     json.dump(body, fp, ensure_ascii=False, indent=2)
             except Exception:
                 pass

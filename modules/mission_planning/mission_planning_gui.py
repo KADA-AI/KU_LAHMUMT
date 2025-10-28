@@ -20,7 +20,7 @@ from PyQt5.QtCore import (
 )
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QTabWidget, QShortcut,
-    QWidget, QLabel, QHBoxLayout, QVBoxLayout, QSlider
+    QWidget, QLabel, QHBoxLayout, QVBoxLayout, QSlider, QPushButton
 )
 from PyQt5.QtGui import QKeySequence
 
@@ -549,43 +549,58 @@ class MainWindow(QMainWindow):
     # ───────── 순차 푸시(0301 송신 → 0305 완료 → 0903 요청) ─────────
     def _start_push_sequence(self):
         if not self._power_on:
-            self._append_log_line("[BLOCK] Power OFF → push sequence 차단")
+            self._append_log_line("[BLOCK] Power OFF -> push sequence blocked")
             return
         payload = self._pending_plan_push or {}
         plan_ids = list(payload.get("plan_ids") or [])
-        reason   = payload.get("reason") or "초기임무재계획"
+        option_names = list(payload.get("option_names") or [])
+        reason = payload.get("reason") or "init-plan"
+
+        is_execution_mode = False
+        try:
+            mode_slider = getattr(self, "mode_slider", None)
+            if mode_slider is not None:
+                is_execution_mode = int(mode_slider.value()) == 4
+        except Exception:
+            is_execution_mode = False
+
         if not plan_ids:
             self._append_log_line("[WARN] No missionPlanID to push (0301)")
             return
 
-        # 0301 송신
-        QTimer.singleShot(0,   lambda: self._click_tx_button_for("0301"))
-        # 0305 완료 알림
+        # send 0301
+        QTimer.singleShot(0, lambda: self._click_tx_button_for("0301"))
+        # send 0305 completion
         QTimer.singleShot(600, lambda: self._push_0305(status=2, reason=reason))
-        # 0903 수행임무갱신 요청 (각 missionPlanID)
-        base_delay = 900
-        scheduled = False
-        for idx, plan_id in enumerate(plan_ids):
-            try:
-                mpid = int(plan_id)
-            except Exception:
-                self._append_log_line(f"[WARN] 0903 skip: invalid missionPlanID={plan_id}")
-                continue
-            delay = base_delay + idx * 200
-            QTimer.singleShot(delay, lambda pid=mpid: self._push_0903(pid))
-            scheduled = True
-        if not scheduled:
-            self._append_log_line("[WARN] No valid missionPlanID for 0903 push")
+
+        if is_execution_mode:
+            self._append_log_line("[INFO] Execution mode -> sending 0901 instead of 0903")
+            QTimer.singleShot(900, lambda: self._push_0901_options(plan_ids, option_names))
+        else:
+            base_delay = 900
+            scheduled = False
+            for idx, plan_id in enumerate(plan_ids):
+                try:
+                    mpid = int(plan_id)
+                except Exception:
+                    self._append_log_line(f"[WARN] 0903 skip: invalid missionPlanID={plan_id}")
+                    continue
+                delay = base_delay + idx * 200
+                QTimer.singleShot(delay, lambda pid=mpid: self._push_0903(pid))
+                scheduled = True
+            if not scheduled:
+                self._append_log_line("[WARN] No valid missionPlanID for 0903 push")
+
         self._pending_plan_push = None
 
     def _click_tx_button_for(self, code: str):
         if not self._power_on:
-            self._append_log_line(f"[BLOCK] Power OFF → TX '{code}' 차단")
+            self._append_log_line(f"[BLOCK] Power OFF -> TX '{code}' blocked")
             return
         try:
             tab = getattr(self, "_tab", None)
             if tab is None or not hasattr(tab, "tbl_tx"):
-                self._append_log_line(f"[WARN] TX 테이블을 찾을 수 없음 → code={code}")
+                self._append_log_line(f"[WARN] TX table missing for code={code}")
                 return
 
             tbl = tab.tbl_tx
@@ -593,41 +608,42 @@ class MainWindow(QMainWindow):
             for r in range(tbl.rowCount()):
                 it = tbl.item(r, 0)
                 if it and it.text().strip() == str(code):
-                    target_row = r; break
+                    target_row = r
+                    break
 
             if target_row < 0:
-                self._append_log_line(f"[WARN] TX 테이블에 {code} 행이 없음")
+                self._append_log_line(f"[WARN] TX table has no entry for {code}")
                 return
 
-            # (A) 셀 위젯 버튼 클릭
             try:
                 btn = tbl.cellWidget(target_row, 3)
                 if btn is not None and hasattr(btn, "click"):
-                    # 선제 통지 시도(안전)
-                    try: self._send_mon("tx", msg_id=_z4(code))
-                    except Exception: pass
+                    try:
+                        self._send_mon("tx", msg_id=_z4(code))
+                    except Exception:
+                        pass
                     btn.click()
-                    self._append_log_line(f"[PUSH] {code} 버튼 click()")
+                    self._append_log_line(f"[PUSH] {code} button click()")
                     return
             except Exception:
                 pass
 
-            # (B) 내부 핸들러 직접 호출
             try:
                 if hasattr(tab, "_on_tx_button_clicked"):
-                    try: self._send_mon("tx", msg_id=_z4(code))
-                    except Exception: pass
+                    try:
+                        self._send_mon("tx", msg_id=_z4(code))
+                    except Exception:
+                        pass
                     tab._on_tx_button_clicked(target_row)
-                    self._append_log_line(f"[PUSH] {code} 내부 핸들러 호출")
+                    self._append_log_line(f"[PUSH] {code} handler invoked")
                     return
             except Exception:
                 pass
 
-            self._append_log_line(f"[ERR] {code} 푸시 실행 실패: 버튼/핸들러 접근 불가")
+            self._append_log_line(f"[ERR] {code} push failed: no button/handler")
         except Exception as e:
-            self._append_log_line(f"[ERR] {code} 푸시 실행 실패: {e}")
+            self._append_log_line(f"[ERR] {code} push failed: {e}")
 
-    # ───────── 유틸 ─────────
     def _append_log_line(self, text: str):
         try:
             if getattr(self, "_tab", None) and hasattr(self._tab, "append_log"):
@@ -774,7 +790,7 @@ class MainWindow(QMainWindow):
 
 
     def _push_0901_options(self, plan_ids, option_names):
-        """옵션정보 생성 요청(개수 = plan_ids 개수)."""
+        """Push option info request using supplied plan IDs."""
         try:
             from push_center import push_message
         except Exception as e:
@@ -797,7 +813,7 @@ class MainWindow(QMainWindow):
                 return
             body = {
                 "timestamp": ts,
-                "source": "MMR",            # ← Mission Planning 모듈에서 요청
+                "source": "MMR",
                 "requestTime": ts,
                 "pendingOptionList": entries,
             }
@@ -808,6 +824,8 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
         except Exception as e:
+            self.log_sig.emit(f"[ERR] 0901 push failed: {e}")
+
             self.log_sig.emit(f"[ERR] 0901 push failed: {e}")
 
     # ───────── 0102 폴백(일반적으론 send_status_ok 사용) ─────────
@@ -1070,15 +1088,14 @@ class MainWindow(QMainWindow):
             import os, json
             from pathlib import Path
 
-            ctx    = getattr(self, '_active_plan_context', {}) or {}
+            ctx = getattr(self, '_active_plan_context', {}) or {}
             staged = self._staged_plan_context if isinstance(getattr(self, '_staged_plan_context', {}), dict) else {}
             reason = str(ctx.get('reason') or staged.get('reason') or 'init-plan')
 
             self.log_sig.emit(f"[STEP 0] Replan pipeline start (reason={reason})")
 
-            # MissionPlanner 패키지 로드 경로 보정
-            mp_pkg_dir = Path(PROJECT_ROOT) / "modules" / "mission_planning" / "MissionPlanner"
-            for p in (mp_pkg_dir, mp_pkg_dir.parent, Path(PROJECT_ROOT) / "modules"):
+            mp_pkg_dir = Path(PROJECT_ROOT) / 'modules' / 'mission_planning' / 'MissionPlanner'
+            for p in (mp_pkg_dir, mp_pkg_dir.parent, Path(PROJECT_ROOT) / 'modules'):
                 p_str = str(p)
                 if p.exists() and p_str not in sys.path:
                     sys.path.insert(0, p_str)
@@ -1088,16 +1105,16 @@ class MainWindow(QMainWindow):
             from data_def.id_allocator import next_path_id
 
             def _imp_path_id(im):
-                for key in ("pathID", "pathId", "individualMissionPathID", "missionPathID"):
+                for key in ('pathID', 'pathId', 'individualMissionPathID', 'missionPathID'):
                     value = im.get(key)
                     try:
                         if value is not None:
                             return int(value)
                     except Exception:
                         continue
-                mission_info = im.get("missionInfo")
+                mission_info = im.get('missionInfo')
                 if isinstance(mission_info, dict):
-                    for key in ("pathID", "pathId"):
+                    for key in ('pathID', 'pathId'):
                         value = mission_info.get(key)
                         try:
                             if value is not None:
@@ -1110,24 +1127,24 @@ class MainWindow(QMainWindow):
                 fixed = 0
                 for fp in fps or []:
                     try:
-                        aid = int(fp.get("aircraftID", 0))
-                        mid = int(fp.get("individualMissionID", 0))
+                        aid = int(fp.get('aircraftID', 0))
+                        mid = int(fp.get('individualMissionID', 0))
                         desired = pid_map.get((aid, mid))
-                        if desired is not None and fp.get("pathID") != desired:
-                            fp["pathID"] = desired
+                        if desired is not None and fp.get('pathID') != desired:
+                            fp['pathID'] = desired
                             fixed += 1
                     except Exception:
                         continue
                 return fixed
 
             db_root = db_paths.get_active_db_root()
-            dir_0201 = db_root / "InputMissionPlan"
-            dir_0203 = db_root / "MissionReferenceInfo"
-            out_root = db_root / "mission_output"
-            out_root.mkdir(parents=True, exist_ok=True)
+            dir_0201 = db_root / 'InputMissionPlan'
+            dir_0203 = db_root / 'MissionReferenceInfo'
+            out_root_base = db_root / 'mission_output'
+            out_root_base.mkdir(parents=True, exist_ok=True)
 
             def _pick_json(directory: Path):
-                candidates = sorted(p for p in directory.glob("*.json") if p.is_file())
+                candidates = sorted(p for p in directory.glob('*.json') if p.is_file())
                 return candidates[0] if candidates else None
 
             def _resolve_path(value, directory: Path):
@@ -1140,158 +1157,175 @@ class MainWindow(QMainWindow):
                         pass
                 return _pick_json(directory)
 
-            cmpk_path = _resolve_path(ctx.get("cmpk_path") or staged.get("cmpk_path"), dir_0201)
-            mrpk_path = _resolve_path(ctx.get("mrpk_path") or staged.get("mrpk_path"), dir_0203)
+            cmpk_path = _resolve_path(ctx.get('cmpk_path') or staged.get('cmpk_path'), dir_0201)
+            mrpk_path = _resolve_path(ctx.get('mrpk_path') or staged.get('mrpk_path'), dir_0203)
             if not cmpk_path or not mrpk_path:
-                self.log_sig.emit("[ERR] Replan pipeline aborted: missing 0201/0203 input")
+                self.log_sig.emit('[ERR] Replan pipeline aborted: missing 0201/0203 input')
                 return
 
-            # 0201+0203 → 0302 IMP 분해
-            self.log_sig.emit("[STEP 1] Divide & Pattern start")
-            imp_paths = run_divide_and_pattern(str(cmpk_path), str(mrpk_path), str(out_root),
-                                               log=lambda msg: self.log_sig.emit(str(msg)))
-            if not imp_paths:
-                self.log_sig.emit("[ERR] IMP generation failed")
-                return
-            self.log_sig.emit(f"[OK] IMP generated: {len(imp_paths)} file(s)")
+            plan_ids_source = ctx.get('plan_ids') or staged.get('plan_ids') or []
+            plan_ids: list[int | None] = []
+            for val in plan_ids_source:
+                try:
+                    plan_ids.append(int(val))
+                except Exception:
+                    plan_ids.append(None)
 
-            # 0301 생성
-            mp_tmp = out_root / f"MissionPlan_{int(time.time()*1000)}.json"
-            build_mission_plan_0301(str(cmpk_path), str(mrpk_path), imp_paths, str(mp_tmp))
-            with mp_tmp.open(encoding="utf-8") as f:
-                mp_json = json.load(f)
-            imp_id_map = {a.get("aircraftID"): a.get("individualMissionPackageID")
-                          for a in mp_json.get("aircraftList", [])}
-            self.log_sig.emit(f"[OK] MissionPlan built: {mp_tmp.name}")
+            option_names = list(ctx.get('option_names') or staged.get('option_names') or [])
+            plan_count = max(len(plan_ids), len(option_names), 1)
+            while len(plan_ids) < plan_count:
+                plan_ids.append(None)
+            while len(option_names) < plan_count:
+                option_names.append(f'option{len(option_names) + 1}')
 
-            # 메모리 상으로 0302(IMP)들 집계
-            missions = []
-            for imp in imp_paths:
-                with open(imp, encoding="utf-8") as f:
-                    pkg = json.load(f)
-                aid = int(pkg.get("aircraftID", 0))
-                for im in pkg.get("individualMissionList", []):
-                    im_copy = dict(im)
-                    im_copy["aircraftID"] = aid
-                    if "individualMissionPlanPackageID" not in im_copy and imp_id_map:
-                        im_copy["individualMissionPlanPackageID"] = imp_id_map.get(aid)
-                    missions.append(im_copy)
-
-            # pathID 매핑(0302·0303·0304 일치 보장)
-            pid_map = {}
-            for im in missions:
-                aid = int(im.get("aircraftID", 0))
-                mid = int(im.get("individualMissionID", 0))
-                if aid in (1, 2, 3):  # LAH
-                    pid = int(next_path_id(aid))
-                    im["pathID"] = pid
-                    pid_map[(aid, mid)] = pid
-                else:  # UAV
-                    imp_pid = _imp_path_id(im)
-                    if imp_pid is not None:
-                        im["pathID"] = int(imp_pid)
-                        pid_map[(aid, mid)] = int(imp_pid)
-            self.log_sig.emit("[INFO] pathID mapping done for 0302/0303/0304")
-
-            # 0303/0304 FP 생성
-            from data_def import d0303, d0304  # 재확인(일부 환경에서 재임포트 필요)
-            manned   = [im for im in missions if int(im.get("aircraftID", 0)) in (1, 2, 3)]
-            unmanned = [im for im in missions if int(im.get("aircraftID", 0)) in (4, 5, 6)]
-            wp_alloc = d0303._WPAllocator()
-
-            flight_plans_0303 = d0303.build_flight_plans(unmanned, wp_alloc, 40.0, turn_step_deg=15.0) if unmanned else []
-            flight_plans_0304 = d0304.build_lah_flight_plans_fixed(manned, cruise_speed=40.0, wp_alloc=wp_alloc) if manned else []
-
-            fixed3 = _enforce_fp_path_ids(flight_plans_0303, pid_map)
-            fixed4 = _enforce_fp_path_ids(flight_plans_0304, pid_map)
-            if fixed3 or fixed4:
-                self.log_sig.emit(f"[INFO] FlightPath pathID enforced: 0303={fixed3}, 0304={fixed4}")
-            if not flight_plans_0303 and not flight_plans_0304:
-                self.log_sig.emit("[ERR] FlightPath generation failed")
-                return
-            self.log_sig.emit(f"[OK] FlightPath counts: 0303={len(flight_plans_0303)} / 0304={len(flight_plans_0304)}")
-
-            # 디스크 저장 (0301/0302/0303/0304)
-            db_root = db_paths.get_active_db_root()
-            dir_mp  = db_root / "MissionPlan"
-            dir_imp = db_root / "IndividualMissionPlan"
-            dir_fp  = db_root / "FlightPath"
-            for directory in (dir_mp, dir_imp, dir_fp):
-                directory.mkdir(parents=True, exist_ok=True)
-                for entry in directory.glob("*.json"):
-                    try: entry.unlink()
-                    except Exception: pass
-
-            # plan_ids가 없으면 0301에 포함된 ID 또는 타임기반 fallback 사용
-            plan_ids: list[int] = []
-            for v in ctx.get("plan_ids") or staged.get("plan_ids") or []:
-                try: plan_ids.append(int(v))
-                except Exception: pass
-            if not plan_ids:
-                base_id = mp_json.get("missionPlanID") or mp_json.get("MissionPlanID")
-                try: plan_ids = [int(base_id)] if base_id is not None else []
-                except Exception: plan_ids = []
-
-            option_names: list[str] = list(ctx.get("option_names") or staged.get("option_names") or [])
-            while len(option_names) < len(plan_ids):
-                option_names.append(f"option{len(option_names) + 1}")
-
-            # 0301 저장(요청 수만큼 복제 저장)
-            generated_plan_ids = []
-            if not plan_ids:
-                plan_ids = [int(time.time())]
-            for plan_id in plan_ids:
-                try: pid = int(plan_id)
-                except Exception: continue
-                mp_copy = json.loads(json.dumps(mp_json))
-                mp_copy["missionPlanID"] = pid
-                (dir_mp / f"{pid}.json").write_text(json.dumps(mp_copy, indent=2, ensure_ascii=False), encoding="utf-8")
-                generated_plan_ids.append(pid)
-
-            # 0302 저장
             try:
                 cmpk_id = int(Path(cmpk_path).stem)
             except Exception:
                 cmpk_id = 0
-            imp_pkgs = d0302.build_mission_packages(missions, cmpk_id=cmpk_id, plan_pkg_map=imp_id_map)
-            for pkg in imp_pkgs:
-                imp_id = pkg.get("individualMissionPackageID") or pkg.get("individualMissionPlanPackageID")
-                if imp_id is None: continue
-                (dir_imp / f"{int(imp_id)}.json").write_text(json.dumps(pkg, indent=2, ensure_ascii=False), encoding="utf-8")
 
-            # 0303/0304 저장
-            def _dump_fp(target_dir, fps):
-                count = 0
-                for fp in fps:
-                    pid = fp.get("pathID")
-                    if pid is None: continue
-                    (target_dir / f"{int(pid)}.json").write_text(json.dumps(fp, indent=2, ensure_ascii=False), encoding="utf-8")
-                    count += 1
-                return count
-            c3 = _dump_fp(dir_fp, flight_plans_0303)
-            c4 = _dump_fp(dir_fp, flight_plans_0304)
+            dir_mp = db_root / 'MissionPlan'
+            dir_imp = db_root / 'IndividualMissionPlan'
+            dir_fp = db_root / 'FlightPath'
+            for directory in (dir_mp, dir_imp, dir_fp):
+                directory.mkdir(parents=True, exist_ok=True)
 
-            # 임시 출력 정리
+            generated_plan_ids: list[int] = []
+            option_names_out: list[str] = []
+            total_imp_files = 0
+            total_fp_files = 0
+
+            for idx in range(plan_count):
+                variant_no = idx + 1
+                requested_plan_id = plan_ids[idx]
+                option_name = option_names[idx]
+
+                iter_out_root = out_root_base / f'variant_{variant_no:02d}'
+                if iter_out_root.exists():
+                    shutil.rmtree(iter_out_root)
+                iter_out_root.mkdir(parents=True, exist_ok=True)
+
+                self.log_sig.emit(f"[STEP 1.{variant_no}] Divide & Pattern start")
+                imp_paths = run_divide_and_pattern(
+                    str(cmpk_path),
+                    str(mrpk_path),
+                    str(iter_out_root),
+                    log=lambda msg, n=variant_no: self.log_sig.emit(f"[variant {n}] {msg}")
+                )
+                if not imp_paths:
+                    self.log_sig.emit(f"[ERR] IMP generation failed (variant={variant_no})")
+                    return
+                self.log_sig.emit(f"[OK] IMP generated: {len(imp_paths)} file(s) (variant={variant_no})")
+
+                mp_tmp = iter_out_root / f"MissionPlan_{int(time.time()*1000)}.json"
+                build_mission_plan_0301(str(cmpk_path), str(mrpk_path), imp_paths, str(mp_tmp))
+                with mp_tmp.open(encoding='utf-8') as f:
+                    mp_json = json.load(f)
+                imp_id_map = {a.get('aircraftID'): a.get('individualMissionPackageID') for a in mp_json.get('aircraftList', [])}
+                self.log_sig.emit(f"[OK] MissionPlan built: {mp_tmp.name} (variant={variant_no})")
+
+                missions = []
+                for imp_path in imp_paths:
+                    with open(imp_path, encoding='utf-8') as f:
+                        pkg = json.load(f)
+                    aid = int(pkg.get('aircraftID', 0))
+                    for im in pkg.get('individualMissionList', []):
+                        im_copy = dict(im)
+                        im_copy['aircraftID'] = aid
+                        if 'individualMissionPlanPackageID' not in im_copy and imp_id_map:
+                            im_copy['individualMissionPlanPackageID'] = imp_id_map.get(aid)
+                        missions.append(im_copy)
+
+                pid_map = {}
+                for im in missions:
+                    aid = int(im.get('aircraftID', 0))
+                    mid = int(im.get('individualMissionID', 0))
+                    if aid in (1, 2, 3):
+                        pid = int(next_path_id(aid))
+                        im['pathID'] = pid
+                        pid_map[(aid, mid)] = pid
+                    else:
+                        imp_pid = _imp_path_id(im)
+                        if imp_pid is not None:
+                            im['pathID'] = int(imp_pid)
+                            pid_map[(aid, mid)] = int(imp_pid)
+                self.log_sig.emit(f"[INFO] pathID mapping done for 0302/0303/0304 (variant={variant_no})")
+
+                manned = [im for im in missions if int(im.get('aircraftID', 0)) in (1, 2, 3)]
+                unmanned = [im for im in missions if int(im.get('aircraftID', 0)) in (4, 5, 6)]
+                wp_alloc = d0303._WPAllocator()
+                flight_plans_0303 = d0303.build_flight_plans(unmanned, wp_alloc, 40.0, turn_step_deg=15.0) if unmanned else []
+                flight_plans_0304 = d0304.build_lah_flight_plans_fixed(manned, cruise_speed=40.0, wp_alloc=wp_alloc) if manned else []
+
+                fixed3 = _enforce_fp_path_ids(flight_plans_0303, pid_map)
+                fixed4 = _enforce_fp_path_ids(flight_plans_0304, pid_map)
+                if fixed3 or fixed4:
+                    self.log_sig.emit(f"[INFO] FlightPath pathID enforced (variant={variant_no}): 0303={fixed3}, 0304={fixed4}")
+                if not flight_plans_0303 and not flight_plans_0304:
+                    self.log_sig.emit(f"[ERR] FlightPath generation failed (variant={variant_no})")
+                    return
+                self.log_sig.emit(f"[OK] FlightPath counts (variant={variant_no}): 0303={len(flight_plans_0303)} / 0304={len(flight_plans_0304)}")
+
+                plan_id_value = requested_plan_id if requested_plan_id is not None else mp_json.get('missionPlanID')
+                try:
+                    plan_id = int(plan_id_value)
+                except Exception:
+                    plan_id = int(time.time()) + variant_no
+                mp_json['missionPlanID'] = plan_id
+
+                (dir_mp / f"{plan_id}.json").write_text(json.dumps(mp_json, indent=2, ensure_ascii=False), encoding='utf-8')
+
+                imp_pkgs = d0302.build_mission_packages(missions, cmpk_id=cmpk_id, plan_pkg_map=imp_id_map)
+                for pkg in imp_pkgs:
+                    imp_id = pkg.get('individualMissionPackageID') or pkg.get('individualMissionPlanPackageID')
+                    if imp_id is None:
+                        continue
+                    (dir_imp / f"{int(imp_id)}.json").write_text(json.dumps(pkg, indent=2, ensure_ascii=False), encoding='utf-8')
+                total_imp_files += len(imp_pkgs)
+
+                def _dump_fp(target_dir, fps):
+                    count = 0
+                    for fp in fps:
+                        pid = fp.get('pathID')
+                        if pid is None:
+                            continue
+                        (target_dir / f"{int(pid)}.json").write_text(json.dumps(fp, indent=2, ensure_ascii=False), encoding='utf-8')
+                        count += 1
+                    return count
+
+                fp_count_0303 = _dump_fp(dir_fp, flight_plans_0303)
+                fp_count_0304 = _dump_fp(dir_fp, flight_plans_0304)
+                total_fp_files += fp_count_0303 + fp_count_0304
+
+                self.log_sig.emit(f"[OK] Stored variant {variant_no}: MissionPlanID={plan_id}, IMP={len(imp_pkgs)}, FlightPath={fp_count_0303 + fp_count_0304}")
+
+                generated_plan_ids.append(plan_id)
+                option_names_out.append(option_name)
+
+                try:
+                    shutil.rmtree(iter_out_root)
+                except Exception:
+                    pass
+
             try:
-                if out_root.exists():
-                    shutil.rmtree(out_root)
+                if out_root_base.exists():
+                    shutil.rmtree(out_root_base)
             except Exception:
                 pass
 
-            self.log_sig.emit(f"[OK] Stored mission data: MissionPlan={len(generated_plan_ids)}, "
-                              f"IndividualMission={len(imp_pkgs)}, FlightPath={c3 + c4}")
+            self.log_sig.emit(f"[OK] Stored mission data: MissionPlan={len(generated_plan_ids)}, IndividualMission={total_imp_files}, FlightPath={total_fp_files}")
 
             self._last_mission_plan_ids = generated_plan_ids
-            self._last_mission_plan_id  = generated_plan_ids[0] if generated_plan_ids else None
+            self._last_mission_plan_id = generated_plan_ids[0] if generated_plan_ids else None
+            ctx['plan_ids'] = generated_plan_ids
+            ctx['option_names'] = option_names_out
+            self._active_plan_context = ctx
 
-            # 최종 푸시(0301만 전송 + 0305 완료 + 0901 요청)
-            self._schedule_plan_delivery(generated_plan_ids, option_names, reason)
+            self._schedule_plan_delivery(generated_plan_ids, option_names_out, reason)
 
         except Exception as exc:
             self.log_sig.emit(f"[ERR] Replan pipeline failed: {exc}")
         finally:
             self._initplan_running = False
-
     def _schedule_plan_delivery(self, plan_ids, option_names, reason):
         self._pending_plan_push = {
             "plan_ids":     list(plan_ids or []),
