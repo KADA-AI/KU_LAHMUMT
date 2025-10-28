@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from dataclasses import asdict
 
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from pathlib import Path
 
 # --- 데이터 모델 import ---
 from data.message_models import (
@@ -84,6 +85,8 @@ class MonitoringLogic:
         self._mission_file_map: Dict[
             Tuple[int, int, Optional[int]], Tuple[int, int, int]
         ] = {}
+        self._input_mission_file_map: Dict[int, Tuple[Path, int]] = {}
+        self._input_mission_status: Dict[int, bool] = {}
         self._input_completion_notified: Set[int] = set()
         self._collab_pause_active: bool = False
         self._collab_pause_prev_suspended: bool = False
@@ -426,7 +429,54 @@ class MonitoringLogic:
             "inputMissionIDs": sorted(input_ids),
         }
 
+    def _refresh_input_mission_index(self, context: Dict[str, Any]) -> None:
+        self._input_mission_file_map = {}
+        self._input_mission_status = {}
+        package_id = self._to_int(context.get("inputMissionPackageID"))
+        if package_id is None:
+            context["inputMissionStatus"] = {}
+            return
+        try:
+            plan_path = db_paths.get_db_subpath(
+                "InputMissionPlan", f"{package_id}.json"
+            )
+        except FileNotFoundError:
+            self.manager._log(
+                "MON_LOGIC",
+                "WARN",
+                f"InputMissionPlan file missing for package {package_id}",
+            )
+            context["inputMissionStatus"] = {}
+            return
+        try:
+            with plan_path.open("r", encoding="utf-8") as fh:
+                input_plan = json.load(fh)
+        except Exception as exc:
+            self.manager._log(
+                "MON_LOGIC",
+                "WARN",
+                f"InputMissionPlan load failed for package {package_id}: {exc}",
+            )
+            context["inputMissionStatus"] = {}
+            return
+        mission_list = input_plan.get("inputMissionList") or []
+        for idx, mission in enumerate(mission_list):
+            input_id = self._to_int(
+                self._safe_get(mission, "inputMissionID", "InputMissionID")
+            )
+            if input_id is None:
+                continue
+            self._input_mission_file_map[input_id] = (plan_path, idx)
+            status = bool(self._safe_get(mission, "isDone", "IsDone"))
+            self._input_mission_status[input_id] = status
+        context["inputMissionStatus"] = dict(self._input_mission_status)
+        try:
+            self.manager.logic_store.set_data("input_mission_status", dict(self._input_mission_status))
+        except Exception:
+            pass
+
     def _initialize_input_tracker(self, context: Dict[str, Any]) -> None:
+        self._refresh_input_mission_index(context)
         tracker: Dict[int, Dict[str, Set[Tuple[int, int, Optional[int]]]]] = {}
         reverse_map: Dict[Tuple[int, int, Optional[int]], int] = {}
         file_map: Dict[Tuple[int, int, Optional[int]], Tuple[int, int, int]] = {}
@@ -1151,7 +1201,53 @@ class MonitoringLogic:
         ):
             self._handle_all_input_missions_completed()
 
+    def _mark_input_mission_done(self, input_id: int) -> None:
+        entry = self._input_mission_file_map.get(input_id)
+        if entry is None:
+            return
+        plan_path, mission_index = entry
+        if self._input_mission_status.get(input_id):
+            if self._plan_context is not None:
+                status_map = self._plan_context.setdefault('inputMissionStatus', {})
+                status_map[input_id] = True
+            return
+        try:
+            with plan_path.open('r', encoding='utf-8') as fh:
+                plan_data = json.load(fh)
+        except Exception as exc:
+            self.manager._log(
+                'MON_LOGIC',
+                'WARN',
+                f"Failed to load InputMissionPlan for completion update ({plan_path}): {exc}",
+            )
+            return
+        mission_list = plan_data.get('inputMissionList')
+        if not isinstance(mission_list, list) or mission_index >= len(mission_list):
+            return
+        if mission_list[mission_index].get('isDone') is not True:
+            mission_list[mission_index]['isDone'] = True
+            try:
+                plan_path.write_text(
+                    json.dumps(plan_data, ensure_ascii=False, indent=2),
+                    encoding='utf-8',
+                )
+            except Exception as exc:
+                self.manager._log(
+                    'MON_LOGIC',
+                    'WARN',
+                    f"Failed to persist InputMissionPlan update ({plan_path}): {exc}",
+                )
+        self._input_mission_status[input_id] = True
+        if self._plan_context is not None:
+            status_map = self._plan_context.setdefault('inputMissionStatus', {})
+            status_map[input_id] = True
+        try:
+            self.manager.logic_store.set_data('input_mission_status', dict(self._input_mission_status))
+        except Exception:
+            pass
+
     def _notify_input_mission_completed(self, input_id: int) -> None:
+        self._mark_input_mission_done(input_id)
         if input_id in self._input_completion_notified:
             return
         self._input_completion_notified.add(input_id)
