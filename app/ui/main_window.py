@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QGridLayout, QPushButton, QLabel, QLineEdit, QFileDialog, QShortcut,
-    QHBoxLayout, QVBoxLayout, QSizePolicy
+    QHBoxLayout, QVBoxLayout, QSizePolicy, QDialog, QPlainTextEdit, QSplitter, QMessageBox
 )
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QKeySequence
@@ -18,6 +18,102 @@ from pathlib import Path
 from modules.common import db_paths
 
 APP_TITLE = "KU Mission Decision Support Dashboard (v251028)"
+SW_UPDATE_FILE = db_paths.PROJECT_ROOT / "SW_UPDATE_LOG.txt"
+SW_MEMO_FILE = db_paths.PROJECT_ROOT / "SW_MEMO_NOTE.txt"
+SW_DEFAULT_UPDATE_SAMPLE = """[예시 업데이트]
+- 2025-10-28: 모니터링 연료 경보 로직을 리터 → 퍼센트 변환으로 개선
+- 2025-10-22: 초기 시나리오 활성화 경로 검증 로그 추가
+
+※ 실제 배포 시 업데이트 내용을 이 파일(SW_UPDATE_LOG.txt)에 정리해 주세요.
+"""
+
+
+class SWNotesDialog(QDialog):
+    def __init__(self, parent: QWidget, update_path: Path, memo_path: Path):
+        super().__init__(parent)
+        self.setWindowTitle("SW 업데이트 / 테스트 메모")
+        self.resize(900, 620)
+        self._update_path = Path(update_path)
+        self._memo_path = Path(memo_path)
+        self._dirty = False
+
+        layout = QVBoxLayout(self)
+
+        header = QHBoxLayout()
+        lbl_update = QLabel("SW 업데이트 (읽기 전용)", self)
+        lbl_update.setStyleSheet("font-weight: 600;")
+        lbl_memo = QLabel("테스트 메모 (자동 저장)", self)
+        lbl_memo.setStyleSheet("font-weight: 600;")
+        header.addWidget(lbl_update, 1)
+        header.addWidget(lbl_memo, 1, alignment=Qt.AlignRight)
+        layout.addLayout(header)
+
+        splitter = QSplitter(Qt.Horizontal, self)
+
+        self.update_view = QPlainTextEdit(self)
+        self.update_view.setReadOnly(True)
+        self.update_view.setPlainText(self._load_update_text())
+        splitter.addWidget(self.update_view)
+
+        self.memo_edit = QPlainTextEdit(self)
+        self.memo_edit.setPlaceholderText("SW 테스트 중 메모를 자유롭게 남겨 주세요.")
+        self.memo_edit.setPlainText(self._load_memo_text())
+        self.memo_edit.textChanged.connect(self._mark_dirty)
+        splitter.addWidget(self.memo_edit)
+
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 1)
+        layout.addWidget(splitter, 1)
+
+        controls = QHBoxLayout()
+        controls.addStretch(1)
+        btn_save = QPushButton("저장", self)
+        btn_save.clicked.connect(self._save_notes)
+        btn_close = QPushButton("닫기", self)
+        btn_close.clicked.connect(self.close)
+        controls.addWidget(btn_save)
+        controls.addWidget(btn_close)
+        layout.addLayout(controls)
+
+    def _load_update_text(self) -> str:
+        try:
+            if self._update_path.exists():
+                return self._update_path.read_text(encoding="utf-8")
+        except Exception:
+            pass
+        return SW_DEFAULT_UPDATE_SAMPLE
+
+    def _load_memo_text(self) -> str:
+        try:
+            if self._memo_path.exists():
+                return self._memo_path.read_text(encoding="utf-8")
+        except Exception:
+            pass
+        return ""
+
+    def _mark_dirty(self) -> None:
+        self._dirty = True
+
+    def _save_notes(self) -> None:
+        try:
+            self._memo_path.parent.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+        try:
+            self._memo_path.write_text(self.memo_edit.toPlainText(), encoding="utf-8")
+            self._dirty = False
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "저장 실패",
+                f"메모를 저장하지 못했습니다.\n{exc}",
+            )
+
+    def closeEvent(self, event):
+        if self._dirty:
+            self._save_notes()
+        super().closeEvent(event)
+
 
 class MainWindow(QMainWindow):
     """Main dashboard window arranged on a 35x50 grid."""
@@ -48,8 +144,10 @@ class MainWindow(QMainWindow):
         self.btn_module_shutdown = None
         self.btn_info_module = None
         self.btn_integration_module = None
+        self.btn_sw_notes = None
         self._auto_enabled = False
         self._role_processes = {}
+        self._sw_notes_dialog = None
 
         self._build_ui()
 
@@ -586,6 +684,17 @@ class MainWindow(QMainWindow):
             self.btn_integration_module.clicked.connect(lambda: self._launch_role("integration"))
             body.addWidget(self.btn_integration_module)
 
+            self.btn_sw_notes = QPushButton("SW 업데이트 / 메모", placeholder)
+            self.btn_sw_notes.setObjectName("BtnSwNotes")
+            self.btn_sw_notes.setMinimumHeight(34)
+            self.btn_sw_notes.setStyleSheet(
+                "QPushButton { background-color: #f97316; color: #ffffff; font-weight: 600; }"
+                "QPushButton:hover { background-color: #fb923c; }"
+                "QPushButton:pressed { background-color: #ea580c; }"
+            )
+            self.btn_sw_notes.clicked.connect(self._open_sw_notes_dialog)
+            body.addWidget(self.btn_sw_notes)
+
             body.addStretch(1)
 
         grid.addWidget(placeholder, row0, col0, row_end - row0, col_end - col0)
@@ -814,6 +923,21 @@ class MainWindow(QMainWindow):
                             mod.append_log(f"[SCENARIO ROOT] {display}")
                         except Exception:
                             pass
+
+    def _open_sw_notes_dialog(self) -> None:
+        if self._sw_notes_dialog is not None and self._sw_notes_dialog.isVisible():
+            self._sw_notes_dialog.raise_()
+            self._sw_notes_dialog.activateWindow()
+            return
+
+        dialog = SWNotesDialog(self, SW_UPDATE_FILE, SW_MEMO_FILE)
+        self._sw_notes_dialog = dialog
+
+        def _cleanup(_=None):
+            self._sw_notes_dialog = None
+
+        dialog.finished.connect(_cleanup)
+        dialog.show()
 
     def update_scenario_status_indicator(self, changed: bool, tooltip: Optional[str] | None = None) -> None:
         if self._scenario_status_dot is None:
