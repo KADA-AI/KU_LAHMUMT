@@ -27,6 +27,18 @@ import os
 from modules.common import db_paths
 
 
+def _resolve_fuel_capacity() -> float:
+    raw = os.getenv("KU_MON_FUEL_CAPACITY_L", "15")
+    try:
+        value = float(raw) if raw is not None else 15.0
+    except (TypeError, ValueError):
+        value = 15.0
+    return value if value > 0 else 15.0
+
+
+FUEL_CAPACITY_LITERS = _resolve_fuel_capacity()
+
+
 # --- 반환 가능한 모든 Push 메시지 본문 타입을 정의 ---
 
 def _inform_info_module(msg_id: str, body: dict):
@@ -498,62 +510,84 @@ class MonitoringLogic:
 
                 for agent_state in data_401.agentStateList:
                     if agent_state.isUnmanned == 1:
+                        try:
+                            fuel_liters = float(getattr(agent_state, "fuel", 0) or 0.0)
+                        except (TypeError, ValueError):
+                            fuel_liters = 0.0
+                        if fuel_liters < 0:
+                            fuel_liters = 0.0
+                        if FUEL_CAPACITY_LITERS > 0:
+                            fuel_percent = max(
+                                0.0,
+                                min(
+                                    100.0,
+                                    (fuel_liters / FUEL_CAPACITY_LITERS) * 100.0,
+                                ),
+                            )
+                        else:
+                            fuel_percent = 0.0
+
                         text = ""
                         fuel_level = 0
-                        if agent_state.fuel * 100 // 100 <= 10:
+                        if fuel_percent <= 10.0:
                             text = "red"
                             fuel_level = 2
-                        elif agent_state.fuel * 100 // 100 <= 20:
+                        elif fuel_percent <= 20.0:
                             text = "yellow"
                             fuel_level = 1
                         else:
                             text = "green"
 
                         feul_data.append(
-                            {"id": agent_state.aircraftID, "warning": text}
+                            {
+                                "id": agent_state.aircraftID,
+                                "warning": text,
+                                "fuelPercent": round(fuel_percent, 1),
+                                "fuelLiters": round(fuel_liters, 2),
+                            }
                         )
 
                         if fuel_level in (1, 2):
-                            last_state = prev_warnings.get(agent_state.aircraftID)
-                            if last_state != text:
-                                warning_body = {
-                                    "timestamp": int(
-                                        (
-                                            datetime.now(timezone.utc)
-                                            - datetime(2000, 1, 1, tzinfo=timezone.utc)
-                                        ).total_seconds()
-                                        * 1000
-                                    ),
-                                    "source": "MSM",
-                                    "aircraftID": agent_state.aircraftID,
-                                    "fuelLevel": fuel_level,
-                                }
-                                push_message(
-                                    "0504",
-                                    self.manager.node_messenger,
-                                    body_dict=warning_body,
-                                )
-                                self.manager._log(
-                                    "MON_LOGIC",
-                                    "INFO",
-                                    f"0504 연료 경고 전송 (UAV={agent_state.aircraftID}, level={text})",
-                                )
+                            warning_body = {
+                                "timestamp": int(
+                                    (
+                                        datetime.now(timezone.utc)
+                                        - datetime(2000, 1, 1, tzinfo=timezone.utc)
+                                    ).total_seconds()
+                                    * 1000
+                                ),
+                                "source": "MSM",
+                                "aircraftID": agent_state.aircraftID,
+                                "fuelLevel": fuel_level,
+                                "fuelPercent": round(fuel_percent, 1),
+                                "fuelLiters": round(fuel_liters, 2),
+                            }
+                            push_message(
+                                "0504",
+                                self.manager.node_messenger,
+                                body_dict=warning_body,
+                            )
+                            self.manager._log(
+                                "MON_LOGIC",
+                                "INFO",
+                                f"0504 fuel warning (UAV={agent_state.aircraftID}, level={text}, remaining={fuel_percent:.1f}%)",
+                            )
+                            try:
+                                self.manager.push_store.add_data("0504", warning_body)
+                            except Exception:
+                                pass
+                            try:
+                                udp_reporter.notify_tx("0504")
+                            except Exception:
+                                pass
+                            _inform_info_module("0504", warning_body)
+                            if self.manager.gui_update_callback:
                                 try:
-                                    self.manager.push_store.add_data("0504", warning_body)
+                                    self.manager.gui_update_callback(
+                                        "logic", "0504", warning_body
+                                    )
                                 except Exception:
                                     pass
-                                try:
-                                    udp_reporter.notify_tx("0504")
-                                except Exception:
-                                    pass
-                                _inform_info_module("0504", warning_body)
-                                if self.manager.gui_update_callback:
-                                    try:
-                                        self.manager.gui_update_callback(
-                                            "logic", "0504", warning_body
-                                        )
-                                    except Exception:
-                                        pass
                         prev_warnings[agent_state.aircraftID] = text
 
                 self.manager.logic_store.set_data(
