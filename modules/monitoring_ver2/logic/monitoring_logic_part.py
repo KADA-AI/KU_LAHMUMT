@@ -99,6 +99,7 @@ class MonitoringLogic:
         self._existing_mission_plan_ids: Set[int] = set()
         self._pending_mission_plan_id: Optional[int] = None
         self._pending_decision_command: Optional[Tuple[Optional[int], Optional[int]]] = None
+        self._current_input_mission_id: Optional[int] = None
         try:
             self.manager.logic_store.set_data("collab_pause_active", False)
         except Exception:
@@ -283,6 +284,8 @@ class MonitoringLogic:
         self._plan_context = context
         self._current_mission_plan_id = mission_plan_id
         self._initialize_input_tracker(context)
+        self._current_input_mission_id = self._find_next_input_mission_id(initial=True)
+        self._update_plan_context_active_input()
         try:
             self.manager.logic_store.set_data("current_mission_plan", context)
         except Exception:
@@ -472,6 +475,64 @@ class MonitoringLogic:
         self._mission_progress_max = {}
         self._mission_file_map = file_map
         self._input_completion_notified = set()
+        self._current_input_mission_id = None
+
+    def _update_plan_context_active_input(self) -> None:
+        if self._plan_context is not None:
+            self._plan_context["activeInputMissionID"] = self._current_input_mission_id
+        try:
+            self.manager.logic_store.set_data(
+                "active_input_mission_id", self._current_input_mission_id
+            )
+        except Exception:
+            pass
+
+    def _find_next_input_mission_id(self, initial: bool = False) -> Optional[int]:
+        raw_ids: List[Any] = []
+        if self._plan_context:
+            raw_ids = list(self._plan_context.get("inputMissionIDs") or [])
+        if not raw_ids:
+            raw_ids = list(self._input_mission_tracker.keys())
+        normalized_ids: List[int] = []
+        for value in raw_ids:
+            try:
+                normalized_ids.append(int(value))
+            except (TypeError, ValueError):
+                continue
+        normalized_ids = sorted(set(normalized_ids))
+        if not normalized_ids:
+            return None
+        current = None if initial else self._current_input_mission_id
+        start_index = 0
+        if current is not None and current in normalized_ids and not initial:
+            start_index = normalized_ids.index(current) + 1
+        for idx in range(start_index, len(normalized_ids)):
+            candidate = normalized_ids[idx]
+            if candidate not in self._completed_input_ids:
+                return candidate
+        return None
+
+    def _advance_to_next_input_mission(self) -> None:
+        if (
+            self._current_input_mission_id is not None
+            and self._current_input_mission_id not in self._completed_input_ids
+        ):
+            self.manager._log(
+                "MON_LOGIC",
+                "INFO",
+                "[COLLAB] execute=1 received but current input mission is not completed yet; ignoring advance request.",
+            )
+            return
+        next_id = self._find_next_input_mission_id()
+        if next_id == self._current_input_mission_id:
+            return
+        self._current_input_mission_id = next_id
+        self._update_plan_context_active_input()
+        self.manager._log(
+            "MON_LOGIC",
+            "INFO",
+            f"[COLLAB] active input mission set to {next_id}.",
+        )
 
     def execute(self, mode_override=None):
         """시스템 모드를 확인하고, 'monitoring'일 경우에만 로직을 실행합니다."""
@@ -493,6 +554,9 @@ class MonitoringLogic:
                     "MON_LOGIC", "INFO", "401 데이터 확인. 모니터링 절차 실행."
                 )
                 # 모니터링 절차 실행하여 0501 메시지 본문 생성
+                if self._current_input_mission_id is None:
+                    self._current_input_mission_id = self._find_next_input_mission_id(initial=True)
+                self._update_plan_context_active_input()
                 body_0501, mission_status = run_monitoring_procedure(
                     data_401, plan_context, current_plan_id
                 )
@@ -648,6 +712,8 @@ class MonitoringLogic:
         else:
             self._deactivate_collab_pause(reason=f"execute={execute_val} command received")
             self._cancel_pending_replan(reason=f"execute={execute_val}")
+            if execute_val == 1:
+                self._advance_to_next_input_mission()
 
     def _handle_new_input_plan(self, data: Any) -> None:
         package_id = self._to_int(self._safe_get(data, "inputMissionPackageID"))
@@ -1268,6 +1334,8 @@ class MonitoringLogic:
             return
         self._collab_completion_sent = True
         self._monitoring_suspended = True
+        self._current_input_mission_id = None
+        self._update_plan_context_active_input()
         self._send_0503_notification("전체 협업기저임무 완료")
 
 

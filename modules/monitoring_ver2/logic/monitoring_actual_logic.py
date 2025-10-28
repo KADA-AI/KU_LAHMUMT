@@ -36,6 +36,25 @@ def run_monitoring_procedure(
     except (TypeError, ValueError):
         plan_input_package_id = None
 
+    raw_current_input_id = (
+        plan_input_package_id if plan_input_package_id is not None else (plan_input_ids[0] if plan_input_ids else None)
+    )
+    try:
+        current_input_mission_id_int = (
+            int(raw_current_input_id) if raw_current_input_id is not None else None
+        )
+    except (TypeError, ValueError):
+        current_input_mission_id_int = None
+    active_input_mission_id = current_input_mission_id_int
+    plan_active_input = plan_context.get("activeInputMissionID")
+    try:
+        if plan_active_input is not None:
+            plan_active_input = int(plan_active_input)
+    except (TypeError, ValueError):
+        plan_active_input = None
+    if plan_active_input is not None:
+        active_input_mission_id = plan_active_input
+
     timestamp = int(
         (
             datetime.now(timezone.utc) - datetime(2000, 1, 1, tzinfo=timezone.utc)
@@ -112,14 +131,21 @@ def run_monitoring_procedure(
         current_idx = None
         current_pos = None
         if current_wp is None:
-            current_idx = 0
+            current_idx = len(missions)
         elif current_wp in waypoint_map:
             current_idx, current_pos = waypoint_map[current_wp]
 
-        progress_list: List[tuple[int, int]] = []
+        progress_list: List[tuple[int, int, Optional[int]]] = []
         for idx, mission in enumerate(missions):
             mission_id = int(mission.get("individualMissionID") or 0)
             total_waypoints = len(mission.get("waypoints") or []) or 1
+            mission_input_id = mission.get("inputMissionID")
+            try:
+                mission_input_id = (
+                    int(mission_input_id) if mission_input_id is not None else None
+                )
+            except (TypeError, ValueError):
+                mission_input_id = None
 
             if current_idx is None:
                 progress = 0
@@ -136,7 +162,7 @@ def run_monitoring_procedure(
                 progress = 0
 
             progress = max(0, min(progress, 100))
-            progress_list.append((mission_id, progress))
+            progress_list.append((mission_id, progress, mission_input_id))
             mission_progress.append(
                 {
                     "aircraftID": aircraft_id,
@@ -149,12 +175,34 @@ def run_monitoring_procedure(
 
         chosen_id = 0
         chosen_progress = 0
-        if progress_list:
-            chosen_id, chosen_progress = progress_list[-1]
-            for mid, prog in progress_list:
+        chosen_entry: Optional[tuple[int, int]] = None
+        matching_fallback: Optional[tuple[int, int]] = None
+        nonmatching_fallback: Optional[tuple[int, int]] = None
+
+        for mid, prog, mission_input_id in progress_list:
+            matches_active = (
+                active_input_mission_id is None
+                or mission_input_id is None
+                or mission_input_id == active_input_mission_id
+            )
+            entry = (mid, prog)
+            if matches_active:
+                matching_fallback = entry
                 if prog < 100:
-                    chosen_id, chosen_progress = mid, prog
+                    chosen_entry = entry
                     break
+            else:
+                if nonmatching_fallback is None:
+                    nonmatching_fallback = entry
+
+        if chosen_entry is not None:
+            chosen_id, chosen_progress = chosen_entry
+        elif matching_fallback is not None:
+            chosen_id, chosen_progress = matching_fallback
+        elif nonmatching_fallback is not None:
+            chosen_id, chosen_progress = nonmatching_fallback
+        elif progress_list:
+            chosen_id, chosen_progress = progress_list[-1][:2]
 
         entries.append(
             IndividualMissionProgressStatusModel(
@@ -184,11 +232,15 @@ def run_monitoring_procedure(
         mission_plan_value = plan_context.get("missionPlanID")
     mission_plan_value = int(mission_plan_value) if mission_plan_value else 0
 
-    current_input_mission_id = (plan_input_ids[0] if plan_input_ids else None)
-    try:
-        current_input_mission_id = int(current_input_mission_id) if current_input_mission_id is not None else 0
-    except (TypeError, ValueError):
+    output_input_mission_id = (
+        active_input_mission_id
+        if active_input_mission_id is not None
+        else current_input_mission_id_int
+    )
+    if output_input_mission_id is None:
         current_input_mission_id = 0
+    else:
+        current_input_mission_id = output_input_mission_id
 
     data = MissionProgressBodyModel(
         source="MSM",
