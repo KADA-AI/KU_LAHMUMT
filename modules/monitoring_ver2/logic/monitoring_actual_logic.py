@@ -184,7 +184,7 @@ def run_monitoring_procedure(
         mission_plan_value = plan_context.get("missionPlanID")
     mission_plan_value = int(mission_plan_value) if mission_plan_value else 0
 
-    current_input_mission_id = plan_input_package_id or (plan_input_ids[0] if plan_input_ids else None)
+    current_input_mission_id = (plan_input_ids[0] if plan_input_ids else None)
     try:
         current_input_mission_id = int(current_input_mission_id) if current_input_mission_id is not None else 0
     except (TypeError, ValueError):

@@ -252,16 +252,11 @@ class MainWindow(QMainWindow):
         except Exception:
             pass  # 모니터링용이므로 실패해도 동작에는 영향 없음
 
-    # ───────── 전원 ON 시 0.5s 뒤 0102 5Hz 자동 시작 ─────────
+    # 0102 periodic auto-start disabled (INF mock mode)
     def _start_0102_stream(self):
         if not self._power_on:
             return
-        try:
-            # 5Hz 보장 (CSCTabBase의 periodic_config 사용)
-            self._tab.periodic_config['0102'] = 5
-        except Exception:
-            pass
-        self._ensure_0102(True)
+        self._append_log_line("[INFO] 0102 periodic transmission disabled for INF mock mode")
 
     # ───────── Power OFF 가드(발신/수신/카운트/우회 클릭 차단) ─────────
     def _install_power_gate_hooks(self):

@@ -1,4 +1,4 @@
-﻿# /mnt/data/main_window.py
+# /mnt/data/main_window.py
 # -*- coding: utf-8 -*-
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QGridLayout, QPushButton, QLabel, QLineEdit, QFileDialog, QShortcut,
@@ -7,6 +7,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QKeySequence
 from datetime import datetime
+from typing import Optional
 from .zones import GRID_ROWS, GRID_COLS, ZONES
 from ..widgets.cards import Card
 from ..widgets.module_with_log import ModuleWithLog
@@ -16,16 +17,20 @@ import os, subprocess, json, socket
 from pathlib import Path
 from modules.common import db_paths
 
+APP_TITLE = "KU Mission Decision Support Dashboard (v251028)"
+
 class MainWindow(QMainWindow):
     """Main dashboard window arranged on a 35x50 grid."""
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("KU Mission Decision Support Dashboard")
+        self.setWindowTitle(APP_TITLE)
         self.resize(1800, 900)
 
         self._db_path_line: QLineEdit = None
         self._scenario_root_line: QLineEdit = None
         self._current_db_root: str = ""
+        self._scenario_status_dot: Optional[QLabel] = None
+        self._scenario_status_label: Optional[QLabel] = None
 
         # Middleware widget references
         self._mw_name: QLineEdit = None
@@ -43,7 +48,6 @@ class MainWindow(QMainWindow):
         self.btn_module_shutdown = None
         self.btn_info_module = None
         self.btn_integration_module = None
-        self.btn_collab_base_replan = None
         self._auto_enabled = False
         self._role_processes = {}
 
@@ -62,7 +66,7 @@ class MainWindow(QMainWindow):
             grid.setColumnStretch(c, 1)
 
         # Title label
-        title_lbl = QLabel("KU Mission Decision Support Dashboard", self)
+        title_lbl = QLabel(APP_TITLE, self)
         title_lbl.setObjectName("MainTitle")
         title_lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self._add_zone(grid, title_lbl, "TITLE")
@@ -93,9 +97,24 @@ class MainWindow(QMainWindow):
         path_layout = QVBoxLayout(path_container)
         path_layout.setContentsMargins(0, 0, 0, 0)
         path_layout.setSpacing(2)
+        indicator_row = QHBoxLayout()
+        indicator_row.setContentsMargins(0, 0, 0, 0)
+        indicator_row.setSpacing(6)
+        self._scenario_status_dot = QLabel("●", self)
+        self._scenario_status_dot.setObjectName("ScenarioDot")
+        self._scenario_status_dot.setProperty("active", False)
+        self._scenario_status_dot.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        indicator_row.addWidget(self._scenario_status_dot, 0, Qt.AlignLeft)
+        self._scenario_status_label = QLabel("대기 시나리오 (유지)", self)
+        self._scenario_status_label.setObjectName("ScenarioStatusLabel")
+        self._scenario_status_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        indicator_row.addWidget(self._scenario_status_label, 0, Qt.AlignLeft)
+        indicator_row.addStretch(1)
+        path_layout.addLayout(indicator_row)
         path_layout.addWidget(self._db_path_line)
         path_layout.addWidget(self._scenario_root_line)
         self._add_zone(grid, path_container, "DB_PATH")
+        self.update_scenario_status_indicator(False, "대기 모드에서 새로운 폴더가 생성되면 초록색으로 바뀝니다.")
 
         # Middleware configuration row
         mw_row = self._make_middleware_row()
@@ -125,7 +144,7 @@ class MainWindow(QMainWindow):
         self._add_zone(grid, self.operation_panel, "OPS_FLOW")
 
         # Footer
-        footer = QLabel("KU Mission Decision Support Dashboard", self)
+        footer = QLabel(APP_TITLE, self)
         footer.setObjectName("FooterFull")
         footer.setAlignment(Qt.AlignCenter)
         self._add_zone(grid, footer, "FOOTER")
@@ -567,12 +586,6 @@ class MainWindow(QMainWindow):
             self.btn_integration_module.clicked.connect(lambda: self._launch_role("integration"))
             body.addWidget(self.btn_integration_module)
 
-            self.btn_collab_base_replan = QPushButton("협업기저임무 재계획", placeholder)
-            self.btn_collab_base_replan.setObjectName("BtnCollabBaseReplan")
-            self.btn_collab_base_replan.setMinimumHeight(34)
-            self.btn_collab_base_replan.clicked.connect(self._handle_collab_base_replan)
-            body.addWidget(self.btn_collab_base_replan)
-
             body.addStretch(1)
 
         grid.addWidget(placeholder, row0, col0, row_end - row0, col_end - col0)
@@ -739,13 +752,6 @@ class MainWindow(QMainWindow):
                 except Exception:
                     pass
 
-    def _handle_collab_base_replan(self) -> None:
-        if self.module_mission and hasattr(self.module_mission, "append_log"):
-            try:
-                self.module_mission.append_log("[UI] 협업기저임무 재계획 버튼 클릭")
-            except Exception:
-                pass
-
     def _add_placeholder(self, grid: QGridLayout, zone_key: str) -> None:
         placeholder = Card("", self)
         placeholder.setObjectName(f"{zone_key}_placeholder")
@@ -786,6 +792,7 @@ class MainWindow(QMainWindow):
                 self._current_db_root = info.get("db_root") or path
                 self._db_path_line.setText(self._current_db_root)
                 self.update_scenario_root(info.get("base_root"))
+                self.update_scenario_status_indicator(False, f"수동 DB 선택: {self._current_db_root}")
                 # Record path selection in module logs when modules are available
                 for attr in ("module_mission", "module_monitor", "module_decision"):
                     mod = getattr(self, attr, None)
@@ -799,6 +806,7 @@ class MainWindow(QMainWindow):
                 base_root = info.get("base_root")
                 self.update_scenario_root(base_root)
                 display = base_root or ""
+                self.update_scenario_status_indicator(False, f"시나리오 베이스 지정: {display}")
                 for attr in ("module_mission", "module_monitor", "module_decision"):
                     mod = getattr(self, attr, None)
                     if mod and hasattr(mod, "append_log"):
@@ -806,6 +814,29 @@ class MainWindow(QMainWindow):
                             mod.append_log(f"[SCENARIO ROOT] {display}")
                         except Exception:
                             pass
+
+    def update_scenario_status_indicator(self, changed: bool, tooltip: Optional[str] | None = None) -> None:
+        if self._scenario_status_dot is None:
+            return
+        active = bool(changed)
+        self._scenario_status_dot.setProperty("active", active)
+        label_text = "대기 시나리오 (신규)" if active else "대기 시나리오 (유지)"
+        if self._scenario_status_label is not None:
+            self._scenario_status_label.setText(label_text)
+            self._scenario_status_label.setProperty("active", active)
+        if tooltip is not None:
+            tip_text = tooltip or ""
+            self._scenario_status_dot.setToolTip(tip_text)
+            if self._scenario_status_label is not None:
+                self._scenario_status_label.setToolTip(tip_text)
+        self._scenario_status_dot.style().unpolish(self._scenario_status_dot)
+        self._scenario_status_dot.style().polish(self._scenario_status_dot)
+        self._scenario_status_dot.update()
+        if self._scenario_status_label is not None:
+            self._scenario_status_label.style().unpolish(self._scenario_status_label)
+            self._scenario_status_label.style().polish(self._scenario_status_label)
+            self._scenario_status_label.update()
+
 
     def update_db_root(self, path: str | Path) -> None:
         self._current_db_root = str(path)

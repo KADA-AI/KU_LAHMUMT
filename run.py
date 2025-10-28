@@ -321,8 +321,11 @@ class DashboardOrchestrator(QObject):
         info = db_paths.get_info()
         self._scenario_timestamp = info.get("timestamp_ms")
         try:
-            self.win.update_db_root(info.get("db_root") or db_paths.get_active_db_root_str())
+            db_root_init = info.get("db_root") or db_paths.get_active_db_root_str()
+            self.win.update_db_root(db_root_init)
             self.win.update_scenario_root(info.get("base_root"))
+            tooltip = f"{info.get('iso') or '??'} @ {db_root_init}"
+            self.win.update_scenario_status_indicator(False, tooltip)
         except Exception:
             pass
 
@@ -946,20 +949,35 @@ class DashboardOrchestrator(QObject):
 
         self._last_system_mode_code = code
 
+
+
     def _maybe_activate_scenario(self, timestamp: int | None) -> None:
         if self._last_system_mode_code == 1:
             return
         if self._scenario_activated_once:
             reuse_root = db_paths.get_active_db_root_str()
             self._safe_log(f"[OPS] Standby re-entry - reuse existing DB @ {reuse_root}")
+            try:
+                self.win.update_scenario_status_indicator(False, f"재사용 경로: {reuse_root}")
+            except Exception:
+                pass
             return
         if timestamp is None:
-            self._safe_log("[OPS] Standby 모드 timestamp 미확인 → 기존 DB 유지")
+            self._safe_log("[OPS] Standby entry missing timestamp -> skip DB activation")
+            try:
+                self.win.update_scenario_status_indicator(False, "타임스탬프 없음 → 기존 경로 유지")
+            except Exception:
+                pass
             return
+        prev_db_root = db_paths.get_active_db_root_str()
         try:
             info = db_paths.activate_scenario(timestamp)
         except Exception as exc:
-            self._safe_log(f"[ERR] Standby 시나리오 준비 실패: {exc}")
+            self._safe_log(f"[ERR] Standby activation prep failed: {exc}")
+            try:
+                self.win.update_scenario_status_indicator(False, f"Standby 준비 실패: {exc}")
+            except Exception:
+                pass
             return
 
         self._scenario_timestamp = info.get("timestamp_ms")
@@ -972,7 +990,31 @@ class DashboardOrchestrator(QObject):
                 pass
         db_root_str = db_root or db_paths.get_active_db_root_str()
         iso = info.get("iso") or timestamp
-        self._safe_log(f"[OPS] Standby 시나리오 활성화 → {iso} @ {db_root_str}")
+        change_state = "신규 경로 적용"
+        if prev_db_root and db_root_str:
+            try:
+                prev_norm = os.path.normcase(os.path.normpath(str(prev_db_root)))
+                curr_norm = os.path.normcase(os.path.normpath(str(db_root_str)))
+            except Exception:
+                prev_norm = str(prev_db_root)
+                curr_norm = str(db_root_str)
+            if prev_norm == curr_norm:
+                change_state = "경로 유지"
+        elif not db_root_str:
+            change_state = "경로 확인 불가"
+        self._safe_log(f"[OPS] Standby 활성화({change_state}) {iso} @ {db_root_str}")
+        tooltip = f"{iso} @ {db_root_str or '경로 없음'}"
+        changed = (change_state == "신규 경로 적용")
+        try:
+            self.win.update_scenario_status_indicator(changed, tooltip)
+        except Exception:
+            pass
+        if db_root_str:
+            try:
+                if not Path(db_root_str).exists():
+                    self._safe_log(f"[WARN] Standby DB path missing: {db_root_str}")
+            except Exception:
+                self._safe_log(f"[WARN] Standby DB path inspection failed: {db_root_str}")
         self._scenario_activated_once = True
 
     # --------- 모드/CTRL/런처/로깅 유틸 ---------

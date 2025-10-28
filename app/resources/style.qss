@@ -131,3 +131,9 @@ QPushButton#ModeBtn:pressed {
 /* 상태점(초록/회색) */
 #GreenDot        { font-size: 14px; color: #10b981; }
 #GreenDot[active="false"] { color: #9ca3af; }
+
+/* Scenario status indicator */
+#ScenarioDot { font-size: 18px; color: #ef4444; }
+#ScenarioDot[active="true"] { color: #22c55e; }
+#ScenarioStatusLabel { font-weight: 600; color: #111827; }
+#ScenarioStatusLabel[active="true"] { color: #0f766e; }

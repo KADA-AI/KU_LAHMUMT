@@ -11,6 +11,8 @@ from typing import Any, Dict, Optional
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 LEGACY_DB_ROOT = PROJECT_ROOT / "database"
+DEFAULT_SCENARIO_DIRNAME = "Logs"
+DEFAULT_SCENARIO_BASE = PROJECT_ROOT / DEFAULT_SCENARIO_DIRNAME
 SCENARIO_PREFIX = "Scenario_"
 AGENCY_CODE_DEFAULT = os.environ.get("KU_AGENCY_CODE", "SBC3")
 ENV_DB_ROOT = "KU_MISSION_DB_ROOT"
@@ -21,6 +23,28 @@ _TS_OFFSET_MS = int(os.environ.get("KU_SCENARIO_TS_OFFSET_MS", "0") or 0)
 _EPOCH_2000 = datetime(2000, 1, 1, tzinfo=timezone.utc)
 
 _lock = threading.Lock()
+def _default_base_root() -> Path:
+    try:
+        DEFAULT_SCENARIO_BASE.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    return DEFAULT_SCENARIO_BASE
+
+
+def _ensure_base_root_unlocked(persist: bool = False) -> str:
+    base = _cache.get("base_root")
+    if base:
+        return str(base)
+    base_path = _default_base_root()
+    base_str = str(base_path)
+    _cache["base_root"] = base_str
+    if persist:
+        info = _current_info_dict()
+        info["base_root"] = base_str
+        _write_info_unlocked(info)
+    return base_str
+
+
 _cache: Dict[str, Any] = {
     "mtime": None,
     "db_root": None,
@@ -29,7 +53,7 @@ _cache: Dict[str, Any] = {
     "iso": None,
     "agency": None,
     "source": None,
-    "base_root": None,
+    "base_root": str(_default_base_root()),
 }
 _watcher_started = False
 
@@ -70,8 +94,10 @@ def _set_env_unlocked(db_root: Optional[Path], scenario_dir: Optional[Path]) -> 
 
 def _write_info_unlocked(info: Dict[str, Any]) -> None:
     info = dict(info)
-    if "base_root" not in info:
-        info["base_root"] = _cache.get("base_root")
+    base_value = info.get("base_root") or _cache.get("base_root") or str(_default_base_root())
+    base_value = str(base_value)
+    info["base_root"] = base_value
+    _cache["base_root"] = base_value
     INFO_PATH.parent.mkdir(parents=True, exist_ok=True)
     with INFO_PATH.open("w", encoding="utf-8") as fh:
         json.dump(info, fh, ensure_ascii=False, indent=2, sort_keys=True)
@@ -93,8 +119,9 @@ def _refresh_cache_unlocked() -> None:
             "iso": None,
             "agency": None,
             "source": None,
-            "base_root": None,
+            "base_root": _cache.get("base_root"),
         })
+        _ensure_base_root_unlocked()
         return
     try:
         with INFO_PATH.open("r", encoding="utf-8") as fh:
@@ -104,6 +131,7 @@ def _refresh_cache_unlocked() -> None:
         return
     db_root = Path(data["db_root"]) if data.get("db_root") else None
     scenario_dir = Path(data["scenario_dir"]) if data.get("scenario_dir") else None
+    base_root_str = data.get("base_root") or None
     _cache.update({
         "mtime": mtime,
         "db_root": db_root,
@@ -112,8 +140,10 @@ def _refresh_cache_unlocked() -> None:
         "iso": data.get("iso"),
         "agency": data.get("agency"),
         "source": data.get("source"),
-        "base_root": data.get("base_root"),
+        "base_root": str(base_root_str) if base_root_str else None,
     })
+    persist_needed = not bool(base_root_str)
+    _ensure_base_root_unlocked(persist=persist_needed)
     _set_env_unlocked(db_root, scenario_dir)
 
 
@@ -211,15 +241,20 @@ def _ensure_db_scaffold(db_dir: Path) -> None:
 def activate_scenario(timestamp_ms: int, agency: Optional[str] = None, *, copy_legacy: bool = True) -> Dict[str, Any]:
     iso = ms_to_iso(timestamp_ms)
     agency_code = agency or os.environ.get("KU_AGENCY_CODE") or AGENCY_CODE_DEFAULT
-    base_override = _cache.get("base_root")
-    base_root = Path(base_override) if base_override else PROJECT_ROOT
+    base_override = _cache.get("base_root") or _ensure_base_root_unlocked()
+    default_base = _default_base_root()
+    base_root = Path(str(base_override))
+    try:
+        is_custom_base = base_root.resolve() != default_base.resolve()
+    except Exception:
+        is_custom_base = base_root != default_base
     base_root.mkdir(parents=True, exist_ok=True)
     scenario_dir = base_root / f"{SCENARIO_PREFIX}{iso}"
     agency_dir = scenario_dir / agency_code
     db_dir = agency_dir
     with _lock:
         agency_dir.mkdir(parents=True, exist_ok=True)
-        copy_from_legacy = copy_legacy and not base_override
+        copy_from_legacy = copy_legacy and not is_custom_base
         if copy_from_legacy and not _dir_has_files(db_dir):
             _copy_legacy_into(db_dir)
         _ensure_db_scaffold(db_dir)
@@ -230,7 +265,7 @@ def activate_scenario(timestamp_ms: int, agency: Optional[str] = None, *, copy_l
             "agency": agency_code,
             "db_root": str(db_dir),
             "source": "scenario",
-            "base_root": base_override,
+            "base_root": str(base_root),
         }
         _write_info_unlocked(info)
         _cache.update({
@@ -241,7 +276,7 @@ def activate_scenario(timestamp_ms: int, agency: Optional[str] = None, *, copy_l
             "iso": iso,
             "agency": agency_code,
             "source": info["source"],
-            "base_root": base_override,
+            "base_root": str(base_root),
         })
         _set_env_unlocked(db_dir, scenario_dir)
     return info
@@ -250,6 +285,7 @@ def activate_scenario(timestamp_ms: int, agency: Optional[str] = None, *, copy_l
 def set_manual_db_root(path: str | Path, *, source: str = "manual") -> Dict[str, Any]:
     dest = Path(path)
     dest.mkdir(parents=True, exist_ok=True)
+    base_root_str = _cache.get("base_root") or _ensure_base_root_unlocked()
     info = {
         "timestamp_ms": None,
         "iso": None,
@@ -257,7 +293,7 @@ def set_manual_db_root(path: str | Path, *, source: str = "manual") -> Dict[str,
         "agency": None,
         "db_root": str(dest),
         "source": source,
-        "base_root": _cache.get("base_root"),
+        "base_root": str(base_root_str),
     }
     with _lock:
         _write_info_unlocked(info)
@@ -269,7 +305,7 @@ def set_manual_db_root(path: str | Path, *, source: str = "manual") -> Dict[str,
             "iso": None,
             "agency": None,
             "source": source,
-            "base_root": _cache.get("base_root"),
+            "base_root": str(base_root_str),
         })
         _set_env_unlocked(dest, None)
     return info
@@ -277,12 +313,13 @@ def set_manual_db_root(path: str | Path, *, source: str = "manual") -> Dict[str,
 
 def set_scenario_base_root(path: str | Path | None) -> Dict[str, Any]:
     with _lock:
-        base = Path(path).resolve() if path else None
+        base = Path(path).resolve() if path else _default_base_root()
+        base_str = str(base)
         _cache.update({
-            "base_root": str(base) if base else None,
+            "base_root": base_str,
         })
         info = _current_info_dict()
-        info["base_root"] = _cache.get("base_root")
+        info["base_root"] = base_str
         _write_info_unlocked(info)
         try:
             _cache["mtime"] = INFO_PATH.stat().st_mtime
@@ -295,6 +332,7 @@ def set_scenario_base_root(path: str | Path | None) -> Dict[str, Any]:
 def get_info() -> Dict[str, Any]:
     with _lock:
         _refresh_cache_unlocked()
+        _ensure_base_root_unlocked()
         info = _current_info_dict()
         return info
 
