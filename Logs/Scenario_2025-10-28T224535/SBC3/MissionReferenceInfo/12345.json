@@ -1,0 +1,110 @@
+{
+  "timestamp": 811837939069,
+  "missionReferencePackageID": 12345,
+  "inputTimestamp": 811837939069,
+  "takeOverInfoList": [
+    {
+      "aircraftID": 4,
+      "coordinate": {
+        "latitude": 37.635834,
+        "longitude": 128.01356,
+        "altitude": 1
+      }
+    },
+    {
+      "aircraftID": 5,
+      "coordinate": {
+        "latitude": 37.633834,
+        "longitude": 128.01356,
+        "altitude": 2
+      }
+    },
+    {
+      "aircraftID": 6,
+      "coordinate": {
+        "latitude": 37.635834,
+        "longitude": 128.01256,
+        "altitude": 3
+      }
+    }
+  ],
+  "handOverInfoList": [
+    {
+      "aircraftID": 4,
+      "coordinate": {
+        "latitude": 37.635834,
+        "longitude": 128.01356,
+        "altitude": 1
+      }
+    },
+    {
+      "aircraftID": 5,
+      "coordinate": {
+        "latitude": 37.633834,
+        "longitude": 128.01356,
+        "altitude": 2
+      }
+    },
+    {
+      "aircraftID": 6,
+      "coordinate": {
+        "latitude": 37.635834,
+        "longitude": 128.01256,
+        "altitude": 3
+      }
+    }
+  ],
+  "rtbCoordinateList": [
+    {
+      "latitude": 37.635834,
+        "longitude": 128.01256,
+      "altitude": 1000
+    }
+  ],
+  "flightAreaList": [
+    {
+      "flightAreaID": 1,
+      "areaLatLonList": [
+        {
+          "latitude": 37.65,
+          "longitude": 127.9
+        },
+        {
+          "latitude": 38.7,
+          "longitude": 128.5
+        },
+        {
+          "latitude": 37.65,
+          "longitude": 128.5
+        }
+      ],
+      "altitudeLimits": {
+        "lowerLimit": 600,
+        "upperLimit": 2500
+      }
+    }
+  ],
+  "prohibitedAreaList": [
+    {
+      "prohibitedAreaID": 1,
+      "areaLatLonList": [
+        {
+          "latitude": 35.66,
+          "longitude": 124.66
+        },
+        {
+          "latitude": 35.77,
+          "longitude": 124.77
+        },
+        {
+          "latitude": 35.88,
+          "longitude": 124.88
+        }
+      ],
+      "altitudeLimits": {
+        "lowerLimit": 100,
+        "upperLimit": 200
+      }
+    }
+  ]
+}

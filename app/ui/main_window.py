@@ -13,7 +13,7 @@ from ..widgets.cards import Card
 from ..widgets.module_with_log import ModuleWithLog
 from ..widgets.toggle_switch import ToggleSwitch
 from ..widgets.operation_flow_panel import OperationFlowPanel
-import os, subprocess, json, socket
+import os, subprocess, json, socket, shutil
 from pathlib import Path
 from modules.common import db_paths
 
@@ -144,6 +144,7 @@ class MainWindow(QMainWindow):
         self.btn_module_shutdown = None
         self.btn_info_module = None
         self.btn_integration_module = None
+        self.btn_overwrite_020x = None
         self.btn_sw_notes = None
         self._auto_enabled = False
         self._role_processes = {}
@@ -684,6 +685,17 @@ class MainWindow(QMainWindow):
             self.btn_integration_module.clicked.connect(lambda: self._launch_role("integration"))
             body.addWidget(self.btn_integration_module)
 
+            self.btn_overwrite_020x = QPushButton("0201/0203 덮어쓰기", placeholder)
+            self.btn_overwrite_020x.setObjectName("BtnOverwrite020x")
+            self.btn_overwrite_020x.setMinimumHeight(34)
+            self.btn_overwrite_020x.setStyleSheet(
+                "QPushButton { background-color: #f97316; color: #ffffff; font-weight: 600; }"
+                "QPushButton:hover { background-color: #fb923c; }"
+                "QPushButton:pressed { background-color: #ea580c; }"
+            )
+            self.btn_overwrite_020x.clicked.connect(self._handle_overwrite_020x)
+            body.addWidget(self.btn_overwrite_020x)
+
             self.btn_sw_notes = QPushButton("SW 업데이트 / 메모", placeholder)
             self.btn_sw_notes.setObjectName("BtnSwNotes")
             self.btn_sw_notes.setMinimumHeight(34)
@@ -860,6 +872,50 @@ class MainWindow(QMainWindow):
                     mod.append_log('[RUN] module shutdown requested')
                 except Exception:
                     pass
+
+    def _handle_overwrite_020x(self) -> None:
+        try:
+            src_root = db_paths.PROJECT_ROOT / "Logs"
+            tasks = [
+                ("0201", src_root / "InputMissionPlan", db_paths.get_db_subpath("InputMissionPlan")),
+                ("0203", src_root / "MissionReferenceInfo", db_paths.get_db_subpath("MissionReferenceInfo")),
+            ]
+            messages = []
+            total = 0
+            for code, src_dir, dest_dir in tasks:
+                src_dir = Path(src_dir)
+                dest_dir = Path(dest_dir)
+                if not src_dir.exists():
+                    messages.append(f"{code}: 원본 없음 ({src_dir})")
+                    continue
+                count = 0
+                for path in src_dir.rglob("*"):
+                    if not path.is_file():
+                        continue
+                    target = dest_dir / path.relative_to(src_dir)
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(path, target)
+                    count += 1
+                dest_dir.mkdir(parents=True, exist_ok=True)
+                messages.append(f"{code}: {count}개 복사 → {dest_dir}")
+                total += count
+
+            info = db_paths.get_info()
+            scenario = info.get("scenario_dir") or "(시나리오 미지정)"
+            summary = "\n".join(messages) if messages else "복사된 파일이 없습니다."
+
+            if total > 0:
+                self._log_to_modules(f"[RUN] 0201/0203 덮어쓰기 완료 ({total} files) → {scenario}")
+                self._debug_log(f'overwrite 020x copied={total} scenario={scenario}')
+                QMessageBox.information(self, "0201/0203 덮어쓰기", f"{summary}\n\n시나리오: {scenario}")
+            else:
+                self._log_to_modules("[RUN] 0201/0203 덮어쓰기를 수행했으나 복사할 파일이 없습니다.")
+                self._debug_log(f'overwrite 020x no files scenario={scenario}')
+                QMessageBox.warning(self, "0201/0203 덮어쓰기", f"복사할 파일이 없습니다.\n{summary}\n\n시나리오: {scenario}")
+        except Exception as exc:
+            self._log_to_modules(f"[RUN] 0201/0203 덮어쓰기 실패: {exc}")
+            self._debug_log(f'overwrite 020x error={exc}')
+            QMessageBox.critical(self, "0201/0203 덮어쓰기", f"복사 중 오류가 발생했습니다.\n{exc}")
 
     def _add_placeholder(self, grid: QGridLayout, zone_key: str) -> None:
         placeholder = Card("", self)

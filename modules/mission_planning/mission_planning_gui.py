@@ -151,6 +151,7 @@ class MainWindow(QMainWindow):
         self._staged_plan_context: dict = {}
         self._active_plan_context: dict = {}
         self._pending_plan_push: dict | None = None
+        self._scheduled_0301_plan_ids: list[int] = []
 
         # ── 중앙 탭(AssignmentPlanningTab)
         tabs = QTabWidget()
@@ -164,6 +165,7 @@ class MainWindow(QMainWindow):
 
         self._install_power_gate_hooks()       # Power OFF 가드
         self._install_mon_wires()              # ★ 모니터링 전송 훅
+        self._install_0301_override()          # 0301 전송 커스텀
         tabs.addTab(self._tab, "임무 할당·계획수립 CSC")
 
         # ── 상단 모드 슬라이더
@@ -427,6 +429,85 @@ class MainWindow(QMainWindow):
                 QTimer.singleShot(0, _pulse)
             tab.bump_rx = _wrapped_bump_rx  # type: ignore
             self._rx_bump_wrapped = True
+
+    def _install_0301_override(self):
+        tab = getattr(self, "_tab", None)
+        if not tab or not hasattr(tab, "_on_tx_button_clicked") or hasattr(self, "_tx_override_installed"):
+            return
+
+        original_handler = tab._on_tx_button_clicked
+
+        def _wrapped(row: int):
+            code = ""
+            try:
+                item = tab.tbl_tx.item(row, 0)
+                if item is not None:
+                    code = item.text().strip()
+            except Exception:
+                code = ""
+
+            if code == "0301":
+                plan_ids: list[int] = []
+                for pid in self._scheduled_0301_plan_ids or []:
+                    try:
+                        plan_ids.append(int(pid))
+                    except Exception:
+                        continue
+                plan_ids = list(dict.fromkeys(plan_ids))
+                if not plan_ids:
+                    return original_handler(row)
+                try:
+                    self._send_mon("tx", msg_id=_z4("0301"))
+                except Exception:
+                    pass
+                self._send_0301_batch(plan_ids)
+                return
+
+            return original_handler(row)
+
+        tab._on_tx_button_clicked = _wrapped  # type: ignore
+        self._tx_override_installed = True
+
+    def _push_single_0301(self, mission_plan_id: int):
+        try:
+            from push_center import push_message
+        except Exception as exc:
+            self._append_log_line(f"[ERR] 0301 push unavailable: {exc}")
+            return
+
+        try:
+            mpid = int(mission_plan_id)
+        except Exception:
+            self._append_log_line(f"[WARN] 0301 skipped: invalid missionPlanID={mission_plan_id}")
+            return
+
+        body = {
+            "timestamp": _now_ms_since_2000(),
+            "source": "MMR",
+            "missionPlanID": mpid,
+        }
+
+        try:
+            push_message("0301", NodeMessenger, body_dict=body)
+            raw = json.dumps(body, ensure_ascii=False).encode("utf-8", "ignore")
+        except Exception as exc:
+            self._append_log_line(f"[ERR] 0301 push failed: {exc}")
+            return
+
+        try:
+            self.log_sig.emit(f"[0301] missionPlanID={mpid} 전송")
+        except Exception:
+            pass
+
+        try:
+            self._tab.mark_sent(_z4("0301"), raw)
+        except Exception:
+            pass
+
+    def _send_0301_batch(self, plan_ids: list[int]):
+        for pid in plan_ids:
+            self._push_single_0301(pid)
+        self._scheduled_0301_plan_ids = []
 
     def _send_mon(self, kind: str, **payload):
         """
@@ -1189,6 +1270,41 @@ class MainWindow(QMainWindow):
             for directory in (dir_mp, dir_imp, dir_fp):
                 directory.mkdir(parents=True, exist_ok=True)
 
+            def _scan_existing_ids(target_dir: Path) -> set[int]:
+                results: set[int] = set()
+                try:
+                    for item in target_dir.glob("*.json"):
+                        stem = item.stem
+                        if stem.isdigit():
+                            try:
+                                results.add(int(stem))
+                            except Exception:
+                                continue
+                except Exception:
+                    pass
+                return results
+
+            used_plan_ids: set[int] = _scan_existing_ids(dir_mp)
+            next_plan_id_seed = max(used_plan_ids) + 1 if used_plan_ids else 700000000
+
+            def _allocate_plan_id(preferred: int | None) -> int:
+                nonlocal next_plan_id_seed
+                if preferred is not None:
+                    try:
+                        candidate = int(preferred)
+                        if candidate not in used_plan_ids:
+                            used_plan_ids.add(candidate)
+                            return candidate
+                        self.log_sig.emit(f"[WARN] missionPlanID {candidate} already exists; allocating new ID")
+                    except Exception:
+                        pass
+                while next_plan_id_seed in used_plan_ids:
+                    next_plan_id_seed += 1
+                assigned = next_plan_id_seed
+                used_plan_ids.add(assigned)
+                next_plan_id_seed += 1
+                return assigned
+
             generated_plan_ids: list[int] = []
             option_names_out: list[str] = []
             total_imp_files = 0
@@ -1267,9 +1383,10 @@ class MainWindow(QMainWindow):
 
                 plan_id_value = requested_plan_id if requested_plan_id is not None else mp_json.get('missionPlanID')
                 try:
-                    plan_id = int(plan_id_value)
+                    preferred_plan_id = int(plan_id_value)
                 except Exception:
-                    plan_id = int(time.time()) + variant_no
+                    preferred_plan_id = None
+                plan_id = _allocate_plan_id(preferred_plan_id)
                 mp_json['missionPlanID'] = plan_id
 
                 (dir_mp / f"{plan_id}.json").write_text(json.dumps(mp_json, indent=2, ensure_ascii=False), encoding='utf-8')
@@ -1332,6 +1449,10 @@ class MainWindow(QMainWindow):
             "option_names": list(option_names or []),
             "reason":       reason,
         }
+        try:
+            self._scheduled_0301_plan_ids = [int(pid) for pid in (plan_ids or []) if pid is not None]
+        except Exception:
+            self._scheduled_0301_plan_ids = list(plan_ids or [])
         summary = ", ".join(str(pid) for pid in plan_ids or []) or "-"
         self.log_sig.emit(f"[STEP 4] 0301 push queued (planIds={summary})")
         self.start_push_seq.emit()

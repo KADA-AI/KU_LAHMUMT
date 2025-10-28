@@ -47,6 +47,68 @@ def _serialize_reason(data: Any) -> str:
         return json.dumps(str(data), ensure_ascii=False)
 
 
+def _extract_first_mission_type(detail: Any) -> Optional[int]:
+    """Return the first missionType from a PriorMissionInfo payload."""
+    try:
+        if hasattr(detail, "priorMissionList"):
+            prior_list = detail.priorMissionList
+        elif isinstance(detail, dict):
+            prior_list = detail.get("priorMissionList")
+        else:
+            prior_list = None
+        if not prior_list:
+            return None
+        first = prior_list[0]
+        if isinstance(first, dict):
+            return int(first.get("missionType")) if first.get("missionType") is not None else None
+        if hasattr(first, "missionType"):
+            return int(first.missionType)
+    except Exception:
+        return None
+    return None
+
+
+def _extract_mandatory_type(detail: Any) -> Optional[int]:
+    """Return the mandatoryType from a ForcedCommand payload."""
+    try:
+        if isinstance(detail, dict):
+            value = detail.get("mandatoryType")
+        elif hasattr(detail, "mandatoryType"):
+            value = detail.mandatoryType
+        else:
+            value = None
+        return int(value) if value is not None else None
+    except Exception:
+        return None
+
+
+def _format_replan_reason(replan_info: Dict[str, Any]) -> str:
+    """Generate human readable replanReason text for selected triggers."""
+    msg_id = str(replan_info.get("original_message_id") or "").zfill(4)
+    detail = replan_info.get("재계획 상세 사유")
+
+    if msg_id == "0202":
+        mission_type = _extract_first_mission_type(detail)
+        mission_desc = {
+            1: "좌표지향 요청",
+            2: "표적추적 요청",
+        }.get(mission_type)
+        return f"선행임무 입력({mission_desc})" if mission_desc else "선행임무 입력"
+
+    if msg_id == "0801":
+        return "운용자 요청으로 인한 임무재계획"
+
+    if msg_id == "0802":
+        mandatory_desc = {
+            1: "강제 대기",
+            2: "강제 귀환",
+            3: "강제 임무복귀",
+        }.get(_extract_mandatory_type(detail))
+        return f"강제명령({mandatory_desc})" if mandatory_desc else "강제명령"
+
+    return _serialize_reason(replan_info)
+
+
 def _convert_trigger_for_ui(replan_info: Dict[str, Any]) -> Dict[str, Any]:
     """Convert monitoring_backup-style trigger info into the structure ReplanTab expects."""
     detail = replan_info.get("재계획 상세 사유")
@@ -182,6 +244,7 @@ def determine_level_and_send_request(manager, confirmed_request: Optional[Dict[s
     replan_situation = str(confirmed_request.get("재계획 상황", "")).strip()
     replan_level = 1 if replan_situation == "운용자 입력에 의한 재계획" else 2
     timestamp_ms = _now_timestamp_ms()
+    reason_text = _format_replan_reason(confirmed_request)
 
     replan_body = ReplanRequestBodyModel(
         source="MonitoringModule",
@@ -191,7 +254,7 @@ def determine_level_and_send_request(manager, confirmed_request: Optional[Dict[s
         inputMissionIDList=[],
         IndividualMissionIDList=[],
         priorMissionList=[],
-        replanRequest=_serialize_reason(confirmed_request),
+        replanRequest=reason_text,
         optionList=[],
     )
 
@@ -248,4 +311,3 @@ def run_replan_procedure(manager):
     determine_level_and_send_request(manager, confirmed)
 
     manager._log("REPLAN_PROCEDURE", "INFO", "--- 재계획 절차 END ---")
-

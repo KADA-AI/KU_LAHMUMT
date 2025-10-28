@@ -1,0 +1,156 @@
+{
+  "timestamp": 814974637385,
+  "Source": "MMR",
+  "pathID": 400000002,
+  "aircraftID": 4,
+  "isFormationFlight": false,
+  "waypointList": [
+    {
+      "waypointID": 4,
+      "coordinate": {
+        "latitude": 38.14359450673615,
+        "longitude": 127.31238479992649,
+        "altitude": 1200
+      },
+      "speed": 40.0,
+      "eta": 0,
+      "ecf": 0.0,
+      "nextWaypointID": 5,
+      "waypointPassType": 1,
+      "filmingProperty": {
+        "fieldOfView": 5.5,
+        "sensorType": 1,
+        "operationMode": 2,
+        "lineSearch": {
+          "coordinateList": [
+            {
+              "latitude": 38.142595701057935,
+              "longitude": 127.32212348200063,
+              "altitude": 5
+            },
+            {
+              "latitude": 38.14459331241436,
+              "longitude": 127.32206356690868,
+              "altitude": 5
+            },
+            {
+              "latitude": 38.14278680422278,
+              "longitude": 127.32093392537051,
+              "altitude": 5
+            },
+            {
+              "latitude": 38.14456577304117,
+              "longitude": 127.32088056809727,
+              "altitude": 5
+            },
+            {
+              "latitude": 38.14297790738763,
+              "longitude": 127.31974436874037,
+              "altitude": 5
+            },
+            {
+              "latitude": 38.14453823367697,
+              "longitude": 127.31969756929726,
+              "altitude": 5
+            },
+            {
+              "latitude": 38.143169010552484,
+              "longitude": 127.31855481209884,
+              "altitude": 5
+            },
+            {
+              "latitude": 38.144510694303776,
+              "longitude": 127.31851457048585,
+              "altitude": 5
+            },
+            {
+              "latitude": 38.14336011371733,
+              "longitude": 127.31736525546872,
+              "altitude": 5
+            },
+            {
+              "latitude": 38.14448315493957,
+              "longitude": 127.31733157167443,
+              "altitude": 5
+            }
+          ],
+          "searchSpeed": 115.82
+        }
+      }
+    },
+    {
+      "waypointID": 5,
+      "coordinate": {
+        "latitude": 38.14400341622429,
+        "longitude": 127.30645346847069,
+        "altitude": 1200
+      },
+      "speed": 40.0,
+      "eta": 107,
+      "ecf": 0.62,
+      "nextWaypointID": 6,
+      "waypointPassType": 1,
+      "filmingProperty": {
+        "fieldOfView": 5.5,
+        "sensorType": 1,
+        "operationMode": 2,
+        "lineSearch": {
+          "coordinateList": [
+            {
+              "latitude": 38.144455615566386,
+              "longitude": 127.31614857287444,
+              "altitude": 5
+            },
+            {
+              "latitude": 38.14355121688218,
+              "longitude": 127.31617569883858,
+              "altitude": 5
+            },
+            {
+              "latitude": 38.14442807620218,
+              "longitude": 127.31496557406301,
+              "altitude": 5
+            },
+            {
+              "latitude": 38.14374232004703,
+              "longitude": 127.31498614219704,
+              "altitude": 5
+            }
+          ],
+          "searchSpeed": 115.82
+        }
+      }
+    },
+    {
+      "waypointID": 6,
+      "coordinate": {
+        "latitude": 38.14416030513665,
+        "longitude": 127.30417794028321,
+        "altitude": 1200
+      },
+      "speed": 40.0,
+      "eta": 66,
+      "ecf": 1.0,
+      "nextWaypointID": 0,
+      "waypointPassType": 2,
+      "filmingProperty": {
+        "fieldOfView": 66.638654,
+        "sensorType": 1,
+        "operationMode": 1,
+        "coordinateOrientation": {
+          "coordinate": {
+            "latitude": 38.14416030513665,
+            "longitude": 127.30417794028321,
+            "altitude": 0
+          }
+        }
+      },
+      "loiterProperty": {
+        "radius": 800,
+        "direction": 1,
+        "time": 30,
+        "speed": 40
+      }
+    }
+  ]
+}

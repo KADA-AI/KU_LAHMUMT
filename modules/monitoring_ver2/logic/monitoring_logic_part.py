@@ -1076,6 +1076,17 @@ class MonitoringLogic:
             input_id = entry.get("inputMissionID")
             if input_id is None:
                 input_id = self._mission_to_input.get(key)
+            fallback_key: Optional[Tuple[int, int, Optional[int]]] = None
+            if input_id is None and path_id is None:
+                # 일부 메시지에는 pathID가 누락될 수 있으므로 동일한 항공기/임무ID로 보정
+                for candidate_key, candidate_input in self._mission_to_input.items():
+                    if (
+                        candidate_key[0] == aircraft_id
+                        and candidate_key[1] == mission_id
+                    ):
+                        input_id = candidate_input
+                        fallback_key = candidate_key
+                        break
             if input_id is None:
                 continue
             try:
@@ -1084,7 +1095,18 @@ class MonitoringLogic:
                 continue
             tracker = self._input_mission_tracker.get(input_id)
             if not tracker or key not in tracker.get("total", set()):
-                continue
+                if fallback_key and fallback_key in tracker.get("total", set()):
+                    key = fallback_key
+                else:
+                    matched = None
+                    for candidate in tracker.get("total", set()):
+                        if candidate[0] == aircraft_id and candidate[1] == mission_id:
+                            matched = candidate
+                            break
+                    if matched:
+                        key = matched
+                    else:
+                        continue
             try:
                 progress = int(entry.get("progress", 0))
             except (TypeError, ValueError):

@@ -1,0 +1,84 @@
+{
+  "timestamp": 814974637474,
+  "Source": "MMR",
+  "individualMissionPackageID": 800002036,
+  "aircraftID": 4,
+  "individualMissionList": [
+    {
+      "individualMissionID": 900028544,
+      "isDone": true,
+      "relatedMission": {
+        "relatedMissionType": 1,
+        "inputMissionID": 70000000,
+        "priorMissionID": 0
+      },
+      "individualMissionInfo": {
+        "individualMissionType": 6,
+        "patternType": 4,
+        "autoZoomIn": true,
+        "lineList": [
+          {
+            "width": 36.0,
+            "coordinateList": [
+              {
+                "latitude": 38.13605,
+                "longitude": 127.3069,
+                "altitude": 900
+              },
+              {
+                "latitude": 38.12059,
+                "longitude": 127.31805518136579,
+                "altitude": 900
+              }
+            ]
+          }
+        ],
+        "targetID": null
+      },
+      "pathID": 400000001
+    },
+    {
+      "individualMissionID": 900028545,
+      "isDone": true,
+      "relatedMission": {
+        "relatedMissionType": 1,
+        "inputMissionID": 70000001,
+        "priorMissionID": 0
+      },
+      "individualMissionInfo": {
+        "individualMissionType": 4,
+        "patternType": 4,
+        "autoZoomIn": true,
+        "areaList": [
+          {
+            "isHole": false,
+            "coordinateList": [
+              {
+                "latitude": 38.14460249219943,
+                "longitude": 127.32245789984582,
+                "altitude": 0
+              },
+              {
+                "latitude": 38.142532,
+                "longitude": 127.32252,
+                "altitude": 0
+              },
+              {
+                "latitude": 38.143814,
+                "longitude": 127.31454,
+                "altitude": 0
+              },
+              {
+                "latitude": 38.14442427103755,
+                "longitude": 127.31480212642563,
+                "altitude": 0
+              }
+            ]
+          }
+        ],
+        "targetID": null
+      },
+      "pathID": 400000002
+    }
+  ]
+}
