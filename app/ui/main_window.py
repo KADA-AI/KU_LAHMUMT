@@ -4,8 +4,8 @@ from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QGridLayout, QPushButton, QLabel, QLineEdit, QFileDialog, QShortcut,
     QHBoxLayout, QVBoxLayout, QSizePolicy, QDialog, QPlainTextEdit, QSplitter, QMessageBox
 )
-from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QKeySequence
+from PyQt5.QtCore import Qt, QTimer, QUrl
+from PyQt5.QtGui import QKeySequence, QDesktopServices
 from datetime import datetime
 from typing import Optional
 from .zones import GRID_ROWS, GRID_COLS, ZONES
@@ -20,6 +20,7 @@ from modules.common import db_paths
 APP_TITLE = "KU Mission Decision Support Dashboard (v251028)"
 SW_UPDATE_FILE = db_paths.PROJECT_ROOT / "SW_UPDATE_LOG.txt"
 SW_MEMO_FILE = db_paths.PROJECT_ROOT / "SW_MEMO_NOTE.txt"
+REFERENCE_PDF_PATH = db_paths.PROJECT_ROOT / "ref" / "04. 모듈 간 인터페이스 설계-v7-20250917_133206.pdf"
 SW_DEFAULT_UPDATE_SAMPLE = """[예시 업데이트]
 - 2025-10-28: 모니터링 연료 경보 로직을 리터 → 퍼센트 변환으로 개선
 - 2025-10-22: 초기 시나리오 활성화 경로 검증 로그 추가
@@ -146,6 +147,7 @@ class MainWindow(QMainWindow):
         self.btn_integration_module = None
         self.btn_overwrite_020x = None
         self.btn_sw_notes = None
+        self.btn_reference_pdf = None
         self._auto_enabled = False
         self._role_processes = {}
         self._sw_notes_dialog = None
@@ -707,6 +709,17 @@ class MainWindow(QMainWindow):
             self.btn_sw_notes.clicked.connect(self._open_sw_notes_dialog)
             body.addWidget(self.btn_sw_notes)
 
+            self.btn_reference_pdf = QPushButton("모듈 인터페이스 문서", placeholder)
+            self.btn_reference_pdf.setObjectName("BtnReferencePdf")
+            self.btn_reference_pdf.setMinimumHeight(34)
+            self.btn_reference_pdf.setStyleSheet(
+                "QPushButton { background-color: #f97316; color: #ffffff; font-weight: 600; }"
+                "QPushButton:hover { background-color: #fb923c; }"
+                "QPushButton:pressed { background-color: #ea580c; }"
+            )
+            self.btn_reference_pdf.clicked.connect(self._open_reference_pdf)
+            body.addWidget(self.btn_reference_pdf)
+
             body.addStretch(1)
 
         grid.addWidget(placeholder, row0, col0, row_end - row0, col_end - col0)
@@ -979,6 +992,28 @@ class MainWindow(QMainWindow):
                             mod.append_log(f"[SCENARIO ROOT] {display}")
                         except Exception:
                             pass
+
+    def _open_reference_pdf(self) -> None:
+        target = Path(REFERENCE_PDF_PATH)
+        if not target.exists():
+            QMessageBox.warning(
+                self,
+                "파일 없음",
+                f"지정한 문서를 찾을 수 없습니다.\n{target}",
+            )
+            return
+        try:
+            import sys
+            if sys.platform.startswith("win"):
+                os.startfile(str(target))  # type: ignore[attr-defined]
+            else:
+                QDesktopServices.openUrl(QUrl.fromLocalFile(str(target)))
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "열기 실패",
+                f"문서를 여는 중 오류가 발생했습니다.\n{exc}",
+            )
 
     def _open_sw_notes_dialog(self) -> None:
         if self._sw_notes_dialog is not None and self._sw_notes_dialog.isVisible():
