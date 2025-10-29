@@ -112,6 +112,7 @@ from modules.common.ctrl_listener import start_ctrl_listener, env_ctrl_port
 
 from push_center import push_message
 from modules.common import db_paths
+from receive_center import register_listener
 
 
 # ───────── 유틸: ms since 2000-01-01 ─────────
@@ -475,6 +476,25 @@ class _MissionSidePanel(QGroupBox):
         r1.addWidget(self._lamp_0401); r1.addWidget(lbl1); r1.addWidget(self._path_0401); r1.addWidget(btn1)
         lay.addWidget(row1)
 
+        self._chk_force_wp0 = QCheckBox("wp id 강제 0 할당", self)
+        self._chk_force_wp0.setToolTip("0401 송출 시 currentWaypointID.waypointID 값을 0으로 덮어씁니다.")
+        lay.addWidget(self._chk_force_wp0)
+
+        block_row = QHBoxLayout()
+        block_row.setContentsMargins(0, 0, 0, 0)
+        block_row.setSpacing(8)
+        self._block_checks: dict[int, QCheckBox] = {}
+        for aid, label in (
+            (4, "무인기 1 차단"),
+            (5, "무인기 2 차단"),
+            (6, "무인기 3 차단"),
+        ):
+            chk = QCheckBox(label, self)
+            block_row.addWidget(chk)
+            self._block_checks[aid] = chk
+        block_row.addStretch(1)
+        lay.addLayout(block_row)
+
         # 0402 행
         row2 = QWidget(self); r2 = QHBoxLayout(row2); r2.setContentsMargins(0,0,0,0); r2.setSpacing(8)
         self._lamp_0402 = QLabel(row2); self._set_lamp(self._lamp_0402, False)
@@ -496,6 +516,23 @@ class _MissionSidePanel(QGroupBox):
         self.btn_0202 = QPushButton("0202 선행임무정보 보내기", self.grp_manual); manual_layout.addWidget(self.btn_0202)
         self.btn_0801 = QPushButton("0801 임무재계획 명령 보내기", self.grp_manual); manual_layout.addWidget(self.btn_0801)
         self.btn_0802 = QPushButton("0802 강제명령 보내기", self.grp_manual); manual_layout.addWidget(self.btn_0802)
+        self.cmb_0702_option = QComboBox(self.grp_manual)
+        self.cmb_0702_option.setEnabled(False)
+        manual_layout.addWidget(self.cmb_0702_option)
+        self.cmb_0702_ignore = QComboBox(self.grp_manual)
+        self.cmb_0702_ignore.addItem("ignore=0 (자동선택 없음)", 0)
+        self.cmb_0702_ignore.addItem("ignore=1 (기존 임무 유지)", 1)
+        self.cmb_0702_ignore.addItem("ignore=2 (신규 임무 선택)", 2)
+        self.cmb_0702_ignore.setCurrentIndex(2)
+        self.cmb_0702_ignore.setEnabled(False)
+        manual_layout.addWidget(self.cmb_0702_ignore)
+        self.chk_0702_auto = QCheckBox("autoExecution", self.grp_manual)
+        self.chk_0702_auto.setChecked(False)
+        self.chk_0702_auto.setEnabled(False)
+        manual_layout.addWidget(self.chk_0702_auto)
+        self.btn_0702 = QPushButton("0702 의사결정 결과 보내기", self.grp_manual)
+        self.btn_0702.setEnabled(False)
+        manual_layout.addWidget(self.btn_0702)
         lay.addWidget(self.grp_manual)
 
         # 시작 버튼
@@ -543,6 +580,70 @@ class _MissionSidePanel(QGroupBox):
 
     def use_mission_overlay(self) -> bool:
         return bool(self._chk_use_mission.isChecked())
+
+    def force_wp_zero(self) -> bool:
+        try:
+            return bool(self._chk_force_wp0.isChecked())
+        except Exception:
+            return False
+
+    def blocked_uav_ids(self) -> set[int]:
+        try:
+            return {
+                aid for aid, chk in self._block_checks.items() if chk.isChecked()
+            }
+        except Exception:
+            return set()
+
+    def update_decision_options(self, options: list[dict]) -> None:
+        self.cmb_0702_option.clear()
+        if not options:
+            self.cmb_0702_option.setEnabled(False)
+            self.cmb_0702_ignore.setEnabled(False)
+            self.chk_0702_auto.setEnabled(False)
+            self.btn_0702.setEnabled(False)
+            return
+
+        for opt in options:
+            if not isinstance(opt, dict):
+                continue
+            option_id = opt.get("optionID")
+            mission_plan_id = opt.get("missionPlanID")
+            label = f"Option {option_id} → Plan {mission_plan_id}"
+            self.cmb_0702_option.addItem(label, mission_plan_id)
+
+        if self.cmb_0702_option.count() > 0:
+            self.cmb_0702_option.setCurrentIndex(0)
+            self.cmb_0702_ignore.setCurrentIndex(2)
+            self.chk_0702_auto.setChecked(False)
+            self.cmb_0702_ignore.setEnabled(True)
+            self.chk_0702_auto.setEnabled(True)
+            self.cmb_0702_option.setEnabled(True)
+            self.btn_0702.setEnabled(True)
+        else:
+            self.cmb_0702_option.setEnabled(False)
+            self.cmb_0702_ignore.setEnabled(False)
+            self.chk_0702_auto.setEnabled(False)
+            self.btn_0702.setEnabled(False)
+
+    def selected_decision_plan_id(self) -> int | None:
+        data = self.cmb_0702_option.currentData()
+        if data is None:
+            return None
+        try:
+            return int(data)
+        except (TypeError, ValueError):
+            return None
+
+    def selected_decision_ignore(self) -> int:
+        data = self.cmb_0702_ignore.currentData()
+        try:
+            return int(data)
+        except (TypeError, ValueError):
+            return 0
+
+    def decision_auto_execution(self) -> bool:
+        return bool(self.chk_0702_auto.isChecked())
 
     def set_extra_buttons_enabled(self, enabled: bool):
         try:
@@ -1203,6 +1304,9 @@ class _ReplayManager(QObject):
 
     def _emit_message(self, msg_id: str, body: dict, row: int):
         if msg_id == "0401":
+            if self._side.force_wp_zero():
+                self._force_wp_zero(body)
+            self._apply_uav_blocks(body)
             try:
                 for aid, lat, lon, typ in self._iter_agent_states(body):
                     self._tracker._map.set_pos(aid, lat, lon, typ)
@@ -1236,6 +1340,69 @@ class _ReplayManager(QObject):
         except Exception as exc:
             if callable(self._log):
                 self._log(f"[REPLAY] 0803 push 실패: {exc}")
+
+    def _match_key(self, container: dict, target: str):
+        if not isinstance(container, dict):
+            return None, None
+        target_lower = target.lower()
+        for key, value in container.items():
+            if isinstance(key, str) and key.lower() == target_lower:
+                return key, value
+        return None, None
+
+    def _force_wp_zero(self, body: dict) -> None:
+        if not isinstance(body, dict):
+            return
+
+        _, agent_states = self._match_key(body, "agentStateList")
+        if not isinstance(agent_states, list):
+            return
+
+        for agent in agent_states:
+            if not isinstance(agent, dict):
+                continue
+            _, unmanned_info = self._match_key(agent, "unmannedInfo")
+            if not isinstance(unmanned_info, dict):
+                continue
+            key_cwp, current_wp = self._match_key(unmanned_info, "currentWaypointID")
+            if key_cwp is None or not isinstance(current_wp, dict):
+                unmanned_info["currentWaypointID"] = {"waypointID": 0}
+                continue
+            key_wp, _ = self._match_key(current_wp, "waypointID")
+            if key_wp is None:
+                current_wp["waypointID"] = 0
+            else:
+                current_wp[key_wp] = 0
+
+    def _apply_uav_blocks(self, body: dict) -> None:
+        blocked = self._side.blocked_uav_ids()
+        if not blocked or not isinstance(body, dict):
+            return
+
+        key_list, agent_states = self._match_key(body, "agentStateList")
+        if key_list is None or not isinstance(agent_states, list):
+            return
+
+        filtered = [
+            agent
+            for agent in agent_states
+            if not self._is_agent_blocked(agent, blocked)
+        ]
+
+        body[key_list] = filtered
+
+    def _is_agent_blocked(self, agent: dict, blocked: set[int]) -> bool:
+        if not isinstance(agent, dict):
+            return False
+        _, value = self._match_key(agent, "aircraftID")
+        if value is None:
+            _, value = self._match_key(agent, "agentID")
+        if value is None and "aircraftID" in agent:
+            value = agent.get("aircraftID")
+        try:
+            return int(value) in blocked
+        except (TypeError, ValueError):
+            return False
 
     def _schedule_next_overlay_row(self, initial: bool = False):
         if self._awaiting_user:
@@ -1386,6 +1553,13 @@ class MainWindow(QMainWindow):
         self._side.btn_0202.clicked.connect(self._act_send_0202)
         self._side.btn_0801.clicked.connect(self._act_send_0801)
         self._side.btn_0802.clicked.connect(self._act_send_0802)
+        self._side.btn_0702.clicked.connect(self._act_send_0702)
+        self._latest_decision_options: list[dict] = []
+        self._last_selected_plan_id: int | None = None
+        try:
+            register_listener("0701", self._on_receive_0701)
+        except Exception:
+            self._append_log_line("[WARN] register_listener(0701) 실패")
 
         # (우측) 기존 상단/탭을 세로 배치
         right = QWidget(); v = QVBoxLayout(right); v.setContentsMargins(0,0,0,0)
@@ -1640,6 +1814,54 @@ class MainWindow(QMainWindow):
             push_message(msg_id, NodeMessenger, on_done=_on_done, body_dict=body)
         except Exception as exc:
             self._append_log_line(f"[SEND] {msg_id} 실패: {exc}")
+
+    def _on_receive_0701(self, msg_id: str, payload: object) -> None:
+        option_list: list[dict] = []
+        if isinstance(payload, dict):
+            raw_list = payload.get("optionList") or []
+            if isinstance(raw_list, list):
+                option_list = [opt for opt in raw_list if isinstance(opt, dict)]
+
+        self._latest_decision_options = option_list
+        self._side.update_decision_options(option_list)
+
+        if option_list:
+            plan_ids = [opt.get("missionPlanID") for opt in option_list if isinstance(opt, dict)]
+            self._append_log_line(f"[0701] 옵션 {len(option_list)}건 수신: {plan_ids}")
+        else:
+            self._append_log_line("[0701] 옵션 정보가 비어 있어 버튼을 비활성화합니다.")
+
+    def _act_send_0702(self):
+        if not self._latest_decision_options:
+            QMessageBox.warning(self, "0702", "최근 수신한 옵션 정보가 없습니다.")
+            return
+
+        ignore_value = self._side.selected_decision_ignore()
+        selected_plan_id = self._side.selected_decision_plan_id()
+
+        if ignore_value == 2:
+            if selected_plan_id is None:
+                QMessageBox.warning(self, "0702", "선택된 옵션이 없습니다.")
+                return
+            mission_plan_id = int(selected_plan_id)
+            self._last_selected_plan_id = mission_plan_id
+        elif ignore_value == 1:
+            if self._last_selected_plan_id is None:
+                QMessageBox.warning(self, "0702", "기존 임무 계획 ID를 찾을 수 없습니다.")
+                return
+            mission_plan_id = int(self._last_selected_plan_id)
+        else:
+            mission_plan_id = int(selected_plan_id or 0)
+
+        ts = self._sim_now()
+        body = {
+            "timestamp": ts,
+            "source": "MOB",
+            "autoExecution": bool(self._side.decision_auto_execution()),
+            "ignore": int(ignore_value),
+            "missionPlanID": mission_plan_id,
+        }
+        self._send_and_mark("0702", body)
 
     def _act_send_0202(self):
         dlg = _Dlg0202_PriorMissionInfo(self, default_source="DSC")

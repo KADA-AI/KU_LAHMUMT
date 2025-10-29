@@ -779,7 +779,31 @@ class MonitoringLogic:
         package_id = self._to_int(self._safe_get(data, "inputMissionPackageID"))
         timestamp = self._to_int(self._safe_get(data, "timestamp", "Timestamp"))
         self._latest_input_plan_key = (package_id, timestamp)
-        if self._collab_replan_pending:
+
+        system_mode = self.manager.logic_store.get_data("SystemMode")
+        if system_mode in (3, 4):
+            trigger_ts = timestamp if timestamp is not None else self._current_time_ms()
+            prev = self._collab_replan_trigger or {}
+            self._collab_replan_trigger = {
+                "command_timestamp": trigger_ts,
+                "source": prev.get("source") or "MonitoringModule",
+                "replanLevel": self._to_int(prev.get("replanLevel")) or 3,
+                "reason": "rx_0201 (new input mission)",
+            }
+            self._collab_replan_pending = True
+            self._collab_replan_inflight = False  # allow immediate dispatch even if previous replan existed
+            self._collab_last_replan_key = None
+            try:
+                self.manager.logic_store.set_data(
+                    "collab_replan_trigger", dict(self._collab_replan_trigger)
+                )
+            except Exception:
+                pass
+            self.manager._log(
+                "MON_LOGIC",
+                "INFO",
+                "[COLLAB] mission-mode 0201 received; dispatching collaborative replan.",
+            )
             self._maybe_stage_replan(reason="rx_0201")
 
     def _register_collab_replan_trigger(self, data: Any) -> None:
@@ -823,6 +847,7 @@ class MonitoringLogic:
             self._collab_replan_inflight = False
             self._exit_collab_reexecute_mode(reason=f"cancel({reason})")
         self._collab_replan_trigger = None
+        self._collab_last_replan_key = None
         try:
             self.manager.logic_store.set_data(
                 "collab_replan_state",
@@ -836,8 +861,15 @@ class MonitoringLogic:
             pass
 
     def _maybe_stage_replan(self, reason: str) -> None:
-        if not self._collab_replan_pending or self._collab_replan_inflight:
+        if not self._collab_replan_pending:
             return
+        if self._collab_replan_inflight:
+            self.manager._log(
+                "MON_LOGIC",
+                "INFO",
+                "[COLLAB] overriding in-flight replan with new request.",
+            )
+            self._collab_replan_inflight = False
         system_mode = self.manager.logic_store.get_data("SystemMode")
         if system_mode not in (3, 4):
             return
@@ -899,7 +931,11 @@ class MonitoringLogic:
         except (TypeError, ValueError):
             replan_level = 3
         source = trigger.get("source") or "MonitoringModule"
-        reason_text = "협업기저임무 재수행"
+        trigger_desc = str(trigger.get("reason") or "")
+        if "rx_0201" in trigger_desc:
+            reason_text = "협업기저임무 편집으로 인한 재계획"
+        else:
+            reason_text = "협업기저임무 재수행"
         replan_body = ReplanRequestBodyModel(
             source=source,
             timestamp=timestamp,
@@ -1032,6 +1068,8 @@ class MonitoringLogic:
         self._collab_replan_inflight = False
         self._collab_replan_pending = False
         self._collab_replan_trigger = None
+        self._collab_last_replan_key = None
+
         self._exit_collab_reexecute_mode(reason="0305 status=2")
         if self._collab_pause_active:
             self._deactivate_collab_pause(reason="replan completed")

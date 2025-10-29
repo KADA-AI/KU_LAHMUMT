@@ -135,6 +135,9 @@ def run_monitoring_procedure(
         elif current_wp in waypoint_map:
             current_idx, current_pos = waypoint_map[current_wp]
 
+        # Waypoint ID 0은 특정 운용 모드에서 "미진입" 상태로 사용되므로 진행률을 0으로 강제.
+        force_zero_progress = current_wp == 0
+
         if current_wp == 0:
             mission_to_check: Optional[Dict[str, Any]] = None
             if current_idx is not None and 0 <= current_idx < len(missions):
@@ -175,6 +178,9 @@ def run_monitoring_procedure(
                 else:
                     progress = int(round((current_pos + 1) * 100 / total_waypoints))
             else:
+                progress = 0
+
+            if force_zero_progress:
                 progress = 0
 
             if (

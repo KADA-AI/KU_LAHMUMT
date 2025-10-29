@@ -12,7 +12,7 @@ from push_center import push_message
 
 
 class ManageInfo(CSCTabBase):
-    TITLE = "Info Management CSC"
+    TITLE = "데이터 상태 정보"
 
     # Message definitions (0000 ~ 0904)
     PUSH_MESSAGES = [

@@ -1,0 +1,58 @@
+{
+  "timestamp": 815064369295,
+  "Source": "MMR",
+  "pathID": 100000027,
+  "aircraftID": 1,
+  "lahWaypointList": [
+    {
+      "waypointID": 183,
+      "coordinate": {
+        "latitude": 37.869144,
+        "longitude": 128.21759,
+        "altitude": 300
+      },
+      "speed": 40.0,
+      "eta": 0,
+      "ecf": 0.0,
+      "nextWaypointID": 184,
+      "hovering": {
+        "time": 0
+      },
+      "loiter": {
+        "radius": 0,
+        "direction": 0,
+        "time": 0,
+        "speed": 0
+      },
+      "attack": {
+        "targetID": 0,
+        "weaponType": 0
+      }
+    },
+    {
+      "waypointID": 184,
+      "coordinate": {
+        "latitude": 37.790607,
+        "longitude": 128.17487,
+        "altitude": 300
+      },
+      "speed": 40.0,
+      "eta": 237264,
+      "ecf": 1.0,
+      "nextWaypointID": 0,
+      "hovering": {
+        "time": 0
+      },
+      "loiter": {
+        "radius": 0,
+        "direction": 0,
+        "time": 0,
+        "speed": 0
+      },
+      "attack": {
+        "targetID": 0,
+        "weaponType": 0
+      }
+    }
+  ]
+}

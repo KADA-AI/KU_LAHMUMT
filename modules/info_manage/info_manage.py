@@ -131,7 +131,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.setWindowTitle('정보관리(INF)')
+        self.setWindowTitle('데이터 상태 정보')
         self.resize(1100, 700)
 
         # 파워/상태
@@ -150,7 +150,7 @@ class MainWindow(QMainWindow):
 
         self._install_power_gate_hooks()  # Power OFF 가드
         self._install_mon_wires()         # ★ 모니터링 전송 훅
-        tabs.addTab(self._tab, "정보관리 CSC")
+        tabs.addTab(self._tab, "데이터 상태 정보")
 
         # ───── 상단 슬라이더 바 ─────
         top = QWidget()

@@ -143,7 +143,6 @@ class MainWindow(QMainWindow):
         self.auto_toggle = None
         self.btn_auto_boot = None
         self.btn_module_shutdown = None
-        self.btn_info_module = None
         self.btn_integration_module = None
         self.btn_overwrite_020x = None
         self.btn_sw_notes = None
@@ -675,12 +674,6 @@ class MainWindow(QMainWindow):
             self.btn_module_shutdown.clicked.connect(self._handle_module_shutdown)
             body.addWidget(self.btn_module_shutdown)
 
-            self.btn_info_module = QPushButton("정보관리모듈 실행", placeholder)
-            self.btn_info_module.setObjectName("BtnInfoModule")
-            self.btn_info_module.setMinimumHeight(34)
-            self.btn_info_module.clicked.connect(lambda: self._launch_role("info"))
-            body.addWidget(self.btn_info_module)
-
             self.btn_integration_module = QPushButton("연동모듈 실행", placeholder)
             self.btn_integration_module.setObjectName("BtnIntegrationModule")
             self.btn_integration_module.setMinimumHeight(34)
@@ -846,7 +839,7 @@ class MainWindow(QMainWindow):
         self._debug_log('auto boot triggered')
         self._log_to_modules('[AUTO] boot sequence started')
 
-        for role in ("mission", "monitor", "decision"):
+        for role in ("mission", "monitor", "decision", "info"):
             self._log_to_module(role, '[AUTO] module launch requested')
             try:
                 self._debug_log(f'launching role={role}')
