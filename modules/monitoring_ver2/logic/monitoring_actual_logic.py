@@ -135,6 +135,22 @@ def run_monitoring_procedure(
         elif current_wp in waypoint_map:
             current_idx, current_pos = waypoint_map[current_wp]
 
+        if current_wp == 0:
+            mission_to_check: Optional[Dict[str, Any]] = None
+            if current_idx is not None and 0 <= current_idx < len(missions):
+                mission_to_check = missions[current_idx]
+            else:
+                for mission in missions:
+                    waypoints = mission.get("waypoints") or []
+                    if 0 in waypoints:
+                        mission_to_check = mission
+                        break
+            if mission_to_check is not None:
+                waypoints = mission_to_check.get("waypoints") or []
+                if waypoints and all(wp == 0 for wp in waypoints):
+                    current_idx = None
+                    current_pos = None
+
         progress_list: List[tuple[int, int, Optional[int]]] = []
         for idx, mission in enumerate(missions):
             mission_id = int(mission.get("individualMissionID") or 0)
@@ -159,6 +175,14 @@ def run_monitoring_procedure(
                 else:
                     progress = int(round((current_pos + 1) * 100 / total_waypoints))
             else:
+                progress = 0
+
+            if (
+                current_wp == 0
+                and progress >= 100
+                and (mission.get("waypoints") or [])
+                and all(wp == 0 for wp in mission.get("waypoints") or [])
+            ):
                 progress = 0
 
             progress = max(0, min(progress, 100))

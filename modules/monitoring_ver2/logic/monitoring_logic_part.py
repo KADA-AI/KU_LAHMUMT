@@ -103,6 +103,7 @@ class MonitoringLogic:
         self._pending_mission_plan_id: Optional[int] = None
         self._pending_decision_command: Optional[Tuple[Optional[int], Optional[int]]] = None
         self._current_input_mission_id: Optional[int] = None
+        self._prev_feul_state_text = ""
         try:
             self.manager.logic_store.set_data("collab_pause_active", False)
         except Exception:
@@ -641,68 +642,77 @@ class MonitoringLogic:
                         else:
                             fuel_percent = 0.0
 
-                        text = ""
+                        
+                        feul_state_text = ""
                         fuel_level = 0
+                        is_fuel_updated  = False
+                        
                         if fuel_percent <= 10.0:
-                            text = "red"
+                            feul_state_text = "red"
                             fuel_level = 2
                         elif fuel_percent <= 20.0:
-                            text = "yellow"
+                            feul_state_text = "yellow"
                             fuel_level = 1
                         else:
-                            text = "green"
+                            feul_state_text = "green"
 
-                        feul_data.append(
-                            {
-                                "id": agent_state.aircraftID,
-                                "warning": text,
-                                "fuelPercent": round(fuel_percent, 1),
-                                "fuelLiters": round(fuel_liters, 2),
-                            }
-                        )
+                        if self._prev_feul_state_text == feul_state_text:
+                            is_fuel_updated = True
+                        else:
+                            is_fuel_updated = False
 
-                        if fuel_level in (1, 2):
-                            warning_body = {
-                                "timestamp": int(
-                                    (
-                                        datetime.now(timezone.utc)
-                                        - datetime(2000, 1, 1, tzinfo=timezone.utc)
-                                    ).total_seconds()
-                                    * 1000
-                                ),
-                                "source": "MSM",
-                                "aircraftID": agent_state.aircraftID,
-                                "fuelLevel": fuel_level,
-                                "fuelPercent": round(fuel_percent, 1),
-                                "fuelLiters": round(fuel_liters, 2),
-                            }
-                            push_message(
-                                "0504",
-                                self.manager.node_messenger,
-                                body_dict=warning_body,
+                        if is_fuel_updated: 
+                            feul_data.append(
+                                {
+                                    "id": agent_state.aircraftID,
+                                    "warning": feul_state_text,
+                                    "fuelPercent": round(fuel_percent, 1),
+                                    "fuelLiters": round(fuel_liters, 2),
+                                }
                             )
-                            self.manager._log(
-                                "MON_LOGIC",
-                                "INFO",
-                                f"0504 fuel warning (UAV={agent_state.aircraftID}, level={text}, remaining={fuel_percent:.1f}%)",
-                            )
-                            try:
-                                self.manager.push_store.add_data("0504", warning_body)
-                            except Exception:
-                                pass
-                            try:
-                                udp_reporter.notify_tx("0504")
-                            except Exception:
-                                pass
-                            _inform_info_module("0504", warning_body)
-                            if self.manager.gui_update_callback:
+
+                            if fuel_level in (1, 2):
+                                warning_body = {
+                                    "timestamp": int(
+                                        (
+                                            datetime.now(timezone.utc)
+                                            - datetime(2000, 1, 1, tzinfo=timezone.utc)
+                                        ).total_seconds()
+                                        * 1000
+                                    ),
+                                    "source": "MSM",
+                                    "aircraftID": agent_state.aircraftID,
+                                    "fuelLevel": fuel_level,
+                                    "fuelPercent": round(fuel_percent, 1),
+                                    "fuelLiters": round(fuel_liters, 2),
+                                }
+                                push_message(
+                                    "0504",
+                                    self.manager.node_messenger,
+                                    body_dict=warning_body,
+                                )
+                                self.manager._log(
+                                    "MON_LOGIC",
+                                    "INFO",
+                                    f"0504 fuel warning (UAV={agent_state.aircraftID}, level={feul_state_text}, remaining={fuel_percent:.1f}%)",
+                                )
                                 try:
-                                    self.manager.gui_update_callback(
-                                        "logic", "0504", warning_body
-                                    )
+                                    self.manager.push_store.add_data("0504", warning_body)
                                 except Exception:
                                     pass
-                        prev_warnings[agent_state.aircraftID] = text
+                                try:
+                                    udp_reporter.notify_tx("0504")
+                                except Exception:
+                                    pass
+                                _inform_info_module("0504", warning_body)
+                                if self.manager.gui_update_callback:
+                                    try:
+                                        self.manager.gui_update_callback(
+                                            "logic", "0504", warning_body
+                                        )
+                                    except Exception:
+                                        pass
+                            prev_warnings[agent_state.aircraftID] = feul_state_text
 
                 self.manager.logic_store.set_data(
                     "fuel_warning_prev", prev_warnings
