@@ -4,6 +4,7 @@ import math
 from collections import OrderedDict
 from typing import List, Tuple                       # ★ 추가
 from .mission_helpers import now_ms_since_2000
+from .id_allocator import next_waypoint_id as _next_waypoint_id
 from UAV_missionPlanning import UAVMissionPlanner
 from Aisle_Sweep_CPP_shoot_plan import RectanglePath
 from .coord_transform import llh_to_xy, xy_to_llh
@@ -188,14 +189,19 @@ def _mk_filming(operation_mode: int = OPMODE_NONE,
     return fp
 
 class _WPAllocator:
-    def __init__(self, start: int = 1) -> None:
-        self._next = start
+    def __init__(self, start: int | None = None) -> None:
+        self._local_next = start
+        self._use_global = start is None
 
     def alloc(self) -> int:
-        if self._next > 65535:
+        if self._use_global:
+            return int(_next_waypoint_id())
+        if self._local_next is None:
+            raise RuntimeError("Waypoint allocator misconfigured (local start unset)")
+        if self._local_next > 65_535:
             raise RuntimeError("WaypointID pool exhausted")
-        wid = self._next
-        self._next += 1
+        wid = self._local_next
+        self._local_next += 1
         return wid
 
 def _index_refpoints(ref0203: dict | None):

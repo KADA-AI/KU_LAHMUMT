@@ -20,6 +20,7 @@ BASE = {
     },
     "waypoint": 1,             # 필요한 경우
 }
+VOLATILE_KEYS = {"waypoint"}
 
 def _load() -> dict:
     """
@@ -75,8 +76,26 @@ def _save(state: dict) -> None:
     raise PermissionError(f"id_tracker write failed after retries: {_STORE}")
 _state = _load()              # {key: last_used}
 
+for _volatile_key in list(VOLATILE_KEYS):
+    if _volatile_key in _state:
+        try:
+            del _state[_volatile_key]
+            _save(_state)
+        except Exception:
+            pass
+
+_volatile_counters = {key: BASE[key] - 1 for key in VOLATILE_KEYS}
+
 def _next(key: str, inc: int = 1, subkey=None) -> int:
     with _LOCK:
+        if key in VOLATILE_KEYS:
+            if subkey is not None:
+                raise ValueError(f"volatile key '{key}' does not support subkey allocation")
+            cur = _volatile_counters.get(key, BASE[key] - 1)
+            cur += inc
+            _volatile_counters[key] = cur
+            return cur
+
         if subkey is None:
             cur = _state.get(key, BASE[key] - 1)
             cur += inc

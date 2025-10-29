@@ -97,6 +97,7 @@ class MonitoringLogic:
         self._collab_replan_trigger: Optional[Dict[str, Any]] = None
         self._collab_last_replan_key: Optional[Tuple[Optional[int], Optional[int]]] = None
         self._latest_input_plan_key: Optional[Tuple[Optional[int], Optional[int]]] = None
+        self._collab_reexecute_armed: bool = False
         self._used_option_ids: Set[int] = set()
         self._allocated_plan_ids: Set[int] = set()
         self._existing_mission_plan_ids: Set[int] = set()
@@ -770,6 +771,7 @@ class MonitoringLogic:
             self._register_collab_replan_trigger(data)
             self._maybe_stage_replan(reason="rx_0803")
         else:
+            self._collab_reexecute_armed = False
             self._deactivate_collab_pause(reason=f"execute={execute_val} command received")
             self._cancel_pending_replan(reason=f"execute={execute_val}")
             if execute_val == 1:
@@ -784,11 +786,15 @@ class MonitoringLogic:
         if system_mode in (3, 4):
             trigger_ts = timestamp if timestamp is not None else self._current_time_ms()
             prev = self._collab_replan_trigger or {}
+            prev_reason = str(prev.get("reason") or "")
+            reason_tag = "rx_0201 (new input mission)"
+            if self._collab_reexecute_armed or "execute=2" in prev_reason:
+                reason_tag = "rx_0201 (reexecute)"
             self._collab_replan_trigger = {
                 "command_timestamp": trigger_ts,
                 "source": prev.get("source") or "MonitoringModule",
                 "replanLevel": self._to_int(prev.get("replanLevel")) or 3,
-                "reason": "rx_0201 (new input mission)",
+                "reason": reason_tag,
             }
             self._collab_replan_pending = True
             self._collab_replan_inflight = False  # allow immediate dispatch even if previous replan existed
@@ -848,6 +854,7 @@ class MonitoringLogic:
             self._exit_collab_reexecute_mode(reason=f"cancel({reason})")
         self._collab_replan_trigger = None
         self._collab_last_replan_key = None
+        self._collab_reexecute_armed = False
         try:
             self.manager.logic_store.set_data(
                 "collab_replan_state",
@@ -892,6 +899,7 @@ class MonitoringLogic:
             self._collab_last_replan_key = current_key
             self._collab_replan_pending = False
             self._collab_replan_inflight = True
+            self._collab_reexecute_armed = False
             self._enter_collab_reexecute_mode(context.get("timestamp"))
         else:
             self.manager._log(
@@ -932,7 +940,9 @@ class MonitoringLogic:
             replan_level = 3
         source = trigger.get("source") or "MonitoringModule"
         trigger_desc = str(trigger.get("reason") or "")
-        if "rx_0201" in trigger_desc:
+        if "rx_0201 (reexecute)" in trigger_desc or "execute=2" in trigger_desc:
+            reason_text = "협업기저임무 재수행"
+        elif "rx_0201" in trigger_desc:
             reason_text = "협업기저임무 편집으로 인한 재계획"
         else:
             reason_text = "협업기저임무 재수행"
@@ -1071,6 +1081,7 @@ class MonitoringLogic:
         self._collab_last_replan_key = None
 
         self._exit_collab_reexecute_mode(reason="0305 status=2")
+        self._collab_reexecute_armed = False
         if self._collab_pause_active:
             self._deactivate_collab_pause(reason="replan completed")
         try:
@@ -1104,6 +1115,7 @@ class MonitoringLogic:
             )
             return
 
+        self._collab_reexecute_armed = True
         self._collab_pause_prev_suspended = self._monitoring_suspended
         self._monitoring_suspended = True
         self._collab_pause_active = True
@@ -1137,6 +1149,7 @@ class MonitoringLogic:
             return
         self._collab_pause_active = False
         self._monitoring_suspended = self._collab_pause_prev_suspended
+        self._collab_reexecute_armed = False
         self.manager._log(
             "MON_LOGIC",
             "INFO",
