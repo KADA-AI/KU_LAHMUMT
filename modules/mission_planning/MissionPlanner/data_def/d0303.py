@@ -2,6 +2,7 @@ from __future__ import annotations
 import os
 import math
 from collections import OrderedDict
+from copy import deepcopy
 from typing import List, Tuple                       # ★ 추가
 from .mission_helpers import now_ms_since_2000
 from .id_allocator import next_waypoint_id as _next_waypoint_id
@@ -30,6 +31,8 @@ Line  = Tuple[Point, Point]
 
 # ── 고정 상수 ───────────────────────────────────────────
 FOV_DEG         = 5.5
+SWEEP_ENTRY_OFFSET_M = 500.0
+SWEEP_MERGE_HEADING_DEG = 12.0
 
 SENSOR_NONE     = 0
 SENSOR_EO_IR    = 1        # 예) EO/IR 센서
@@ -565,9 +568,32 @@ def build_flight_plans(
         if not wps:
             continue
 
-        if len(wps) >= 2:
-            first_coord = wps[0].get("coordinate") or {}
-            second_coord = wps[1].get("coordinate") or {}
+        def _has_line_search(wp: OrderedDict) -> bool:
+            fp = wp.get("filmingProperty") or {}
+            ls = fp.get("lineSearch") or {}
+            coords = ls.get("coordinateList")
+            return isinstance(coords, list) and len(coords) >= 2
+
+        def _angle_between(v1: tuple[float, float], v2: tuple[float, float]) -> float:
+            n1 = math.hypot(v1[0], v1[1])
+            n2 = math.hypot(v2[0], v2[1])
+            if n1 < 1e-6 or n2 < 1e-6:
+                return 0.0
+            dot = max(-1.0, min(1.0, (v1[0] * v2[0] + v1[1] * v2[1]) / (n1 * n2)))
+            return math.degrees(math.acos(dot))
+
+        sweep_indices = [idx for idx, wp in enumerate(wps) if _has_line_search(wp)]
+
+        if len(sweep_indices) >= 2:
+            sweep_wps = [wps[idx] for idx in sweep_indices]
+
+            first_idx = sweep_indices[0]
+            second_idx = sweep_indices[1]
+            first_wp_obj = sweep_wps[0]
+            second_wp_obj = sweep_wps[1]
+
+            first_coord = first_wp_obj.get("coordinate") or {}
+            second_coord = second_wp_obj.get("coordinate") or {}
             lat0 = float(first_coord.get("latitude", 0.0))
             lon0 = float(first_coord.get("longitude", 0.0))
             lat1 = float(second_coord.get("latitude", lat0))
@@ -576,14 +602,14 @@ def build_flight_plans(
             norm = math.hypot(vec_x, vec_y)
             if norm >= 1.0:
                 ux, uy = vec_x / norm, vec_y / norm
-                entry_xy = (-ux * 500.0, -uy * 500.0)
+                entry_xy = (-ux * SWEEP_ENTRY_OFFSET_M, -uy * SWEEP_ENTRY_OFFSET_M)
                 entry_lat, entry_lon = xy_to_llh(entry_xy[0], entry_xy[1], lat0, lon0)
                 entry_coord = OrderedDict([
                     ("latitude", round(entry_lat, 6)),
                     ("longitude", round(entry_lon, 6)),
                     ("altitude", first_coord.get("altitude", 1200)),
                 ])
-                wps.insert(0, OrderedDict([
+                wps.insert(first_idx, OrderedDict([
                     ("waypointID", 0),
                     ("coordinate", entry_coord),
                     ("speed", cruise_speed),
@@ -599,6 +625,128 @@ def build_flight_plans(
                         gimbal_yaw=0.0,
                     )),
                 ]))
+
+            first_fp_orig = first_wp_obj.get("filmingProperty") or {}
+            first_ls_orig = first_fp_orig.get("lineSearch") or {}
+            first_segment_coords = deepcopy(first_ls_orig.get("coordinateList") or [])
+            first_search_speed = first_ls_orig.get("searchSpeed", SEARCH_SPEED)
+            first_fov = float(first_fp_orig.get("fieldOfView", FOV_DEG))
+
+            target_point = first_segment_coords[0] if first_segment_coords else first_coord
+            orient_fp = OrderedDict([
+                ("fieldOfView", first_fov),
+                ("sensorType", SENSOR_EO_IR),
+                ("operationMode", OPMODE_POINT),
+                ("coordinateOrientation", OrderedDict([
+                    ("coordinate", OrderedDict([
+                        ("latitude", float(target_point.get("latitude", 0.0))),
+                        ("longitude", float(target_point.get("longitude", 0.0))),
+                        ("altitude", 0),
+                    ]))
+                ])),
+            ])
+            first_wp_obj["filmingProperty"] = orient_fp
+
+            segments_data: list[dict] = []
+            if len(first_segment_coords) >= 2:
+                segments_data.append({
+                    "wp": None,
+                    "coord": first_coord,
+                    "segments": first_segment_coords,
+                    "searchSpeed": first_search_speed,
+                })
+
+            for wp in sweep_wps[1:]:
+                film = wp.get("filmingProperty") or {}
+                line_search = film.get("lineSearch") or {}
+                coord_list = deepcopy(line_search.get("coordinateList") or [])
+                if not coord_list:
+                    continue
+                segments_data.append({
+                    "wp": wp,
+                    "coord": wp.get("coordinate") or {},
+                    "segments": coord_list,
+                    "searchSpeed": line_search.get("searchSpeed", SEARCH_SPEED),
+                })
+
+            if len(segments_data) >= 2:
+                coords_xy = []
+                base_lat = float(segments_data[0]["coord"].get("latitude", 0.0))
+                base_lon = float(segments_data[0]["coord"].get("longitude", 0.0))
+                for item in segments_data:
+                    coord = item["coord"]
+                    coords_xy.append(llh_to_xy(
+                        float(coord.get("latitude", base_lat)),
+                        float(coord.get("longitude", base_lon)),
+                        base_lat,
+                        base_lon,
+                    ))
+
+                ranges: list[tuple[int, int]] = []
+                start = 0
+                prev_vec: tuple[float, float] | None = None
+                for idx_cur in range(1, len(segments_data)):
+                    vec = (
+                        coords_xy[idx_cur][0] - coords_xy[idx_cur - 1][0],
+                        coords_xy[idx_cur][1] - coords_xy[idx_cur - 1][1],
+                    )
+                    if prev_vec is None:
+                        prev_vec = vec
+                        continue
+                    if _angle_between(prev_vec, vec) > SWEEP_MERGE_HEADING_DEG:
+                        ranges.append((start, idx_cur - 1))
+                        start = idx_cur
+                        prev_vec = None
+                    else:
+                        prev_vec = vec
+                ranges.append((start, len(segments_data) - 1))
+
+                def _same_coord(a: dict, b: dict) -> bool:
+                    return (
+                        abs(float(a.get("latitude", 0.0)) - float(b.get("latitude", 0.0))) < 1e-7 and
+                        abs(float(a.get("longitude", 0.0)) - float(b.get("longitude", 0.0))) < 1e-7 and
+                        abs(float(a.get("altitude", 0.0)) - float(b.get("altitude", 0.0))) < 1e-3
+                    )
+
+                removal_ids: set[int] = set()
+                for start_idx, end_idx in ranges:
+                    actual_indices = [i for i in range(start_idx, end_idx + 1) if segments_data[i]["wp"] is not None]
+                    if not actual_indices:
+                        continue
+                    target_idx = actual_indices[-1]
+                    target_wp_obj = segments_data[target_idx]["wp"]
+                    combined_coords: list[OrderedDict] = []
+                    for idx_seg in range(start_idx, end_idx + 1):
+                        for coord in segments_data[idx_seg]["segments"]:
+                            coord_od = OrderedDict([
+                                ("latitude", float(coord.get("latitude", 0.0))),
+                                ("longitude", float(coord.get("longitude", 0.0))),
+                                ("altitude", coord.get("altitude", 0)),
+                            ])
+                            if combined_coords and _same_coord(combined_coords[-1], coord_od):
+                                continue
+                            combined_coords.append(coord_od)
+                    if len(combined_coords) < 2:
+                        continue
+
+                    target_fp = target_wp_obj.get("filmingProperty") or OrderedDict()
+                    line_search = target_fp.get("lineSearch")
+                    if not isinstance(line_search, OrderedDict):
+                        line_search = OrderedDict()
+                    line_search["coordinateList"] = combined_coords
+                    line_search["searchSpeed"] = segments_data[target_idx]["searchSpeed"]
+                    target_fp["lineSearch"] = line_search
+                    target_fp["sensorType"] = SENSOR_EO_IR
+                    target_fp["operationMode"] = OPMODE_LINE
+                    target_wp_obj["filmingProperty"] = target_fp
+
+                    for idx_seg in actual_indices:
+                        wp_ref = segments_data[idx_seg]["wp"]
+                        if wp_ref is not target_wp_obj:
+                            removal_ids.add(id(wp_ref))
+
+                if removal_ids:
+                    wps[:] = [wp for wp in wps if id(wp) not in removal_ids]
 
         for wp in wps:
             wp["waypointID"] = wp_alloc.alloc()
