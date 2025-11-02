@@ -270,10 +270,10 @@ class MonitoringCSCTab(QWidget):
                     status_item.setForeground(QColor("blue"))
                     status_item.setText(status_text)
             else:
-                status_text = "송신 완료"
+                status_text = "발신 완료"
                 status_item = self.tbl_tx.item(row, 2)
                 if status_item:
-                    status_item.setForeground(QColor("black"))
+                    status_item.setForeground(QColor("blue"))
                     status_item.setText(status_text)
         else:
             status_item = self.tbl_tx.item(row, 2)
@@ -337,15 +337,20 @@ class MonitoringCSCTab(QWidget):
         for msg_id, row in self.rx_row_map.items():
             data_obj = all_data.get(msg_id)
             dq = self.rx_history[msg_id]
+            item = self.tbl_rx.item(row, 2)
             if data_obj:
                 entry = self._serialize_obj(data_obj)
                 if not dq or dq[0] != entry:
                     dq.appendleft(entry)
                     self._append_rx_log(msg_id, entry)
                 status = self._format_status("수신 완료", entry.get("timestamp"))
-                self.tbl_rx.item(row, 2).setText(status)
+                if item:
+                    item.setText(status)
+                    item.setForeground(QColor("blue"))
             else:
-                self.tbl_rx.item(row, 2).setText("수신 전")
+                if item:
+                    item.setText("수신 전")
+                    item.setForeground(QColor("black"))
 
     def set_replan_context(self, context: Dict[str, Any] | None, body: Any | None = None) -> None:
         """Store the prepared 0902 context so it can be dispatched on demand."""

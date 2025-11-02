@@ -671,7 +671,15 @@ class CSCTabBase(QWidget):
     def _update_state(self, tbl: QTableWidget, msg_id: str, state: str):
         for r in range(tbl.rowCount()):
             if tbl.item(r, 0).text() == msg_id:
-                tbl.item(r, 2).setText(state)
+                item = tbl.item(r, 2)
+                if item is None:
+                    break
+                item.setText(state)
+                try:
+                    if "완료" in state:
+                        item.setForeground(QColor("blue"))
+                except Exception:
+                    pass
                 break
 
     def _write_log(self,

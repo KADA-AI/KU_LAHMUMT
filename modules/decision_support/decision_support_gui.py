@@ -655,27 +655,9 @@ class MainWindow(QMainWindow):
             self._append_log_line(f"[0901] 리스너 등록 실패: {e}")
 
     def _on_rx_0901(self, raw: bytes | None):
-        payload = self._decode_json_payload(raw)
-        if not isinstance(payload, dict):
-            self._append_log_line("[0901] payload decode 실패")
-            return
-        option_entries = []
-        for item in payload.get("pendingOptionList") or []:
-            if not isinstance(item, dict):
-                continue
-            try:
-                option_id = int(item.get("optionID"))
-                mission_plan_id = int(item.get("missionPlanID"))
-            except Exception:
-                continue
-            name = item.get("optionName")
-            option_entries.append({
-                "optionID": option_id,
-                "missionPlanID": mission_plan_id,
-                "optionName": str(name) if name is not None else f"option{option_id}",
-            })
+        option_entries = self._option_decoder.decode(raw)
         if not option_entries:
-            self._append_log_line("[0901] 옵션 목록이 비어 있어 0701 생성 생략")
+            self._append_log_line("[0901] payload decode 실패")
             return
         self._send_mon("rx", msg_id=_z4("0901"), optionCount=len(option_entries))
         self._latest_option_entries = option_entries
@@ -689,7 +671,7 @@ class MainWindow(QMainWindow):
     def _flush_pending_option_entries(self):
         if not self._pending_option_entries:
             return
-        if not self._bus_ready or not self._is_mission_execute_mode():
+        if not self._bus_ready:
             QTimer.singleShot(300, self._flush_pending_option_entries)
             return
         entries = list(self._pending_option_entries)
@@ -697,88 +679,44 @@ class MainWindow(QMainWindow):
         self._push_0701_from_entries(entries)
 
 
-    def _decode_json_payload(self, raw: bytes | None) -> dict | None:
-        if not raw:
-            return None
-        try:
-            text = raw.decode('utf-8', 'ignore')
-        except Exception:
-            return None
-        m = re.search(r"{.*}", text, flags=re.S)
-        target = m.group(0) if m else text.strip()
-        if not target:
-            return None
-        try:
-            return json.loads(target)
-        except Exception:
-            return None
-
     def _push_0701_from_entries(self, option_entries: list[dict]) -> None:
-        try:
-            from push_center import push_message
-        except Exception as e:
-            self._append_log_line(f"[0701] push unavailable: {e}")
-            return
-        templates = [
-            {"survivalRate": 0, "timeContraction": 0, "recogEffectiveness": 0},
-            {"survivalRate": -1, "timeContraction": 0, "recogEffectiveness": 1},
-            {"survivalRate": 0, "timeContraction": 1, "recogEffectiveness": -1},
-        ]
-        option_list = []
-        for idx, entry in enumerate(option_entries):
-            metrics = templates[idx] if idx < len(templates) else templates[-1]
-            option_list.append({
+        entries = [  # normalize copy to avoid mutating cached list
+            {
                 "optionID": int(entry["optionID"]),
-                "optionName": entry["optionName"],
                 "missionPlanID": int(entry["missionPlanID"]),
-                "survivalRate": int(metrics["survivalRate"]),
-                "timeContraction": int(metrics["timeContraction"]),
-                "recogEffectiveness": int(metrics["recogEffectiveness"]),
-                "distance": 50000,
-                "target": 0,
-            })
-        if not option_list:
-            self._append_log_line("[0701] optionList 비어 전송 생략")
+                "optionName": str(entry.get("optionName", f"option{entry['optionID']}")),
+            }
+            for entry in option_entries
+            if entry and "optionID" in entry and "missionPlanID" in entry
+        ]
+        if not entries:
+            self._append_log_line("[0701] option 목록이 비어 전송 생략")
             return
-        body = {
-            "timestamp": _now_ms_since_2000(),
-            "source": "MOB",
-            "autoExecution": False,
-            "optionList": option_list,
-        }
-        try:
-            info = db_paths.get_info()
-            scenario_dir = info.get("scenario_dir")
-            agency_code = info.get("agency") or os.environ.get("KU_AGENCY_CODE") or "SBC3"
-            if scenario_dir:
-                save_dir = Path(scenario_dir) / agency_code / "MissionPlanOptionInfo"
-                save_dir.mkdir(parents=True, exist_ok=True)
-            else:
-                save_dir = db_paths.ensure_db_payload("MissionPlanOptionInfo")
-
-            next_id = 1
+        body = self._option_builder.build_body(entries, source="MOB")
+        saved_path = self._option_builder.persist_body(body)
+        if saved_path is not None:
+            self._append_log_line(f"[0701] option info saved: {saved_path.name}")
+        else:
+            err = getattr(self._option_builder, "last_error", None)
+            detail = f"{err}" if err else "unknown reason"
+            self._append_log_line(f"[0701] option save skipped: {detail}")
+        ok = self._option_messenger.send(body)
+        if ok:
+            self._append_log_line(f"[0701] option info sent (count={len(body.get('optionList') or [])})")
             try:
-                existing = [
-                    int(p.stem)
-                    for p in save_dir.glob("*.json")
-                    if p.is_file() and p.stem.isdigit()
-                ]
-                if existing:
-                    next_id = max(existing) + 1
+                self._send_mon("tx", msg_id=_z4("0701"), optionCount=len(body.get("optionList") or []))
             except Exception:
                 pass
-
-            output_path = save_dir / f"{next_id}.json"
-            output_path.write_text(json.dumps(body, ensure_ascii=False, indent=2), encoding="utf-8")
-            self._append_log_line(f"[0701] option info saved: {output_path.name}")
-        except Exception as e:
-            self._append_log_line(f"[0701] file save failed: {e}")
-        try:
-            push_message("0701", NodeMessenger, body_dict=body)
-            self._append_log_line(f"[0701] option info sent (count={len(option_list)})")
-            self._send_mon("tx", msg_id=_z4("0701"), optionCount=len(option_list))
-        except Exception as e:
-            self._append_log_line(f"[0701] push failed: {e}")
+            try:
+                raw_bytes = json.dumps(body, ensure_ascii=False).encode("utf-8")
+                if getattr(self, "_tab", None) is not None:
+                    self._tab.mark_sent(_z4("0701"), raw_bytes)
+            except Exception:
+                pass
+        else:
+            err = getattr(self._option_messenger, "last_error", None)
+            detail = f"{err}" if err else "unknown reason"
+            self._append_log_line(f"[0701] push failed: {detail}")
 
     def _install_0101_mode_listener(self):
         """
