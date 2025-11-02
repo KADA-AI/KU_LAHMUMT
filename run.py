@@ -671,15 +671,12 @@ class DashboardOrchestrator(QObject):
         log_edit = None
         try:
             from PyQt5.QtWidgets import QPlainTextEdit, QTextEdit
+            # Only treat widgets explicitly tagged as logs to avoid dumping debug text in memo fields.
             for widget in win.findChildren((QPlainTextEdit, QTextEdit)):
                 name = (widget.objectName() or "").lower()
                 if "log" in name:
                     log_edit = widget
                     break
-            if log_edit is None:
-                widgets = win.findChildren((QPlainTextEdit, QTextEdit))
-                if widgets:
-                    log_edit = widgets[0]
         except Exception:
             pass
 
@@ -1258,11 +1255,13 @@ class DashboardOrchestrator(QObject):
             except Exception:
                 pass
 
-        # 최종 폴백: 콘솔
-        try:
-            print(text)
-        except Exception:
-            pass
+        # 최종 폴백: 콘솔(옵션) — 기본적으로는 터미널에 출력하지 않는다.
+        allow_console = os.getenv("KU_MON_CONSOLE_FALLBACK", "").strip().lower()
+        if allow_console in ("1", "true", "yes", "on"):
+            try:
+                print(text)
+            except Exception:
+                pass
 
 
 # ─────────────────────────────────────────────────────────────

@@ -35,7 +35,14 @@ qInstallMessageHandler(_qt_silent_handler)
 from modules.common.status_reporter import send_status_ok
 from modules.common.ctrl_listener import start_ctrl_listener, env_ctrl_port
 from modules.common import db_paths
-from receive_center import register_listener   # ★ 0101 모드 수신 리스너
+from receive_center import register_listener, unregister_listener   # ★ 0101 모드 수신 리스너
+from latest_input_cache import (
+    reset_latest_inputs,
+    update_from_payload as cache_update_from_payload,
+    get_latest_package_id,
+    describe_latest_ids,
+    resolve_path_from_cache,
+)
 
 _EPOCH2000_MS = 946_684_800_000
 def _now_ms_since_2000() -> int:
@@ -155,6 +162,11 @@ class MainWindow(QMainWindow):
         self._scheduled_0301_plan_ids: list[int] = []
         self._replan_delay_timer: QTimer | None = None
         self._option_id_counter = 0
+
+        reset_latest_inputs()
+        self._last_logged_input_ids = {"0201": None, "0203": None}
+        self._input_listener_refs: list[tuple[str, callable]] = []
+        self._install_input_listeners()
 
         # ── 중앙 탭(AssignmentPlanningTab)
         tabs = QTabWidget()
@@ -538,6 +550,47 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         self._ensure_0102(True)
+
+    # ───────── 최신 0201/0203 ID 트래킹 ─────────
+    def _install_input_listeners(self):
+        """0201/0203 수신 리스너를 등록하고 캐시를 유지한다."""
+        if getattr(self, "_input_listener_refs", None):
+            for msg_id, handler in self._input_listener_refs:
+                try:
+                    unregister_listener(msg_id, handler)
+                except Exception:
+                    pass
+            self._input_listener_refs.clear()
+        for msg_id, handler in (("0201", self._on_input_payload_0201), ("0203", self._on_input_payload_0203)):
+            try:
+                register_listener(msg_id, handler)
+                self._input_listener_refs.append((msg_id, handler))
+            except Exception:
+                self._append_log_line(f"[WARN] Listener registration failed for {msg_id}")
+
+    def _on_input_payload_0201(self, msg_id, payload):
+        self._handle_latest_input_payload(msg_id, payload)
+
+    def _on_input_payload_0203(self, msg_id, payload):
+        self._handle_latest_input_payload(msg_id, payload)
+
+    def _handle_latest_input_payload(self, msg_id: str, payload):
+        try:
+            prev = self._last_logged_input_ids.get(msg_id)
+        except Exception:
+            prev = None
+        cache_update_from_payload(msg_id, payload)
+        current = get_latest_package_id(msg_id)
+        if current is None or current == prev:
+            return
+        self._last_logged_input_ids[msg_id] = current
+        src = None
+        if isinstance(payload, dict):
+            src = payload.get("Source") or payload.get("source")
+        note = f"[INFO] Latest {msg_id} ID updated → {current}"
+        if src:
+            note += f" (source={src})"
+        self.log_sig.emit(note)
 
     # ───────── Power OFF 가드(발신/수신/카운트/우회 클릭 차단) ─────────
     def _install_power_gate_hooks(self):
@@ -1281,11 +1334,55 @@ class MainWindow(QMainWindow):
                         pass
                 return _pick_json(directory)
 
-            cmpk_path = _resolve_path(ctx.get('cmpk_path') or staged.get('cmpk_path'), dir_0201)
-            mrpk_path = _resolve_path(ctx.get('mrpk_path') or staged.get('mrpk_path'), dir_0203)
+            self.log_sig.emit(f"[INFO] Latest input snapshot → {describe_latest_ids()}")
+
+            latest_cmpk_id = get_latest_package_id("0201")
+            latest_mrpk_id = get_latest_package_id("0203")
+
+            cmpk_path = None
+            if latest_cmpk_id is not None:
+                candidate = dir_0201 / f"{latest_cmpk_id}.json"
+                if candidate.exists():
+                    cmpk_path = candidate
+                    ctx['inputMissionPackageID'] = latest_cmpk_id
+                    self.log_sig.emit(f"[STEP 0] Using latest 0201 ID {latest_cmpk_id} ({candidate.name})")
+                else:
+                    self.log_sig.emit(f"[WARN] Latest 0201 ID {latest_cmpk_id} not found at {candidate}; fallback will be used")
+            if cmpk_path is None:
+                fallback_cmpk = ctx.get('cmpk_path') or staged.get('cmpk_path')
+                cmpk_path = _resolve_path(fallback_cmpk, dir_0201)
+                if cmpk_path:
+                    try:
+                        ctx.setdefault('inputMissionPackageID', int(Path(cmpk_path).stem))
+                    except Exception:
+                        pass
+                    self.log_sig.emit(f"[INFO] Fallback 0201 file selected: {cmpk_path.name}")
+
+            mrpk_path = None
+            if latest_mrpk_id is not None:
+                candidate = dir_0203 / f"{latest_mrpk_id}.json"
+                if candidate.exists():
+                    mrpk_path = candidate
+                    ctx['missionReferencePackageID'] = latest_mrpk_id
+                    self.log_sig.emit(f"[STEP 0] Using latest 0203 ID {latest_mrpk_id} ({candidate.name})")
+                else:
+                    self.log_sig.emit(f"[WARN] Latest 0203 ID {latest_mrpk_id} not found at {candidate}; fallback will be used")
+            if mrpk_path is None:
+                fallback_mrpk = ctx.get('mrpk_path') or staged.get('mrpk_path')
+                mrpk_path = _resolve_path(fallback_mrpk, dir_0203)
+                if mrpk_path:
+                    try:
+                        ctx.setdefault('missionReferencePackageID', int(Path(mrpk_path).stem))
+                    except Exception:
+                        pass
+                    self.log_sig.emit(f"[INFO] Fallback 0203 file selected: {mrpk_path.name}")
+
             if not cmpk_path or not mrpk_path:
                 self.log_sig.emit('[ERR] Replan pipeline aborted: missing 0201/0203 input')
                 return
+
+            ctx['cmpk_path'] = str(cmpk_path)
+            ctx['mrpk_path'] = str(mrpk_path)
 
             plan_ids_source = ctx.get('plan_ids') or staged.get('plan_ids') or []
             plan_ids: list[int | None] = []
@@ -1486,6 +1583,15 @@ class MainWindow(QMainWindow):
             self.log_sig.emit(f"[ERR] Replan pipeline failed: {exc}")
         finally:
             self._initplan_running = False
+
+    def closeEvent(self, event):
+        try:
+            for msg_id, handler in getattr(self, "_input_listener_refs", []):
+                unregister_listener(msg_id, handler)
+        except Exception:
+            pass
+        super().closeEvent(event)
+
     def _schedule_plan_delivery(self, plan_ids, option_names, reason):
         self._pending_plan_push = {
             "plan_ids":     list(plan_ids or []),
