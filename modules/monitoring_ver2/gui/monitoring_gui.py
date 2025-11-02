@@ -17,7 +17,7 @@ from PyQt5.QtWidgets import (
 # 분리된 탭들을 임포트
 from .tabs.MonitoringTab import MonitoringTab
 from .tabs.ReplanTab import ReplanTab
-from .tabs.DummyTab import DummyTab
+from .tabs.MonitoringCSCTab import MonitoringCSCTab
 from .tabs.SystemModeControlTab import SystemModeControlTab
 
 
@@ -29,8 +29,8 @@ class MainWindow(QMainWindow):
 
     def __init__(self, manager):
         super().__init__()
-        self.setWindowTitle("임무 모니터링·판단 GUI (Refactored)")
-        self.resize(800, 800)  # 높이 늘림
+        self.setWindowTitle('임무 모니터링·판단 (MSM)')
+        self.resize(1100, 700)  # 높이 늘림
         self.manager = manager
 
         # 탭 위젯 생성 및 설정
@@ -40,12 +40,12 @@ class MainWindow(QMainWindow):
         # 각 탭 인스턴스 생성
         self.monitoring_tab = MonitoringTab(manager=self.manager)
         self.replan_tab = ReplanTab(manager=self.manager)
-        self.dummy_tab = DummyTab(manager=self.manager)
+        self.csc_tab = MonitoringCSCTab(manager=self.manager)
 
         # 탭 위젯에 탭 추가
-        self.tabs.addTab(self.monitoring_tab, "모니터링")
+        self.tabs.addTab(self.csc_tab, "모니터링 CSC")
+        self.tabs.addTab(self.monitoring_tab, "모니터링 요약")
         self.tabs.addTab(self.replan_tab, "재계획 판단")
-        self.tabs.addTab(self.dummy_tab, "더미")
 
         # --- 로그 창 추가 ---
         self.log_dock = QDockWidget("로그", self)
@@ -56,8 +56,8 @@ class MainWindow(QMainWindow):
 
         # 업데이트 유형에 따라 처리할 탭들을 리스트로 매핑합니다.
         self.update_handlers = {
-            "receive": [self.monitoring_tab, self.replan_tab, self.dummy_tab],
-            "logic": [self.monitoring_tab, self.replan_tab, self.dummy_tab],
+            "receive": [self.monitoring_tab, self.replan_tab, self.csc_tab],
+            "logic": [self.monitoring_tab, self.replan_tab, self.csc_tab],
         }
 
         # 시그널-슬롯 연결

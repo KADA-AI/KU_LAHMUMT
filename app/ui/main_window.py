@@ -610,17 +610,6 @@ class MainWindow(QMainWindow):
 
         elif role == "monitor":
             candidates = [
-                root / "modules" / "monitoring" / "monitoring_gui.py",
-                root / "app"     / "modules" / "monitoring" / "monitoring_gui.py",
-                root / "modules" / "decision_support" / "monitoring_gui.py",
-                root / "modules" / "decision_support" / "monitoritng_gui.py",
-                root / "app"     / "modules" / "decision_support" / "monitoring_gui.py",
-                root / "app"     / "modules" / "decision_support" / "monitoritng_gui.py",
-            ]
-            target_log = self.module_monitor
-
-        elif role == "monitor_v2":
-            candidates = [
                 root / "modules" / "monitoring_ver2" / "test_monitoring.py",
                 root / "app"     / "modules" / "monitoring_ver2" / "test_monitoring.py",
             ]
