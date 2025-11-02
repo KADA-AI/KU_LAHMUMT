@@ -565,6 +565,41 @@ def build_flight_plans(
         if not wps:
             continue
 
+        if len(wps) >= 2:
+            first_coord = wps[0].get("coordinate") or {}
+            second_coord = wps[1].get("coordinate") or {}
+            lat0 = float(first_coord.get("latitude", 0.0))
+            lon0 = float(first_coord.get("longitude", 0.0))
+            lat1 = float(second_coord.get("latitude", lat0))
+            lon1 = float(second_coord.get("longitude", lon0))
+            vec_x, vec_y = llh_to_xy(lat1, lon1, lat0, lon0)
+            norm = math.hypot(vec_x, vec_y)
+            if norm >= 1.0:
+                ux, uy = vec_x / norm, vec_y / norm
+                entry_xy = (-ux * 500.0, -uy * 500.0)
+                entry_lat, entry_lon = xy_to_llh(entry_xy[0], entry_xy[1], lat0, lon0)
+                entry_coord = OrderedDict([
+                    ("latitude", round(entry_lat, 6)),
+                    ("longitude", round(entry_lon, 6)),
+                    ("altitude", first_coord.get("altitude", 1200)),
+                ])
+                wps.insert(0, OrderedDict([
+                    ("waypointID", 0),
+                    ("coordinate", entry_coord),
+                    ("speed", cruise_speed),
+                    ("eta", 0),
+                    ("ecf", 0.0),
+                    ("nextWaypointID", 0),
+                    ("waypointPassType", PASS_FLYBY),
+                    ("filmingProperty", _mk_filming(
+                        operation_mode=OPMODE_HOLD,
+                        fov=10.0,
+                        sensor=SENSOR_EO_IR,
+                        gimbal_pitch=-90.0,
+                        gimbal_yaw=0.0,
+                    )),
+                ]))
+
         for wp in wps:
             wp["waypointID"] = wp_alloc.alloc()
 
