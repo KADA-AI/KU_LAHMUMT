@@ -230,6 +230,153 @@ class RelationshipCache:
         matches = [pkg_id for pkg_id, pkg in self.packages.items() if input_id in pkg["missions"]]
         return matches if len(matches) == 1 else []
 
+    def filter_scope(self, scope: Optional[Dict[str, Set[int]]]) -> None:
+        if not scope:
+            return
+
+        packages_scope = scope.get("packages")
+        plans_scope = scope.get("plans")
+        imps_scope = scope.get("individual_packages")
+        path_scope = scope.get("paths")
+
+        def _resolve_allowed(current_keys: Iterable[int], requested: Optional[Set[int]]) -> Set[int]:
+            current_set = set(current_keys)
+            if requested is None:
+                return current_set
+            return current_set & set(requested)
+
+        allowed_packages = _resolve_allowed(self.packages.keys(), packages_scope)
+        allowed_plans = _resolve_allowed(self.mission_plans.keys(), plans_scope)
+        allowed_imps = _resolve_allowed(self.individual_packages.keys(), imps_scope)
+
+        # Filter packages
+        self.packages = {pkg_id: data for pkg_id, data in self.packages.items() if pkg_id in allowed_packages}
+
+        # Filter package->plans mapping
+        filtered_pkg_to_plans = defaultdict(list)
+        for pkg_id, plans in self.package_to_plans.items():
+            if pkg_id not in allowed_packages:
+                continue
+            filtered = [pid for pid in plans if pid in allowed_plans]
+            if filtered:
+                filtered_pkg_to_plans[pkg_id] = filtered
+        self.package_to_plans = filtered_pkg_to_plans
+
+        # Filter mission plans and ensure package relationship
+        filtered_mission_plans: Dict[int, Dict[str, Any]] = {}
+        for plan_id, mp in self.mission_plans.items():
+            if plan_id not in allowed_plans:
+                continue
+            pkg_id = mp.get("package_id")
+            if pkg_id is not None and allowed_packages and pkg_id not in allowed_packages:
+                continue
+            filtered_mission_plans[plan_id] = mp
+        self.mission_plans = filtered_mission_plans
+        allowed_plans = set(self.mission_plans.keys())
+        for pkg_id in list(self.package_to_plans.keys()):
+            plans = [pid for pid in self.package_to_plans[pkg_id] if pid in allowed_plans]
+            self.package_to_plans[pkg_id] = plans
+
+        # Filter plan -> individual mapping
+        filtered_plan_to_imp: Dict[int, List[Dict[str, Optional[int]]]] = {}
+        for plan_id, items in self.plan_to_individual_packages.items():
+            if plan_id not in allowed_plans:
+                continue
+            filtered_items = []
+            for item in items:
+                imp_id = item.get("package_id")
+                if imps_scope is not None and imp_id is not None and imp_id not in allowed_imps:
+                    continue
+                filtered_items.append(item)
+            if filtered_items:
+                filtered_plan_to_imp[plan_id] = filtered_items
+        self.plan_to_individual_packages = filtered_plan_to_imp
+
+        # Individual package associations
+        filtered_imp_to_plans = defaultdict(set)
+        for imp_id, plans in self.individual_package_to_plans.items():
+            if imps_scope is not None and imp_id not in allowed_imps:
+                continue
+            filtered = {pid for pid in plans if pid in allowed_plans}
+            if filtered:
+                filtered_imp_to_plans[imp_id] = filtered
+        self.individual_package_to_plans = filtered_imp_to_plans
+
+        filtered_imp_to_packages = defaultdict(set)
+        for imp_id, pkgs in self.individual_package_to_packages.items():
+            if imps_scope is not None and imp_id not in allowed_imps:
+                continue
+            filtered = {pkg for pkg in pkgs if pkg in allowed_packages}
+            filtered_imp_to_packages[imp_id] = filtered
+        self.individual_package_to_packages = filtered_imp_to_packages
+
+        # Determine allowed individual packages after relationship pruning
+        if allowed_imps:
+            allowed_imps = {imp_id for imp_id in allowed_imps if imp_id in self.individual_package_to_plans}
+        else:
+            allowed_imps = set(self.individual_package_to_plans.keys())
+
+        self.individual_packages = {
+            imp_id: data for imp_id, data in self.individual_packages.items() if imp_id in allowed_imps
+        }
+
+        # Filter input_to_individuals
+        filtered_input_to_inds = defaultdict(list)
+        for (pkg_id, input_id), entries in self.input_to_individuals.items():
+            if packages_scope is not None and pkg_id not in allowed_packages:
+                continue
+            filtered_entries = [
+                entry for entry in entries
+                if (not allowed_imps or entry.get("package_id") in allowed_imps)
+                and (not allowed_plans or not entry.get("plan_ids") or any(pid in allowed_plans for pid in entry.get("plan_ids", [])))
+            ]
+            if filtered_entries:
+                filtered_input_to_inds[(pkg_id, input_id)] = filtered_entries
+        self.input_to_individuals = filtered_input_to_inds
+
+        # Filter individual entries
+        filtered_individual_entries: Dict[int, Dict[str, Any]] = {}
+        for ind_id, entry in self.individual_entries.items():
+            imp_id = entry.get("package_id")
+            pkg_ids = entry.get("input_packages") or []
+            plan_ids = entry.get("plan_ids") or []
+            if imps_scope is not None and imp_id not in allowed_imps:
+                continue
+            if packages_scope is not None and pkg_ids and not any(pkg in allowed_packages for pkg in pkg_ids):
+                continue
+            if plans_scope is not None and plan_ids and not any(pid in allowed_plans for pid in plan_ids):
+                continue
+            filtered_individual_entries[ind_id] = entry
+        self.individual_entries = filtered_individual_entries
+
+        # Filter path entries
+        if path_scope is not None:
+            allowed_paths = set(path_scope)
+        else:
+            allowed_paths = {
+                path_id
+                for path_id, entries in self.path_entries.items()
+                for entry in entries
+                if entry.get("package_id") in self.individual_packages
+            }
+
+        filtered_paths = defaultdict(list)
+        for path_id, entries in self.path_entries.items():
+            if path_id not in allowed_paths:
+                continue
+            filtered_entries = [
+                entry for entry in entries
+                if entry.get("package_id") in self.individual_packages
+                and (
+                    not allowed_plans
+                    or not entry.get("plan_ids")
+                    or any(pid in allowed_plans for pid in entry.get("plan_ids", []))
+                )
+            ]
+            if filtered_entries:
+                filtered_paths[path_id] = filtered_entries
+        self.path_entries = filtered_paths
+
     # Query helpers -------------------------------------------------------
     def get_package_ids(self) -> List[int]:
         return sorted(self.packages.keys())
@@ -323,6 +470,7 @@ class IdRelationshipTab(QWidget):
         super().__init__(parent)
         self.db_root = Path(db_paths.bootstrap_db_root())
         self.cache = RelationshipCache(self.db_root)
+        self._session_scope: Optional[Dict[str, Set[int]]] = None
         self._selected_package_id: Optional[int] = None
         self._selected_input_id: Optional[int] = None
         self._selected_plan_id: Optional[int] = None
@@ -336,6 +484,11 @@ class IdRelationshipTab(QWidget):
         self._pending_path_id: Optional[int] = None
         self._last_refresh: Optional[datetime] = None
         self._current_entries_base: List[Dict[str, Any]] = []
+        self._input_status = {
+            "0201": None,
+            "0203": None,
+            "plan": "임무계획 전",
+        }
 
         self._build_ui()
         self.refresh()
@@ -351,6 +504,10 @@ class IdRelationshipTab(QWidget):
         self.summary_label = QLabel("")
         self.summary_label.setStyleSheet("font-weight:600;")
         header.addWidget(self.summary_label, 1)
+
+        self.scope_label = QLabel("0201: 미수신 | 0203: 미수신 | Plan: 임무계획 전")
+        self.scope_label.setStyleSheet("color:#246;")
+        header.addWidget(self.scope_label, 1)
 
         self.selection_label = QLabel("No selection")
         self.selection_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
@@ -426,6 +583,7 @@ class IdRelationshipTab(QWidget):
         prev_path = self._selected_path_id
 
         self.cache.refresh()
+        self.cache.filter_scope(self._session_scope)
         self._last_refresh = datetime.now()
 
         self._selected_package_id = None
@@ -462,6 +620,7 @@ class IdRelationshipTab(QWidget):
         if self._last_refresh:
             summary.append(f"Updated: {self._last_refresh.strftime('%H:%M:%S')}")
         self.summary_label.setText(" | ".join(summary))
+        self._update_status_label()
 
         self._update_selection_label()
         self._set_detail(None, None)
@@ -504,6 +663,8 @@ class IdRelationshipTab(QWidget):
             if self._pending_input_id is not None:
                 self._select_list_row(self.input_list, (package_id, self._pending_input_id))
                 self._pending_input_id = None
+            elif self.input_list.count():
+                self._auto_select_first(self.input_list)
 
     def _populate_plan_list(self, package_id: Optional[int]) -> None:
         with _SignalBlocker(self.plan_list):
@@ -521,6 +682,8 @@ class IdRelationshipTab(QWidget):
             if self._pending_plan_id is not None:
                 self._select_list_row(self.plan_list, self._pending_plan_id)
                 self._pending_plan_id = None
+            elif self.plan_list.count():
+                self._auto_select_first(self.plan_list)
 
     def _populate_individual_package_list(self, plan_id: Optional[int]) -> None:
         with _SignalBlocker(self.individual_package_list):
@@ -829,6 +992,39 @@ class IdRelationshipTab(QWidget):
         self._set_detail(f"Individual Mission {entry.get('individual_id')}", "\n".join(text_lines))
         self._update_selection_label()
 
+    # Session scope/status ----------------------------------------------
+    def update_session_scope(self, scope: Optional[Dict[str, Set[int]]]) -> None:
+        if scope is None:
+            self._session_scope = None
+        else:
+            self._session_scope = {
+                "packages": set(scope.get("packages", set())),
+                "plans": set(scope.get("plans", set())),
+                "individual_packages": set(scope.get("individual_packages", set())),
+                "paths": set(scope.get("paths", set())),
+            }
+        self.refresh()
+
+    def update_input_status(self, *, cmpk_id: Optional[int] = None, mrpk_id: Optional[int] = None, plan_state: Optional[str] = None) -> None:
+        if cmpk_id is not None:
+            self._input_status["0201"] = cmpk_id
+        if mrpk_id is not None:
+            self._input_status["0203"] = mrpk_id
+        if plan_state is not None:
+            self._input_status["plan"] = plan_state
+        self._update_status_label()
+
+    def _update_status_label(self) -> None:
+        parts = []
+        cmpk = self._input_status.get("0201")
+        mrpk = self._input_status.get("0203")
+        plan = self._input_status.get("plan") or "임무계획 전"
+        parts.append(f"0201: {cmpk if cmpk is not None else '미수신'}")
+        parts.append(f"0203: {mrpk if mrpk is not None else '미수신'}")
+        parts.append(f"Plan: {plan}")
+        if hasattr(self, "scope_label"):
+            self.scope_label.setText(" | ".join(parts))
+
     # Detail helpers ------------------------------------------------------
     def _set_detail(self, title: Optional[str], body: Optional[str]) -> None:
         self.detail_title.setText(title or "")
@@ -904,3 +1100,7 @@ class IdRelationshipTab(QWidget):
     def _auto_select_first(self, widget: QListWidget) -> None:
         if widget.count():
             widget.setCurrentRow(0)
+
+
+
+

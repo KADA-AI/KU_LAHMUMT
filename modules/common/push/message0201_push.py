@@ -244,21 +244,21 @@ def make_random_and_push(node_messenger) -> bytes:
         # 0304(유인기 pathID)는 1/2/3 시작만 전송(기존 규칙 유지)
         needs_prefix = "123" if MSG_ID == "0304" else None
         ids = _list_numeric_ids(dbdir, needs_prefix)
-        logs = []
-        for vid in ids:
-            wl = TX_FIELD_WHITELIST.get(MSG_ID, [])
-            body = {
-                "timestamp": int((datetime.utcnow().replace(tzinfo=timezone.utc) - _EPOCH_2000).total_seconds() * 1000),
-                "Source": "DSC",
-            }
-            # ID 필드 결정
-            if "inputMissionPackageID" in wl:          body["inputMissionPackageID"] = vid
-            if "missionReferencePackageID" in wl:      body["missionReferencePackageID"] = vid
-            if "missionPlanID" in wl:                  body["missionPlanID"] = vid
-            if "individualMissionPackageID" in wl:     body["individualMissionPackageID"] = vid
-            if "pathID" in wl:                         body["pathID"] = vid
-            logs.append(make_and_push(body, node_messenger))
-        return b"\n".join(logs) if logs else b""
+        if not ids:
+            return b""
+        wl = TX_FIELD_WHITELIST.get(MSG_ID, [])
+        body = {
+            "timestamp": int((datetime.utcnow().replace(tzinfo=timezone.utc) - _EPOCH_2000).total_seconds() * 1000),
+            "Source": "DSC",
+        }
+        vid = ids[-1]
+        # ID 필드 결정
+        if "inputMissionPackageID" in wl:          body["inputMissionPackageID"] = vid
+        if "missionReferencePackageID" in wl:      body["missionReferencePackageID"] = vid
+        if "missionPlanID" in wl:                  body["missionPlanID"] = vid
+        if "individualMissionPackageID" in wl:     body["individualMissionPackageID"] = vid
+        if "pathID" in wl:                         body["pathID"] = vid
+        return make_and_push(body, node_messenger)
     else:
         # 비 DB 메시지는 제너레이터 → 필요 시 화이트리스트로 선별
         body = make_msg0201_body()
@@ -302,8 +302,9 @@ def _list_ids_0201() -> list:
     return sorted(ids)
 
 def make_from_db_and_push(node_messenger) -> bytes | None:
-    logs = []
-    for pid in _list_ids_0201():
-        body = {"timestamp": _now_ms_2000(), "inputMissionPackageID": pid}
-        logs.append(make_and_push(body, node_messenger))
-    return b"\n".join(logs) if logs else None
+    ids = _list_ids_0201()
+    if not ids:
+        return None
+    pid = ids[-1]
+    body = {"timestamp": _now_ms_2000(), "inputMissionPackageID": pid}
+    return make_and_push(body, node_messenger)

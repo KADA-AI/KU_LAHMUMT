@@ -288,27 +288,6 @@ def build_flight_plans(
     SEARCH_SPEED = round(cruise_speed * 2.8955, 2)
     ALT_M = 850.0
     DEG_M = 111_132
-    GROUP_K_BASE = 7
-    GROUP_K_MIN = 5
-    GROUP_K_MAX = 9
-
-    def _angle_diff_deg(a: float, b: float) -> float:
-        diff = (b - a + 180.0) % 360.0 - 180.0
-        return abs(diff)
-
-    def _pick_group_span(headings: list[float]) -> int:
-        if len(headings) <= 1:
-            return GROUP_K_BASE
-        diffs = [_angle_diff_deg(h1, h2) for h1, h2 in zip(headings, headings[1:])]
-        max_turn = max(diffs)
-        avg_turn = sum(diffs) / len(diffs)
-        if max_turn <= 6.0 and avg_turn <= 3.0:
-            return min(GROUP_K_MAX, GROUP_K_BASE * 2)
-        if max_turn >= 22.5 or avg_turn >= 12.0:
-            return GROUP_K_MIN
-        return GROUP_K_BASE
-
-
     # ── 마지막점용 POINT 촬영 블록 생성기 ─────────────────
     def _mk_point_filming_for_coord(coord: dict) -> OrderedDict:
         lat = float(coord.get("latitude", 0.0))
@@ -392,41 +371,18 @@ def build_flight_plans(
 
                 lat0, lon0 = lines[0][0]["latitude"], lines[0][0]["longitude"]
 
-                # ➊ 그룹화
-                lines_xy: list[tuple[tuple[float, float], tuple[float, float]]] = []
-                headings: list[float] = []
-                for ln in lines:
-                    s_lat, s_lon = ln[0]["latitude"], ln[0]["longitude"]
-                    e_lat, e_lon = ln[1]["latitude"], ln[1]["longitude"]
-                    s_xy = llh_to_xy(s_lat, s_lon, lat0, lon0)
-                    e_xy = llh_to_xy(e_lat, e_lon, lat0, lon0)
-                    lines_xy.append((s_xy, e_xy))
-                    headings.append(math.degrees(math.atan2(e_xy[1] - s_xy[1], e_xy[0] - s_xy[0])))
-
-                group_span = max(1, _pick_group_span(headings))
-                groups: list[dict] = []
-                for idx, ln in enumerate(lines):
-                    if idx % group_span == 0:
-                        groups.append({"segments": [], "segments_xy": []})
-                    groups[-1]["segments"].append(ln)
-                    groups[-1]["segments_xy"].append(lines_xy[idx])
-
-                # ??그룹??
                 last_off_xy: tuple[float, float] | None = None
-                for g in groups:
-                    segs = g["segments"]
-                    segs_xy = g["segments_xy"]
+                for idx, ln in enumerate(lines):
+                    s, e = ln
+                    s_xy = llh_to_xy(s['latitude'], s['longitude'], lat0, lon0)
+                    e_xy = llh_to_xy(e['latitude'], e['longitude'], lat0, lon0)
 
-                    s_xy, e_xy = segs_xy[0]
                     mid_xy = ((s_xy[0] + e_xy[0]) / 2, (s_xy[1] + e_xy[1]) / 2)
                     off_xy = (mid_xy[0] - ux_b * ALT_M, mid_xy[1] + uy_b * ALT_M)
                     last_off_xy = off_xy
                     off_lat, off_lon = xy_to_llh(*off_xy, lat0, lon0)
 
-                    coord_list = []
-                    for order, sw in enumerate(segs, 1):
-                        s, e = (sw[1], sw[0]) if order % 2 == 0 else sw
-                        coord_list.extend([s, e])
+                    sweep = [e, s] if idx % 2 else [s, e]
 
                     wplist.append(OrderedDict([
                         ("waypointID", 0),
@@ -440,7 +396,7 @@ def build_flight_plans(
                             operation_mode=OPMODE_LINE,
                             sensor=SENSOR_EO_IR,
                             line_search=OrderedDict([
-                                ("coordinateList", coord_list),
+                                ("coordinateList", sweep),
                                 ("searchSpeed", SEARCH_SPEED),
                             ]),
                         )),
@@ -492,35 +448,21 @@ def build_flight_plans(
                     fov_deg=10, cruise_speed=cruise_speed, crs="lla",
                 )
 
-                headings: list[float] = []
-                for sw in planner.sweeps:
-                    s_xy, e_xy = sw
-                    headings.append(math.degrees(math.atan2(e_xy[1] - s_xy[1], e_xy[0] - s_xy[0])))
-
-                group_span = max(1, _pick_group_span(headings))
-                groups: list[dict] = []
-                for idx, (pt, sw) in enumerate(zip(planner.orange_pts, planner.sweeps)):
-                    if idx % group_span == 0:
-                        groups.append({"anchor": pt, "segments": []})
-                    groups[-1]["segments"].append(sw)
-
                 last_anchor_xy: tuple[float, float] | None = None
-                first_line_xy: tuple[float, float] | None = None
-                for g in groups:
-                    anchor_xy = g["anchor"]
+                last_first_xy: tuple[float, float] | None = None
+                for idx, (anchor_xy, sw) in enumerate(zip(planner.orange_pts, planner.sweeps)):
                     w_lat, w_lon = planner._proj_back(anchor_xy[0], anchor_xy[1])[::-1]
 
-                    coord_list = []
-                    for order, sw in enumerate(g["segments"], 1):
-                        s_xy, e_xy = (sw[1], sw[0]) if order % 2 == 0 else sw
-                        s_lat, s_lon = planner._proj_back(s_xy[0], s_xy[1])[::-1]
-                        e_lat, e_lon = planner._proj_back(e_xy[0], e_xy[1])[::-1]
-                        coord_list.extend([
-                            {"latitude": s_lat, "longitude": s_lon, "altitude": 5},
-                            {"latitude": e_lat, "longitude": e_lon, "altitude": 5},
-                        ])
-                        if first_line_xy is None:
-                            first_line_xy = s_xy
+                    s_xy, e_xy = sw
+                    if idx % 2:
+                        s_xy, e_xy = e_xy, s_xy
+
+                    s_lat, s_lon = planner._proj_back(s_xy[0], s_xy[1])[::-1]
+                    e_lat, e_lon = planner._proj_back(e_xy[0], e_xy[1])[::-1]
+                    coord_list = [
+                        {"latitude": s_lat, "longitude": s_lon, "altitude": 5},
+                        {"latitude": e_lat, "longitude": e_lon, "altitude": 5},
+                    ]
 
                     wplist.append(OrderedDict([
                         ("waypointID", 0),
@@ -541,11 +483,10 @@ def build_flight_plans(
                     ]))
 
                     last_anchor_xy = anchor_xy
-                    first_line_xy = None
+                    last_first_xy = s_xy
 
-                if last_anchor_xy:
-                    s0_xy = groups[-1]["segments"][0][0]
-                    vx, vy = s0_xy[0] - last_anchor_xy[0], s0_xy[1] - last_anchor_xy[1]
+                if last_anchor_xy and last_first_xy:
+                    vx, vy = last_first_xy[0] - last_anchor_xy[0], last_first_xy[1] - last_anchor_xy[1]
                     vlen = math.hypot(vx, vy) or 1.0
                     ux_c, uy_c = vx / vlen, vy / vlen
                     end_xy = (last_anchor_xy[0] + ux_c * 300.0, last_anchor_xy[1] + uy_c * 300.0)

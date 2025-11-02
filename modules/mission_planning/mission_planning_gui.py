@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys, os, threading, json, re, time, shutil, socket
 os.environ["KU_ROLE"] = "mission"  # MMR
 from pathlib import Path
+from typing import Dict, Optional, Set
 
 _ROOT = Path(__file__).resolve().parents[2]  # .../KU_LAHMUMT
 for _p in (_ROOT, _ROOT / "modules", _ROOT / "modules" / "common"):
@@ -40,6 +41,7 @@ from latest_input_cache import (
     reset_latest_inputs,
     update_from_payload as cache_update_from_payload,
     get_latest_package_id,
+    get_latest_snapshot,
     describe_latest_ids,
     resolve_path_from_cache,
 )
@@ -161,6 +163,8 @@ class MainWindow(QMainWindow):
         self._pending_plan_push: dict | None = None
         self._scheduled_0301_plan_ids: list[int] = []
         self._replan_delay_timer: QTimer | None = None
+        self._session_scope = self._create_empty_scope()
+        self._plan_status = "임무계획 전"
         self._option_id_counter = 0
 
         reset_latest_inputs()
@@ -574,6 +578,50 @@ class MainWindow(QMainWindow):
     def _on_input_payload_0203(self, msg_id, payload):
         self._handle_latest_input_payload(msg_id, payload)
 
+    def _create_empty_scope(self) -> Dict[str, Set[int]]:
+        return {
+            "packages": set(),
+            "plans": set(),
+            "individual_packages": set(),
+            "paths": set(),
+        }
+
+    def _reset_session_scope(self) -> None:
+        self._session_scope = self._create_empty_scope()
+
+    def _submit_id_tab_update(
+        self,
+        *,
+        scope: Optional[Dict[str, Set[int]]] = None,
+        cmpk_id: Optional[int] = None,
+        mrpk_id: Optional[int] = None,
+        plan_state: Optional[str] = None,
+    ) -> None:
+        tab = getattr(self, "_id_tab", None)
+        if tab is None:
+            return
+        scope_payload = None
+        if scope is not None:
+            scope_payload = {
+                "packages": set(scope.get("packages", set())),
+                "plans": set(scope.get("plans", set())),
+                "individual_packages": set(scope.get("individual_packages", set())),
+                "paths": set(scope.get("paths", set())),
+            }
+        def _apply() -> None:
+            if scope_payload is not None:
+                tab.update_session_scope(scope_payload)
+            tab.update_input_status(
+                cmpk_id=cmpk_id,
+                mrpk_id=mrpk_id,
+                plan_state=plan_state,
+            )
+        QTimer.singleShot(0, _apply)
+
+    def _set_plan_status(self, status: str) -> None:
+        self._plan_status = status
+        self._submit_id_tab_update(plan_state=status)
+
     def _handle_latest_input_payload(self, msg_id: str, payload):
         try:
             prev = self._last_logged_input_ids.get(msg_id)
@@ -582,6 +630,7 @@ class MainWindow(QMainWindow):
         cache_update_from_payload(msg_id, payload)
         current = get_latest_package_id(msg_id)
         if current is None or current == prev:
+            self._submit_id_tab_update(plan_state=self._plan_status)
             return
         self._last_logged_input_ids[msg_id] = current
         src = None
@@ -591,6 +640,22 @@ class MainWindow(QMainWindow):
         if src:
             note += f" (source={src})"
         self.log_sig.emit(note)
+
+        cmpk_update = current if msg_id == "0201" else None
+        mrpk_update = current if msg_id == "0203" else None
+        scope_update: Optional[Dict[str, Set[int]]] = None
+        if msg_id == "0201":
+            if current is not None:
+                self._reset_session_scope()
+                self._session_scope["packages"].add(int(current))
+            self._plan_status = "임무계획 전"
+            scope_update = self._session_scope
+        self._submit_id_tab_update(
+            scope=scope_update,
+            cmpk_id=cmpk_update,
+            mrpk_id=mrpk_update,
+            plan_state=self._plan_status,
+        )
 
     # ───────── Power OFF 가드(발신/수신/카운트/우회 클릭 차단) ─────────
     def _install_power_gate_hooks(self):
@@ -1271,6 +1336,9 @@ class MainWindow(QMainWindow):
 
             self.log_sig.emit(f"[STEP 0] Replan pipeline start (reason={reason})")
 
+            generated_imp_ids: Set[int] = set()
+            generated_path_ids: Set[int] = set()
+
             mp_pkg_dir = Path(PROJECT_ROOT) / 'modules' / 'mission_planning' / 'MissionPlanner'
             for p in (mp_pkg_dir, mp_pkg_dir.parent, Path(PROJECT_ROOT) / 'modules'):
                 p_str = str(p)
@@ -1340,6 +1408,7 @@ class MainWindow(QMainWindow):
             latest_mrpk_id = get_latest_package_id("0203")
 
             cmpk_path = None
+            cmpk_missing = False
             if latest_cmpk_id is not None:
                 candidate = dir_0201 / f"{latest_cmpk_id}.json"
                 if candidate.exists():
@@ -1347,7 +1416,28 @@ class MainWindow(QMainWindow):
                     ctx['inputMissionPackageID'] = latest_cmpk_id
                     self.log_sig.emit(f"[STEP 0] Using latest 0201 ID {latest_cmpk_id} ({candidate.name})")
                 else:
-                    self.log_sig.emit(f"[WARN] Latest 0201 ID {latest_cmpk_id} not found at {candidate}; fallback will be used")
+                    snap_0201 = get_latest_snapshot("0201")
+                    payload_0201 = getattr(snap_0201, "payload", None)
+                    if isinstance(payload_0201, dict) and (
+                        payload_0201.get("inputMissionList") or payload_0201.get("availableAircraftList")
+                    ):
+                        payload_copy = dict(payload_0201)
+                        payload_copy.setdefault("inputMissionPackageID", latest_cmpk_id)
+                        try:
+                            candidate.write_text(json.dumps(payload_copy, ensure_ascii=False, indent=2), encoding="utf-8")
+                            cmpk_path = candidate
+                            ctx['inputMissionPackageID'] = latest_cmpk_id
+                            self.log_sig.emit(f"[STEP 0] Materialized latest 0201 ID {latest_cmpk_id} from cache payload ({candidate.name})")
+                        except Exception as exc:
+                            self.log_sig.emit(f"[ERR] Failed to materialize latest 0201 ID {latest_cmpk_id}: {exc}")
+                            cmpk_missing = True
+                    else:
+                        self.log_sig.emit(f"[ERR] Latest 0201 ID {latest_cmpk_id} missing and cache payload unavailable")
+                        cmpk_missing = True
+            if cmpk_missing:
+                self._plan_status = "임무계획 실패"
+                self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
+                return
             if cmpk_path is None:
                 fallback_cmpk = ctx.get('cmpk_path') or staged.get('cmpk_path')
                 cmpk_path = _resolve_path(fallback_cmpk, dir_0201)
@@ -1359,6 +1449,7 @@ class MainWindow(QMainWindow):
                     self.log_sig.emit(f"[INFO] Fallback 0201 file selected: {cmpk_path.name}")
 
             mrpk_path = None
+            mrpk_missing = False
             if latest_mrpk_id is not None:
                 candidate = dir_0203 / f"{latest_mrpk_id}.json"
                 if candidate.exists():
@@ -1366,7 +1457,28 @@ class MainWindow(QMainWindow):
                     ctx['missionReferencePackageID'] = latest_mrpk_id
                     self.log_sig.emit(f"[STEP 0] Using latest 0203 ID {latest_mrpk_id} ({candidate.name})")
                 else:
-                    self.log_sig.emit(f"[WARN] Latest 0203 ID {latest_mrpk_id} not found at {candidate}; fallback will be used")
+                    snap_0203 = get_latest_snapshot("0203")
+                    payload_0203 = getattr(snap_0203, "payload", None)
+                    if isinstance(payload_0203, dict) and (
+                        payload_0203.get("takeOverInfoList") or payload_0203.get("flightAreaList") or payload_0203.get("handOverInfoList")
+                    ):
+                        payload_copy = dict(payload_0203)
+                        payload_copy.setdefault("missionReferencePackageID", latest_mrpk_id)
+                        try:
+                            candidate.write_text(json.dumps(payload_copy, ensure_ascii=False, indent=2), encoding="utf-8")
+                            mrpk_path = candidate
+                            ctx['missionReferencePackageID'] = latest_mrpk_id
+                            self.log_sig.emit(f"[STEP 0] Materialized latest 0203 ID {latest_mrpk_id} from cache payload ({candidate.name})")
+                        except Exception as exc:
+                            self.log_sig.emit(f"[ERR] Failed to materialize latest 0203 ID {latest_mrpk_id}: {exc}")
+                            mrpk_missing = True
+                    else:
+                        self.log_sig.emit(f"[ERR] Latest 0203 ID {latest_mrpk_id} missing and cache payload unavailable")
+                        mrpk_missing = True
+            if mrpk_missing:
+                self._plan_status = "임무계획 실패"
+                self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
+                return
             if mrpk_path is None:
                 fallback_mrpk = ctx.get('mrpk_path') or staged.get('mrpk_path')
                 mrpk_path = _resolve_path(fallback_mrpk, dir_0203)
@@ -1379,6 +1491,8 @@ class MainWindow(QMainWindow):
 
             if not cmpk_path or not mrpk_path:
                 self.log_sig.emit('[ERR] Replan pipeline aborted: missing 0201/0203 input')
+                self._plan_status = "임무계획 실패"
+                self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
                 return
 
             ctx['cmpk_path'] = str(cmpk_path)
@@ -1469,6 +1583,8 @@ class MainWindow(QMainWindow):
                 )
                 if not imp_paths:
                     self.log_sig.emit(f"[ERR] IMP generation failed (variant={variant_no})")
+                    self._plan_status = "임무계획 실패"
+                    self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
                     return
                 self.log_sig.emit(f"[OK] IMP generated: {len(imp_paths)} file(s) (variant={variant_no})")
 
@@ -1499,11 +1615,14 @@ class MainWindow(QMainWindow):
                         pid = int(next_path_id(aid))
                         im['pathID'] = pid
                         pid_map[(aid, mid)] = pid
+                        generated_path_ids.add(pid)
                     else:
                         imp_pid = _imp_path_id(im)
                         if imp_pid is not None:
-                            im['pathID'] = int(imp_pid)
-                            pid_map[(aid, mid)] = int(imp_pid)
+                            pid_val = int(imp_pid)
+                            im['pathID'] = pid_val
+                            pid_map[(aid, mid)] = pid_val
+                            generated_path_ids.add(pid_val)
                 self.log_sig.emit(f"[INFO] pathID mapping done for 0302/0303/0304 (variant={variant_no})")
 
                 manned = [im for im in missions if int(im.get('aircraftID', 0)) in (1, 2, 3)]
@@ -1511,6 +1630,14 @@ class MainWindow(QMainWindow):
                 wp_alloc = d0303._WPAllocator()
                 flight_plans_0303 = d0303.build_flight_plans(unmanned, wp_alloc, 40.0, turn_step_deg=15.0) if unmanned else []
                 flight_plans_0304 = d0304.build_lah_flight_plans_fixed(manned, cruise_speed=40.0, wp_alloc=wp_alloc) if manned else []
+
+                for fp in (flight_plans_0303 or []) + (flight_plans_0304 or []):
+                    pid_val = fp.get('pathID')
+                    if pid_val is not None:
+                        try:
+                            generated_path_ids.add(int(pid_val))
+                        except Exception:
+                            pass
 
                 fixed3 = _enforce_fp_path_ids(flight_plans_0303, pid_map)
                 fixed4 = _enforce_fp_path_ids(flight_plans_0304, pid_map)
@@ -1536,6 +1663,10 @@ class MainWindow(QMainWindow):
                     imp_id = pkg.get('individualMissionPackageID') or pkg.get('individualMissionPlanPackageID')
                     if imp_id is None:
                         continue
+                    try:
+                        generated_imp_ids.add(int(imp_id))
+                    except Exception:
+                        pass
                     (dir_imp / f"{int(imp_id)}.json").write_text(json.dumps(pkg, indent=2, ensure_ascii=False), encoding='utf-8')
                 total_imp_files += len(imp_pkgs)
 
@@ -1577,6 +1708,32 @@ class MainWindow(QMainWindow):
             ctx['option_names'] = option_names_out
             self._active_plan_context = ctx
 
+            try:
+                input_pkg_id_int = int(ctx.get('inputMissionPackageID'))
+            except Exception:
+                input_pkg_id_int = None
+            try:
+                ref_pkg_id_int = int(ctx.get('missionReferencePackageID'))
+            except Exception:
+                ref_pkg_id_int = None
+
+            plan_id_set = {int(pid) for pid in generated_plan_ids if pid is not None}
+            imp_id_set = {int(val) for val in generated_imp_ids if val is not None}
+            path_id_set = {int(val) for val in generated_path_ids if val is not None}
+
+            if input_pkg_id_int is not None:
+                self._session_scope['packages'].add(input_pkg_id_int)
+            self._session_scope['plans'].update(plan_id_set)
+            self._session_scope['individual_packages'].update(imp_id_set)
+            self._session_scope['paths'].update(path_id_set)
+            self._plan_status = "임무계획 완료"
+            self._submit_id_tab_update(
+                scope=self._session_scope,
+                cmpk_id=input_pkg_id_int,
+                mrpk_id=ref_pkg_id_int,
+                plan_state=self._plan_status,
+            )
+
             self._schedule_plan_delivery(generated_plan_ids, option_names_out, reason)
 
         except Exception as exc:
@@ -1613,5 +1770,3 @@ if __name__ == "__main__":
     win = MainWindow()
     win.show()
     sys.exit(app.exec_())
-
-
