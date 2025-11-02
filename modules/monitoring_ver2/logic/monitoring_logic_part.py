@@ -3,6 +3,7 @@
 from datetime import datetime, timezone
 from dataclasses import asdict
 
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 # --- ?곗씠??紐⑤뜽 import ---
@@ -103,6 +104,10 @@ class MonitoringLogic:
         self._pending_mission_plan_id: Optional[int] = None
         self._pending_decision_command: Optional[Tuple[Optional[int], Optional[int]]] = None
         self._current_input_mission_id: Optional[int] = None
+        self._input_mission_package_id: Optional[int] = None
+        self._input_mission_plan_path: Optional[Path] = None
+        self._input_mission_index_map: Dict[int, int] = {}
+        self._input_plan_lookup_failed: bool = False
         try:
             self.manager.logic_store.set_data("collab_pause_active", False)
         except Exception:
@@ -441,6 +446,25 @@ class MonitoringLogic:
         tracker: Dict[int, Dict[str, Set[Tuple[int, int, Optional[int], int]]]] = {}
         reverse_map: Dict[Tuple[int, int, Optional[int], int], int] = {}
         file_map: Dict[Tuple[int, int, Optional[int], int], Tuple[int, int, int]] = {}
+        self._input_mission_package_id = None
+        self._input_mission_plan_path = None
+        self._input_mission_index_map = {}
+        self._input_plan_lookup_failed = False
+        package_value = context.get("inputMissionPackageID")
+        if package_value is not None:
+            try:
+                self._input_mission_package_id = int(package_value)
+            except (TypeError, ValueError):
+                self._input_mission_package_id = None
+        if self._input_mission_package_id is not None:
+            try:
+                self._input_mission_plan_path = db_paths.get_db_subpath(
+                    "InputMissionPlan", f"{self._input_mission_package_id}.json"
+                )
+            except Exception:
+                self._input_mission_plan_path = None
+            else:
+                self._refresh_input_mission_index_map(force=True)
         for aircraft_id, payload in (context.get("aircraft") or {}).items():
             missions = payload.get("missions") or []
             try:
@@ -487,6 +511,66 @@ class MonitoringLogic:
         self._mission_file_map = file_map
         self._current_input_mission_id = None
         self._input_completion_notified = set()
+
+    def _refresh_input_mission_index_map(self, force: bool = False) -> Dict[int, int]:
+        if not force and self._input_mission_index_map:
+            return self._input_mission_index_map
+        mapping: Dict[int, int] = {}
+        path = self._input_mission_plan_path
+        if not path:
+            self._input_plan_lookup_failed = True
+            self._input_mission_index_map = mapping
+            return mapping
+        try:
+            with path.open("r", encoding="utf-8") as fh:
+                data = json.load(fh)
+        except FileNotFoundError:
+            if not self._input_plan_lookup_failed:
+                self.manager._log(
+                    "MON_LOGIC",
+                    "WARN",
+                    f"InputMissionPlan file missing (package={self._input_mission_package_id})",
+                )
+            self._input_plan_lookup_failed = True
+            self._input_mission_index_map = mapping
+            return mapping
+        except Exception as exc:
+            if not self._input_plan_lookup_failed:
+                self.manager._log(
+                    "MON_LOGIC",
+                    "WARN",
+                    f"InputMissionPlan load failed (package={self._input_mission_package_id}): {exc}",
+                )
+            self._input_plan_lookup_failed = True
+            self._input_mission_index_map = mapping
+            return mapping
+        mission_list = data.get("inputMissionList")
+        if isinstance(mission_list, list):
+            for idx, mission in enumerate(mission_list):
+                mission_id = mission.get("inputMissionID")
+                try:
+                    mission_id_int = int(mission_id)
+                except (TypeError, ValueError):
+                    continue
+                mapping[mission_id_int] = idx
+        self._input_plan_lookup_failed = False
+        self._input_mission_index_map = mapping
+        return mapping
+
+    def _resolve_mission_tracker_key(
+        self,
+        keys: Set[Tuple[int, int, Optional[int], int]],
+        target: Tuple[int, int, Optional[int], int],
+    ) -> Optional[Tuple[int, int, Optional[int], int]]:
+        if target in keys:
+            return target
+        for candidate in keys:
+            if candidate[:3] == target[:3]:
+                return candidate
+        for candidate in keys:
+            if candidate[0] == target[0] and candidate[1] == target[1]:
+                return candidate
+        return None
 
     def _update_plan_context_active_input(self) -> None:
         if self._plan_context is not None:
@@ -1121,10 +1205,10 @@ class MonitoringLogic:
                 mission_index = int(mission_index) if mission_index is not None else 0
             except (TypeError, ValueError):
                 mission_index = 0
-            key = (aircraft_id, mission_id, path_id, mission_index)
+            raw_key = (aircraft_id, mission_id, path_id, mission_index)
             input_id = entry.get("inputMissionID")
             if input_id is None:
-                input_id = self._mission_to_input.get(key)
+                input_id = self._mission_to_input.get(raw_key)
             if input_id is None:
                 continue
             try:
@@ -1132,8 +1216,18 @@ class MonitoringLogic:
             except (TypeError, ValueError):
                 continue
             tracker = self._input_mission_tracker.get(input_id)
-            if not tracker or key not in tracker.get("total", set()):
+            if not tracker:
                 continue
+            total_keys = tracker.get("total") or set()
+            key = raw_key
+            if key not in total_keys:
+                resolved = self._resolve_mission_tracker_key(total_keys, raw_key)
+                if resolved is None:
+                    continue
+                key = resolved
+                self._mission_to_input[raw_key] = input_id
+                if raw_key not in self._mission_file_map and key in self._mission_file_map:
+                    self._mission_file_map[raw_key] = self._mission_file_map[key]
             inactive_set = tracker.get("inactive")
             if inactive_set and key in inactive_set:
                 inactive_set.discard(key)
@@ -1204,6 +1298,7 @@ class MonitoringLogic:
                 pass
 
     def _notify_input_mission_completed(self, input_id: int) -> None:
+        self._mark_input_mission_done(input_id)
         if input_id in self._input_completion_notified:
             return
         self._input_completion_notified.add(input_id)
@@ -1412,6 +1507,53 @@ class MonitoringLogic:
         self._update_plan_context_active_input()
         self._send_0503_notification("All input missions completed")
 
+    def _mark_input_mission_done(self, input_id: Optional[int]) -> None:
+        if input_id is None:
+            return
+        try:
+            input_id_int = int(input_id)
+        except (TypeError, ValueError):
+            return
+        path = self._input_mission_plan_path
+        if not path:
+            return
+        index_map = self._refresh_input_mission_index_map()
+        index = index_map.get(input_id_int)
+        if index is None:
+            index_map = self._refresh_input_mission_index_map(force=True)
+            index = index_map.get(input_id_int)
+            if index is None:
+                return
+        try:
+            with path.open("r", encoding="utf-8") as fh:
+                data = json.load(fh)
+        except Exception as exc:
+            self.manager._log(
+                "MON_LOGIC",
+                "WARN",
+                f"InputMissionPlan reload failed (package={self._input_mission_package_id}, input={input_id_int}): {exc}",
+            )
+            return
+        mission_list = data.get("inputMissionList")
+        if not isinstance(mission_list, list):
+            return
+        if index < 0 or index >= len(mission_list):
+            return
+        mission_entry = mission_list[index]
+        if mission_entry.get("isDone") is True:
+            return
+        mission_entry["isDone"] = True
+        try:
+            path.write_text(
+                json.dumps(data, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except Exception as exc:
+            self.manager._log(
+                "MON_LOGIC",
+                "WARN",
+                f"InputMissionPlan write failed (package={self._input_mission_package_id}, input={input_id_int}): {exc}",
+            )
 
     def _mark_individual_mission_done(
         self, key: Tuple[int, int, Optional[int], int]
