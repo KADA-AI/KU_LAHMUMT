@@ -21,6 +21,7 @@ from data_def.id_allocator import (
 from typing import List, Dict, Tuple
 import math
 from shapely.geometry import LineString, Polygon, box
+from shapely.ops import linemerge
 from shapely.affinity import translate
 
 # ==== 외부 의존 모듈 경로 맞춰 주세요 ====
@@ -119,7 +120,27 @@ def divide_corridor_polyline(line_seg: dict, uav_cnt: int) -> list[dict]:
 
             center_ls = line_world.parallel_offset(
                 d_center, "left", join_style=2, mitre_limit=1.0)
-            cs_xy, ce_xy = np.array(center_ls.coords[0]), np.array(center_ls.coords[-1])
+
+            center_geom = center_ls
+            if center_geom.geom_type == "MultiLineString":
+                center_geom = linemerge(center_geom)
+            if center_geom.geom_type == "GeometryCollection":
+                lines = [g for g in center_geom.geoms if isinstance(g, LineString)]
+                center_geom = max(lines, key=lambda g: g.length) if lines else LineString()
+
+            if isinstance(center_geom, LineString) and not center_geom.is_empty:
+                center_xy = np.array(center_geom.coords)
+            else:
+                # fallback: use endpoints only
+                cs_xy = np.array(center_ls.coords[0])
+                ce_xy = np.array(center_ls.coords[-1])
+                center_xy = np.vstack([cs_xy, ce_xy])
+
+            if len(center_xy) >= 2:
+                dist_start = np.linalg.norm(center_xy[0] - xy[0])
+                dist_end   = np.linalg.norm(center_xy[-1] - xy[0])
+                if dist_start > dist_end:
+                    center_xy = center_xy[::-1]
 
         except Exception:   # vector too long 등
             # ── 2') 직사각형 fallback ─────────────────────────
@@ -136,8 +157,7 @@ def divide_corridor_polyline(line_seg: dict, uav_cnt: int) -> list[dict]:
                                    yoff = w[1] * offset_dist)
 
             poly   = strip_poly
-            cs_xy  = xy[0] + w * offset_dist
-            ce_xy  = xy[-1] + w * offset_dist
+            center_xy = np.array([pt + w * offset_dist for pt in xy])
 
         if poly.is_empty or len(poly.exterior.coords) < 4:
             raise ValueError(f"strip #{i+1} polygon empty after fallback")
@@ -146,14 +166,24 @@ def divide_corridor_polyline(line_seg: dict, uav_cnt: int) -> list[dict]:
         coord_llh = [{"latitude":  _xy2llh(x, y, lat0, lon0)[0],
                       "longitude": _xy2llh(x, y, lat0, lon0)[1],
                       "altitude":  coords_llh[0].get("altitude", 0)}
-                     for x, y in poly.exterior.coords[:-1]]
+                      for x, y in poly.exterior.coords[:-1]]
 
-        cs_llh = {"latitude":  _xy2llh(*cs_xy, lat0, lon0)[0],
-                  "longitude": _xy2llh(*cs_xy, lat0, lon0)[1],
-                  "altitude":  coords_llh[0].get("altitude", 0)}
-        ce_llh = {"latitude":  _xy2llh(*ce_xy, lat0, lon0)[0],
-                  "longitude": _xy2llh(*ce_xy, lat0, lon0)[1],
-                  "altitude":  coords_llh[-1].get("altitude", 0)}
+        center_llh = [{
+            "latitude":  _xy2llh(float(px), float(py), lat0, lon0)[0],
+            "longitude": _xy2llh(float(px), float(py), lat0, lon0)[1],
+            "altitude":  coords_llh[0].get("altitude", 0),
+        } for px, py in center_xy]
+        if not center_llh:
+            # fallback: use segment endpoints if something went wrong
+            cs_xy = xy[0]; ce_xy = xy[-1]
+            center_llh = [
+                {"latitude": _xy2llh(*cs_xy, lat0, lon0)[0],
+                 "longitude": _xy2llh(*cs_xy, lat0, lon0)[1],
+                 "altitude": coords_llh[0].get("altitude", 0)},
+                {"latitude": _xy2llh(*ce_xy, lat0, lon0)[0],
+                 "longitude": _xy2llh(*ce_xy, lat0, lon0)[1],
+                 "altitude": coords_llh[-1].get("altitude", 0)},
+            ]
 
         # ── 4) DEM 기반 고도 통계 ───────────────────────────
         mean_alt, var_alt = altitude_stats_llh(coord_llh)
@@ -161,7 +191,7 @@ def divide_corridor_polyline(line_seg: dict, uav_cnt: int) -> list[dict]:
         strips.append({
             "Geometry":        "Area",
             "width":           indiv_w,
-            "Centerline":      [cs_llh, ce_llh],
+            "Centerline":      center_llh,
             "coordinateList":  coord_llh,
             "meanAltitude":    mean_alt,
             "altitudeVariance":var_alt
