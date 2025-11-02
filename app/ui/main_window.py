@@ -17,8 +17,8 @@ from pathlib import Path
 from modules.common import db_paths
 
 APP_TITLE = "KU Mission Decision Support Dashboard (v251029)"
-SW_UPDATE_FILE = db_paths.PROJECT_ROOT / "SW_UPDATE_LOG.txt"
-SW_MEMO_FILE = db_paths.PROJECT_ROOT / "SW_MEMO_NOTE.txt"
+SW_UPDATE_FILE = db_paths.PROJECT_ROOT / "memo" / "SW_UPDATE_LOG.txt"
+SW_MEMO_FILE = db_paths.PROJECT_ROOT / "memo" / "SW_MEMO_NOTE.txt"
 REFERENCE_PDF_PATH = db_paths.PROJECT_ROOT / "ref" / "04. 모듈 간 인터페이스 설계-v7-20250917_133206.pdf"
 SW_DEFAULT_UPDATE_SAMPLE = """[예시 업데이트]
 - 2025-10-28: 모니터링 연료 경보 로직을 리터 → 퍼센트 변환으로 개선
