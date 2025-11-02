@@ -98,6 +98,10 @@ class MonitoringLogic:
         self._collab_replan_trigger: Optional[Dict[str, Any]] = None
         self._collab_last_replan_key: Optional[Tuple[Optional[int], Optional[int]]] = None
         self._latest_input_plan_key: Optional[Tuple[Optional[int], Optional[int]]] = None
+        self._collab_replan_required_input_key: Optional[
+            Tuple[Optional[int], Optional[int]]
+        ] = None
+        self._collab_replan_waiting_for_new_input_logged: bool = False
         self._used_option_ids: Set[int] = set()
         self._allocated_plan_ids: Set[int] = set()
         self._existing_mission_plan_ids: Set[int] = set()
@@ -870,6 +874,10 @@ class MonitoringLogic:
             "replanLevel": replan_level,
             "reason": reason_text,
         }
+        self._collab_replan_required_input_key = (
+            None if self._latest_input_plan_key is None else tuple(self._latest_input_plan_key)
+        )
+        self._collab_replan_waiting_for_new_input_logged = False
         self._collab_replan_pending = True
         self.manager._log(
             "MON_LOGIC",
@@ -891,6 +899,8 @@ class MonitoringLogic:
             self._collab_replan_inflight = False
             self._exit_collab_reexecute_mode(reason=f"cancel({reason})")
         self._collab_replan_trigger = None
+        self._collab_replan_required_input_key = None
+        self._collab_replan_waiting_for_new_input_logged = False
         try:
             self.manager.logic_store.set_data(
                 "collab_replan_state",
@@ -915,6 +925,19 @@ class MonitoringLogic:
         package_id = self._to_int(self._safe_get(input_plan, "inputMissionPackageID"))
         timestamp = self._to_int(self._safe_get(input_plan, "timestamp", "Timestamp"))
         current_key = (package_id, timestamp)
+        if (
+            self._collab_replan_required_input_key is not None
+            and current_key == self._collab_replan_required_input_key
+        ):
+            if not self._collab_replan_waiting_for_new_input_logged:
+                self.manager._log(
+                    "MON_LOGIC",
+                    "INFO",
+                    "[COLLAB] waiting for new 0201 input plan before dispatching replan.",
+                )
+                self._collab_replan_waiting_for_new_input_logged = True
+            return
+        self._collab_replan_waiting_for_new_input_logged = False
         self._latest_input_plan_key = current_key
         if current_key == self._collab_last_replan_key:
             return
@@ -926,6 +949,7 @@ class MonitoringLogic:
         success = self._dispatch_collab_replan(replan_body, context)
         if success:
             self._collab_last_replan_key = current_key
+            self._collab_replan_required_input_key = current_key
             self._collab_replan_pending = False
             self._collab_replan_inflight = True
             self._enter_collab_reexecute_mode(context.get("timestamp"))
