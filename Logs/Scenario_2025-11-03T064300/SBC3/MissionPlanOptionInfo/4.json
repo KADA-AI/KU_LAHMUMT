@@ -1,0 +1,37 @@
+{
+  "timestamp": 815435258337,
+  "source": "MOB",
+  "autoExecution": false,
+  "optionList": [
+    {
+      "optionID": 7,
+      "optionName": "시스템추천",
+      "missionPlanID": 700000017,
+      "survivalRate": 0,
+      "timeContraction": 0,
+      "recogEffectiveness": 0,
+      "distance": 50000,
+      "target": 0
+    },
+    {
+      "optionID": 8,
+      "optionName": "촬영효율우선",
+      "missionPlanID": 700000018,
+      "survivalRate": -1,
+      "timeContraction": 0,
+      "recogEffectiveness": 1,
+      "distance": 50000,
+      "target": 0
+    },
+    {
+      "optionID": 9,
+      "optionName": "비행효율우선",
+      "missionPlanID": 700000019,
+      "survivalRate": 0,
+      "timeContraction": 1,
+      "recogEffectiveness": -1,
+      "distance": 50000,
+      "target": 0
+    }
+  ]
+}
