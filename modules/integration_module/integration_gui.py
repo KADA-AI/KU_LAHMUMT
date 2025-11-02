@@ -1652,14 +1652,14 @@ class MainWindow(QMainWindow):
 
     # ───────── 모드/슬라이더 ─────────
     def _on_mode_slider_changed(self, val: int):
-        labels = ["전원 OFF", "전원 ON", "대기모드", "초기 임무 계획", "임무 수행"]
+        labels = ["전원 OFF", "초기화 모드", "대기모드", "초기 임무 계획", "임무 수행"]
         try: self.mode_now.setText(labels[int(val)])
         except Exception: pass
         self._power_on = (int(val) != 0)
         self._apply_power_state()
 
     def _set_mode_slider_by_text(self, text: str):
-        labels = ["전원 OFF", "전원 ON", "대기모드", "초기 임무 계획", "임무 수행"]
+        labels = ["전원 OFF", "초기화 모드", "대기모드", "초기 임무 계획", "임무 수행"]
         norm = re.sub(r"\s+", "", str(text)).lower()
         mapping = {
             "전원off":0,"off":0,"poweroff":0,"0":0,

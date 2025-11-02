@@ -9,7 +9,7 @@
 # - info             (modules/info_manage/info_manage.py)               → 46984  (KU_MON_INFO_PORT)
 #
 # ※ CTRL 브로드캐스트(송신)는 45981/45982/45983/45984 유지.
-#   본 파일의 46981~46984는 ‘모듈→대시보드(본 파일)’ 모니터링 수신용입니다.
+#   본 파일의 46981~46984는 ‘모듈→대시보드(본 파일)’ 모니터링 수 용입니다.
 
 from __future__ import annotations
 import os, sys, subprocess, threading
@@ -564,7 +564,7 @@ class DashboardOrchestrator(QObject):
     def _normalize_mode_text(self, text: str) -> str:
         t = "".join(str(text).split()).lower()
         if t in ("전원off", "off", "poweroff", "0"): return "전원 OFF"
-        if t in ("전원on",  "on",  "poweron",  "1"): return "전원 ON"
+        if t in ("전원on",  "on",  "poweron",  "1"): return "초기화 모드"
         if t in ("대기모드", "대기", "standby", "2"): return "대기모드"
         if t in ("초기임무계획", "초기임무계획모드", "initplan", "initial", "3", "초기임무계획모드진입"): return "초기임무계획"
         if t in ("임무수행", "execution", "4"): return "임무 수행"
@@ -593,6 +593,7 @@ class DashboardOrchestrator(QObject):
         self._set_mode_text_single(role, norm)
         self._safe_log(f"[MODE] {role} → {norm}")
         self._visualize_mode_change(role, norm)
+
 
     def _visualize_mode_change(self, role: str, text: str):
         flow = self.widgets.get("flow")
@@ -1093,9 +1094,9 @@ class DashboardOrchestrator(QObject):
     def _launch_all_guis(self):
         for sn in ("mission_planning_gui.py", "monitoring_gui.py", "decision_support_gui.py", "info_manage.py"):
             self._launch_gui(sn)
-        QTimer.singleShot(1000, lambda: self._set_mode_text_all("전원 ON"))
-        QTimer.singleShot(1000, lambda: self._broadcast_ctrl({"cmd": "mode", "text": "전원 ON"}))
-        QTimer.singleShot(1000, lambda: self._safe_log("모든 SW 전원 ON"))
+        QTimer.singleShot(1000, lambda: self._set_mode_text_all("초기화 모드"))
+        QTimer.singleShot(1000, lambda: self._broadcast_ctrl({"cmd": "mode", "text": "초기화 모드"}))
+        QTimer.singleShot(1000, lambda: self._safe_log("모든 SW 초기화 모드 진입"))
 
     def _launch_gui(self, script_name: str):
         import sys, os, subprocess

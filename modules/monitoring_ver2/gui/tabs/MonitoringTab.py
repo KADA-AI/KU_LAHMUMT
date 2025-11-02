@@ -13,6 +13,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtGui import QColor  # Import QColor
 from ..widgets.CircularProgressBar import CircularProgressBar
+from modules.monitoring_ver2.config import SYSTEM_MODE_OPTIONS
 
 
 class MonitoringTab(QWidget):
@@ -32,14 +33,8 @@ class MonitoringTab(QWidget):
         mode_layout = QFormLayout()
 
         self.system_mode_combo = QComboBox()
-        self.system_mode_combo.addItems(
-            [
-                "0: 초기화 모드",
-                "1: 대기 모드",
-                "2: 초기임무재계획 모드",
-                "3: 임무수행 모드",
-            ]
-        )
+        for value, label in SYSTEM_MODE_OPTIONS:
+            self.system_mode_combo.addItem(label, value)
         self.system_mode_combo.currentIndexChanged.connect(self.on_system_mode_changed)
         mode_layout.addRow(QLabel("현재 모드:"), self.system_mode_combo)
         mode_groupbox.setLayout(mode_layout)
@@ -67,11 +62,17 @@ class MonitoringTab(QWidget):
 
     def on_system_mode_changed(self, index):
         """QComboBox의 값이 사용자에 의해 변경되었을 때 호출되는 슬롯"""
-        self.manager.set_system_mode(index)
+        mode_value = self.system_mode_combo.itemData(index)
+        if mode_value is None:
+            return
+        self.manager.set_system_mode(int(mode_value))
 
     def refresh_display(self, update_info: tuple, data_object: object = None):
         """Manager로부터 데이터 변경 알림을 받아 화면을 갱신합니다."""
         source, key = update_info
+
+        if source == "send":
+            return
 
         # 시스템 모드 변경 처리
         if (source == "logic" and key == "SystemMode") or (
@@ -87,9 +88,16 @@ class MonitoringTab(QWidget):
                 new_mode = self.manager.get_logic_result("SystemMode")
 
             if new_mode is not None:
-                self.system_mode_combo.blockSignals(True)
-                self.system_mode_combo.setCurrentIndex(new_mode)
-                self.system_mode_combo.blockSignals(False)
+                try:
+                    mode_int = int(new_mode)
+                except (TypeError, ValueError):
+                    mode_int = None
+                if mode_int is not None:
+                    index = self.system_mode_combo.findData(mode_int)
+                    if index >= 0:
+                        self.system_mode_combo.blockSignals(True)
+                        self.system_mode_combo.setCurrentIndex(index)
+                        self.system_mode_combo.blockSignals(False)
 
         # 0501 메시지 수신 시 진행률 업데이트
         if key == "0501":

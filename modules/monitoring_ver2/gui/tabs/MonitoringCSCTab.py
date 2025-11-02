@@ -4,6 +4,8 @@ import dataclasses
 import json
 from collections import deque
 from datetime import datetime, timezone, timedelta
+from typing import Any, Deque, Dict, List, Optional
+import time
 
 from PyQt5.QtWidgets import (
     QWidget,
@@ -11,6 +13,8 @@ from PyQt5.QtWidgets import (
     QHBoxLayout,
     QGroupBox,
     QLabel,
+    QComboBox,
+    QFormLayout,
     QTableWidget,
     QTableWidgetItem,
     QHeaderView,
@@ -19,9 +23,10 @@ from PyQt5.QtWidgets import (
     QMessageBox,
     QDialog,
 )
+from PyQt5.QtGui import QColor
 from PyQt5.QtCore import Qt
 
-from config import PUSH_MESSAGES, RECEIVE_MESSAGES
+from modules.monitoring_ver2.config import PUSH_MESSAGES, RECEIVE_MESSAGES, SYSTEM_MODE_OPTIONS
 from push.push_center import push_message
 from data.message_models import (
     ModuleStatusModelModel,
@@ -60,13 +65,19 @@ class MonitoringCSCTab(QWidget):
         self.manager = manager
         self.receive_storage = manager.receive_store
         self.push_storage = manager.push_store
+        self.mode_combo = None
 
-        self.tx_row_map: dict[str, int] = {}
-        self.rx_row_map: dict[str, int] = {}
-        self.tx_history: dict[str, deque] = {}
-        self.rx_history: dict[str, deque] = {}
+        self.tx_row_map: Dict[str, int] = {}
+        self.rx_row_map: Dict[str, int] = {}
+        self.tx_history: Dict[str, Deque[dict]] = {msg_id: deque(maxlen=self.MAX_HISTORY) for msg_id, _ in PUSH_MESSAGES}
+        self.rx_history: Dict[str, Deque[dict]] = {msg_id: deque(maxlen=self.MAX_HISTORY) for msg_id, _ in RECEIVE_MESSAGES}
+        self._periodic_targets: Dict[str, float] = {"0102": 5.0}
+        self._prepared_replan_body: Any | None = None
+        self._prepared_replan_context: Dict[str, Any] | None = None
+        self._last_replan_error: Exception | None = None
 
         self._init_ui()
+        self._update_mode_selection(self.manager.get_logic_result("SystemMode"))
 
     # ------------------------------------------------------------------ UI
     def _init_ui(self):
@@ -76,22 +87,58 @@ class MonitoringCSCTab(QWidget):
         self._populate_tx_table()
         self._populate_rx_table()
 
-        self.log_tx = self._make_log_viewer("▶ 발신 로그가 출력됩니다.")
-        self.log_rx = self._make_log_viewer("▶ 수신 로그가 출력됩니다.")
+        self.log_tx = self._make_log_viewer("송신 로그가 표시됩니다.")
+        self.log_rx = self._make_log_viewer("수신 로그가 표시됩니다.")
+
+        self.mode_combo = QComboBox()
+        for value, label in SYSTEM_MODE_OPTIONS:
+            self.mode_combo.addItem(label, value)
+        self.mode_combo.currentIndexChanged.connect(self._handle_mode_combo_changed)
+
+        mode_group = QGroupBox("시스템 운용 모드")
+        mode_form = QFormLayout()
+        mode_form.addRow(QLabel("현재 모드:"), self.mode_combo)
+        mode_group.setLayout(mode_form)
 
         top_layout = QHBoxLayout()
-        top_layout.addWidget(self._wrap_in_group("발신 데이터 목록", self.tbl_tx))
-        top_layout.addWidget(self._wrap_in_group("수신 데이터 목록", self.tbl_rx))
+        top_layout.addWidget(self._wrap_in_group("송신 메시지 이력", self.tbl_tx))
+        top_layout.addWidget(self._wrap_in_group("수신 메시지 이력", self.tbl_rx))
 
         log_layout = QHBoxLayout()
-        log_layout.addWidget(self._wrap_in_group("발신 로그", self.log_tx))
+        log_layout.addWidget(self._wrap_in_group("송신 로그", self.log_tx))
         log_layout.addWidget(self._wrap_in_group("수신 로그", self.log_rx))
 
         root = QVBoxLayout(self)
+        root.addWidget(mode_group, 0)
         root.addLayout(top_layout, 3)
         root.addLayout(log_layout, 2)
         root.setContentsMargins(8, 6, 8, 6)
         self.setLayout(root)
+
+    def _handle_mode_combo_changed(self, index: int) -> None:
+        if self.mode_combo is None:
+            return
+        mode_value = self.mode_combo.itemData(index)
+        if mode_value is None:
+            return
+        try:
+            mode_int = int(mode_value)
+        except (TypeError, ValueError):
+            return
+        self.manager.set_system_mode(mode_int)
+
+    def _update_mode_selection(self, mode_value) -> None:
+        if self.mode_combo is None:
+            return
+        try:
+            mode_int = int(mode_value)
+        except (TypeError, ValueError):
+            return
+        index = self.mode_combo.findData(mode_int)
+        if index >= 0:
+            self.mode_combo.blockSignals(True)
+            self.mode_combo.setCurrentIndex(index)
+            self.mode_combo.blockSignals(False)
 
     def _wrap_in_group(self, title: str, widget: QWidget) -> QGroupBox:
         box = QGroupBox(title)
@@ -178,27 +225,112 @@ class MonitoringCSCTab(QWidget):
 
     # ------------------------------------------------------------------ Refresh
     def refresh_display(self, update_info=None, data_object=None):
+        if update_info is None:
+            self._update_mode_selection(self.manager.get_logic_result("SystemMode"))
+        else:
+            source, key = update_info
+            if source == "send":
+                raw_bytes = data_object if isinstance(data_object, (bytes, bytearray)) else None
+                self.mark_sent(key, raw_bytes)
+                return
+            if (source == "logic" and key == "SystemMode") or (source == "receive" and key == "0101"):
+                if source == "receive" and key == "0101" and data_object is not None and hasattr(data_object, "systemMode"):
+                    self._update_mode_selection(getattr(data_object, "systemMode"))
+                else:
+                    self._update_mode_selection(self.manager.get_logic_result("SystemMode"))
+
         self._update_tx_table()
         self._update_rx_table()
 
     def _update_tx_table(self):
-        for msg_id, row in self.tx_row_map.items():
-            history_objs = self.push_storage.get_history(msg_id)
-            dq = self.tx_history[msg_id]
-            history_objs = history_objs or []
+        for msg_id in self.tx_row_map.keys():
+            history_objs = self.push_storage.get_history(msg_id) or []
+            dq = self.tx_history.setdefault(msg_id, deque(maxlen=self.MAX_HISTORY))
             dq.clear()
             for obj in history_objs[: self.MAX_HISTORY]:
-                entry = self._serialize_obj(obj)
-                dq.append(entry)
-            if dq:
-                latest = dq[0]
-                self._append_tx_log(msg_id, latest, replace=True)
-                status = self._format_status("발신 완료", latest.get("timestamp"))
-                self.tbl_tx.item(row, 2).setText(status)
-                self.tbl_tx.item(row, 0).setData(Qt.UserRole, list(dq))
+                dq.append(self._serialize_obj(obj))
+            self._update_tx_row_state(msg_id)
+
+    def _update_tx_row_state(self, msg_id: str) -> None:
+        row = self.tx_row_map.get(msg_id)
+        if row is None:
+            return
+        dq = self.tx_history.get(msg_id) or deque(maxlen=self.MAX_HISTORY)
+        self.tx_history[msg_id] = dq
+        if dq:
+            latest = dq[0]
+            self.tbl_tx.item(row, 0).setData(Qt.UserRole, list(dq))
+            self._append_tx_log(msg_id, latest, replace=True)
+            planned = self._periodic_targets.get(msg_id)
+            actual = self._calc_recent_frequency(dq)
+            if planned:
+                status_text = self._format_rate_state("주기송신", planned, actual)
+                status_item = self.tbl_tx.item(row, 2)
+                if status_item:
+                    status_item.setForeground(QColor("blue"))
+                    status_item.setText(status_text)
             else:
-                self.tbl_tx.item(row, 0).setData(Qt.UserRole, [])
-                self.tbl_tx.item(row, 2).setText("발신 전")
+                status_text = "송신 완료"
+                status_item = self.tbl_tx.item(row, 2)
+                if status_item:
+                    status_item.setForeground(QColor("black"))
+                    status_item.setText(status_text)
+        else:
+            status_item = self.tbl_tx.item(row, 2)
+            if status_item:
+                status_item.setForeground(QColor("black"))
+                status_item.setText("송신 대기")
+            cell = self.tbl_tx.item(row, 0)
+            if cell:
+                cell.setData(Qt.UserRole, [])
+
+    def _calc_recent_frequency(self, history: Deque[dict], window_sec: float = 10.0) -> float | None:
+        timestamps: List[float] = []
+        for entry in history:
+            ts = entry.get("timestamp") or entry.get("ms")
+            if ts is None:
+                continue
+            try:
+                val = float(ts)
+            except (TypeError, ValueError):
+                continue
+            if val > 1e10:
+                val /= 1000.0
+            timestamps.append(val)
+        if len(timestamps) < 2:
+            return None
+        timestamps.sort()
+        latest = timestamps[-1]
+        cutoff = latest - window_sec
+        recent = [t for t in timestamps if t >= cutoff]
+        if len(recent) < 2:
+            return None
+        span = recent[-1] - recent[0]
+        if span <= 0:
+            return None
+        return (len(recent) - 1) / span
+
+    def _format_rate_state(self, label: str, planned: float | None, actual: float | None) -> str:
+        parts: List[str] = []
+        if planned is not None:
+            parts.append(f"{planned:g}Hz")
+        if actual is not None:
+            parts.append(f"{actual:.2f}Hz")
+        if parts:
+            inner = " / ".join(parts)
+            return f"{label}({inner})"
+        return label
+
+    def mark_sent(self, msg_id: str, raw: bytes | None = None) -> None:
+        if msg_id not in self.tx_row_map:
+            return
+        if raw:
+            try:
+                payload_dict = json.loads(raw.decode("utf-8"))
+                self._append_tx_log(msg_id, payload_dict, replace=True)
+            except Exception:
+                pass
+        self._update_tx_table()
 
     def _update_rx_table(self):
         all_data = self.receive_storage.get_all_data()
@@ -215,12 +347,101 @@ class MonitoringCSCTab(QWidget):
             else:
                 self.tbl_rx.item(row, 2).setText("수신 전")
 
+    def set_replan_context(self, context: Dict[str, Any] | None, body: Any | None = None) -> None:
+        """Store the prepared 0902 context so it can be dispatched on demand."""
+        if context is not None:
+            self._prepared_replan_context = dict(context)
+        else:
+            self._prepared_replan_context = None
+        self._prepared_replan_body = body
+
+        row = self.tx_row_map.get("0902")
+        if row is None:
+            return
+        status_item = self.tbl_tx.item(row, 2)
+        if status_item is None:
+            return
+        if context:
+            status_item.setText("재계획 요청 준비됨")
+            status_item.setForeground(QColor("darkgreen"))
+        else:
+            status_item.setText("송신 대기")
+            status_item.setForeground(QColor("black"))
+
+    def dispatch_replan_request(self, body: Any | None = None, context: Dict[str, Any] | None = None) -> bool:
+        """Send a prepared 0902 request through the push pipeline."""
+        payload = body if body is not None else self._prepared_replan_body
+        if payload is None:
+            self._last_replan_error = ValueError("No 0902 payload is prepared")
+            return False
+        if context is None:
+            context = self._prepared_replan_context
+        if context is not None:
+            try:
+                self.set_replan_context(context, body=payload)
+            except Exception:
+                pass
+
+        if dataclasses.is_dataclass(payload):
+            body_dict = to_dict(payload)
+            store_obj = payload
+        elif isinstance(payload, dict):
+            body_dict = dict(payload)
+            store_obj = body_dict
+        else:
+            body_dict = to_dict(payload)
+            store_obj = body_dict
+
+        try:
+            push_message("0902", self.manager.node_messenger, body_dict=body_dict)
+        except Exception as exc:
+            self._last_replan_error = exc
+            try:
+                self.manager._log("MON_CSC", "ERROR", f"0902 push failed: {exc}")
+            except Exception:
+                pass
+            return False
+
+        try:
+            raw_bytes = json.dumps(body_dict, ensure_ascii=False).encode("utf-8")
+        except Exception:
+            raw_bytes = None
+
+        try:
+            if raw_bytes and self.manager.gui_update_callback:
+                self.manager.gui_update_callback("send", "0902", raw_bytes)
+        except Exception:
+            pass
+
+        try:
+            self.push_storage.add_data("0902", store_obj)
+        except Exception:
+            pass
+
+        self._append_tx_log("0902", body_dict)
+        self.set_replan_context(None)
+        self.refresh_display()
+        self._last_replan_error = None
+        return True
+
+
     # ------------------------------------------------------------------ Button handlers
     def _handle_send_clicked(self, row: int):
         item = self.tbl_tx.item(row, 0)
         if not item:
             return
         msg_id = item.text()
+        if msg_id == "0902" and self._prepared_replan_body is not None:
+            payload = self._prepared_replan_body
+            context = self._prepared_replan_context
+            if not self.dispatch_replan_request(payload, context=context):
+                err = self._last_replan_error or Exception("0902 dispatch failed")
+                QMessageBox.critical(
+                    self,
+                    "0902 발신 실패",
+                    f"0902 재계획 요청을 발신하지 못했습니다.\n{err}",
+                )
+            return
         try:
             body_obj = self._create_dummy_body(msg_id)
         except NotImplementedError:
@@ -271,7 +492,6 @@ class MonitoringCSCTab(QWidget):
         self._show_history_dialog(f"[{msg_id}] 수신 데이터 기록", entries)
         self._append_rx_log(msg_id, entries[0], replace=True)
 
-    # ------------------------------------------------------------------ Logging helpers
     def _append_tx_log(self, msg_id: str, body: dict, replace: bool = False):
         payload = json.dumps(body, ensure_ascii=False, indent=2)
         text = f"[{msg_id}] {payload}"
@@ -288,7 +508,6 @@ class MonitoringCSCTab(QWidget):
         else:
             self.log_rx.append(text)
 
-    # ------------------------------------------------------------------ Helpers
     def _format_status(self, prefix: str, timestamp) -> str:
         ts = self._format_time(timestamp)
         return f"{prefix} ({ts})" if ts else prefix
@@ -339,7 +558,6 @@ class MonitoringCSCTab(QWidget):
         dlg.resize(520, 620)
         dlg.exec_()
 
-    # ------------------------------------------------------------------ Dummy body generator
     def _create_dummy_body(self, msg_id: str):
         timestamp = int(datetime.now(timezone.utc).timestamp() * 1000)
         source_module = "MonitoringCSC"

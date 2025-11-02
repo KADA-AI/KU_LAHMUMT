@@ -11,6 +11,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtGui import QPalette, QColor
 from PyQt5.QtCore import Qt
+from modules.monitoring_ver2.config import SYSTEM_MODE_OPTIONS
 
 
 class ReplanTab(QWidget):
@@ -26,16 +27,10 @@ class ReplanTab(QWidget):
         mode_layout = QFormLayout()
 
         self.system_mode_combo = QComboBox()
-        self.system_mode_combo.addItems(
-            [
-                "0: 초기화 모드",
-                "1: 대기 모드",
-                "2: 초기임무재계획 모드",
-                "3: 임무수행 모드",
-            ]
-        )
+        for value, label in SYSTEM_MODE_OPTIONS:
+            self.system_mode_combo.addItem(label, value)
 
-        # 시그널 연결 (사용자 변경시)
+        # 콤보박스 연결 (선택 변경시)
         self.system_mode_combo.currentIndexChanged.connect(self.on_system_mode_changed)
 
         mode_layout.addRow(QLabel("현재 모드:"), self.system_mode_combo)
@@ -97,7 +92,10 @@ class ReplanTab(QWidget):
     def on_system_mode_changed(self, index):
         """QComboBox의 값이 사용자에 의해 변경되었을 때 호출되는 슬롯"""
         # manager를 통해 시스템 모드 변경 요청
-        self.manager.set_system_mode(index)
+        mode_value = self.system_mode_combo.itemData(index)
+        if mode_value is None:
+            return
+        self.manager.set_system_mode(int(mode_value))
 
     def refresh_display(self, update_info, data_object=None):
         """manager로부터 데이터 변경 알림을 받았을 때 호출됩니다."""
@@ -107,16 +105,30 @@ class ReplanTab(QWidget):
             new_mode = self.manager.get_logic_result("SystemMode")
             if new_mode is not None:
                 # 무한 루프를 방지하기 위해 시그널을 잠시 끊음
-                self.system_mode_combo.blockSignals(True)
-                self.system_mode_combo.setCurrentIndex(new_mode)
-                self.system_mode_combo.blockSignals(False)
+                try:
+                    mode_int = int(new_mode)
+                except (TypeError, ValueError):
+                    mode_int = None
+                if mode_int is not None:
+                    index = self.system_mode_combo.findData(mode_int)
+                    if index >= 0:
+                        self.system_mode_combo.blockSignals(True)
+                        self.system_mode_combo.setCurrentIndex(index)
+                        self.system_mode_combo.blockSignals(False)
         elif source == "receive" and key == "0101":
             if data_object and hasattr(data_object, "systemMode"):
                 new_mode = data_object.systemMode
                 # 무한 루프를 방지하기 위해 시그널을 잠시 끊음
-                self.system_mode_combo.blockSignals(True)
-                self.system_mode_combo.setCurrentIndex(new_mode)
-                self.system_mode_combo.blockSignals(False)
+                try:
+                    mode_int = int(new_mode)
+                except (TypeError, ValueError):
+                    mode_int = None
+                if mode_int is not None:
+                    index = self.system_mode_combo.findData(mode_int)
+                    if index >= 0:
+                        self.system_mode_combo.blockSignals(True)
+                        self.system_mode_combo.setCurrentIndex(index)
+                        self.system_mode_combo.blockSignals(False)
 
         # --- 재계획 요약 업데이트 ---
         final_replan_output = self.manager.logic_store.get_data("final_replan_output")

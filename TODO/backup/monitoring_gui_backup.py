@@ -390,7 +390,7 @@ class MainWindow(QMainWindow):
           1 : 대기 모드
           2 : 초기임무계획 모드
           3 : 임무수행 모드
-        내부 슬라이더(0~4): [0=전원 OFF, 1=전원 ON, 2=대기모드, 3=초기 임무 계획, 4=임무 수행]
+        내부 슬라이더(0~4): [0=전원 OFF, 1=초기화 모드, 2=대기모드, 3=초기 임무 계획, 4=임무 수행]
         → 교차 매핑: 0→1, 1→2, 2→3, 3→4
         """
         code_to_slider = {0: 1, 1: 2, 2: 3, 3: 4}
@@ -465,7 +465,7 @@ class MainWindow(QMainWindow):
         return {"mission":"MMR","monitoring":"MSM","decision":"MOB"}.get(role, "MMR")
 
     def _on_mode_slider_changed(self, val: int):
-        labels = ["전원 OFF", "전원 ON", "대기모드", "초기 임무 계획", "임무 수행"]
+        labels = ["전원 OFF", "초기화 모드", "대기모드", "초기 임무 계획", "임무 수행"]
         try: self.mode_now.setText(labels[int(val)])
         except Exception: pass
         self._power_on = (int(val) != 0)
@@ -480,7 +480,7 @@ class MainWindow(QMainWindow):
 
     def _set_mode_slider_by_text(self, text: str):
         # 텍스트 별칭 확장 (공백/‘모드’ 접미 허용)
-        labels = ["전원 OFF", "전원 ON", "대기모드", "초기 임무 계획", "임무 수행"]
+        labels = ["전원 OFF", "초기화 모드", "대기모드", "초기 임무 계획", "임무 수행"]
         norm = re.sub(r"\s+", "", str(text)).lower()
 
         mapping = {
@@ -491,7 +491,7 @@ class MainWindow(QMainWindow):
             "임무수행": 4, "임무수행모드": 4, "execution": 4, "4": 4,
 
             # 요청 정의와 표현 일치
-            "초기화모드": 1,  # 초기화 모드 → 전원 ON 단계로 표시
+            "초기화모드": 1,  # 초기화 모드 → 초기화 모드 단계로 표시
             "초기임무계획모드": 3,
         }
 

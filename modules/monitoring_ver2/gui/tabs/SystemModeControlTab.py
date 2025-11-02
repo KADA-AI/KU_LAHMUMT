@@ -9,6 +9,7 @@ from PyQt5.QtCore import pyqtSlot
 from nFusion.Model.msg_0101 import SystemOperationMode
 from nFusion.Nodes.Core import NodeMessenger
 from System import String, UInt64, UInt32
+from config import SYSTEM_MODE_OPTIONS
 
 class SystemModeControlTab(QWidget):
     def __init__(self, manager, parent=None):
@@ -27,11 +28,8 @@ class SystemModeControlTab(QWidget):
         mode_layout = QHBoxLayout()
         mode_label = QLabel("시스템 모드 선택:")
         self.mode_combo = QComboBox()
-        self.mode_combo.addItem("0: 초기화 모드", 0)
-        self.mode_combo.addItem("1: 대기 모드", 1)
-        self.mode_combo.addItem("2: 초기 임무 재계획 모드", 2)
-        self.mode_combo.addItem("3: 임무 수행 모드", 3)
-        self.mode_combo.addItem("4: 단일 로직 수행 모드", 4)
+        for value, label in SYSTEM_MODE_OPTIONS:
+            self.mode_combo.addItem(label, value)
         mode_layout.addWidget(mode_label)
         mode_layout.addWidget(self.mode_combo)
         main_layout.addLayout(mode_layout)

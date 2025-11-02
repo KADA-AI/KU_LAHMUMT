@@ -4,6 +4,21 @@
 Configuration for the Monitoring CSC.
 """
 
+POWER_OFF_MODE = 5
+INITIAL_MODE = 0
+
+SYSTEM_MODE_LABELS = {
+    POWER_OFF_MODE: "전원 OFF 모드",
+    INITIAL_MODE: "초기화 모드",
+    1: "대기 모드",
+    2: "초기 임무 재계획 모드",
+    3: "임무 수행 모드",
+}
+
+
+SYSTEM_MODE_ORDER = [POWER_OFF_MODE, INITIAL_MODE, 1, 2, 3]
+SYSTEM_MODE_OPTIONS = [(code, SYSTEM_MODE_LABELS[code]) for code in SYSTEM_MODE_ORDER]
+
 PUSH_MESSAGES = (
     ("0102", "모듈 상태 정보"),
     ("0501", "임무수행상태정보"),

@@ -133,7 +133,7 @@ def _z4(s: str) -> str:
 
 _MODE_LABELS = [
     "\uc804\uc6d0 OFF",
-    "\uc804\uc6d0 ON",
+    "\ucd08\uae30\ud654 \ubaa8\ub4dc",
     "\ub300\uae30\ubaa8\ub4dc",
     "\ucd08\uae30 \uc784\ubb34 \uacc4\ud68d",
     "\uc784\ubb34 \uc218\ud589",
@@ -148,6 +148,9 @@ _MODE_TEXT_ALIASES = {
     "on": 1,
     "poweron": 1,
     "1": 1,
+    "\ucd08\uae30\ud654": 1,
+    "\ucd08\uae30\ud654\ubaa8\ub4dc": 1,
+    "\ucd08\uae30\ud654mode": 1,
     "\ub300\uae30\ubaa8\ub4dc": 2,
     "\ub300\uae30": 2,
     "standby": 2,
@@ -246,8 +249,8 @@ class MainWindow(QMainWindow):
         v.addWidget(top); v.addWidget(tabs)
         self.setCentralWidget(center)
 
-        # 초기 전원 OFF로 시작
-        self._set_mode_slider_by_text("전원 OFF")
+        # 초기 기동과 동시에 초기화 모드로 진입
+        self._set_mode_slider_by_text("초기화 모드")
         self._apply_power_state()
 
         # 시그널
@@ -851,7 +854,7 @@ class MainWindow(QMainWindow):
           1 : 대기 모드
           2 : 초기임무계획 모드
           3 : 임무수행 모드
-        내부 슬라이더(0~4): [0=전원 OFF, 1=전원 ON, 2=대기모드, 3=초기 임무 계획, 4=임무 수행]
+        내부 슬라이더(0~4): [0=전원 OFF, 1=초기화 모드, 2=대기모드, 3=초기 임무 계획, 4=임무 수행]
         매핑: 0→1, 1→2, 2→3, 3→4
         """
         slider_val = _SYSTEM_MODE_TO_SLIDER.get(code)

@@ -191,8 +191,8 @@ class MainWindow(QMainWindow):
         v.addWidget(top); v.addWidget(tabs)
         self.setCentralWidget(center)
 
-        # 초기 전원 OFF 적용
-        self._set_mode_slider_by_text("전원 OFF")
+        # 초기 기동 시 즉시 초기화 모드로 전환
+        self._set_mode_slider_by_text("초기화 모드")
         self._apply_power_state()
 
         # 신호 연결
@@ -302,7 +302,7 @@ class MainWindow(QMainWindow):
           1 : 대기 모드
           2 : 초기임무계획 모드
           3 : 임무수행 모드
-        내부 슬라이더(0~4): [0=전원 OFF, 1=전원 ON, 2=대기모드, 3=초기 임무 계획, 4=임무 수행]
+        내부 슬라이더(0~4): [0=전원 OFF, 1=초기화 모드, 2=대기모드, 3=초기 임무 계획, 4=임무 수행]
         → 매핑: 0→1, 1→2, 2→3, 3→4
         """
         code_to_slider = {0: 1, 1: 2, 2: 3, 3: 4}
@@ -530,7 +530,7 @@ class MainWindow(QMainWindow):
             pass  # 모니터링용이므로 실패해도 동작에는 영향 없음
 
     def _start_0102_stream(self):
-        """전원 ON 직후 0.5s 뒤 0102를 5Hz로 자동 시작."""
+        """초기화 모드 직후 0.5s 뒤 0102를 5Hz로 자동 시작."""
         if not self._power_on:
             return
         try:
@@ -741,7 +741,7 @@ class MainWindow(QMainWindow):
 
     # ───────── 모드/슬라이더 ─────────
     def _on_mode_slider_changed(self, val: int):
-        labels = ["전원 OFF", "전원 ON", "대기모드", "초기 임무 계획", "임무 수행"]
+        labels = ["전원 OFF", "초기화 모드", "대기모드", "초기 임무 계획", "임무 수행"]
         try: self.mode_now.setText(labels[int(val)])
         except Exception: pass
         self._power_on = (int(val) != 0)
@@ -754,11 +754,12 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(500, self._start_0102_stream)
 
     def _set_mode_slider_by_text(self, text: str):
-        labels = ["전원 OFF", "전원 ON", "대기모드", "초기 임무 계획", "임무 수행"]
+        labels = ["전원 OFF", "초기화 모드", "대기모드", "초기 임무 계획", "임무 수행"]
         norm = re.sub(r"\s+", "", str(text)).lower()
         mapping = {
             "전원off":0,"off":0,"poweroff":0,"0":0,
             "전원on":1,"on":1,"poweron":1,"1":1,
+            "초기화":1,"초기화모드":1,"초기화mode":1,
             "대기모드":2,"대기":2,"standby":2,"2":2,
             "초기임무계획":3,"초기임무계획모드":3,"initplan":3,"initial":3,"3":3,
             "임무수행":4,"execution":4,"4":4

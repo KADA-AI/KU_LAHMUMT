@@ -10,7 +10,6 @@ from typing import Optional
 from .zones import GRID_ROWS, GRID_COLS, ZONES
 from ..widgets.cards import Card
 from ..widgets.module_with_log import ModuleWithLog
-from ..widgets.toggle_switch import ToggleSwitch
 from ..widgets.operation_flow_panel import OperationFlowPanel
 import os, subprocess, json, socket, shutil
 from pathlib import Path
@@ -243,13 +242,11 @@ class MainWindow(QMainWindow):
         self.module_decision = None
         self.flow = None
 
-        self.auto_toggle = None
         self.btn_auto_boot = None
         self.btn_module_shutdown = None
         self.btn_integration_module = None
         self.btn_overwrite_020x = None
         self.btn_reference_pdf = None
-        self._auto_enabled = False
         self._role_processes = {}
         self._sw_notes_dialog = None
         self._sw_notes_panel = None
@@ -727,22 +724,6 @@ class MainWindow(QMainWindow):
         if body is not None:
             body.setSpacing(12)
 
-            auto_row = QHBoxLayout()
-            auto_row.setContentsMargins(0, 0, 0, 0)
-            auto_row.setSpacing(12)
-
-            auto_label = QLabel("Auto", placeholder)
-            auto_label.setObjectName("GlobalAutoLabel")
-            auto_row.addWidget(auto_label)
-
-            self.auto_toggle = ToggleSwitch(placeholder, checked=self._auto_enabled)
-            self.auto_toggle.setObjectName("GlobalAutoToggle")
-            self.auto_toggle.toggled.connect(self._on_global_auto_toggled)
-            auto_row.addWidget(self.auto_toggle)
-            auto_row.addStretch(1)
-
-            body.addLayout(auto_row)
-
             self.btn_auto_boot = QPushButton("자동 부팅", placeholder)
             self.btn_auto_boot.setObjectName("BtnAutoBoot")
             self.btn_auto_boot.setMinimumHeight(34)
@@ -788,29 +769,6 @@ class MainWindow(QMainWindow):
 
         grid.addWidget(placeholder, row0, col0, row_end - row0, col_end - col0)
 
-    def _on_global_auto_toggled(self, checked: bool) -> None:
-        self._auto_enabled = bool(checked)
-        self._apply_auto_state_to_modules()
-        state_msg = "[AUTO] Global auto ON" if self._auto_enabled else "[AUTO] Global auto OFF"
-        if self._auto_enabled:
-            for role in ("mission", "monitor", "decision"):
-                self._launch_role(role, schedule_powerup=False)
-
-        for mod in (self.module_mission, self.module_monitor, self.module_decision):
-            if mod and hasattr(mod, 'append_log'):
-                try:
-                    mod.append_log(state_msg)
-                except Exception:
-                    pass
-
-    def _apply_auto_state_to_modules(self) -> None:
-        for mod in (self.module_mission, self.module_monitor, self.module_decision):
-            if mod and hasattr(mod, 'set_auto_enabled'):
-                try:
-                    mod.set_auto_enabled(self._auto_enabled)
-                except Exception:
-                    pass
-
     def _debug_log(self, message: str) -> None:
         # Debug logging disabled to avoid creating log files
         return
@@ -821,6 +779,19 @@ class MainWindow(QMainWindow):
             'monitor': getattr(self, 'module_monitor', None),
             'decision': getattr(self, 'module_decision', None),
         }.get(role)
+
+    def _set_all_module_modes(self, text: str) -> None:
+        target = str(text)
+        for role in ('mission', 'monitor', 'decision'):
+            mod = self._module_widget(role)
+            if not mod:
+                continue
+            setter = getattr(mod, 'set_mode_text', None)
+            if callable(setter):
+                try:
+                    setter(target)
+                except Exception:
+                    pass
 
     def _log_to_modules(self, message: str) -> None:
         for role in ('mission', 'monitor', 'decision'):
@@ -885,11 +856,11 @@ class MainWindow(QMainWindow):
         self._debug_log(f'_schedule_module_powerup role={role}')
 
         def send_mode_on():
-            ok = self._send_ctrl_single(role, {'cmd': 'mode', 'text': '전원 ON'})
+            ok = self._send_ctrl_single(role, {'cmd': 'mode', 'text': '초기화 모드'})
             if ok:
-                self._log_to_module(role, '[AUTO] power-on broadcast ("전원 ON")')
+                self._log_to_module(role, '[AUTO] 초기화 모드 broadcast ("초기화 모드")')
             else:
-                self._log_to_module(role, '[AUTO WARN] power-on send failed')
+                self._log_to_module(role, '[AUTO WARN] 초기화 모드 send failed')
 
         def send_self_check():
             ok = self._send_ctrl_single(role, {'cmd': 'self_check', 'status': 1})
@@ -909,10 +880,17 @@ class MainWindow(QMainWindow):
             self._log_to_module(role, '[AUTO] module launch requested')
             try:
                 self._debug_log(f'launching role={role}')
-                self._launch_role(role)
+                self._launch_role(role, schedule_powerup=False)
             except Exception as exc:
                 self._log_to_module(role, '[AUTO WARN] launch failed')
                 self._debug_log(f'launch failed role={role} err={exc}')
+
+        def _set_init_mode():
+            self._log_to_modules('[AUTO] 초기화 모드 broadcast')
+            self._set_all_module_modes("초기화 모드")
+            self._broadcast_ctrl({'cmd': 'mode', 'text': '초기화 모드'})
+
+        QTimer.singleShot(1000, _set_init_mode)
 
     def _handle_module_shutdown(self) -> None:
         for role, proc in list(self._role_processes.items()):
