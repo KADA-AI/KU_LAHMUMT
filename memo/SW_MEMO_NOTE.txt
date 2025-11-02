@@ -2826,3 +2826,17 @@ S235 임시 무인기 임무제외 -> 재계획 X
 [MON PORTS] monitoring: 46982
 [MON PORTS] decision: 46983
 [MON PORTS] info: 46984
+[MON PORTS] assignment: 46981
+[MON PORTS] monitoring: 46982
+[MON PORTS] decision: 46983
+[MON PORTS] info: 46984
+[UDP RECV] decision/MOB  kind=mode  mid=
+[UDP RECV] monitoring/MSM  kind=mode  mid=
+[UDP RECV] assignment/MMR  kind=mode  mid=
+[UDP RECV] info/INF  kind=mode  mid=
+[MODE] inf → 전원 OFF
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=mode  mid=
+[MODE] inf → 전원 ON

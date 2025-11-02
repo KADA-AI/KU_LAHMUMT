@@ -925,15 +925,6 @@ class MainWindow(QMainWindow):
                 self._log_to_module(role, '[AUTO WARN] launch failed')
                 self._debug_log(f'launch failed role={role} err={exc}')
 
-        # launch monitoring_ver2 functional stub (no GUI)
-        try:
-            self._debug_log('launching role=monitor_v2')
-            self._launch_role('monitor_v2', schedule_powerup=False)
-            self._log_to_module('monitor', '[AUTO] monitoring_ver2 helper launched')
-        except Exception as exc:
-            self._log_to_module('monitor', '[AUTO WARN] monitoring_ver2 launch failed')
-            self._debug_log(f'launch failed role=monitor_v2 err={exc}')
-
     def _handle_module_shutdown(self) -> None:
         for role, proc in list(self._role_processes.items()):
             if not proc:
