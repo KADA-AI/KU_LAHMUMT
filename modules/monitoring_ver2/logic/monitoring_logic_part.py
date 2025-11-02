@@ -1191,12 +1191,23 @@ class MonitoringLogic:
             for info in self._input_mission_tracker.values()
         ):
             self._handle_all_input_missions_completed()
+        try:
+            self.manager.logic_store.set_data(
+                "completed_input_ids", sorted(self._completed_input_ids)
+            )
+        except Exception:
+            pass
+        if self.manager.gui_update_callback:
+            try:
+                self.manager.gui_update_callback("logic", "mission_overview", None)
+            except Exception:
+                pass
 
     def _notify_input_mission_completed(self, input_id: int) -> None:
         if input_id in self._input_completion_notified:
             return
         self._input_completion_notified.add(input_id)
-        self._send_0503_notification(f"?묒뾽湲곗??꾨Т ID={input_id}")
+        self._send_0503_notification(f"Input mission completed (ID={input_id})")
 
     def _send_0503_notification(self, log_context: str) -> None:
         timestamp = int(
@@ -1215,13 +1226,13 @@ class MonitoringLogic:
             self.manager._log(
                 "MON_LOGIC",
                 "INFO",
-                f"0503 ?묒뾽湲곗??꾨Т ?꾨즺 ?뚮┝??諛쒖떊?덉뒿?덈떎. ({log_context})",
+                f"0503 collaborative completion notice sent ({log_context})",
             )
         except Exception as exc:
             self.manager._log(
                 "MON_LOGIC",
                 "WARN",
-                f"0503 硫붿떆吏 諛쒖떊 ?ㅽ뙣({log_context}): {exc}",
+                f"0503 completion notice failed ({log_context}): {exc}",
             )
             return
         try:
