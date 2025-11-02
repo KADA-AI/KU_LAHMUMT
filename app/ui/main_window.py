@@ -222,20 +222,8 @@ class MainWindow(QMainWindow):
         # Remove left-hand controls but keep layout slots
         self._add_left_placeholder(grid)
 
-        # Module cards (tables + logs) stay visible
-        self.module_mission = ModuleWithLog("Assignment Planning Module")
-        self.module_mission.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self._add_zone(grid, self.module_mission, "MODULE_MISSION_COMBO")
-
-        self.module_monitor = ModuleWithLog("Mission Monitoring Module")
-        self.module_monitor.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self._add_zone(grid, self.module_monitor, "MODULE_MONITOR_COMBO")
-
-        self.module_decision = ModuleWithLog("Decision Support Module")
-        self.module_decision.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self._add_zone(grid, self.module_decision, "MODULE_DECISION_COMBO")
-
-        self._apply_auto_state_to_modules()
+        # Central placeholder where legacy module cards used to live
+        self._add_placeholder(grid, "MODULE_CENTER")
         self._normalize_module_columns(grid)
 
         # Operation flow panel
@@ -928,13 +916,11 @@ class MainWindow(QMainWindow):
         self._add_zone(grid, placeholder, zone_key)
 
     def _normalize_module_columns(self, grid: QGridLayout) -> None:
-        module_keys = ("MODULE_MISSION_COMBO", "MODULE_MONITOR_COMBO", "MODULE_DECISION_COMBO")
-        for key in module_keys:
-            zone = ZONES.get(key)
-            if not zone:
-                continue
-            for col in range(zone["c0"], zone["c0"] + zone["cs"]):
-                grid.setColumnStretch(col, 2)
+        zone = ZONES.get("MODULE_CENTER")
+        if not zone:
+            return
+        for col in range(zone["c0"], zone["c0"] + zone["cs"]):
+            grid.setColumnStretch(col, 2)
 
     def _add_zone(self, grid: QGridLayout, w: QWidget, key: str):
         """Add widget to the grid using ZONES metadata."""

@@ -4,8 +4,9 @@
 GRID_ROWS = 35
 GRID_COLS = 50
 
+
 def Z(r1, c1, r2, c2):
-    """1-based → dict(0-based, span)"""
+    """Convert 1-based inclusive coordinates to a grid layout descriptor."""
     return {
         "r0": r1 - 1,
         "c0": c1 - 1,
@@ -13,33 +14,32 @@ def Z(r1, c1, r2, c2):
         "cs": (c2 - c1 + 1),
     }
 
+
 ZONES = {
-    # (1) 상단 타이틀: 카드 없이 큰/굵은 라벨만
+    # (1) Title area
     "TITLE": Z(2, 2, 3, 25),
 
-    # (2) 경로 지정 버튼(= '찾아보기' 버튼)
+    # (2) Path browse button
     "ROUTE_BUTTON": Z(3, 47, 3, 48),
 
-    # (3) DB 경로 텍스트 창(버튼 없음)
+    # (3) Database path summary
     "DB_PATH": Z(3, 28, 3, 45),
 
-    # ✅ (3-1) 미들웨어 설정 행 (DB 경로 아래 한 줄)
+    # (3-1) Middleware settings row
     "MIDDLEWARE": Z(4, 28, 4, 48),
 
-    # (4~6 + 7~9 통합) 모듈+로그 결합 영역
-    "MODULE_MISSION_COMBO":   Z(5, 14, 27, 24),   # 임무 할당 및 계획 + 로그
-    "MODULE_MONITOR_COMBO":   Z(5, 26, 27, 36),   # 모니터링 및 판단 + 로그
-    "MODULE_DECISION_COMBO":  Z(5, 38, 27, 48),   # 의사결정 지원 + 로그
+    # (4~9) Central module area (currently empty placeholder)
+    "MODULE_CENTER": Z(5, 14, 27, 48),
 
-    # (10) 데이터 흐름 시각화 (제목 없음)
+    # (10) Flow visualizer
     "FLOW_VIS": Z(5, 6, 27, 12),
 
-    # (11) 모드 버튼
+    # (11) Mode buttons
     "MODE_BUTTONS": Z(5, 2, 27, 4),
 
-    # (12) 운용흐름 모니터링
+    # (12) Operations flow panel
     "OPS_FLOW": Z(29, 2, 33, 48),
 
-    # (13) 하단 검정 바
+    # (13) Footer row
     "FOOTER": Z(35, 1, 35, 50),
 }
