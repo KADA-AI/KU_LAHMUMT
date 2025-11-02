@@ -115,6 +115,110 @@ class SWNotesDialog(QDialog):
         super().closeEvent(event)
 
 
+class SWNotesPanel(Card):
+    """Inline panel that mirrors the SW update/memo dialog functionality."""
+
+    def __init__(self, parent: QWidget, update_path: Path, memo_path: Path):
+        super().__init__("SW 업데이트 / 메모", parent)
+        self._update_path = Path(update_path)
+        self._memo_path = Path(memo_path)
+        self._dirty = False
+
+        layout = self.body_layout
+        layout.setSpacing(12)
+
+        splitter = QSplitter(Qt.Horizontal, self)
+
+        self.update_view = QPlainTextEdit(self)
+        self.update_view.setReadOnly(True)
+        self.update_view.setPlainText(self._load_update_text())
+        splitter.addWidget(self.update_view)
+
+        self.memo_edit = QPlainTextEdit(self)
+        self.memo_edit.setPlaceholderText("SW 메모를 입력하세요.")
+        memo_text = self._load_memo_text()
+        self.memo_edit.setPlainText(memo_text)
+        splitter.addWidget(self.memo_edit)
+
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 1)
+        layout.addWidget(splitter, 1)
+
+        controls = QHBoxLayout()
+        controls.setContentsMargins(0, 0, 0, 0)
+
+        self.status_label = QLabel("", self)
+        self.status_label.setObjectName("SwNotesStatus")
+        self.status_label.setStyleSheet("color: #2563eb;")
+        controls.addWidget(self.status_label, 0)
+        controls.addStretch(1)
+
+        self.save_button = QPushButton("메모 저장", self)
+        self.save_button.setMinimumWidth(110)
+        self.save_button.clicked.connect(self._save_notes)
+        controls.addWidget(self.save_button, 0)
+
+        layout.addLayout(controls)
+
+        # Track memo modifications after initial load
+        self.memo_edit.document().modificationChanged.connect(self._on_modification_changed)
+        self.memo_edit.document().setModified(False)
+        self._dirty = False
+        self._set_status("현재 메모가 저장되어 있습니다.")
+
+    def refresh_update_log(self) -> None:
+        """Reload update text from disk."""
+        self.update_view.setPlainText(self._load_update_text())
+
+    def save_if_dirty(self) -> None:
+        if self._dirty:
+            self._save_notes()
+
+    def _load_update_text(self) -> str:
+        try:
+            if self._update_path.exists():
+                return self._update_path.read_text(encoding="utf-8")
+        except Exception:
+            pass
+        return SW_DEFAULT_UPDATE_SAMPLE
+
+    def _load_memo_text(self) -> str:
+        try:
+            if self._memo_path.exists():
+                return self._memo_path.read_text(encoding="utf-8")
+        except Exception:
+            pass
+        return ""
+
+    def _on_modification_changed(self, modified: bool) -> None:
+        self._dirty = bool(modified)
+        if self._dirty:
+            self._set_status("저장되지 않은 변경 내용이 있습니다.")
+        else:
+            self._set_status("현재 메모가 저장되어 있습니다.")
+
+    def _set_status(self, text: str) -> None:
+        if self.status_label is not None:
+            self.status_label.setText(text)
+
+    def _save_notes(self) -> None:
+        try:
+            self._memo_path.parent.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+        try:
+            self._memo_path.write_text(self.memo_edit.toPlainText(), encoding="utf-8")
+            self.memo_edit.document().setModified(False)
+            self._on_modification_changed(False)
+            self._set_status("메모를 저장했습니다.")
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "저장 실패",
+                f"메모를 저장하지 못했습니다.\n{exc}",
+            )
+
+
 class MainWindow(QMainWindow):
     """Main dashboard window arranged on a 35x50 grid."""
     def __init__(self):
@@ -144,11 +248,11 @@ class MainWindow(QMainWindow):
         self.btn_module_shutdown = None
         self.btn_integration_module = None
         self.btn_overwrite_020x = None
-        self.btn_sw_notes = None
         self.btn_reference_pdf = None
         self._auto_enabled = False
         self._role_processes = {}
         self._sw_notes_dialog = None
+        self._sw_notes_panel = None
 
         self._build_ui()
 
@@ -222,8 +326,9 @@ class MainWindow(QMainWindow):
         # Remove left-hand controls but keep layout slots
         self._add_left_placeholder(grid)
 
-        # Central placeholder where legacy module cards used to live
-        self._add_placeholder(grid, "MODULE_CENTER")
+        # Central SW update/memo panel
+        self._sw_notes_panel = SWNotesPanel(self, SW_UPDATE_FILE, SW_MEMO_FILE)
+        self._add_zone(grid, self._sw_notes_panel, "MODULE_CENTER")
         self._normalize_module_columns(grid)
 
         # Operation flow panel
@@ -678,16 +783,6 @@ class MainWindow(QMainWindow):
             self.btn_overwrite_020x.clicked.connect(self._handle_overwrite_020x)
             body.addWidget(self.btn_overwrite_020x)
 
-            self.btn_sw_notes = QPushButton("SW 업데이트 / 메모", placeholder)
-            self.btn_sw_notes.setObjectName("BtnSwNotes")
-            self.btn_sw_notes.setMinimumHeight(34)
-            self.btn_sw_notes.setStyleSheet(
-                "QPushButton { background-color: #f97316; color: #ffffff; font-weight: 600; }"
-                "QPushButton:hover { background-color: #fb923c; }"
-                "QPushButton:pressed { background-color: #ea580c; }"
-            )
-            self.btn_sw_notes.clicked.connect(self._open_sw_notes_dialog)
-            body.addWidget(self.btn_sw_notes)
 
             self.btn_reference_pdf = QPushButton("모듈 인터페이스 문서", placeholder)
             self.btn_reference_pdf.setObjectName("BtnReferencePdf")
@@ -926,6 +1021,15 @@ class MainWindow(QMainWindow):
         """Add widget to the grid using ZONES metadata."""
         z = ZONES[key]
         grid.addWidget(w, z["r0"], z["c0"], z["rs"], z["cs"])
+
+    def closeEvent(self, event):
+        """Persist memo edits before the window closes."""
+        try:
+            if self._sw_notes_panel is not None:
+                self._sw_notes_panel.save_if_dirty()
+        except Exception:
+            pass
+        super().closeEvent(event)
 
     # ---------- Actions ----------
     def _browse_db(self):
