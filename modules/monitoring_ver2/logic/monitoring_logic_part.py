@@ -1,11 +1,11 @@
-# logic/monitoring_logic_part.py: '모니터링' 도메인에 대한 세부 비즈니스 로직을 구현합니다.
+﻿# logic/monitoring_logic_part.py: '紐⑤땲?곕쭅' ?꾨찓?몄뿉 ????몃? 鍮꾩쫰?덉뒪 濡쒖쭅??援ы쁽?⑸땲??
 
 from datetime import datetime, timezone
 from dataclasses import asdict
 
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
-# --- 데이터 모델 import ---
+# --- ?곗씠??紐⑤뜽 import ---
 from data.message_models import (
     ModuleStatusModelModel,
     MissionProgressBodyModel,
@@ -42,7 +42,7 @@ def _resolve_fuel_capacity() -> float:
 FUEL_CAPACITY_LITERS = _resolve_fuel_capacity()
 
 
-# --- 반환 가능한 모든 Push 메시지 본문 타입을 정의 ---
+# --- 諛섑솚 媛?ν븳 紐⑤뱺 Push 硫붿떆吏 蹂몃Ц ??낆쓣 ?뺤쓽 ---
 
 def _inform_info_module(msg_id: str, body: dict):
     try:
@@ -75,17 +75,17 @@ class MonitoringLogic:
         self.manager = manager
         self._current_mission_plan_id: Optional[int] = None
         self._plan_context: Optional[Dict[str, Any]] = None
-        self._input_mission_tracker: Dict[
-            int, Dict[str, Set[Tuple[int, int, Optional[int]]]]
+        self._input_mission_tracker: Dict[int, Dict[str, Set[Tuple[int, int, Optional[int], int]]]] = {}
+        self._mission_to_input: Dict[
+            Tuple[int, int, Optional[int], int], int
         ] = {}
-        self._mission_to_input: Dict[Tuple[int, int, Optional[int]], int] = {}
         self._completed_input_ids: Set[int] = set()
         self._collab_completion_sent: bool = False
         self._monitoring_suspended: bool = False
         self._active_aircraft_ids: Set[int] = set()
-        self._mission_progress_max: Dict[Tuple[int, int, Optional[int]], int] = {}
+        self._mission_progress_max: Dict[Tuple[int, int, Optional[int], int], int] = {}
         self._mission_file_map: Dict[
-            Tuple[int, int, Optional[int]], Tuple[int, int, int]
+            Tuple[int, int, Optional[int], int], Tuple[int, int, int]
         ] = {}
         self._input_completion_notified: Set[int] = set()
         self._collab_pause_active: bool = False
@@ -311,7 +311,7 @@ class MonitoringLogic:
             self._pending_mission_plan_id = None
 
     def _scan_latest_mission_plan_id(self) -> Optional[int]:
-        """MissionPlan 디렉터리에서 가장 최신의 plan ID를 추론한다."""
+        """MissionPlan ?붾젆?곕━?먯꽌 媛??理쒖떊??plan ID瑜?異붾줎?쒕떎."""
         try:
             mission_plan_dir = db_paths.get_db_subpath("MissionPlan")
         except Exception:
@@ -438,9 +438,9 @@ class MonitoringLogic:
         }
 
     def _initialize_input_tracker(self, context: Dict[str, Any]) -> None:
-        tracker: Dict[int, Dict[str, Set[Tuple[int, int, Optional[int]]]]] = {}
-        reverse_map: Dict[Tuple[int, int, Optional[int]], int] = {}
-        file_map: Dict[Tuple[int, int, Optional[int]], Tuple[int, int, int]] = {}
+        tracker: Dict[int, Dict[str, Set[Tuple[int, int, Optional[int], int]]]] = {}
+        reverse_map: Dict[Tuple[int, int, Optional[int], int], int] = {}
+        file_map: Dict[Tuple[int, int, Optional[int], int], Tuple[int, int, int]] = {}
         for aircraft_id, payload in (context.get("aircraft") or {}).items():
             missions = payload.get("missions") or []
             try:
@@ -465,7 +465,7 @@ class MonitoringLogic:
                         path_id = int(path_id)
                     except (TypeError, ValueError):
                         path_id = None
-                key = (aircraft_id_int, mission_id, path_id)
+                key = (aircraft_id_int, mission_id, path_id, idx)
                 entry = tracker.setdefault(
                     input_id_int, {"total": set(), "completed": set(), "inactive": set()}
                 )
@@ -546,7 +546,7 @@ class MonitoringLogic:
         )
 
     def execute(self, mode_override=None):
-        """시스템 모드를 확인하고, 'monitoring'일 경우에만 로직을 실행합니다."""
+        """?쒖뒪??紐⑤뱶瑜??뺤씤?섍퀬, 'monitoring'??寃쎌슦?먮쭔 濡쒖쭅???ㅽ뻾?⑸땲??"""
         system_mode = (
             mode_override
             if mode_override is not None
@@ -554,17 +554,17 @@ class MonitoringLogic:
         )
 
         if system_mode == 3:
-            self.manager._log("MON_LOGIC", "EXEC", "모니터링 로직 실행됨.")
+            self.manager._log("MON_LOGIC", "EXEC", "Monitoring loop executing")
             self._process_mission_plan_update()
             plan_context = self._plan_context
             current_plan_id = self._current_mission_plan_id
-            # 401 데이터 가져오기
+            # 401 ?곗씠??媛?몄삤湲?
             data_401 = self.manager.receive_store.get_data("0401")
             if data_401:
                 self.manager._log(
-                    "MON_LOGIC", "INFO", "401 데이터 확인. 모니터링 절차 실행."
+                    "MON_LOGIC", "INFO", "0401 agent status received. Running monitoring cycle."
                 )
-                # 모니터링 절차 실행하여 0501 메시지 본문 생성
+                # 紐⑤땲?곕쭅 ?덉감 ?ㅽ뻾?섏뿬 0501 硫붿떆吏 蹂몃Ц ?앹꽦
                 if self._current_input_mission_id is None:
                     self._current_input_mission_id = self._find_next_input_mission_id(
                         initial=True
@@ -576,7 +576,7 @@ class MonitoringLogic:
 
                 self._update_input_mission_progress(mission_status)
 
-                # 연료 경고 로직
+                # ?곕즺 寃쎄퀬 濡쒖쭅
                 feul_data = []
                 prev_warnings_raw = (
                     self.manager.logic_store.get_data("fuel_warning_prev") or {}
@@ -676,7 +676,7 @@ class MonitoringLogic:
                                 self.manager._log(
                                     "MON_LOGIC",
                                     "INFO",
-                                    f"0504 연료 경고 전송 (UAV={agent_state.aircraftID}, level={text})",
+                                    f"0504 ?곕즺 寃쎄퀬 ?꾩넚 (UAV={agent_state.aircraftID}, level={text})",
                                 )
                                 try:
                                     self.manager.push_store.add_data("0504", warning_body)
@@ -701,27 +701,27 @@ class MonitoringLogic:
                 )
 
                 if body_0501:
-                    # 0501 메시지 발신
+                    # 0501 硫붿떆吏 諛쒖떊
                     # print(f"body_0501: {body_0501}")
                     push_message(
                         "0501", self.manager.node_messenger, body_dict=body_0501
                     )
                     self.manager._log(
-                        "MON_LOGIC", "INFO", "0501 메시지를 발신했습니다."
+                        "MON_LOGIC", "INFO", "0501 mission progress message sent."
                     )
-                    # PushStorage에 저장
+                    # PushStorage?????
                     self.manager.push_store.add_data("0501", body_0501)
-                    # LogicStorage에도 저장
+                    # LogicStorage?먮룄 ???
                     self.manager.logic_store.set_data("0501_data", body_0501)
-                    # UDP 통지 추가
+                    # UDP ?듭? 異붽?
                     udp_reporter.notify_tx("0501")
 
-                    # GUI 업데이트 콜백 호출 (0501은 로직에서 생성된 데이터이므로 'logic' 타입으로 전달)
+                    # GUI ?낅뜲?댄듃 肄쒕갚 ?몄텧 (0501? 濡쒖쭅?먯꽌 ?앹꽦???곗씠?곗씠誘濡?'logic' ??낆쑝濡??꾨떖)
                     if self.manager.gui_update_callback:
                         self.manager.gui_update_callback("logic", "0501", body_0501)
 
-                # fuel_data�� LogicStorage�� �����ϰ� GUI ������Ʈ
-                if feul_data:  # feul_data�� ������� ���� ��쿡�� ó��
+                # fuel_data占쏙옙 LogicStorage占쏙옙 占쏙옙占쏙옙占싹곤옙 GUI 占쏙옙占쏙옙占쏙옙트
+                if feul_data:  # feul_data占쏙옙 占쏙옙占쏙옙占쏙옙占?占쏙옙占쏙옙 占쏙옙荑∽옙占?처占쏙옙
                     self.manager.logic_store.set_data("fuel_data", feul_data)
                     if self.manager.gui_update_callback:
                         self.manager.gui_update_callback(
@@ -730,7 +730,9 @@ class MonitoringLogic:
             self._maybe_stage_replan(reason="logic_loop")
         else:
             self.manager._log(
-                "MON_LOGIC", "INFO", "401 데이터가 없어 모니터링을 건너뜁니다."
+                "MON_LOGIC",
+                "INFO",
+                "0401 agent status not available; skipping monitoring cycle.",
             )
 
     def _handle_collab_command(self, data: Any) -> None:
@@ -881,7 +883,7 @@ class MonitoringLogic:
         except (TypeError, ValueError):
             replan_level = 3
         source = trigger.get("source") or "MonitoringModule"
-        reason_text = "협업기저임무 재수행"
+        reason_text = "협업 재계획 요청"
         replan_body = ReplanRequestBodyModel(
             source=source,
             timestamp=timestamp,
@@ -1056,7 +1058,7 @@ class MonitoringLogic:
         self.manager._log(
             "MON_LOGIC",
             "INFO",
-            f"[COLLAB] 협업기저임무 재수행 대기 상태로 전환 (timestamp={timestamp})",
+            f"[COLLAB] ?묒뾽湲곗??꾨Т ?ъ닔???湲??곹깭濡??꾪솚 (timestamp={timestamp})",
         )
         try:
             self.manager.logic_store.set_data(
@@ -1084,7 +1086,7 @@ class MonitoringLogic:
         self.manager._log(
             "MON_LOGIC",
             "INFO",
-            f"[COLLAB] 협업기저임무 대기 상태 해제 ({reason})",
+            f"[COLLAB] ?묒뾽湲곗??꾨Т ?湲??곹깭 ?댁젣 ({reason})",
         )
         try:
             self.manager.logic_store.set_data("collab_pause_active", False)
@@ -1114,7 +1116,12 @@ class MonitoringLogic:
                     path_id = int(path_id)
                 except (TypeError, ValueError):
                     path_id = None
-            key = (aircraft_id, mission_id, path_id)
+            mission_index = entry.get("missionIndex")
+            try:
+                mission_index = int(mission_index) if mission_index is not None else 0
+            except (TypeError, ValueError):
+                mission_index = 0
+            key = (aircraft_id, mission_id, path_id, mission_index)
             input_id = entry.get("inputMissionID")
             if input_id is None:
                 input_id = self._mission_to_input.get(key)
@@ -1168,7 +1175,7 @@ class MonitoringLogic:
             total = data.get("total") or set()
             inactive = data.get("inactive") or set()
             completed = data.get("completed") or set()
-            effective_completed = completed | inactive
+            effective_completed = { (cid, mid, pid, order) for (cid, mid, pid, order) in completed | inactive }
             if not total:
                 self._completed_input_ids.add(input_id)
                 self._notify_input_mission_completed(input_id)
@@ -1189,7 +1196,7 @@ class MonitoringLogic:
         if input_id in self._input_completion_notified:
             return
         self._input_completion_notified.add(input_id)
-        self._send_0503_notification(f"협업기저임무 ID={input_id}")
+        self._send_0503_notification(f"?묒뾽湲곗??꾨Т ID={input_id}")
 
     def _send_0503_notification(self, log_context: str) -> None:
         timestamp = int(
@@ -1208,13 +1215,13 @@ class MonitoringLogic:
             self.manager._log(
                 "MON_LOGIC",
                 "INFO",
-                f"0503 협업기저임무 완료 알림을 발신했습니다. ({log_context})",
+                f"0503 ?묒뾽湲곗??꾨Т ?꾨즺 ?뚮┝??諛쒖떊?덉뒿?덈떎. ({log_context})",
             )
         except Exception as exc:
             self.manager._log(
                 "MON_LOGIC",
                 "WARN",
-                f"0503 메시지 발신 실패({log_context}): {exc}",
+                f"0503 硫붿떆吏 諛쒖떊 ?ㅽ뙣({log_context}): {exc}",
             )
             return
         try:
@@ -1249,7 +1256,7 @@ class MonitoringLogic:
         self.manager._log(
             "MON_LOGIC",
             "INFO",
-            f"[COLLAB] 협업기저임무 재수행 모드 진입 (timestamp={ts})",
+            f"[COLLAB] ?묒뾽湲곗??꾨Т ?ъ닔??紐⑤뱶 吏꾩엯 (timestamp={ts})",
         )
         try:
             self.manager.logic_store.set_data("collab_reexecute_mode", True)
@@ -1264,7 +1271,7 @@ class MonitoringLogic:
         self.manager._log(
             "MON_LOGIC",
             "INFO",
-            f"[COLLAB] 협업기저임무 재수행 모드 해제 ({reason})",
+            f"[COLLAB] ?묒뾽湲곗??꾨Т ?ъ닔??紐⑤뱶 ?댁젣 ({reason})",
         )
         try:
             self.manager.logic_store.set_data("collab_reexecute_mode", False)
@@ -1301,7 +1308,7 @@ class MonitoringLogic:
         return 700_000_000 + (timestamp % 1_000)
 
     def _build_collab_option_list(self) -> Tuple[List[OptionListModel], List[int]]:
-        option_names = ["시스템추천", "촬영 효과 우선", "비행 효과 우선"]
+        option_names = ["시스템추천", "촬영효율우선", "비행효율우선"]
         option_ids = self._allocate_option_ids(len(option_names))
         mission_plan_ids = self._allocate_mission_plan_ids(len(option_names))
         options: List[OptionListModel] = []
@@ -1392,11 +1399,11 @@ class MonitoringLogic:
         self._monitoring_suspended = True
         self._current_input_mission_id = None
         self._update_plan_context_active_input()
-        self._send_0503_notification("전체 협업기저임무 완료")
+        self._send_0503_notification("All input missions completed")
 
 
     def _mark_individual_mission_done(
-        self, key: Tuple[int, int, Optional[int]]
+        self, key: Tuple[int, int, Optional[int], int]
     ) -> None:
         record = self._mission_file_map.get(key)
         if not record or not self._plan_context:
@@ -1434,7 +1441,7 @@ class MonitoringLogic:
                 pass
 
     def generate_body_for(self, msg_id: str) -> PushBodyType:
-        """메시지 ID에 따라 데이터 클래스 인스턴스를 생성하여 반환합니다."""
+        """硫붿떆吏 ID???곕씪 ?곗씠???대옒???몄뒪?댁뒪瑜??앹꽦?섏뿬 諛섑솚?⑸땲??"""
         timestamp = int(
             (
                 datetime.now(timezone.utc) - datetime(2000, 1, 1, tzinfo=timezone.utc)
@@ -1463,3 +1470,4 @@ class MonitoringLogic:
             )
 
         raise ValueError(f"Body generation not implemented for msg_id: {msg_id}")
+

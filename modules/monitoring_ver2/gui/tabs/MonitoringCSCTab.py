@@ -71,7 +71,7 @@ class MonitoringCSCTab(QWidget):
         self.rx_row_map: Dict[str, int] = {}
         self.tx_history: Dict[str, Deque[dict]] = {msg_id: deque(maxlen=self.MAX_HISTORY) for msg_id, _ in PUSH_MESSAGES}
         self.rx_history: Dict[str, Deque[dict]] = {msg_id: deque(maxlen=self.MAX_HISTORY) for msg_id, _ in RECEIVE_MESSAGES}
-        self._periodic_targets: Dict[str, float] = {"0102": 5.0}
+        self._periodic_targets: Dict[str, float] = {"0102": 5.0, "0501": 1.0}
         self._prepared_replan_body: Any | None = None
         self._prepared_replan_context: Dict[str, Any] | None = None
         self._last_replan_error: Exception | None = None
@@ -560,7 +560,7 @@ class MonitoringCSCTab(QWidget):
 
     def _create_dummy_body(self, msg_id: str):
         timestamp = int(datetime.now(timezone.utc).timestamp() * 1000)
-        source_module = "MonitoringCSC"
+        source_module = "MSM"
         import random
 
         if msg_id == "0102":

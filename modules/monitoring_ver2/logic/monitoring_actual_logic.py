@@ -102,6 +102,7 @@ def run_monitoring_procedure(
                     "individualMissionID": 0,
                     "pathID": None,
                     "inputMissionID": None,
+                    "missionIndex": -1,
                     "progress": progress_value,
                 }
             )
@@ -126,6 +127,7 @@ def run_monitoring_procedure(
                     "individualMissionID": 0,
                     "pathID": None,
                     "inputMissionID": None,
+                    "missionIndex": -1,
                     "progress": progress_value,
                 }
             )
@@ -137,6 +139,63 @@ def run_monitoring_procedure(
             current_idx = len(missions)
         elif current_wp in waypoint_map:
             current_idx, current_pos = waypoint_map[current_wp]
+        else:
+            # waypoint_map은 mission_context를 초기화한 시점의 경로만 포함한다.
+            # 동일한 path를 공유하고 있지만 해당 waypoint가 빠져 있는 경우를 대비해
+            # 우선 pathID가 동일한 임무를 찾아 fallback으로 진행률을 계산한다.
+            fallback_idx = None
+            fallback_pos = None
+            if current_wp is not None:
+                current_path_id = None
+                matches = []
+                for idx, mission in enumerate(missions):
+                    path_id = mission.get("pathID")
+                    if path_id is not None:
+                        try:
+                            path_id = int(path_id)
+                        except (TypeError, ValueError):
+                            path_id = None
+                    if path_id is not None and path_id == current_path_id:
+                        matches.append((idx, mission))
+                    elif current_path_id is None:
+                        # 첫 번째 매칭용
+                        current_path_id = path_id
+                        if current_path_id is not None:
+                            matches.append((idx, mission))
+                if not matches:
+                    # path 정보를 활용하지 못할 때 waypoint 숫자가 증가하는 임무를 fallback
+                    for idx, mission in enumerate(missions):
+                        waypoints = mission.get("waypoints") or []
+                        try:
+                            waypoints_int = [int(wp) for wp in waypoints]
+                        except (TypeError, ValueError):
+                            waypoints_int = []
+                        if waypoints_int and min(waypoints_int) <= current_wp <= max(
+                            waypoints_int
+                        ):
+                            matches.append((idx, mission))
+                if matches:
+                    match_idx, mission = matches[0]
+                    waypoints = mission.get("waypoints") or []
+                    try:
+                        waypoint_ints = [int(wp) for wp in waypoints]
+                    except (TypeError, ValueError):
+                        waypoint_ints = []
+                    if waypoint_ints:
+                        for pos, wp in enumerate(waypoint_ints):
+                            if wp >= current_wp:
+                                fallback_pos = pos
+                                break
+                        if fallback_pos is None:
+                            fallback_pos = len(waypoint_ints)
+                        fallback_idx = match_idx
+            if fallback_idx is not None:
+                current_idx, current_pos = fallback_idx, fallback_pos
+            elif current_wp is not None:
+                # 완전히 알려지지 않은 waypoint라도 다음 진행률 업데이트를 위해
+                # 마지막 임무의 끝으로 간주한다.
+                current_idx = len(missions)
+                current_pos = None
 
         # Waypoint ID 0은 특정 운용 모드에서 "미진입" 상태로 사용되므로 진행률을 0으로 강제.
         force_zero_progress = current_wp == 0
@@ -202,6 +261,7 @@ def run_monitoring_procedure(
                     "individualMissionID": mission_id,
                     "pathID": mission.get("pathID"),
                     "inputMissionID": mission.get("inputMissionID"),
+                    "missionIndex": idx,
                     "progress": progress,
                 }
             )
