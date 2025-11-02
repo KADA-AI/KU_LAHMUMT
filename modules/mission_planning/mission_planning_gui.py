@@ -152,6 +152,8 @@ class MainWindow(QMainWindow):
         self._active_plan_context: dict = {}
         self._pending_plan_push: dict | None = None
         self._scheduled_0301_plan_ids: list[int] = []
+        self._replan_delay_timer: QTimer | None = None
+        self._option_id_counter = 0
 
         # ── 중앙 탭(AssignmentPlanningTab)
         tabs = QTabWidget()
@@ -870,6 +872,17 @@ class MainWindow(QMainWindow):
             self.log_sig.emit(f"[ERR] 0903 push failed: {e}")
 
 
+    def _allocate_option_ids(self, count: int) -> list[int]:
+        ids: list[int] = []
+        try:
+            total = int(count)
+        except Exception:
+            total = 0
+        for _ in range(max(total, 0)):
+            self._option_id_counter += 1
+            ids.append(self._option_id_counter)
+        return ids
+
     def _push_0901_options(self, plan_ids, option_names):
         """Push option info request using supplied plan IDs."""
         try:
@@ -879,19 +892,24 @@ class MainWindow(QMainWindow):
             return
         try:
             ts = _now_ms_since_2000()
-            entries = []
             plan_list = list(plan_ids or [])
             name_list = list(option_names or [])
+            valid_entries: list[tuple[int, str]] = []
             for idx, plan_id in enumerate(plan_list, 1):
                 try:
                     pid = int(plan_id)
                 except Exception:
                     continue
                 name = name_list[idx - 1] if idx - 1 < len(name_list) else f"option{idx}"
-                entries.append({"optionID": idx, "optionName": str(name), "missionPlanID": pid})
-            if not entries:
+                valid_entries.append((pid, str(name)))
+            if not valid_entries:
                 self.log_sig.emit("[WARN] 0901 skipped: no entries")
                 return
+            option_ids = self._allocate_option_ids(len(valid_entries))
+            entries = [
+                {"optionID": oid, "optionName": name, "missionPlanID": pid}
+                for oid, (pid, name) in zip(option_ids, valid_entries)
+            ]
             body = {
                 "timestamp": ts,
                 "source": "MMR",
@@ -905,8 +923,6 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
         except Exception as e:
-            self.log_sig.emit(f"[ERR] 0901 push failed: {e}")
-
             self.log_sig.emit(f"[ERR] 0901 push failed: {e}")
 
     # ───────── 0102 폴백(일반적으론 send_status_ok 사용) ─────────
@@ -1147,10 +1163,33 @@ class MainWindow(QMainWindow):
         self._active_plan_context = ctx
         summary = ", ".join(str(pid) for pid in ctx.get("plan_ids", [])) or "-"
         self._append_log_line(f"[AUTO] 0902 received (planIds={summary})")
-        self._run_replan_pipeline_async()
+        self._schedule_replan_pipeline(delay_ms=1500)
 
     # ───────── 재계획 파이프라인(파일 생성/저장 후 0301만 송신) ─────────
+    def _schedule_replan_pipeline(self, delay_ms: int = 1000) -> None:
+        """Delay the replan pipeline start to avoid race conditions with rapid 0902 dispatch."""
+        timer = getattr(self, "_replan_delay_timer", None)
+        if timer is not None:
+            timer.stop()
+            timer.deleteLater()
+        if delay_ms <= 0:
+            self._replan_delay_timer = None
+            self._run_replan_pipeline_async()
+            return
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+        timer.setInterval(int(delay_ms))
+        timer.timeout.connect(self._run_replan_pipeline_async)
+        self._replan_delay_timer = timer
+        timer.start()
+        self._append_log_line(f"[AUTO] replan pipeline scheduled after {delay_ms/1000:.1f}s delay")
+
     def _run_replan_pipeline_async(self):
+        timer = getattr(self, "_replan_delay_timer", None)
+        if timer is not None:
+            timer.stop()
+            timer.deleteLater()
+            self._replan_delay_timer = None
         if not self._power_on:
             self._append_log_line("[BLOCK] Power OFF → replan pipeline 차단")
             return

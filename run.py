@@ -27,14 +27,8 @@ import collections
 
 
 def _debug_log(message: str) -> None:
-    
-    try:
-        ts = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')
-        log_path = PROJECT_ROOT / 'run_debug.log'
-        with log_path.open('a', encoding='utf-8') as fh:
-            fh.write(f"[{ts}] {message}\n")
-    except Exception:
-        pass
+    # Debug logging disabled to avoid creating log files
+    return
 
 # ─────────────────────────────────────────────────────────────
 # Qt 경고 필터 (선택)
@@ -67,32 +61,6 @@ PROJECT_ROOT, COMMON_DIR, DS_DIR = _bootstrap_paths()
 
 
 db_paths.bootstrap_db_root()
-
-# ---------------------------------------------------------------------------
-# Unhandled exception logging (writes to run_error.log)
-# ---------------------------------------------------------------------------
-import datetime
-
-def _install_exception_logger():
-    def _hook(exc_type, exc, tb):
-        try:
-            ts = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')
-            log_path = PROJECT_ROOT / 'run_error.log'
-            with log_path.open('a', encoding='utf-8') as fh:
-                fh.write(f"[{ts}] {exc_type.__name__}: {exc}\n")
-                import traceback
-                fh.write(''.join(traceback.format_exception(exc_type, exc, tb)))
-                fh.write('\n')
-        except Exception:
-            pass
-        finally:
-            try:
-                sys.__excepthook__(exc_type, exc, tb)
-            except Exception:
-                pass
-    sys.excepthook = _hook
-
-_install_exception_logger()
 
 # ─────────────────────────────────────────────────────────────
 # 스타일(QSS) 로드

@@ -4,7 +4,6 @@ from datetime import datetime, timezone
 from dataclasses import asdict
 
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
-from pathlib import Path
 
 # --- 데이터 모델 import ---
 from data.message_models import (
@@ -25,6 +24,7 @@ import udp_reporter
 import socket
 import json
 import os
+import math
 from modules.common import db_paths
 
 
@@ -32,9 +32,11 @@ def _resolve_fuel_capacity() -> float:
     raw = os.getenv("KU_MON_FUEL_CAPACITY_L", "15")
     try:
         value = float(raw) if raw is not None else 15.0
+        if value > 0:
+            return value
     except (TypeError, ValueError):
-        value = 15.0
-    return value if value > 0 else 15.0
+        pass
+    return 15.0
 
 
 FUEL_CAPACITY_LITERS = _resolve_fuel_capacity()
@@ -85,8 +87,6 @@ class MonitoringLogic:
         self._mission_file_map: Dict[
             Tuple[int, int, Optional[int]], Tuple[int, int, int]
         ] = {}
-        self._input_mission_file_map: Dict[int, Tuple[Path, int]] = {}
-        self._input_mission_status: Dict[int, bool] = {}
         self._input_completion_notified: Set[int] = set()
         self._collab_pause_active: bool = False
         self._collab_pause_prev_suspended: bool = False
@@ -97,14 +97,12 @@ class MonitoringLogic:
         self._collab_replan_trigger: Optional[Dict[str, Any]] = None
         self._collab_last_replan_key: Optional[Tuple[Optional[int], Optional[int]]] = None
         self._latest_input_plan_key: Optional[Tuple[Optional[int], Optional[int]]] = None
-        self._collab_reexecute_armed: bool = False
         self._used_option_ids: Set[int] = set()
         self._allocated_plan_ids: Set[int] = set()
         self._existing_mission_plan_ids: Set[int] = set()
         self._pending_mission_plan_id: Optional[int] = None
         self._pending_decision_command: Optional[Tuple[Optional[int], Optional[int]]] = None
         self._current_input_mission_id: Optional[int] = None
-        self._prev_feul_state_text = ""
         try:
             self.manager.logic_store.set_data("collab_pause_active", False)
         except Exception:
@@ -286,11 +284,19 @@ class MonitoringLogic:
             if command_consumed:
                 self._pending_decision_command = None
             return
+        previous_plan_id = self._current_mission_plan_id
+        tracker_initialized = bool(self._input_mission_tracker)
         self._plan_context = context
         self._current_mission_plan_id = mission_plan_id
-        self._initialize_input_tracker(context)
-        self._current_input_mission_id = self._find_next_input_mission_id(initial=True)
-        self._update_plan_context_active_input()
+        reinitialized = (
+            previous_plan_id != mission_plan_id or not tracker_initialized
+        )
+        if reinitialized:
+            self._initialize_input_tracker(context)
+            self._current_input_mission_id = self._find_next_input_mission_id(
+                initial=True
+            )
+            self._update_plan_context_active_input()
         try:
             self.manager.logic_store.set_data("current_mission_plan", context)
         except Exception:
@@ -431,54 +437,7 @@ class MonitoringLogic:
             "inputMissionIDs": sorted(input_ids),
         }
 
-    def _refresh_input_mission_index(self, context: Dict[str, Any]) -> None:
-        self._input_mission_file_map = {}
-        self._input_mission_status = {}
-        package_id = self._to_int(context.get("inputMissionPackageID"))
-        if package_id is None:
-            context["inputMissionStatus"] = {}
-            return
-        try:
-            plan_path = db_paths.get_db_subpath(
-                "InputMissionPlan", f"{package_id}.json"
-            )
-        except FileNotFoundError:
-            self.manager._log(
-                "MON_LOGIC",
-                "WARN",
-                f"InputMissionPlan file missing for package {package_id}",
-            )
-            context["inputMissionStatus"] = {}
-            return
-        try:
-            with plan_path.open("r", encoding="utf-8") as fh:
-                input_plan = json.load(fh)
-        except Exception as exc:
-            self.manager._log(
-                "MON_LOGIC",
-                "WARN",
-                f"InputMissionPlan load failed for package {package_id}: {exc}",
-            )
-            context["inputMissionStatus"] = {}
-            return
-        mission_list = input_plan.get("inputMissionList") or []
-        for idx, mission in enumerate(mission_list):
-            input_id = self._to_int(
-                self._safe_get(mission, "inputMissionID", "InputMissionID")
-            )
-            if input_id is None:
-                continue
-            self._input_mission_file_map[input_id] = (plan_path, idx)
-            status = bool(self._safe_get(mission, "isDone", "IsDone"))
-            self._input_mission_status[input_id] = status
-        context["inputMissionStatus"] = dict(self._input_mission_status)
-        try:
-            self.manager.logic_store.set_data("input_mission_status", dict(self._input_mission_status))
-        except Exception:
-            pass
-
     def _initialize_input_tracker(self, context: Dict[str, Any]) -> None:
-        self._refresh_input_mission_index(context)
         tracker: Dict[int, Dict[str, Set[Tuple[int, int, Optional[int]]]]] = {}
         reverse_map: Dict[Tuple[int, int, Optional[int]], int] = {}
         file_map: Dict[Tuple[int, int, Optional[int]], Tuple[int, int, int]] = {}
@@ -508,7 +467,7 @@ class MonitoringLogic:
                         path_id = None
                 key = (aircraft_id_int, mission_id, path_id)
                 entry = tracker.setdefault(
-                    input_id_int, {"total": set(), "completed": set()}
+                    input_id_int, {"total": set(), "completed": set(), "inactive": set()}
                 )
                 entry["total"].add(key)
                 reverse_map[key] = input_id_int
@@ -526,8 +485,8 @@ class MonitoringLogic:
         self._active_aircraft_ids = set()
         self._mission_progress_max = {}
         self._mission_file_map = file_map
-        self._input_completion_notified = set()
         self._current_input_mission_id = None
+        self._input_completion_notified = set()
 
     def _update_plan_context_active_input(self) -> None:
         if self._plan_context is not None:
@@ -607,7 +566,9 @@ class MonitoringLogic:
                 )
                 # 모니터링 절차 실행하여 0501 메시지 본문 생성
                 if self._current_input_mission_id is None:
-                    self._current_input_mission_id = self._find_next_input_mission_id(initial=True)
+                    self._current_input_mission_id = self._find_next_input_mission_id(
+                        initial=True
+                    )
                 self._update_plan_context_active_input()
                 body_0501, mission_status = run_monitoring_procedure(
                     data_401, plan_context, current_plan_id
@@ -615,64 +576,84 @@ class MonitoringLogic:
 
                 self._update_input_mission_progress(mission_status)
 
-                if self._monitoring_suspended:
-                    body_0501 = None
-
                 # 연료 경고 로직
                 feul_data = []
-                prev_warnings = dict(
+                prev_warnings_raw = (
                     self.manager.logic_store.get_data("fuel_warning_prev") or {}
                 )
+                prev_warnings: Dict[int, str] = {}
+                for key, value in dict(prev_warnings_raw).items():
+                    try:
+                        norm_key = int(key)
+                    except (TypeError, ValueError):
+                        try:
+                            norm_key = int(str(key))
+                        except (TypeError, ValueError):
+                            norm_key = key
+                    prev_warnings[norm_key] = value
 
                 for agent_state in data_401.agentStateList:
                     if agent_state.isUnmanned == 1:
                         try:
-                            fuel_liters = float(getattr(agent_state, "fuel", 0) or 0.0)
+                            aircraft_id = int(getattr(agent_state, "aircraftID", 0))
                         except (TypeError, ValueError):
-                            fuel_liters = 0.0
-                        if fuel_liters < 0:
-                            fuel_liters = 0.0
-                        if FUEL_CAPACITY_LITERS > 0:
+                            aircraft_id = getattr(agent_state, "aircraftID", 0)
+
+                        fuel_value = getattr(agent_state, "fuel", None)
+                        fuel_liters: Optional[float] = None
+                        if fuel_value is not None:
+                            try:
+                                candidate = float(fuel_value)
+                            except (TypeError, ValueError):
+                                candidate = None
+                            if candidate is not None and math.isfinite(candidate):
+                                if candidate < 0:
+                                    candidate = 0.0
+                                fuel_liters = candidate
+
+                        if fuel_liters is None:
+                            feul_data.append(
+                                {
+                                    "id": aircraft_id,
+                                    "warning": "unknown",
+                                    "fuelLiters": None,
+                                    "fuelPercent": None,
+                                }
+                            )
+                            prev_warnings[aircraft_id] = "unknown"
+                            continue
+
+                        capacity = FUEL_CAPACITY_LITERS if FUEL_CAPACITY_LITERS > 0 else 15.0
+                        red_threshold = capacity * 0.1
+                        yellow_threshold = capacity * 0.2
+                        text = "green"
+                        fuel_level = 0
+                        if fuel_liters <= red_threshold:
+                            text = "red"
+                            fuel_level = 2
+                        elif fuel_liters <= yellow_threshold:
+                            text = "yellow"
+                            fuel_level = 1
+
+                        if capacity > 0:
                             fuel_percent = max(
-                                0.0,
-                                min(
-                                    100.0,
-                                    (fuel_liters / FUEL_CAPACITY_LITERS) * 100.0,
-                                ),
+                                0.0, min(100.0, (fuel_liters / capacity) * 100.0)
                             )
                         else:
                             fuel_percent = 0.0
 
-                        
-                        feul_state_text = ""
-                        fuel_level = 0
-                        is_fuel_updated  = False
-                        
-                        if fuel_percent <= 10.0:
-                            feul_state_text = "red"
-                            fuel_level = 2
-                        elif fuel_percent <= 20.0:
-                            feul_state_text = "yellow"
-                            fuel_level = 1
-                        else:
-                            feul_state_text = "green"
+                        feul_data.append(
+                            {
+                                "id": aircraft_id,
+                                "warning": text,
+                                "fuelLiters": round(fuel_liters, 2),
+                                "fuelPercent": round(fuel_percent, 1),
+                            }
+                        )
 
-                        if self._prev_feul_state_text == feul_state_text:
-                            is_fuel_updated = True
-                        else:
-                            is_fuel_updated = False
-
-                        if is_fuel_updated: 
-                            feul_data.append(
-                                {
-                                    "id": agent_state.aircraftID,
-                                    "warning": feul_state_text,
-                                    "fuelPercent": round(fuel_percent, 1),
-                                    "fuelLiters": round(fuel_liters, 2),
-                                }
-                            )
-
-                            if fuel_level in (1, 2):
+                        if fuel_level in (1, 2):
+                            last_state = prev_warnings.get(aircraft_id)
+                            if last_state != text:
                                 warning_body = {
                                     "timestamp": int(
                                         (
@@ -682,10 +663,10 @@ class MonitoringLogic:
                                         * 1000
                                     ),
                                     "source": "MSM",
-                                    "aircraftID": agent_state.aircraftID,
+                                    "aircraftID": aircraft_id,
                                     "fuelLevel": fuel_level,
-                                    "fuelPercent": round(fuel_percent, 1),
                                     "fuelLiters": round(fuel_liters, 2),
+                                    "fuelPercent": round(fuel_percent, 1),
                                 }
                                 push_message(
                                     "0504",
@@ -695,7 +676,7 @@ class MonitoringLogic:
                                 self.manager._log(
                                     "MON_LOGIC",
                                     "INFO",
-                                    f"0504 fuel warning (UAV={agent_state.aircraftID}, level={feul_state_text}, remaining={fuel_percent:.1f}%)",
+                                    f"0504 연료 경고 전송 (UAV={agent_state.aircraftID}, level={text})",
                                 )
                                 try:
                                     self.manager.push_store.add_data("0504", warning_body)
@@ -713,7 +694,7 @@ class MonitoringLogic:
                                         )
                                     except Exception:
                                         pass
-                            prev_warnings[agent_state.aircraftID] = feul_state_text
+                        prev_warnings[aircraft_id] = text
 
                 self.manager.logic_store.set_data(
                     "fuel_warning_prev", prev_warnings
@@ -771,7 +752,6 @@ class MonitoringLogic:
             self._register_collab_replan_trigger(data)
             self._maybe_stage_replan(reason="rx_0803")
         else:
-            self._collab_reexecute_armed = False
             self._deactivate_collab_pause(reason=f"execute={execute_val} command received")
             self._cancel_pending_replan(reason=f"execute={execute_val}")
             if execute_val == 1:
@@ -781,35 +761,7 @@ class MonitoringLogic:
         package_id = self._to_int(self._safe_get(data, "inputMissionPackageID"))
         timestamp = self._to_int(self._safe_get(data, "timestamp", "Timestamp"))
         self._latest_input_plan_key = (package_id, timestamp)
-
-        system_mode = self.manager.logic_store.get_data("SystemMode")
-        if system_mode in (3, 4):
-            trigger_ts = timestamp if timestamp is not None else self._current_time_ms()
-            prev = self._collab_replan_trigger or {}
-            prev_reason = str(prev.get("reason") or "")
-            reason_tag = "rx_0201 (new input mission)"
-            if self._collab_reexecute_armed or "execute=2" in prev_reason:
-                reason_tag = "rx_0201 (reexecute)"
-            self._collab_replan_trigger = {
-                "command_timestamp": trigger_ts,
-                "source": prev.get("source") or "MonitoringModule",
-                "replanLevel": self._to_int(prev.get("replanLevel")) or 3,
-                "reason": reason_tag,
-            }
-            self._collab_replan_pending = True
-            self._collab_replan_inflight = False  # allow immediate dispatch even if previous replan existed
-            self._collab_last_replan_key = None
-            try:
-                self.manager.logic_store.set_data(
-                    "collab_replan_trigger", dict(self._collab_replan_trigger)
-                )
-            except Exception:
-                pass
-            self.manager._log(
-                "MON_LOGIC",
-                "INFO",
-                "[COLLAB] mission-mode 0201 received; dispatching collaborative replan.",
-            )
+        if self._collab_replan_pending:
             self._maybe_stage_replan(reason="rx_0201")
 
     def _register_collab_replan_trigger(self, data: Any) -> None:
@@ -853,8 +805,6 @@ class MonitoringLogic:
             self._collab_replan_inflight = False
             self._exit_collab_reexecute_mode(reason=f"cancel({reason})")
         self._collab_replan_trigger = None
-        self._collab_last_replan_key = None
-        self._collab_reexecute_armed = False
         try:
             self.manager.logic_store.set_data(
                 "collab_replan_state",
@@ -868,15 +818,8 @@ class MonitoringLogic:
             pass
 
     def _maybe_stage_replan(self, reason: str) -> None:
-        if not self._collab_replan_pending:
+        if not self._collab_replan_pending or self._collab_replan_inflight:
             return
-        if self._collab_replan_inflight:
-            self.manager._log(
-                "MON_LOGIC",
-                "INFO",
-                "[COLLAB] overriding in-flight replan with new request.",
-            )
-            self._collab_replan_inflight = False
         system_mode = self.manager.logic_store.get_data("SystemMode")
         if system_mode not in (3, 4):
             return
@@ -899,7 +842,6 @@ class MonitoringLogic:
             self._collab_last_replan_key = current_key
             self._collab_replan_pending = False
             self._collab_replan_inflight = True
-            self._collab_reexecute_armed = False
             self._enter_collab_reexecute_mode(context.get("timestamp"))
         else:
             self.manager._log(
@@ -939,13 +881,7 @@ class MonitoringLogic:
         except (TypeError, ValueError):
             replan_level = 3
         source = trigger.get("source") or "MonitoringModule"
-        trigger_desc = str(trigger.get("reason") or "")
-        if "rx_0201 (reexecute)" in trigger_desc or "execute=2" in trigger_desc:
-            reason_text = "협업기저임무 재수행"
-        elif "rx_0201" in trigger_desc:
-            reason_text = "협업기저임무 편집으로 인한 재계획"
-        else:
-            reason_text = "협업기저임무 재수행"
+        reason_text = "협업기저임무 재수행"
         replan_body = ReplanRequestBodyModel(
             source=source,
             timestamp=timestamp,
@@ -1078,10 +1014,7 @@ class MonitoringLogic:
         self._collab_replan_inflight = False
         self._collab_replan_pending = False
         self._collab_replan_trigger = None
-        self._collab_last_replan_key = None
-
         self._exit_collab_reexecute_mode(reason="0305 status=2")
-        self._collab_reexecute_armed = False
         if self._collab_pause_active:
             self._deactivate_collab_pause(reason="replan completed")
         try:
@@ -1115,7 +1048,6 @@ class MonitoringLogic:
             )
             return
 
-        self._collab_reexecute_armed = True
         self._collab_pause_prev_suspended = self._monitoring_suspended
         self._monitoring_suspended = True
         self._collab_pause_active = True
@@ -1149,7 +1081,6 @@ class MonitoringLogic:
             return
         self._collab_pause_active = False
         self._monitoring_suspended = self._collab_pause_prev_suspended
-        self._collab_reexecute_armed = False
         self.manager._log(
             "MON_LOGIC",
             "INFO",
@@ -1187,17 +1118,6 @@ class MonitoringLogic:
             input_id = entry.get("inputMissionID")
             if input_id is None:
                 input_id = self._mission_to_input.get(key)
-            fallback_key: Optional[Tuple[int, int, Optional[int]]] = None
-            if input_id is None and path_id is None:
-                # 일부 메시지에는 pathID가 누락될 수 있으므로 동일한 항공기/임무ID로 보정
-                for candidate_key, candidate_input in self._mission_to_input.items():
-                    if (
-                        candidate_key[0] == aircraft_id
-                        and candidate_key[1] == mission_id
-                    ):
-                        input_id = candidate_input
-                        fallback_key = candidate_key
-                        break
             if input_id is None:
                 continue
             try:
@@ -1206,18 +1126,10 @@ class MonitoringLogic:
                 continue
             tracker = self._input_mission_tracker.get(input_id)
             if not tracker or key not in tracker.get("total", set()):
-                if fallback_key and fallback_key in tracker.get("total", set()):
-                    key = fallback_key
-                else:
-                    matched = None
-                    for candidate in tracker.get("total", set()):
-                        if candidate[0] == aircraft_id and candidate[1] == mission_id:
-                            matched = candidate
-                            break
-                    if matched:
-                        key = matched
-                    else:
-                        continue
+                continue
+            inactive_set = tracker.get("inactive")
+            if inactive_set and key in inactive_set:
+                inactive_set.discard(key)
             try:
                 progress = int(entry.get("progress", 0))
             except (TypeError, ValueError):
@@ -1232,83 +1144,48 @@ class MonitoringLogic:
                 self._notify_input_mission_completed(input_id)
         if not changed:
             return
-        if not self._active_aircraft_ids and active_ids:
-            self._active_aircraft_ids = active_ids
+        if active_ids:
+            if not self._active_aircraft_ids:
+                self._active_aircraft_ids = set(active_ids)
+            else:
+                self._active_aircraft_ids.update(active_ids)
             for data in self._input_mission_tracker.values():
                 total = data.get("total") or set()
                 completed = data.get("completed") or set()
-                pruned = {key for key in list(total) if key[0] not in self._active_aircraft_ids}
+                inactive = data.get("inactive")
+                if inactive is None:
+                    inactive = data["inactive"] = set()
+                pruned = {
+                    key for key in list(total) if key[0] not in self._active_aircraft_ids
+                }
                 if pruned:
-                    total.difference_update(pruned)
+                    inactive.update(pruned)
                     completed.difference_update(pruned)
                     for key in pruned:
                         self._mission_progress_max.pop(key, None)
                         self._mission_file_map.pop(key, None)
         for input_id, data in self._input_mission_tracker.items():
             total = data.get("total") or set()
+            inactive = data.get("inactive") or set()
+            completed = data.get("completed") or set()
+            effective_completed = completed | inactive
             if not total:
                 self._completed_input_ids.add(input_id)
                 self._notify_input_mission_completed(input_id)
                 continue
-            completed = data.get("completed") or set()
-            if total <= completed:
+            if total <= effective_completed:
                 self._completed_input_ids.add(input_id)
-                for key in total:
+                for key in total - inactive:
                     self._mark_individual_mission_done(key)
                 self._notify_input_mission_completed(input_id)
         if self._completed_input_ids and all(
-            (info.get("total") or set()) <= (info.get("completed") or set())
+            (info.get("total") or set())
+            <= ((info.get("completed") or set()) | (info.get("inactive") or set()))
             for info in self._input_mission_tracker.values()
         ):
             self._handle_all_input_missions_completed()
 
-    def _mark_input_mission_done(self, input_id: int) -> None:
-        entry = self._input_mission_file_map.get(input_id)
-        if entry is None:
-            return
-        plan_path, mission_index = entry
-        if self._input_mission_status.get(input_id):
-            if self._plan_context is not None:
-                status_map = self._plan_context.setdefault('inputMissionStatus', {})
-                status_map[input_id] = True
-            return
-        try:
-            with plan_path.open('r', encoding='utf-8') as fh:
-                plan_data = json.load(fh)
-        except Exception as exc:
-            self.manager._log(
-                'MON_LOGIC',
-                'WARN',
-                f"Failed to load InputMissionPlan for completion update ({plan_path}): {exc}",
-            )
-            return
-        mission_list = plan_data.get('inputMissionList')
-        if not isinstance(mission_list, list) or mission_index >= len(mission_list):
-            return
-        if mission_list[mission_index].get('isDone') is not True:
-            mission_list[mission_index]['isDone'] = True
-            try:
-                plan_path.write_text(
-                    json.dumps(plan_data, ensure_ascii=False, indent=2),
-                    encoding='utf-8',
-                )
-            except Exception as exc:
-                self.manager._log(
-                    'MON_LOGIC',
-                    'WARN',
-                    f"Failed to persist InputMissionPlan update ({plan_path}): {exc}",
-                )
-        self._input_mission_status[input_id] = True
-        if self._plan_context is not None:
-            status_map = self._plan_context.setdefault('inputMissionStatus', {})
-            status_map[input_id] = True
-        try:
-            self.manager.logic_store.set_data('input_mission_status', dict(self._input_mission_status))
-        except Exception:
-            pass
-
     def _notify_input_mission_completed(self, input_id: int) -> None:
-        self._mark_input_mission_done(input_id)
         if input_id in self._input_completion_notified:
             return
         self._input_completion_notified.add(input_id)

@@ -134,16 +134,21 @@ class MonitoringTab(QWidget):
                         bar.setColor(QColor(0, 255, 0))
                         continue
 
-                    warning_text = fuel_item.get("warning", "green")
+                    warning_text = fuel_item.get("warning", "green") or "green"
+                    display_text = warning_text
 
                     if warning_text == "red":
                         color = QColor(255, 0, 0)  # Red
                     elif warning_text == "yellow":
                         color = QColor(255, 255, 0)  # Yellow
+                    elif warning_text == "unknown":
+                        color = QColor(128, 128, 128)  # Grey for unknown
                     else:
                         color = QColor(0, 255, 0)  # Green
+                        if not warning_text:
+                            display_text = "green"
 
-                    bar.setText(f"UAV {idx+1} (ID {aircraft_id}) Fuel: {warning_text}")
+                    bar.setText(f"UAV {idx+1} (ID {aircraft_id}) Fuel: {display_text}")
                     bar.setColor(color)
         # 기존의 데이터 로깅 로직
         if not (source == "receive" and key):

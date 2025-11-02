@@ -6,7 +6,6 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, QTimer, QUrl
 from PyQt5.QtGui import QKeySequence, QDesktopServices
-from datetime import datetime
 from typing import Optional
 from .zones import GRID_ROWS, GRID_COLS, ZONES
 from ..widgets.cards import Card
@@ -17,7 +16,7 @@ import os, subprocess, json, socket, shutil
 from pathlib import Path
 from modules.common import db_paths
 
-APP_TITLE = "KU Mission Decision Support Dashboard (v251028)"
+APP_TITLE = "KU Mission Decision Support Dashboard (v251029)"
 SW_UPDATE_FILE = db_paths.PROJECT_ROOT / "SW_UPDATE_LOG.txt"
 SW_MEMO_FILE = db_paths.PROJECT_ROOT / "SW_MEMO_NOTE.txt"
 REFERENCE_PDF_PATH = db_paths.PROJECT_ROOT / "ref" / "04. 모듈 간 인터페이스 설계-v7-20250917_133206.pdf"
@@ -741,13 +740,8 @@ class MainWindow(QMainWindow):
                     pass
 
     def _debug_log(self, message: str) -> None:
-        try:
-            ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')
-            log_path = Path(__file__).resolve().parents[2] / 'run_debug.log'
-            with log_path.open('a', encoding='utf-8') as fh:
-                fh.write(f"[{ts}] {message}\n")
-        except Exception:
-            pass
+        # Debug logging disabled to avoid creating log files
+        return
 
     def _module_widget(self, role: str):
         return {
