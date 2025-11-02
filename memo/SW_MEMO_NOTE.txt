@@ -26,3 +26,2803 @@ S235 임시 무인기 임무제외 -> 재계획 X
 [MON PORTS] monitoring: 46982
 [MON PORTS] decision: 46983
 [MON PORTS] info: 46984
+[MON PORTS] assignment: 46981
+[MON PORTS] monitoring: 46982
+[MON PORTS] decision: 46983
+[MON PORTS] info: 46984
+[UDP RECV] decision/MOB  kind=mode  mid=
+[UDP RECV] monitoring/MSM  kind=mode  mid=
+[UDP RECV] assignment/MMR  kind=mode  mid=
+[UDP RECV] info/INF  kind=mode  mid=
+[MODE] inf → 전원 OFF
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[MON PORTS] assignment: 46981
+[MON PORTS] monitoring: 46982
+[MON PORTS] decision: 46983
+[MON PORTS] info: 46984
+[UDP RECV] info/INF  kind=mode  mid=
+[UDP RECV] decision/MOB  kind=mode  mid=
+[MODE] inf → 전원 OFF
+[UDP RECV] monitoring/MSM  kind=mode  mid=
+[UDP RECV] assignment/MMR  kind=mode  mid=
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/MSM  kind=mode  mid=
+[MON PORTS] assignment: 46981
+[MON PORTS] monitoring: 46982
+[MON PORTS] decision: 46983
+[MON PORTS] info: 46984
+[UDP RECV] info/INF  kind=mode  mid=
+[UDP RECV] decision/MOB  kind=mode  mid=
+[UDP RECV] assignment/MMR  kind=mode  mid=
+[UDP RECV] monitoring/MSM  kind=mode  mid=
+[MODE] inf → 전원 OFF
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/MSM  kind=mode  mid=
+[MODE] monitoring → 전원 ON
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.93 Hz   cum≈9.85 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈3.21 Hz   cum≈0.54 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.11 Hz   cum≈4.93 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.52 Hz   cum≈1.21 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.48 Hz   cum≈4.92 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.66 Hz   cum≈1.70 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.62 Hz   cum≈4.92 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.76 Hz   cum≈2.08 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.69 Hz   cum≈4.92 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.80 Hz   cum≈2.38 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.81 Hz   cum≈4.92 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈2.62 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈4.92 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈2.82 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈4.92 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈2.99 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈4.92 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈3.13 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈4.92 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.94 Hz   cum≈3.26 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈4.92 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈3.37 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈4.92 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈3.46 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈4.92 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈3.54 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈4.92 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈3.62 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈4.92 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.91 Hz   cum≈3.68 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.91 Hz   cum≈4.92 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.91 Hz   cum≈3.74 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.91 Hz   cum≈4.92 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.91 Hz   cum≈3.80 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.91 Hz   cum≈4.92 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.91 Hz   cum≈3.85 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.91 Hz   cum≈4.92 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.89 Hz   cum≈3.89 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.89 Hz   cum≈4.92 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.91 Hz   cum≈3.93 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.91 Hz   cum≈4.92 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.91 Hz   cum≈3.97 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.91 Hz   cum≈4.92 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.85 Hz   cum≈4.00 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.89 Hz   cum≈4.91 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[MON PORTS] assignment: 46981
+[MON PORTS] monitoring: 46982
+[MON PORTS] decision: 46983
+[MON PORTS] info: 46984
+[UDP RECV] monitoring/MSM  kind=mode  mid=
+[UDP RECV] decision/MOB  kind=mode  mid=
+[UDP RECV] assignment/MMR  kind=mode  mid=
+[UDP RECV] info/INF  kind=mode  mid=
+[MODE] inf → 전원 OFF
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/MSM  kind=mode  mid=
+[MODE] monitoring → 전원 ON
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.93 Hz   cum≈9.85 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.93 Hz   cum≈0.36 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈5.74 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈0.86 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈5.37 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈1.27 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈5.23 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈1.60 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈5.16 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈1.87 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.91 Hz   cum≈5.10 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈2.10 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0501
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0501
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0501
+[HZ] monitoring:tx:0501  recent≈4.93 Hz   cum≈9.85 Hz
+[UDP RECV] info/INF  kind=rx  mid=0501
+[UDP RECV] decision/MOB  kind=rx  mid=0501
+[UDP RECV] assignment/MMR  kind=rx  mid=0501
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0501
+[UDP RECV] info/INF  kind=rx  mid=0501
+[HZ] inf:rx:0501  recent≈5.35 Hz   cum≈10.70 Hz
+[UDP RECV] assignment/MMR  kind=rx  mid=0501
+[HZ] assignment:rx:0501  recent≈5.35 Hz   cum≈10.70 Hz
+[UDP RECV] decision/MOB  kind=rx  mid=0501
+[HZ] decision:rx:0501  recent≈5.35 Hz   cum≈10.70 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0501
+[UDP RECV] info/INF  kind=rx  mid=0501
+[UDP RECV] assignment/MMR  kind=rx  mid=0501
+[UDP RECV] decision/MOB  kind=rx  mid=0501
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0501
+[UDP RECV] decision/MOB  kind=rx  mid=0501
+[UDP RECV] assignment/MMR  kind=rx  mid=0501
+[UDP RECV] info/INF  kind=rx  mid=0501
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0501
+[UDP RECV] assignment/MMR  kind=rx  mid=0501
+[UDP RECV] info/INF  kind=rx  mid=0501
+[UDP RECV] decision/MOB  kind=rx  mid=0501
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0501
+[HZ] monitoring:tx:0501  recent≈4.92 Hz   cum≈5.74 Hz
+[UDP RECV] assignment/MMR  kind=rx  mid=0501
+[UDP RECV] decision/MOB  kind=rx  mid=0501
+[UDP RECV] info/INF  kind=rx  mid=0501
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0501
+[UDP RECV] info/INF  kind=rx  mid=0501
+[UDP RECV] decision/MOB  kind=rx  mid=0501
+[HZ] decision:rx:0501  recent≈4.99 Hz   cum≈5.82 Hz
+[UDP RECV] assignment/MMR  kind=rx  mid=0501
+[HZ] assignment:rx:0501  recent≈4.99 Hz   cum≈5.82 Hz
+[HZ] inf:rx:0501  recent≈4.99 Hz   cum≈5.82 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0501
+[UDP RECV] info/INF  kind=rx  mid=0501
+[UDP RECV] decision/MOB  kind=rx  mid=0501
+[UDP RECV] assignment/MMR  kind=rx  mid=0501
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0501
+[UDP RECV] info/INF  kind=rx  mid=0501
+[UDP RECV] assignment/MMR  kind=rx  mid=0501
+[UDP RECV] decision/MOB  kind=rx  mid=0501
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0501
+[UDP RECV] info/INF  kind=rx  mid=0501
+[UDP RECV] decision/MOB  kind=rx  mid=0501
+[UDP RECV] assignment/MMR  kind=rx  mid=0501
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0501
+[HZ] monitoring:tx:0501  recent≈4.92 Hz   cum≈5.37 Hz
+[UDP RECV] info/INF  kind=rx  mid=0501
+[UDP RECV] decision/MOB  kind=rx  mid=0501
+[UDP RECV] assignment/MMR  kind=rx  mid=0501
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0501
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0501
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0502
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0502
+[MON PORTS] assignment: 46981
+[MON PORTS] monitoring: 46982
+[MON PORTS] decision: 46983
+[MON PORTS] info: 46984
+[UDP RECV] monitoring/MSM  kind=mode  mid=
+[UDP RECV] decision/MOB  kind=mode  mid=
+[UDP RECV] info/INF  kind=mode  mid=
+[MODE] inf → 전원 OFF
+[UDP RECV] assignment/MMR  kind=mode  mid=
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=mode  mid=
+[MODE] inf → 전원 ON
+[MON PORTS] assignment: 46981
+[MON PORTS] monitoring: 46982
+[MON PORTS] decision: 46983
+[MON PORTS] info: 46984
+[UDP RECV] decision/MOB  kind=mode  mid=
+[UDP RECV] monitoring/MSM  kind=mode  mid=
+[UDP RECV] info/INF  kind=mode  mid=
+[MODE] inf → 전원 OFF
+[UDP RECV] assignment/MMR  kind=mode  mid=
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=mode  mid=
+[MODE] inf → 전원 ON
+[UDP RECV] decision/MOB  kind=rx  mid=0101
+[UDP RECV] assignment/MMR  kind=rx  mid=0101
+[UDP RECV] monitoring/MSM  kind=rx  mid=0101
+[OPS] Standby 활성화(신규 경로 적용) 2025-11-02T185100 @ C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\Logs\Scenario_2025-11-02T185100\SBC3
+[UDP RECV] decision/MOB  kind=mode  mid=
+[MODE] decision → 대기모드
+[UDP RECV] monitoring/MSM  kind=mode  mid=
+[MODE] monitoring → 대기모드
+[UDP RECV] assignment/MMR  kind=mode  mid=
+[MODE] assignment → 대기모드
+[UDP RECV] decision/decision  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] decision/MOB  kind=tx  mid=0102
+[HZ] decision:tx:0102  recent≈6.41 Hz   cum≈12.82 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.93 Hz   cum≈9.85 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.93 Hz   cum≈9.85 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.00 Hz   cum≈0.30 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈5.74 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.92 Hz   cum≈5.74 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.74 Hz   cum≈0.72 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈5.37 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.89 Hz   cum≈5.33 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.82 Hz   cum≈1.07 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈5.23 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.90 Hz   cum≈5.21 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.85 Hz   cum≈1.37 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈5.16 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.65 Hz   cum≈4.89 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.87 Hz   cum≈1.62 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈5.11 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.69 Hz   cum≈4.89 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈1.85 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈5.08 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.69 Hz   cum≈4.90 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈2.04 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈5.06 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.70 Hz   cum≈4.90 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈2.21 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈5.04 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.70 Hz   cum≈4.90 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈2.36 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈5.03 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.92 Hz   cum≈4.91 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈2.50 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.91 Hz   cum≈5.01 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.92 Hz   cum≈4.91 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.91 Hz   cum≈2.62 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.89 Hz   cum≈5.00 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.91 Hz   cum≈4.90 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.91 Hz   cum≈2.73 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.91 Hz   cum≈5.00 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.92 Hz   cum≈4.91 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.91 Hz   cum≈2.83 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.91 Hz   cum≈4.99 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.92 Hz   cum≈4.91 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.91 Hz   cum≈2.92 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.91 Hz   cum≈4.99 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.92 Hz   cum≈4.91 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.91 Hz   cum≈3.00 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈4.98 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.92 Hz   cum≈4.91 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[OPS] SystemMode=2 수신 → 초기임무계획 모드 진입
+자체점검 0102 OFF 전송
+모든 SW 초기임무계획 모드
+[UDP RECV] assignment/MMR  kind=rx  mid=0101
+[UDP RECV] decision/MOB  kind=rx  mid=0101
+[UDP RECV] monitoring/MSM  kind=rx  mid=0101
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=mode  mid=
+[MODE] inf → 초기임무계획
+[UDP RECV] decision/MOB  kind=tx  mid=0102
+[UDP RECV] assignment/MMR  kind=mode  mid=
+[MODE] assignment → 초기임무계획
+[UDP RECV] decision/MOB  kind=mode  mid=
+[MODE] decision → 초기임무계획
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/MSM  kind=mode  mid=
+[MODE] monitoring → 초기임무계획
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0902
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0902
+[UDP RECV] info/INF  kind=rx  mid=0902
+[UDP RECV] assignment/MMR  kind=rx  mid=0902
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] decision/MOB  kind=mode  mid=
+[UDP RECV] monitoring/MSM  kind=mode  mid=
+[UDP RECV] assignment/MMR  kind=mode  mid=
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈3.09 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] decision/MOB  kind=tx  mid=0102
+[HZ] decision:tx:0102  recent≈1.52 Hz   cum≈0.25 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.48 Hz   cum≈4.78 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.64 Hz   cum≈4.90 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈3.16 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[OPS] 0305 재계획 완료 (대기모드 전환은 0702 수신 후)
+[UDP RECV] assignment/assignment  kind=tx  mid=0305
+[UDP RECV] info/INF  kind=rx  mid=0305
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.48 Hz   cum≈4.79 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.64 Hz   cum≈4.90 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈3.23 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.47 Hz   cum≈4.79 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.64 Hz   cum≈4.90 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.94 Hz   cum≈3.29 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.64 Hz   cum≈4.90 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.47 Hz   cum≈4.80 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈3.34 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0301
+[UDP RECV] assignment/assignment  kind=tx  mid=0301
+[UDP RECV] assignment/assignment  kind=tx  mid=0301
+[UDP RECV] monitoring/MSM  kind=rx  mid=0301
+[UDP RECV] info/INF  kind=rx  mid=0301
+[UDP RECV] decision/MOB  kind=rx  mid=0301
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.61 Hz   cum≈4.90 Hz
+[HZ] assignment:tx:0102  recent≈4.91 Hz   cum≈4.81 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0305
+[UDP RECV] assignment/assignment  kind=tx  mid=0305
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈3.40 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0903
+[UDP RECV] info/INF  kind=rx  mid=0903
+[UDP RECV] monitoring/MSM  kind=rx  mid=0903
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.91 Hz   cum≈4.81 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈4.90 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈3.45 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.91 Hz   cum≈4.82 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈4.90 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈3.49 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈4.90 Hz
+[HZ] assignment:tx:0102  recent≈4.91 Hz   cum≈4.82 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈3.53 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.92 Hz   cum≈4.83 Hz
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈4.90 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.91 Hz   cum≈3.57 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈4.91 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.92 Hz   cum≈4.83 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈3.61 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.92 Hz   cum≈4.83 Hz
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈4.91 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈3.65 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈4.91 Hz
+[HZ] assignment:tx:0102  recent≈4.92 Hz   cum≈4.84 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈3.68 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈4.91 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.92 Hz   cum≈4.84 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈3.72 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈4.91 Hz
+[HZ] assignment:tx:0102  recent≈4.92 Hz   cum≈4.84 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈3.75 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈4.91 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.92 Hz   cum≈4.85 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈3.78 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈4.91 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.92 Hz   cum≈4.85 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈3.80 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.92 Hz   cum≈4.85 Hz
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈4.91 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈3.83 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.91 Hz   cum≈4.85 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.91 Hz   cum≈4.91 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/MMR  kind=rx  mid=0101
+[UDP RECV] monitoring/MSM  kind=rx  mid=0101
+[UDP RECV] decision/MOB  kind=rx  mid=0101
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/MSM  kind=mode  mid=
+[UDP RECV] assignment/MMR  kind=mode  mid=
+[UDP RECV] decision/MOB  kind=mode  mid=
+[MODE] decision → 임무 수행
+[MODE] monitoring → 임무 수행
+[MODE] assignment → 임무 수행
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈3.86 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.91 Hz   cum≈4.85 Hz
+[HZ] monitoring:tx:0102  recent≈4.91 Hz   cum≈4.91 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈3.88 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.92 Hz   cum≈4.85 Hz
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈4.91 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈3.90 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.91 Hz   cum≈4.91 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.91 Hz   cum≈4.86 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈3.93 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈4.91 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.92 Hz   cum≈4.86 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈3.95 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈4.91 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.92 Hz   cum≈4.86 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈3.97 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈4.91 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.92 Hz   cum≈4.86 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈3.99 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.92 Hz   cum≈4.86 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈4.91 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈4.00 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈4.91 Hz
+[HZ] assignment:tx:0102  recent≈4.92 Hz   cum≈4.86 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈4.02 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.92 Hz   cum≈4.87 Hz
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈4.91 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈4.04 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈4.91 Hz
+[HZ] assignment:tx:0102  recent≈4.92 Hz   cum≈4.87 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.91 Hz   cum≈4.06 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.92 Hz   cum≈4.87 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈4.91 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈4.07 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.92 Hz   cum≈4.87 Hz
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈4.91 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0401
+[HZ] inf:rx:0401  recent≈4.93 Hz   cum≈9.85 Hz
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[HZ] assignment:rx:0401  recent≈4.93 Hz   cum≈9.85 Hz
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[HZ] decision:rx:0401  recent≈4.93 Hz   cum≈9.85 Hz
+[HZ] monitoring:rx:0401  recent≈4.93 Hz   cum≈9.85 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.91 Hz   cum≈4.09 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.92 Hz   cum≈4.87 Hz
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈4.91 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[HZ] assignment:rx:0401  recent≈4.86 Hz   cum≈5.67 Hz
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[HZ] decision:rx:0401  recent≈4.86 Hz   cum≈5.67 Hz
+[UDP RECV] info/INF  kind=rx  mid=0401
+[HZ] inf:rx:0401  recent≈4.86 Hz   cum≈5.67 Hz
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[HZ] monitoring:rx:0401  recent≈4.86 Hz   cum≈5.67 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈4.10 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈4.91 Hz
+[HZ] assignment:tx:0102  recent≈4.92 Hz   cum≈4.87 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[HZ] decision:rx:0401  recent≈4.89 Hz   cum≈5.33 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0401
+[HZ] inf:rx:0401  recent≈4.89 Hz   cum≈5.33 Hz
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[HZ] assignment:rx:0401  recent≈4.89 Hz   cum≈5.33 Hz
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[HZ] monitoring:rx:0401  recent≈4.89 Hz   cum≈5.33 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈4.12 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈4.91 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.92 Hz   cum≈4.87 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[HZ] decision:rx:0401  recent≈4.90 Hz   cum≈5.21 Hz
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[HZ] assignment:rx:0401  recent≈4.90 Hz   cum≈5.21 Hz
+[UDP RECV] info/INF  kind=rx  mid=0401
+[HZ] inf:rx:0401  recent≈4.90 Hz   cum≈5.21 Hz
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[HZ] monitoring:rx:0401  recent≈4.90 Hz   cum≈5.21 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈4.13 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.92 Hz   cum≈4.87 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈4.91 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] decision:rx:0401  recent≈4.89 Hz   cum≈5.12 Hz
+[UDP RECV] info/INF  kind=rx  mid=0401
+[HZ] inf:rx:0401  recent≈4.89 Hz   cum≈5.12 Hz
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[HZ] monitoring:rx:0401  recent≈4.89 Hz   cum≈5.12 Hz
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[HZ] assignment:rx:0401  recent≈4.89 Hz   cum≈5.12 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈4.14 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.91 Hz   cum≈4.87 Hz
+[HZ] monitoring:tx:0102  recent≈4.91 Hz   cum≈4.91 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[HZ] decision:rx:0401  recent≈4.91 Hz   cum≈5.08 Hz
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[HZ] assignment:rx:0401  recent≈4.91 Hz   cum≈5.08 Hz
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[HZ] monitoring:rx:0401  recent≈4.89 Hz   cum≈5.07 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0401
+[HZ] inf:rx:0401  recent≈4.89 Hz   cum≈5.07 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈4.16 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.91 Hz   cum≈4.91 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.91 Hz   cum≈4.87 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0401
+[HZ] inf:rx:0401  recent≈4.89 Hz   cum≈5.04 Hz
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[HZ] decision:rx:0401  recent≈4.89 Hz   cum≈5.04 Hz
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[HZ] assignment:rx:0401  recent≈4.89 Hz   cum≈5.04 Hz
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[HZ] monitoring:rx:0401  recent≈4.89 Hz   cum≈5.04 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.91 Hz   cum≈4.17 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.91 Hz   cum≈4.91 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.91 Hz   cum≈4.88 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[HZ] decision:rx:0401  recent≈4.89 Hz   cum≈5.03 Hz
+[UDP RECV] info/INF  kind=rx  mid=0401
+[HZ] inf:rx:0401  recent≈4.89 Hz   cum≈5.03 Hz
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[HZ] monitoring:rx:0401  recent≈4.89 Hz   cum≈5.03 Hz
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[HZ] assignment:rx:0401  recent≈4.89 Hz   cum≈5.03 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.91 Hz   cum≈4.18 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.89 Hz   cum≈4.91 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.89 Hz   cum≈4.87 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[HZ] decision:rx:0401  recent≈4.89 Hz   cum≈5.01 Hz
+[UDP RECV] info/INF  kind=rx  mid=0401
+[HZ] inf:rx:0401  recent≈4.89 Hz   cum≈5.01 Hz
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[HZ] assignment:rx:0401  recent≈4.88 Hz   cum≈5.01 Hz
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[HZ] monitoring:rx:0401  recent≈4.88 Hz   cum≈5.01 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.91 Hz   cum≈4.19 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.91 Hz   cum≈4.88 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.91 Hz   cum≈4.91 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0401
+[HZ] inf:rx:0401  recent≈4.89 Hz   cum≈5.00 Hz
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[HZ] monitoring:rx:0401  recent≈4.89 Hz   cum≈5.00 Hz
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[HZ] assignment:rx:0401  recent≈4.89 Hz   cum≈5.00 Hz
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[HZ] decision:rx:0401  recent≈4.89 Hz   cum≈5.00 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.91 Hz   cum≈4.20 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.91 Hz   cum≈4.91 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.91 Hz   cum≈4.88 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0401
+[HZ] inf:rx:0401  recent≈4.91 Hz   cum≈4.99 Hz
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[HZ] monitoring:rx:0401  recent≈4.91 Hz   cum≈4.99 Hz
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[HZ] assignment:rx:0401  recent≈4.91 Hz   cum≈4.99 Hz
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[HZ] decision:rx:0401  recent≈4.91 Hz   cum≈4.99 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈4.22 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.91 Hz   cum≈4.91 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.91 Hz   cum≈4.88 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0401
+[HZ] inf:rx:0401  recent≈4.91 Hz   cum≈4.98 Hz
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[HZ] assignment:rx:0401  recent≈4.91 Hz   cum≈4.98 Hz
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[HZ] decision:rx:0401  recent≈4.91 Hz   cum≈4.98 Hz
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[HZ] monitoring:rx:0401  recent≈4.91 Hz   cum≈4.98 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈4.23 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈4.91 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.92 Hz   cum≈4.88 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[HZ] inf:rx:0401  recent≈4.89 Hz   cum≈4.97 Hz
+[HZ] decision:rx:0401  recent≈4.89 Hz   cum≈4.97 Hz
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[HZ] assignment:rx:0401  recent≈4.89 Hz   cum≈4.97 Hz
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[HZ] monitoring:rx:0401  recent≈4.89 Hz   cum≈4.97 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈4.24 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.92 Hz   cum≈4.88 Hz
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈4.91 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[HZ] decision:rx:0401  recent≈4.92 Hz   cum≈4.97 Hz
+[HZ] inf:rx:0401  recent≈4.92 Hz   cum≈4.97 Hz
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[HZ] monitoring:rx:0401  recent≈4.92 Hz   cum≈4.97 Hz
+[HZ] assignment:rx:0401  recent≈4.92 Hz   cum≈4.97 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈4.25 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] monitoring/MSM  kind=rx  mid=0401
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.92 Hz   cum≈4.88 Hz
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈4.91 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈4.26 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈4.91 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.92 Hz   cum≈4.88 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈4.26 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈4.91 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.92 Hz   cum≈4.88 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.91 Hz   cum≈4.27 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈4.91 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.92 Hz   cum≈4.88 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.91 Hz   cum≈4.28 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.92 Hz   cum≈4.88 Hz
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈4.91 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.91 Hz   cum≈4.29 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] monitoring:tx:0102  recent≈4.92 Hz   cum≈4.91 Hz
+[HZ] assignment:tx:0102  recent≈4.92 Hz   cum≈4.88 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.89 Hz   cum≈4.30 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] monitoring/monitoring  kind=tx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.92 Hz   cum≈4.88 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈4.31 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.92 Hz   cum≈4.88 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.94 Hz   cum≈4.32 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0803
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.92 Hz   cum≈4.88 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.92 Hz   cum≈4.32 Hz
+[UDP RECV] info/INF  kind=rx  mid=0401
+[HZ] inf:rx:0401  recent≈4.93 Hz   cum≈3.16 Hz
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[HZ] decision:rx:0401  recent≈4.93 Hz   cum≈3.16 Hz
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[HZ] assignment:rx:0401  recent≈4.93 Hz   cum≈3.16 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.92 Hz   cum≈4.89 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0401
+[UDP RECV] decision/MOB  kind=rx  mid=0401
+[UDP RECV] assignment/MMR  kind=rx  mid=0401
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[HZ] inf:rx:0102  recent≈4.91 Hz   cum≈4.33 Hz
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] assignment/assignment  kind=tx  mid=0102
+[HZ] assignment:tx:0102  recent≈4.92 Hz   cum≈4.89 Hz
+[UDP RECV] info/INF  kind=rx  mid=0102
+[UDP RECV] info/INF  kind=rx  mid=0102
+[MON PORTS] assignment: 46981
+[MON PORTS] monitoring: 46982
+[MON PORTS] decision: 46983
+[MON PORTS] info: 46984
+[MON PORTS] assignment: 46981
+[MON PORTS] monitoring: 46982
+[MON PORTS] decision: 46983
+[MON PORTS] info: 46984

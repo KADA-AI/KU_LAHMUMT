@@ -112,6 +112,7 @@ from receive import *  # noqa
 
 # 탭
 from Tabs.assignment_planning_tab import AssignmentPlanningTab
+from id_relationship_tab import IdRelationshipTab
 
 # ───────── 모듈별 모니터링 포트(임무계획/MMR) ─────────
 def _mon_port() -> int:
@@ -169,6 +170,8 @@ class MainWindow(QMainWindow):
         self._install_mon_wires()              # ★ 모니터링 전송 훅
         self._install_0301_override()          # 0301 전송 커스텀
         tabs.addTab(self._tab, "임무 할당·계획수립 CSC")
+        self._id_tab = IdRelationshipTab()
+        tabs.addTab(self._id_tab, "ID Explorer")
 
         # ── 상단 모드 슬라이더
         top = QWidget(); top_layout = QHBoxLayout(top)

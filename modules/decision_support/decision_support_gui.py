@@ -2,7 +2,7 @@
 # decision_support_gui.py – 의사결정 지원 전용 GUI
 from __future__ import annotations
 
-import sys, os, threading, re, json, time, socket
+import sys, os, threading, re, json
 os.environ["KU_ROLE"] = "decision"  # MOB
 from pathlib import Path
 
@@ -50,10 +50,14 @@ from modules.common.status_reporter import send_status_ok
 from modules.common.ctrl_listener import start_ctrl_listener, env_ctrl_port
 from modules.common import db_paths
 from receive_center import register_listener
-
-_EPOCH2000_MS = 946_684_800_000
-def _now_ms_since_2000() -> int:
-    return int(time.time() * 1000) - _EPOCH2000_MS
+from modules.decision_support.core import (
+    MonitorBroadcaster,
+    OptionInfoMessenger,
+    OptionPayloadBuilder,
+    OptionRequestDecoder,
+    SelfCheckMessenger,
+    now_ms_since_2000,
+)
 
 # ───────── nFusion 설정/라이선스 + MessageLibrary 로드 ─────────
 def _ensure_fusion_configs():
@@ -206,6 +210,11 @@ class MainWindow(QMainWindow):
         self._rx_counts = {}
         self._self_check_sent = False
         self._system_mode_code: int | None = None
+        self._monitor = MonitorBroadcaster(_mon_port())
+        self._selfcheck_messenger = SelfCheckMessenger(NodeMessenger)
+        self._option_messenger = OptionInfoMessenger(NodeMessenger)
+        self._option_decoder = OptionRequestDecoder()
+        self._option_builder = OptionPayloadBuilder(db_paths)
 
         # 탭
         tabs = QTabWidget()
@@ -213,7 +222,7 @@ class MainWindow(QMainWindow):
 
         # 0102 바디 오버라이드: 항상 MOB 고정형 생성
         self._tab._build_overridden_body = lambda mid: (
-            {"Timestamp": _now_ms_since_2000(), "Status": 1, "Source": "MOB"}
+            {"Timestamp": now_ms_since_2000(), "Status": 1, "Source": "MOB"}
             if str(mid).strip() == "0102" else None
         )
 
@@ -281,12 +290,8 @@ class MainWindow(QMainWindow):
             pass
 
     def _send_mon(self, kind: str, **payload):
-        data = {"kind": str(kind), **payload}
         try:
-            buf = json.dumps(data, ensure_ascii=False).encode("utf-8", "ignore")
-            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            sock.sendto(buf, ("127.0.0.1", _mon_port()))
-            sock.close()
+            self._monitor.send(kind, **payload)
         except Exception:
             pass
 
@@ -609,14 +614,14 @@ class MainWindow(QMainWindow):
             return
         if not getattr(self, "_bus_ready", False) and _retry == 0:
             self._append_log_line("[0102] 버스 준비 전 상태에서 송신을 시도합니다.")
-        try:
-            ok = bool(_push_0102_fixed(status=status))
-        except Exception as exc:
-            ok = False
-            self._append_log_line(f"[WARN] 0102 송신 예외: {exc}")
+        ok = self._selfcheck_messenger.send(status=status)
+        if not ok:
+            err = getattr(self._selfcheck_messenger, "last_error", None)
+            detail = f"{err}" if err else "unknown reason"
+            self._append_log_line(f"[WARN] 0102 송신 실패: {detail}")
         if ok:
             self._self_check_sent = (status == 1)
-            self._last_0102_sent_ms = _now_ms_since_2000()
+            self._last_0102_sent_ms = now_ms_since_2000()
             self._append_log_line(f"[0102] 상태 보고 송신 (status={status})")
             try:
                 self._send_mon("tx", msg_id="0102", role="MOB", status=status)

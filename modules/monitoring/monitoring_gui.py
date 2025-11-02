@@ -7,7 +7,7 @@ os.environ["KU_ROLE"] = "monitoring"
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[2]  # .../KU_LAHMUMT
-for _p in (_ROOT, _ROOT / "modules", _ROOT / "modules" / "common"):
+for _p in (_ROOT, _ROOT / "modules", _ROOT / "modules" / "monitoring_ver2", _ROOT / "modules" / "common"):
     _ps = str(_p)
     if _p.exists() and _ps not in sys.path:
         sys.path.insert(0, _ps)
@@ -27,7 +27,14 @@ from PyQt5.QtGui import QKeySequence
 from modules.common.status_reporter import send_status_ok
 from modules.common.ctrl_listener import start_ctrl_listener, env_ctrl_port
 from modules.common import db_paths
-from receive_center import register_listener   # ★ 0101 리스너 등록용
+from receive_center import register_listener
+
+from modules.monitoring.config import RECEIVE_MESSAGES as VER2_RECEIVE_MESSAGES
+
+
+from modules.monitoring.tabs.ver2_monitoring_tab import Ver2MonitoringTab
+
+from modules.monitoring.tabs.ver2_replan_tab import Ver2ReplanTab   # ★ 0101 리스너 등록용
 
 # ───────── Qt 경고 필터 ─────────
 def _qt_silent_handler(mode: QtMsgType, context, message: str):
@@ -47,7 +54,7 @@ def _bootstrap_paths():
     modules_dir = here.parents[1]                # .../modules
     root = modules_dir.parent                    # .../<project root>
     common_dir = modules_dir / "common"
-    for p in (modules_dir / "monitoring", common_dir, root):
+    for p in (modules_dir / "monitoring", modules_dir / "monitoring_ver2", common_dir, root):
         p_str = str(p)
         if p.exists() and p_str not in sys.path:
             sys.path.insert(0, p_str)
@@ -141,7 +148,19 @@ class MainWindow(QMainWindow):
         self._staged_replan_context = None
         self._auto_initplan_triggered = False
 
+        self._manager = None
+
+        self._manager_init_attempts = 0
+
+        self._ver2_monitor_tab = None
+
+        self._ver2_replan_tab = None
+
+        self._ver2_tabs_added = False
+
         tabs = QTabWidget()
+
+        self._tabs = tabs
         self._tab = MissionMonitoringTab(messenger=NodeMessenger)
         self._install_mode_parsefail_log_filter()
 
@@ -202,6 +221,109 @@ class MainWindow(QMainWindow):
         self._install_0101_mode_listener()
         # ★★★ RX 테이블 폴링으로도 0101을 잡아 모드 반영(리시버 경로 불안정 대비, 기존 동작 불변)
         self._start_0101_rx_poller()
+
+        QTimer.singleShot(0, self._ensure_manager_initialized)
+
+    def _ensure_manager_initialized(self):
+
+        if self._manager is not None:
+
+            return
+
+        self._manager_init_attempts += 1
+
+        try:
+            from modules.monitoring.manager import MonitoringManager
+
+            receive_ids = [mid for mid, _ in VER2_RECEIVE_MESSAGES]
+
+            self._manager = MonitoringManager(NodeMessenger, receive_ids)
+
+        except Exception as exc:
+
+            if self._manager_init_attempts <= 3:
+
+                self._append_log_line(f"[VER2] Manager init 실패: {exc}")
+
+            QTimer.singleShot(1500, self._ensure_manager_initialized)
+
+            return
+
+        self._manager.log_callback = self._handle_manager_log
+
+        self._manager.gui_update_callback = self._handle_manager_update
+
+        self._attach_ver2_tabs()
+
+        self._handle_manager_update("logic", "SystemMode", None)
+
+
+
+    def _attach_ver2_tabs(self):
+
+        if self._ver2_tabs_added or self._manager is None:
+
+            return
+
+        try:
+
+            self._ver2_monitor_tab = Ver2MonitoringTab(manager=self._manager)
+
+            self._ver2_replan_tab = Ver2ReplanTab(manager=self._manager)
+
+        except Exception as exc:
+
+            self._append_log_line(f"[VER2] 탭 생성 실패: {exc}")
+
+            self._ver2_monitor_tab = None
+
+            self._ver2_replan_tab = None
+
+            QTimer.singleShot(1500, self._ensure_manager_initialized)
+
+            return
+
+        if hasattr(self, "_tabs") and self._tabs is not None:
+
+            self._tabs.addTab(self._ver2_monitor_tab, "모니터링 요약 (ver2)")
+
+            self._tabs.addTab(self._ver2_replan_tab, "재계획 판단 (ver2)")
+
+        self._ver2_tabs_added = True
+
+
+
+    def _handle_manager_log(self, tag: str, level: str, message: str, raw: bytes | None):
+
+        def _log():
+
+            self._append_log_line(f"[{tag}] [{level}] {message}")
+
+        QTimer.singleShot(0, _log)
+
+
+
+    def _handle_manager_update(self, update_type: str, key: str, data_object=None):
+
+        def _dispatch():
+
+            targets = [self._ver2_monitor_tab, self._ver2_replan_tab]
+
+            for tab in targets:
+
+                if tab and hasattr(tab, "refresh_display"):
+
+                    try:
+
+                        tab.refresh_display((update_type, key), data_object)
+
+                    except Exception:
+
+                        pass
+
+        QTimer.singleShot(0, _dispatch)
+
+
 
     def _collect_input_mission_ids(self) -> list:
         """
@@ -1054,6 +1176,30 @@ class MainWindow(QMainWindow):
             self._set_mode_slider_by_text(text)
 
     # ───────── Qt 이벤트 ─────────
+    def closeEvent(self, event):
+
+        try:
+
+            manager = getattr(self, '_manager', None)
+
+            if manager is not None:
+
+                manager.shutdown()
+
+        except Exception:
+
+            pass
+
+        try:
+
+            super().closeEvent(event)
+
+        except Exception:
+
+            pass
+
+
+
     def showEvent(self, event):
         try: super().showEvent(event)
         except Exception: pass
