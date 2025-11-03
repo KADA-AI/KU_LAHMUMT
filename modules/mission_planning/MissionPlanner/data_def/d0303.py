@@ -689,7 +689,8 @@ def build_flight_plans(
                 to_remove: list[int] = []
                 first_search_speed = first_line_search.get("searchSpeed")
                 for g_idx, group in enumerate(groups):
-                    rep = records[group[0]]
+                    rep_pos = group[-1]
+                    rep = records[rep_pos]
                     rep_fp = rep["fp"]
                     merged_coords: list[dict] = []
                     if g_idx == 0:
@@ -706,8 +707,9 @@ def build_flight_plans(
                         ("coordinateList", merged_coords),
                         ("searchSpeed", rep_speed),
                     ])
-                    for pos in group[1:]:
-                        to_remove.append(records[pos]["idx"])
+                    for pos in group:
+                        if pos != rep_pos:
+                            to_remove.append(records[pos]["idx"])
 
                 for idx in sorted(to_remove, reverse=True):
                     del wps[idx]

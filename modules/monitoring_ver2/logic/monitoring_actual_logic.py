@@ -72,18 +72,31 @@ def run_monitoring_procedure(
         aircraft_id = int(getattr(agent_state, "aircraftID", 0))
         entries: List[IndividualMissionProgressStatusModel] = []
         mission_progress: List[Dict[str, Any]] = []
-        if getattr(agent_state, "isUnmanned", 0) != 1:
-            return entries, mission_progress
 
-        unmanned_info = getattr(agent_state, "unmannedInfo", None)
+        is_unmanned_raw = getattr(agent_state, "isUnmanned", 0)
+        try:
+            is_unmanned = int(is_unmanned_raw) == 1
+        except (TypeError, ValueError):
+            is_unmanned = bool(is_unmanned_raw)
+
+        unmanned_info = None
         current_wp = None
-        if unmanned_info and getattr(unmanned_info, "currentWaypointID", None):
-            current_wp = getattr(unmanned_info.currentWaypointID, "waypointID", None)
-            try:
-                if current_wp is not None:
-                    current_wp = int(current_wp)
-            except (TypeError, ValueError):
-                pass
+
+        if is_unmanned:
+            unmanned_info = getattr(agent_state, "unmannedInfo", None)
+            if unmanned_info and getattr(unmanned_info, "currentWaypointID", None):
+                current_wp = getattr(unmanned_info.currentWaypointID, "waypointID", None)
+                try:
+                    if current_wp is not None:
+                        current_wp = int(current_wp)
+                except (TypeError, ValueError):
+                    pass
+        else:
+            # 유인기 1~3번은 모니터링 대상에서 제외
+            if aircraft_id in (1, 2, 3):
+                return entries, mission_progress
+            # 유인/준비 상태인 경우에도 진행률 추적을 위해 WP를 0으로 간주
+            current_wp = 0
 
         if not agent_plan:
             progress_value = int(current_wp or 0)
@@ -136,7 +149,7 @@ def run_monitoring_procedure(
         current_idx = None
         current_pos = None
         if current_wp is None:
-            current_idx = len(missions)
+            current_idx = None
         elif current_wp in waypoint_map:
             current_idx, current_pos = waypoint_map[current_wp]
         else:

@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from dataclasses import asdict
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
 # --- ?곗씠??紐⑤뜽 import ---
 from data.message_models import (
@@ -41,6 +41,9 @@ def _resolve_fuel_capacity() -> float:
 
 
 FUEL_CAPACITY_LITERS = _resolve_fuel_capacity()
+COLLAB_REPLAN_REASON_REEXECUTE = "협업기저임무 재수행에 대한 재계획"
+COLLAB_REPLAN_REASON_REINPUT = "협업기저임무 재입력에 대한 재계획"
+COLLAB_REPLAN_DEFAULT_SOURCE = "MonitoringModule"
 
 
 # --- 諛섑솚 媛?ν븳 紐⑤뱺 Push 硫붿떆吏 蹂몃Ц ??낆쓣 ?뺤쓽 ---
@@ -102,6 +105,7 @@ class MonitoringLogic:
             Tuple[Optional[int], Optional[int]]
         ] = None
         self._collab_replan_waiting_for_new_input_logged: bool = False
+        self._collab_last_replan_context: Optional[Dict[str, Any]] = None
         self._used_option_ids: Set[int] = set()
         self._allocated_plan_ids: Set[int] = set()
         self._existing_mission_plan_ids: Set[int] = set()
@@ -611,9 +615,10 @@ class MonitoringLogic:
                 return candidate
         return None
 
-    def _advance_to_next_input_mission(self) -> None:
+    def _advance_to_next_input_mission(self, force: bool = False) -> None:
         if (
-            self._current_input_mission_id is not None
+            not force
+            and self._current_input_mission_id is not None
             and self._current_input_mission_id not in self._completed_input_ids
         ):
             self.manager._log(
@@ -622,6 +627,16 @@ class MonitoringLogic:
                 "[COLLAB] execute=1 received but current input mission is not completed yet; ignoring advance request.",
             )
             return
+        if (
+            force
+            and self._current_input_mission_id is not None
+            and self._current_input_mission_id not in self._completed_input_ids
+        ):
+            self.manager._log(
+                "MON_LOGIC",
+                "INFO",
+                "[COLLAB] execute=1 forcing advance to next input mission despite incomplete status.",
+            )
         next_id = self._find_next_input_mission_id()
         if next_id == self._current_input_mission_id:
             return
@@ -840,19 +855,116 @@ class MonitoringLogic:
         if execute_val == 2:
             self._activate_collab_pause(data)
             self._register_collab_replan_trigger(data)
+            self._reset_last_replan_completion()
             self._maybe_stage_replan(reason="rx_0803")
         else:
             self._deactivate_collab_pause(reason=f"execute={execute_val} command received")
             self._cancel_pending_replan(reason=f"execute={execute_val}")
             if execute_val == 1:
-                self._advance_to_next_input_mission()
+                self._advance_to_next_input_mission(force=True)
 
     def _handle_new_input_plan(self, data: Any) -> None:
         package_id = self._to_int(self._safe_get(data, "inputMissionPackageID"))
         timestamp = self._to_int(self._safe_get(data, "timestamp", "Timestamp"))
-        self._latest_input_plan_key = (package_id, timestamp)
+        previous_key = self._latest_input_plan_key
+        current_key = (package_id, timestamp)
+        self._latest_input_plan_key = current_key
         if self._collab_replan_pending:
-            self._maybe_stage_replan(reason="rx_0201")
+            self._maybe_stage_replan(reason="rx_0201", input_plan=data)
+            return
+        if package_id is None and timestamp is None:
+            return
+        system_mode = self.manager.logic_store.get_data("SystemMode")
+        if system_mode not in (3, 4):
+            return
+        self._register_input_plan_refresh_trigger(
+            package_id=package_id,
+            timestamp=timestamp,
+            trigger_source=self._safe_get(data, "source", "Source"),
+        )
+        self._maybe_stage_replan(reason="rx_0201_input_refresh", input_plan=data)
+
+    def _register_input_plan_refresh_trigger(
+        self,
+        package_id: Optional[int],
+        timestamp: Optional[int],
+        trigger_source: Optional[str] = None,
+    ) -> None:
+        if self._collab_replan_inflight or self._collab_replan_pending:
+            self._cancel_pending_replan(reason="override:new_input_0201")
+        source = trigger_source or COLLAB_REPLAN_DEFAULT_SOURCE
+        command_ts = timestamp if timestamp is not None else self._current_time_ms()
+        reason_text = COLLAB_REPLAN_REASON_REINPUT
+        self._collab_replan_trigger = {
+            "command_timestamp": command_ts,
+            "source": source,
+            "replanLevel": 3,
+            "reason": reason_text,
+            "replanRequestText": reason_text,
+            "triggerType": "input_plan_update",
+        }
+        self._collab_replan_required_input_key = None
+        self._collab_replan_waiting_for_new_input_logged = False
+        self._collab_replan_pending = True
+        self.manager._log(
+            "MON_LOGIC",
+            "INFO",
+            f"[COLLAB] new InputMissionPlan detected (package={package_id}, timestamp={timestamp}); requesting collaborative replan.",
+        )
+        try:
+            self.manager.logic_store.set_data(
+                "collab_replan_trigger", dict(self._collab_replan_trigger)
+            )
+        except Exception:
+            pass
+
+    def _load_input_plan_from_storage(self, package_id: int) -> Optional[Dict[str, Any]]:
+        candidates: List[Path] = []
+        try:
+            candidates.append(
+                db_paths.get_db_subpath("InputMissionPlan", f"{package_id}.json")
+            )
+        except Exception as exc:
+            self.manager._log(
+                "MON_LOGIC",
+                "WARN",
+                f"[COLLAB] failed to resolve active InputMissionPlan path for package={package_id}: {exc}",
+            )
+        try:
+            info = db_paths.get_info()
+        except Exception:
+            info = {}
+        scenario_dir_raw = info.get("scenario_dir")
+        agency_code = info.get("agency") or os.environ.get("KU_AGENCY_CODE") or "SBC3"
+        if scenario_dir_raw:
+            scenario_path = Path(str(scenario_dir_raw))
+            candidates.append(
+                scenario_path / agency_code / "InputMissionPlan" / f"{package_id}.json"
+            )
+        candidates.append(
+            db_paths.LEGACY_DB_ROOT / "InputMissionPlan" / f"{package_id}.json"
+        )
+        for path in candidates:
+            try:
+                if path is None:
+                    continue
+                with path.open("r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+                return data
+            except FileNotFoundError:
+                continue
+            except Exception as exc:
+                self.manager._log(
+                    "MON_LOGIC",
+                    "WARN",
+                    f"[COLLAB] InputMissionPlan load failed for package={package_id} ({path}): {exc}",
+                )
+        self.manager._log(
+            "MON_LOGIC",
+            "WARN",
+            f"[COLLAB] InputMissionPlan not found for package={package_id}; using fallback IDs.",
+        )
+        return None
 
     def _register_collab_replan_trigger(self, data: Any) -> None:
         if self._collab_replan_inflight:
@@ -868,11 +980,14 @@ class MonitoringLogic:
         if replan_level is None:
             replan_level = 3
         reason_text = f"execute=2 command from {source}"
+        request_text = COLLAB_REPLAN_REASON_REEXECUTE
         self._collab_replan_trigger = {
             "command_timestamp": trigger_ts,
             "source": source,
             "replanLevel": replan_level,
             "reason": reason_text,
+            "replanRequestText": request_text,
+            "triggerType": "execute_2",
         }
         self._collab_replan_required_input_key = (
             None if self._latest_input_plan_key is None else tuple(self._latest_input_plan_key)
@@ -913,17 +1028,17 @@ class MonitoringLogic:
         except Exception:
             pass
 
-    def _maybe_stage_replan(self, reason: str) -> None:
+    def _maybe_stage_replan(self, reason: str, input_plan: Optional[Any] = None) -> None:
         if not self._collab_replan_pending or self._collab_replan_inflight:
             return
         system_mode = self.manager.logic_store.get_data("SystemMode")
         if system_mode not in (3, 4):
             return
-        input_plan = self.manager.receive_store.get_data("0201")
-        if not input_plan:
+        plan_payload = input_plan or self.manager.receive_store.get_data("0201")
+        if not plan_payload:
             return
-        package_id = self._to_int(self._safe_get(input_plan, "inputMissionPackageID"))
-        timestamp = self._to_int(self._safe_get(input_plan, "timestamp", "Timestamp"))
+        package_id = self._to_int(self._safe_get(plan_payload, "inputMissionPackageID"))
+        timestamp = self._to_int(self._safe_get(plan_payload, "timestamp", "Timestamp"))
         current_key = (package_id, timestamp)
         if (
             self._collab_replan_required_input_key is not None
@@ -939,9 +1054,7 @@ class MonitoringLogic:
             return
         self._collab_replan_waiting_for_new_input_logged = False
         self._latest_input_plan_key = current_key
-        if current_key == self._collab_last_replan_key:
-            return
-        payload = self._build_replan_body(input_plan)
+        payload = self._build_replan_body(plan_payload)
         if payload is None:
             return
         replan_body, context = payload
@@ -952,6 +1065,7 @@ class MonitoringLogic:
             self._collab_replan_required_input_key = current_key
             self._collab_replan_pending = False
             self._collab_replan_inflight = True
+            self._collab_last_replan_context = dict(context)
             self._enter_collab_reexecute_mode(context.get("timestamp"))
         else:
             self.manager._log(
@@ -967,6 +1081,16 @@ class MonitoringLogic:
         timestamp = self._current_time_ms()
         package_id = self._to_int(self._safe_get(input_plan, "inputMissionPackageID"))
         input_ids = self._extract_input_mission_ids(input_plan)
+        message_input_ids = list(input_ids)
+        file_plan_payload: Optional[Dict[str, Any]] = None
+        used_file_payload = False
+        if package_id is not None:
+            file_plan_payload = self._load_input_plan_from_storage(package_id)
+            if file_plan_payload:
+                file_input_ids = self._extract_input_mission_ids(file_plan_payload)
+                if file_input_ids and (not input_ids or file_input_ids != message_input_ids):
+                    input_ids = file_input_ids
+                    used_file_payload = True
         if not input_ids:
             plan_ids = (self._plan_context or {}).get("inputMissionIDs") or []
             input_ids = list(plan_ids)
@@ -990,8 +1114,8 @@ class MonitoringLogic:
             replan_level = int(replan_level)
         except (TypeError, ValueError):
             replan_level = 3
-        source = trigger.get("source") or "MonitoringModule"
-        reason_text = "협업 재계획 요청"
+        source = trigger.get("source") or COLLAB_REPLAN_DEFAULT_SOURCE
+        reason_text = trigger.get("replanRequestText") or "협업 재계획 요청"
         replan_body = ReplanRequestBodyModel(
             source=source,
             timestamp=timestamp,
@@ -1010,14 +1134,18 @@ class MonitoringLogic:
             "source": source,
             "replanLevel": replan_level,
             "reason": reason_text,
+            "replanRequestText": reason_text,
             "missionPlanID": mission_plan_id,
-             "newMissionPlanIDs": new_plan_ids,
+            "newMissionPlanIDs": new_plan_ids,
             "inputMissionPackageID": package_id,
             "inputMissionIDs": input_ids,
             "individualMissionIDs": individual_ids,
             "priorMissionIDs": prior_ids,
             "commandTimestamp": trigger.get("command_timestamp"),
+            "triggerType": trigger.get("triggerType"),
             "options": [asdict(opt) for opt in option_models],
+            "inputMissionPlanSource": "file" if used_file_payload else "message",
+            "inputMissionPlanPackageID": package_id,
         }
         return replan_body, context
 
@@ -1414,6 +1542,16 @@ class MonitoringLogic:
             mission_list = data.get("inputMissionList")
         ids: Set[int] = set()
         for item in mission_list or []:
+            is_done_val = self._safe_get(item, "isDone", "IsDone")
+            try:
+                if isinstance(is_done_val, str):
+                    is_done_flag = is_done_val.strip().lower() in ("1", "true", "yes")
+                else:
+                    is_done_flag = bool(is_done_val)
+            except Exception:
+                is_done_flag = False
+            if is_done_flag:
+                continue
             value = self._safe_get(item, "inputMissionID", "InputMissionID")
             if value is None:
                 continue
@@ -1647,4 +1785,6 @@ class MonitoringLogic:
             )
 
         raise ValueError(f"Body generation not implemented for msg_id: {msg_id}")
+
+
 

@@ -539,6 +539,19 @@ def split_mission_into_subareas(
         raise ValueError(f"Unknown inputMissionType {mtype}")
     return subs
 
+def _iter_active_input_missions(cmpk: dict):
+    """
+    Yield input missions whose isDone flag is False.
+    """
+    for im in (cmpk.get("inputMissionList") or []):
+        try:
+            if bool(im.get("isDone")):
+                continue
+        except Exception:
+            # 값이 bool로 캐스팅되지 않는 경우에도 True로 간주하지 않는다.
+            pass
+        yield im
+
 def save_lah_tasks(cmpk: dict, out_dir: str, log):
     # ── LAH 기체 추출 ─────────────────────────────────────────
     lah_ids: list[int] = []
@@ -568,7 +581,7 @@ def save_lah_tasks(cmpk: dict, out_dir: str, log):
     }
 
     # ── CMPK InputMission → 개별 임무 변환 ────────────────
-    for im in cmpk.get("inputMissionList", []):
+    for im in _iter_active_input_missions(cmpk):
         mtype        = im["inputMissionType"]
         md           = im["missionDetail"]
         input_id_u32 = _as_uint32(im["inputMissionID"])
@@ -816,7 +829,8 @@ def run_divide_and_pattern(
     log(f"    ▸ LAH {len(lah_paths)}개 파일 저장")
 
     log("[3] InputMission 분할")
-    total_im = len(cmpk.get("inputMissionList", []))
+    active_input_missions = list(_iter_active_input_missions(cmpk))
+    total_im = len(active_input_missions)
     prev_pt  = take_over_cent
     areas: list[dict] = []
 
@@ -849,7 +863,12 @@ def run_divide_and_pattern(
     prev_pt = take_over_cent                     # 첫 bearing 기준점
     areas: list[dict] = []
 
-    for im_idx, im in enumerate(cmpk.get("inputMissionList", []), 1):
+    if total_im == 0:
+        log("    ▸ 활성 InputMission 없음 (isDone=True).")
+        log(f"[✔] divide_and_pattern 끝 (총 {time.time()-t0:.1f}s 경과)")
+        return lah_paths
+
+    for im_idx, im in enumerate(active_input_missions, 1):
         log(f"    ▸ ({im_idx}/{total_im}) "
             f"inputMissionID={im['inputMissionID']} type={im['inputMissionType']}")
         new_subs = split_mission_into_subareas(im, len(uavs), prev_pt)
