@@ -18,11 +18,13 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 from PyQt5.QtCore import qInstallMessageHandler, QtMsgType, QObject, pyqtSignal, QTimer, QMetaObject, Qt, Q_ARG, pyqtSlot
+from PyQt5.QtGui import QCursor
 from PyQt5.QtWidgets import QApplication, QTextEdit, QPlainTextEdit
 
 from modules.common.states.manager import StateManager
 from modules.common import db_paths
 from modules.common.button_wiring import wire_dashboard_buttons
+from modules.monitoring_ver2.utils.vehicle_status import write_vehicle_status
 import collections
 
 
@@ -270,6 +272,13 @@ class DashboardOrchestrator(QObject):
 
         self._init_rows()
         wire_dashboard_buttons(self)   # 버튼 → 상태 디스패치 연결
+
+        reset_btn = getattr(self.win, "btn_decision_reset", None)
+        if reset_btn is not None and hasattr(reset_btn, "clicked"):
+            try:
+                reset_btn.clicked.connect(self._handle_decision_reset_button)
+            except Exception:
+                pass
 
         self._start_bus_monitor()
         self._start_module_sockets()   # 4개 모듈 모니터링 포트 바인드
@@ -982,6 +991,56 @@ class DashboardOrchestrator(QObject):
             except Exception:
                 self._safe_log(f"[WARN] Standby DB path inspection failed: {db_root_str}")
         self._scenario_activated_once = True
+        try:
+            write_vehicle_status(None)
+        except Exception:
+            pass
+
+    def _handle_decision_reset_button(self):
+        """User-triggered reset to rerun decision module flow on next standby."""
+        try:
+            prev_root = db_paths.get_active_db_root_str()
+        except Exception:
+            prev_root = None
+
+        try:
+            handler = getattr(self.win, "_handle_module_shutdown", None)
+            if callable(handler):
+                handler()
+        except Exception as exc:
+            try:
+                self._safe_log(f"[WARN] Decision reset module shutdown failed: {exc}")
+            except Exception:
+                pass
+
+        self._scenario_activated_once = False
+        self._scenario_timestamp = None
+        self._last_system_mode_code = None
+        self._standby_pending = False
+
+        log_msg = "[OPS] Decision module reset ready for next standby"
+        if prev_root:
+            log_msg += f" (current DB: {prev_root})"
+        try:
+            self._safe_log(log_msg)
+        except Exception:
+            pass
+
+        try:
+            tooltip = f"Reset 대기: {prev_root}" if prev_root else "Reset 대기: DB 미선택"
+            self.win.update_scenario_status_indicator(False, tooltip)
+        except Exception:
+            pass
+
+        try:
+            self._set_mode_text_all("모듈 초기화 대기")
+        except Exception:
+            pass
+        try:
+            self._broadcast_ctrl({"cmd": "mode", "text": "모듈 초기화 대기"})
+        except Exception:
+            pass
+
 
     # --------- 모드/CTRL/런처/로깅 유틸 ---------
     def _log_assignment(self, text: str):
@@ -1140,6 +1199,7 @@ class DashboardOrchestrator(QObject):
         except Exception:
             script_basename = script_name
         env["KU_CTRL_PORT"] = port_map.get(script_basename, port_map.get(script_name, ""))
+        env.pop("KU_WINDOW_OFFSET", None)
 
         try: self._safe_log(f"[RUN] {script_basename} @ {script}")
         except Exception: pass
@@ -1240,7 +1300,7 @@ class DashboardOrchestrator(QObject):
             try:
                 if isinstance(ed, QPlainTextEdit): ed.appendPlainText(text)
                 elif isinstance(ed, QTextEdit): ed.append(text)
-                else:  # 예외적으로 타입이 다르면 폴백
+                else:  # 예외적으로 타입이 다르면 폴백700
                     raise RuntimeError("no global text edit")
                 return
             except Exception:
@@ -1264,12 +1324,42 @@ class DashboardOrchestrator(QObject):
                 pass
 
 
+def _position_window_at_cursor(app: QApplication, win):
+    try:
+        cursor_pos = QCursor.pos()
+    except Exception:
+        return
+    screen = app.screenAt(cursor_pos) if hasattr(app, "screenAt") else None
+    if screen is not None:
+        screen_geo = screen.geometry()
+    else:
+        desktop = app.desktop() if hasattr(app, "desktop") else None
+        screen_geo = desktop.screenGeometry(cursor_pos) if desktop and hasattr(desktop, "screenGeometry") else None
+
+    frame_geo = win.frameGeometry()
+    frame_w = frame_geo.width() or win.width()
+    frame_h = frame_geo.height() or win.height()
+    target_x = cursor_pos.x() - frame_w // 2
+    target_y = cursor_pos.y() - frame_h // 2
+
+    if screen_geo is not None and frame_w > 0 and frame_h > 0:
+        left = screen_geo.x()
+        top = screen_geo.y()
+        right = left + screen_geo.width()
+        bottom = top + screen_geo.height()
+        target_x = max(left, min(target_x, right - frame_w))
+        target_y = max(top, min(target_y, bottom - frame_h))
+
+    win.move(target_x, target_y)
+
+
 # ─────────────────────────────────────────────────────────────
 def main():
     app = QApplication(sys.argv)
     _load_qss(app)
     win = MainWindow()
     win.show()
+    _position_window_at_cursor(app, win)
     orch = DashboardOrchestrator(win)
     sys.exit(app.exec_())
 

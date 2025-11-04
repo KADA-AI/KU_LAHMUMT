@@ -631,8 +631,6 @@ class MonitoringLogic:
                             {
                                 "id": aircraft_id,
                                 "warning": text,
-                                "fuelLiters": round(fuel_liters, 2),
-                                "fuelPercent": round(fuel_percent, 1),
                             }
                         )
 
@@ -650,8 +648,6 @@ class MonitoringLogic:
                                     "source": "MSM",
                                     "aircraftID": aircraft_id,
                                     "fuelLevel": fuel_level,
-                                    "fuelLiters": round(fuel_liters, 2),
-                                    "fuelPercent": round(fuel_percent, 1),
                                 }
                                 push_message(
                                     "0504",
@@ -865,7 +861,7 @@ class MonitoringLogic:
             replan_level = int(replan_level)
         except (TypeError, ValueError):
             replan_level = 3
-        source = trigger.get("source") or "MonitoringModule"
+        source = trigger.get("source") or "MSM"
         reason_text = "협업기저임무 재수행"
         replan_body = ReplanRequestBodyModel(
             source=source,
@@ -1412,7 +1408,7 @@ class MonitoringLogic:
             ).total_seconds()
             * 1000
         )
-        source_module = "MonitoringModule"
+        source_module = "MSM"
 
         if msg_id == "0102":
             return ModuleStatusModelModel(

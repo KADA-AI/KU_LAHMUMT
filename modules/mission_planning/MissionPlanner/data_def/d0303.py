@@ -30,9 +30,10 @@ Point = Tuple[float, float]
 Line  = Tuple[Point, Point]
 
 # ── 고정 상수 ───────────────────────────────────────────
-FOV_DEG         = 5.5
+FOV_DEG         = 10
 SWEEP_ENTRY_OFFSET_M = 500.0
 SWEEP_MERGE_HEADING_DEG = 7
+Altitude = 800
 
 SENSOR_NONE     = 0
 SENSOR_EO_IR    = 1        # 예) EO/IR 센서
@@ -129,7 +130,7 @@ def _cpp_line_search(
         anchor_llh: tuple[float,float],
         separation_m: float,
         uav_height_m: float = 610.0,
-        fov_deg: float = 5.5,
+        fov_deg: float = FOV_DEG,
 ) -> list[dict]:
     """
     ▸ 4-점 직사각형 LLH → RectanglePath CPP 스윕 → lineSearch.coordinateList 생성
@@ -242,7 +243,7 @@ def _index_refpoints(ref0203: dict | None):
             to_map[aid] = {
                 "latitude": float(c.get("latitude", 0.0)),
                 "longitude": float(c.get("longitude", 0.0)),
-                "altitude": int(float(c.get("altitude", 1200))),
+                "altitude": int(float(c.get("altitude", Altitude))),
             }
     ho_map = {}
     for it in ref0203.get("handOverInfoList", []) or []:
@@ -252,7 +253,7 @@ def _index_refpoints(ref0203: dict | None):
             ho_map[aid] = {
                 "latitude": float(c.get("latitude", 0.0)),
                 "longitude": float(c.get("longitude", 0.0)),
-                "altitude": int(float(c.get("altitude", 1200))),
+                "altitude": int(float(c.get("altitude", Altitude))),
             }
     return to_map, ho_map
 
@@ -307,8 +308,8 @@ def build_flight_plans(
     now_ms = now_ms_since_2000()
 
     # ── 상수 ───────────────────────────────────────────────
-    FOV_DEG, SENSOR, OPMODE = 5.5, 1, 2
-    SEARCH_SPEED = round(cruise_speed * 2.8955, 2)
+    SENSOR, OPMODE = 1, 2
+    SEARCH_SPEED = round(cruise_speed * 7, 2)
     ALT_M = 850.0
     DEG_M = 111_132
     # ── 마지막점용 POINT 촬영 블록 생성기 ─────────────────
@@ -409,7 +410,7 @@ def build_flight_plans(
 
                     wplist.append(OrderedDict([
                         ("waypointID", 0),
-                        ("coordinate", {"latitude": off_lat, "longitude": off_lon, "altitude": 1200}),
+                        ("coordinate", {"latitude": off_lat, "longitude": off_lon, "altitude": Altitude}),
                         ("speed", cruise_speed),
                         ("eta", 2500),
                         ("ecf", 0.0),
@@ -436,7 +437,7 @@ def build_flight_plans(
                     ux_end, uy_end = vx / vlen, vy / vlen
                     end_xy = (last_xy[0] + ux_end * 200.0, last_xy[1] + uy_end * 200.0)
                     end_lat, end_lon = xy_to_llh(*end_xy, lat0, lon0)
-                    end_coord = {"latitude": end_lat, "longitude": end_lon, "altitude": 1200}
+                    end_coord = {"latitude": end_lat, "longitude": end_lon, "altitude": Altitude}
 
                     wplist.append(OrderedDict([
                         ("waypointID", 0),
@@ -451,7 +452,7 @@ def build_flight_plans(
                 elif len(wplist) == 1 and last_off_xy is not None:
                     end_xy = (last_off_xy[0] + ux_b * 200.0, last_off_xy[1] + uy_b * 200.0)
                     end_lat, end_lon = xy_to_llh(*end_xy, lat0, lon0)
-                    end_coord = {"latitude": end_lat, "longitude": end_lon, "altitude": 1200}
+                    end_coord = {"latitude": end_lat, "longitude": end_lon, "altitude": Altitude}
 
                     wplist.append(OrderedDict([
                         ("waypointID", 0),
@@ -468,7 +469,7 @@ def build_flight_plans(
             if base and len(base) >= 2:
                 planner = UAVMissionPlanner(
                     base, corridor_width=width, separation=ALT_M,
-                    fov_deg=10, cruise_speed=cruise_speed, crs="lla",
+                    fov_deg=FOV_DEG, cruise_speed=cruise_speed, crs="lla",
                 )
 
                 last_anchor_xy: tuple[float, float] | None = None
@@ -489,7 +490,7 @@ def build_flight_plans(
 
                     wplist.append(OrderedDict([
                         ("waypointID", 0),
-                        ("coordinate", {"latitude": w_lat, "longitude": w_lon, "altitude": 1200}),
+                        ("coordinate", {"latitude": w_lat, "longitude": w_lon, "altitude": Altitude}),
                         ("speed", cruise_speed),
                         ("eta", 2500),
                         ("ecf", 0.0),
@@ -514,7 +515,7 @@ def build_flight_plans(
                     ux_c, uy_c = vx / vlen, vy / vlen
                     end_xy = (last_anchor_xy[0] + ux_c * 300.0, last_anchor_xy[1] + uy_c * 300.0)
                     end_lat, end_lon = planner._proj_back(end_xy[0], end_xy[1])[::-1]
-                    end_coord = {"latitude": end_lat, "longitude": end_lon, "altitude": 1200}
+                    end_coord = {"latitude": end_lat, "longitude": end_lon, "altitude": Altitude}
 
                     wplist.append(OrderedDict([
                         ("waypointID", 0),
@@ -539,7 +540,7 @@ def build_flight_plans(
                 lat, lon = base[0]
                 wplist.append(OrderedDict([
                     ("waypointID", 0),
-                    ("coordinate", {"latitude": lat, "longitude": lon, "altitude": 1200}),
+                    ("coordinate", {"latitude": lat, "longitude": lon, "altitude": Altitude}),
                     ("speed", cruise_speed), ("eta", 0), ("ecf", 1.0),
                     ("nextWaypointID", 0), ("waypointPassType", 1),
                     ("filmingProperty", {}),
@@ -562,7 +563,7 @@ def build_flight_plans(
                 for p in simp:
                     wplist.append(OrderedDict([
                         ("waypointID", 0),
-                        ("coordinate", {"latitude": p["lat"], "longitude": p["lon"], "altitude": 1200}),
+                        ("coordinate", {"latitude": p["lat"], "longitude": p["lon"], "altitude": Altitude}),
                         ("speed", cruise_speed),
                         ("eta", p["eta_ms"]),
                         ("ecf", 0.0),
@@ -609,7 +610,7 @@ def build_flight_plans(
                 entry_coord = OrderedDict([
                     ("latitude", round(entry_lat, 6)),
                     ("longitude", round(entry_lon, 6)),
-                    ("altitude", first_coord.get("altitude", 1200)),
+                    ("altitude", first_coord.get("altitude", Altitude)),
                 ])
                 entry_wp = OrderedDict([
                     ("waypointID", 0),
@@ -693,7 +694,7 @@ def build_flight_plans(
                     rep = records[rep_pos]
                     rep_fp = rep["fp"]
                     merged_coords: list[dict] = []
-                    if g_idx == 0:
+                    if g_idx ==0:
                         merged_coords.extend(deepcopy(first_coords))
                     for pos in group:
                         merged_coords.extend(deepcopy(records[pos]["coords"]))

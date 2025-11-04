@@ -511,7 +511,7 @@ def determine_level_and_send_request(manager, confirmed_request: Optional[Dict[s
         mission_plan_ids = [opt.missionPlanID for opt in option_models]
 
     replan_body = ReplanRequestBodyModel(
-        source="MonitoringModule",
+        source="MSM",
         timestamp=timestamp_ms,
         replanRequestTime=ReplanRequestTimeStampModel(replanRequestTimestamp=timestamp_ms),
         replanLevel=replan_level,

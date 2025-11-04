@@ -109,4 +109,5 @@ def notify(msg_id: str, raw: Optional[bytes] = None) -> None:
         QTimer.singleShot(0, lambda: _global_signal_emitter.message_received.emit(key, payload))
 
     if not tabs and not handlers and _global_signal_emitter is None:
-        print(f"[receive_center] notify dropped: msg_id={key}, no listeners", flush=True)
+        # Nothing registered for incoming message; drop silently to avoid noisy output.
+        return

@@ -132,7 +132,7 @@ class S100ChecklistDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("S100 운용 체크리스트")
         self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
-        self.setMinimumWidth(520)
+        self.setMinimumWidth(400)
 
         legend = QLabel("● 초록=생성(TX)   ● 파랑=수신(RX)")
         legend.setStyleSheet("color:#666; font-size:11px;")
@@ -376,7 +376,7 @@ class S110ChecklistDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("S110 초기임무계획 체크리스트")
         self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
-        self.setMinimumWidth(620)
+        self.setMinimumWidth(400)
         self.resize(720, 520)
 
         legend = QLabel("● 초록=송신(TX)   ● 파랑=수신(RX)")
@@ -742,7 +742,7 @@ class S120ChecklistDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("S120 임무 수행 체크리스트")
         self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
-        self.setMinimumWidth(560)
+        self.setMinimumWidth(400)
 
         legend = QLabel("● 초록=송신(TX)   ● 파랑=수신(RX)")
         legend.setStyleSheet("color:#666; font-size:11px;")
@@ -954,7 +954,7 @@ class S210ChecklistDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("S210 정상 수행 체크리스트")
         self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
-        self.setMinimumWidth(560)
+        self.setMinimumWidth(400)
 
         legend = QLabel("● 초록=송신(TX)   ● 파랑=수신(RX)")
         legend.setStyleSheet("color:#666; font-size:11px;")

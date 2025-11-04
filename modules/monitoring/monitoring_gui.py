@@ -139,6 +139,7 @@ class MainWindow(QMainWindow):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.setWindowTitle('모니터링(MSM)')
+        # default footprint sized so multiple GUIs can coexist comfortably
         self.resize(1100, 700)
 
         # Power/State
@@ -1210,7 +1211,8 @@ class MainWindow(QMainWindow):
 # ───────── 엔트리 ─────────
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    win = MainWindow(); win.show()
+    win = MainWindow()
+    win.show()
     sys.exit(app.exec_())
 
 

@@ -19,9 +19,7 @@ from PyQt5.QtWidgets import (
     QTableWidgetItem,
     QHeaderView,
     QPushButton,
-    QTextEdit,
     QMessageBox,
-    QDialog,
 )
 from PyQt5.QtGui import QColor
 from PyQt5.QtCore import Qt
@@ -87,8 +85,8 @@ class MonitoringCSCTab(QWidget):
         self._populate_tx_table()
         self._populate_rx_table()
 
-        self.log_tx = self._make_log_viewer("송신 로그가 표시됩니다.")
-        self.log_rx = self._make_log_viewer("수신 로그가 표시됩니다.")
+        self.log_tx = None
+        self.log_rx = None
 
         self.mode_combo = QComboBox()
         for value, label in SYSTEM_MODE_OPTIONS:
@@ -104,14 +102,9 @@ class MonitoringCSCTab(QWidget):
         top_layout.addWidget(self._wrap_in_group("송신 메시지 이력", self.tbl_tx))
         top_layout.addWidget(self._wrap_in_group("수신 메시지 이력", self.tbl_rx))
 
-        log_layout = QHBoxLayout()
-        log_layout.addWidget(self._wrap_in_group("송신 로그", self.log_tx))
-        log_layout.addWidget(self._wrap_in_group("수신 로그", self.log_rx))
-
         root = QVBoxLayout(self)
         root.addWidget(mode_group, 0)
-        root.addLayout(top_layout, 3)
-        root.addLayout(log_layout, 2)
+        root.addLayout(top_layout, 1)
         root.setContentsMargins(8, 6, 8, 6)
         self.setLayout(root)
 
@@ -148,8 +141,8 @@ class MonitoringCSCTab(QWidget):
         return box
 
     def _make_tx_table(self) -> QTableWidget:
-        tbl = QTableWidget(0, 5)
-        tbl.setHorizontalHeaderLabels(["Message ID", "Message Name", "상태", "발신", "데이터"])
+        tbl = QTableWidget(0, 4)
+        tbl.setHorizontalHeaderLabels(["Message ID", "Message Name", "상태", "송신"])
         tbl.verticalHeader().setVisible(False)
         tbl.setEditTriggers(QTableWidget.NoEditTriggers)
         tbl.setSelectionBehavior(QTableWidget.SelectRows)
@@ -158,12 +151,11 @@ class MonitoringCSCTab(QWidget):
         header.setSectionResizeMode(1, QHeaderView.Stretch)
         header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
         return tbl
 
     def _make_rx_table(self) -> QTableWidget:
-        tbl = QTableWidget(0, 4)
-        tbl.setHorizontalHeaderLabels(["Message ID", "Message Name", "상태", "데이터"])
+        tbl = QTableWidget(0, 3)
+        tbl.setHorizontalHeaderLabels(["Message ID", "Message Name", "상태"])
         tbl.verticalHeader().setVisible(False)
         tbl.setEditTriggers(QTableWidget.NoEditTriggers)
         tbl.setSelectionBehavior(QTableWidget.SelectRows)
@@ -171,15 +163,7 @@ class MonitoringCSCTab(QWidget):
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.Stretch)
         header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
         return tbl
-
-    def _make_log_viewer(self, placeholder: str) -> QTextEdit:
-        log = QTextEdit()
-        log.setReadOnly(True)
-        log.setPlaceholderText(placeholder)
-        log.setStyleSheet("font-family: Consolas; font-size: 11px;")
-        return log
 
     def _populate_tx_table(self):
         for row, (msg_id, msg_name) in enumerate(PUSH_MESSAGES):
@@ -197,9 +181,6 @@ class MonitoringCSCTab(QWidget):
             btn_send.clicked.connect(lambda _, r=row: self._handle_send_clicked(r))
             self.tbl_tx.setCellWidget(row, 3, btn_send)
 
-            btn_view = QPushButton("보기")
-            btn_view.clicked.connect(lambda _, r=row: self._handle_tx_view(r))
-            self.tbl_tx.setCellWidget(row, 4, btn_view)
 
             self.tx_row_map[msg_id] = row
             self.tx_history[msg_id] = deque(maxlen=self.MAX_HISTORY)
@@ -216,9 +197,6 @@ class MonitoringCSCTab(QWidget):
             self.tbl_rx.setItem(row, 1, name_item)
             self.tbl_rx.setItem(row, 2, status_item)
 
-            btn_view = QPushButton("보기")
-            btn_view.clicked.connect(lambda _, r=row: self._handle_rx_view(r))
-            self.tbl_rx.setCellWidget(row, 3, btn_view)
 
             self.rx_row_map[msg_id] = row
             self.rx_history[msg_id] = deque(maxlen=self.MAX_HISTORY)
@@ -479,25 +457,9 @@ class MonitoringCSCTab(QWidget):
         self._append_tx_log(msg_id, body_dict)
         self.refresh_display()
 
-    def _handle_tx_view(self, row: int):
-        msg_id = self.tbl_tx.item(row, 0).text()
-        entries = list(self.tx_history.get(msg_id, []))
-        if not entries:
-            QMessageBox.information(self, "발신 데이터", "발신 이력이 없습니다.")
-            return
-        self._show_history_dialog(f"[{msg_id}] 발신 데이터 기록", entries)
-        self._append_tx_log(msg_id, entries[0], replace=True)
-
-    def _handle_rx_view(self, row: int):
-        msg_id = self.tbl_rx.item(row, 0).text()
-        entries = list(self.rx_history.get(msg_id, []))
-        if not entries:
-            QMessageBox.information(self, "수신 데이터", "수신 이력이 없습니다.")
-            return
-        self._show_history_dialog(f"[{msg_id}] 수신 데이터 기록", entries)
-        self._append_rx_log(msg_id, entries[0], replace=True)
-
     def _append_tx_log(self, msg_id: str, body: dict, replace: bool = False):
+        if self.log_tx is None:
+            return
         payload = json.dumps(body, ensure_ascii=False, indent=2)
         text = f"[{msg_id}] {payload}"
         if replace:
@@ -506,6 +468,8 @@ class MonitoringCSCTab(QWidget):
             self.log_tx.append(text)
 
     def _append_rx_log(self, msg_id: str, body: dict, replace: bool = False):
+        if self.log_rx is None:
+            return
         payload = json.dumps(body, ensure_ascii=False, indent=2)
         text = f"[{msg_id}] {payload}"
         if replace:
@@ -540,29 +504,6 @@ class MonitoringCSCTab(QWidget):
         if isinstance(obj, dict):
             return {k: to_dict(v) for k, v in obj.items()}
         return {"value": str(obj)}
-
-    def _show_history_dialog(self, title: str, entries: list[dict]):
-        dlg = QDialog(self)
-        dlg.setWindowTitle(title)
-        text = QTextEdit(dlg)
-        text.setReadOnly(True)
-
-        total = len(entries)
-        lines = []
-        for idx, entry in enumerate(entries, 1):
-            ts = self._format_time(entry.get("timestamp")) or "-"
-            lines.append("=" * 64)
-            lines.append(f"[{idx}/{total} {ts}]")
-            lines.append(json.dumps(entry, ensure_ascii=False, indent=2))
-        if not lines:
-            lines.append("기록이 없습니다.")
-
-        text.setPlainText("\n".join(lines))
-        layout = QVBoxLayout(dlg)
-        layout.addWidget(text)
-        dlg.resize(520, 620)
-        dlg.exec_()
-
     def _create_dummy_body(self, msg_id: str):
         timestamp = int(datetime.now(timezone.utc).timestamp() * 1000)
         source_module = "MSM"

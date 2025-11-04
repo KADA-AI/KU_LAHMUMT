@@ -239,7 +239,7 @@ class CMPK0201Window(QMainWindow):
         splitter.addWidget(side)
 
         # ★ 변경 1: 우측 패널 최소 폭 설정(입력 가독성 유지)
-        side.setMinimumWidth(400)  # 380~420 사이 취향대로 조절
+        side.setMinimumWidth(300)  # 380~420 사이 취향대로 조절
 
         # ★ 변경 2: 기본 스트레치 비율(지도:패널 ≈ 80:20)
         splitter.setStretchFactor(0, 5)   # 지도

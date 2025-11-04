@@ -94,7 +94,7 @@ class MonitoringManager:
     def send_initial_status_message(self) -> None:
         self._log("MON_MGR", "INFO", "sending initial status message (0102)")
         epoch_ms = int((datetime.now(timezone.utc) - datetime(2000, 1, 1, tzinfo=timezone.utc)).total_seconds() * 1000)
-        body = ModuleStatusModelModel(timestamp=epoch_ms, source="MonitoringModule", status=1)
+        body = ModuleStatusModelModel(timestamp=epoch_ms, source="MSM", status=1)
         try:
             message0102_push.make_and_push(body, self.node_messenger)
             self.push_store.add_data("0102", body)

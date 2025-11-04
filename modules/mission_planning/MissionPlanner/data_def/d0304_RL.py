@@ -120,13 +120,13 @@ def _traj_to_wplist(
     total_d = sum(_haversine(lats[i-1], lons[i-1], lats[i], lons[i])
                   for i in range(1, len(lats))) or 1.0
 
-    cum_d = eta_ms = 0.0
+    cum_d = eta_s = 0.0
     wplist = []
     for i, (lon, lat, alt) in enumerate(zip(lons, lats, alts)):
         if i:
             seg = _haversine(lats[i-1], lons[i-1], lat, lon)
             cum_d += seg
-            eta_ms += seg / cruise_spd * 1000.0
+            eta_s += seg / cruise_spd  # ETA spec: seconds, not milliseconds
         wplist.append(OrderedDict([
             ("waypointID", wp_alloc.alloc()),
             ("coordinate", {
@@ -135,7 +135,7 @@ def _traj_to_wplist(
                 "altitude":  round(alt, 1),   # ← 610 → 궤적 alt 그대로
             }),
             ("speed",          cruise_spd),
-            ("eta",            int(round(eta_ms))),
+            ("eta",            int(round(eta_s))),
             ("ecf",            round(cum_d/total_d, 2)),
             ("nextWaypointID", 0),
             ("hovering",       {}),

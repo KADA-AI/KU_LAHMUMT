@@ -86,29 +86,25 @@ def _extract_mandatory_type(detail: Any) -> Optional[int]:
 def _format_replan_reason(replan_info: Dict[str, Any]) -> str:
     """Generate human readable replanReason text for selected triggers."""
     msg_id = str(replan_info.get("original_message_id") or "").zfill(4)
-    detail = replan_info.get("재계획 상세 사유")
+    detail = _find_detail_payload(replan_info)
 
     if msg_id == "0202":
         mission_type = _extract_first_mission_type(detail)
-        mission_desc = {
-            1: "좌표지향 요청",
-            2: "표적추적 요청",
-        }.get(mission_type)
+        mission_desc = {1: "좌표지정 요청", 2: "추적임무 요청"}.get(mission_type)
         return f"선행임무 입력({mission_desc})" if mission_desc else "선행임무 입력"
 
     if msg_id == "0801":
-        return "운용자 요청으로 인한 임무재계획"
+        return "운용자 명령으로 인한 재계획"
 
     if msg_id == "0802":
         mandatory_desc = {
-            1: "강제 대기",
-            2: "강제 귀환",
-            3: "강제 임무복귀",
+            1: "강제대기로 인한 재계획",
+            2: "강제귀환으로 인한 재계획",
+            3: "강제임무복귀로 인한 재계획",
         }.get(_extract_mandatory_type(detail))
-        return f"강제명령({mandatory_desc})" if mandatory_desc else "강제명령"
+        return mandatory_desc or "강제명령으로 인한 재계획"
 
     return _serialize_reason(replan_info)
-
 
 def _convert_trigger_for_ui(replan_info: Dict[str, Any]) -> Dict[str, Any]:
     """Convert monitoring_backup-style trigger info into the structure ReplanTab expects."""
@@ -362,7 +358,7 @@ def _collect_replan_inputs(
 
     filtered_ids: List[int] = []
     seen: Set[int] = set()
-    for candidate in sorted(candidate_ids):
+    for candidate in candidate_ids:
         if candidate in seen:
             continue
         seen.add(candidate)
@@ -465,9 +461,13 @@ def determine_level_and_send_request(manager, confirmed_request: Optional[Dict[s
     ) = _collect_replan_inputs(manager, excluded_aircraft_ids)
 
     if not input_ids:
-        fallback_ids = sorted(
-            i for i, done in status_map.items() if not done and i not in excluded_input_ids
-        )
+        fallback_ids: List[int] = []
+        for key, done in status_map.items():
+            if done:
+                continue
+            if key in excluded_input_ids:
+                continue
+            fallback_ids.append(key)
         if fallback_ids:
             input_ids = fallback_ids
     if not input_ids:
@@ -493,7 +493,12 @@ def determine_level_and_send_request(manager, confirmed_request: Optional[Dict[s
                 continue
             derived.append(input_id)
         if derived:
-            input_ids = sorted(set(input_ids) | set(derived))
+            existing: Set[int] = set(input_ids)
+            for value in derived:
+                if value in existing:
+                    continue
+                existing.add(value)
+                input_ids.append(value)
     input_models = [InputMissionIDModel(inputMissionID=i) for i in input_ids]
     if not input_models:
         input_models = [InputMissionIDModel(inputMissionID=0)]
@@ -511,7 +516,7 @@ def determine_level_and_send_request(manager, confirmed_request: Optional[Dict[s
         mission_plan_ids = [opt.missionPlanID for opt in option_models]
 
     replan_body = ReplanRequestBodyModel(
-        source="MonitoringModule",
+        source="MSM",
         timestamp=timestamp_ms,
         replanRequestTime=ReplanRequestTimeStampModel(replanRequestTimestamp=timestamp_ms),
         replanLevel=replan_level,

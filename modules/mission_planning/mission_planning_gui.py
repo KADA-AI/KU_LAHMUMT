@@ -36,6 +36,12 @@ qInstallMessageHandler(_qt_silent_handler)
 from modules.common.status_reporter import send_status_ok
 from modules.common.ctrl_listener import start_ctrl_listener, env_ctrl_port
 from modules.common import db_paths
+from modules.common.option_codes import (
+    DEFAULT_OPTION_CODE_SEQUENCE,
+    ensure_option_code_sequence,
+    normalize_option_code,
+    option_code_to_label,
+)
 from receive_center import register_listener, unregister_listener   # ★ 0101 모드 수신 리스너
 from latest_input_cache import (
     reset_latest_inputs,
@@ -1016,21 +1022,28 @@ class MainWindow(QMainWindow):
             ts = _now_ms_since_2000()
             plan_list = list(plan_ids or [])
             name_list = list(option_names or [])
-            valid_entries: list[tuple[int, str]] = []
+            valid_entries: list[tuple[int, int]] = []
+            defaults = list(DEFAULT_OPTION_CODE_SEQUENCE) or [1]
             for idx, plan_id in enumerate(plan_list, 1):
                 try:
                     pid = int(plan_id)
                 except Exception:
                     continue
-                name = name_list[idx - 1] if idx - 1 < len(name_list) else f"option{idx}"
-                valid_entries.append((pid, str(name)))
+                raw_name = name_list[idx - 1] if idx - 1 < len(name_list) else None
+                code = normalize_option_code(
+                    raw_name,
+                    fallback=defaults[idx - 1] if idx - 1 < len(defaults) else defaults[-1],
+                )
+                if code is None:
+                    code = defaults[-1]
+                valid_entries.append((pid, code))
             if not valid_entries:
                 self.log_sig.emit("[WARN] 0901 skipped: no entries")
                 return
             option_ids = self._allocate_option_ids(len(valid_entries))
             entries = [
-                {"optionID": oid, "optionName": name, "missionPlanID": pid}
-                for oid, (pid, name) in zip(option_ids, valid_entries)
+                {"optionID": oid, "optionName": code, "missionPlanID": pid}
+                for oid, (pid, code) in zip(option_ids, valid_entries)
             ]
             body = {
                 "timestamp": ts,
@@ -1039,7 +1052,11 @@ class MainWindow(QMainWindow):
                 "pendingOptionList": entries,
             }
             push_message("0901", NodeMessenger, body_dict=body)
-            self.log_sig.emit(f"[0901] option request sent (count={len(entries)})")
+            labels = ", ".join(
+                f"{entry['optionName']}({option_code_to_label(entry['optionName'])})"
+                for entry in entries
+            )
+            self.log_sig.emit(f"[0901] option request sent (count={len(entries)}, codes={labels})")
             try:
                 self._send_mon("tx", msg_id=_z4("0901"), optionCount=len(entries))
             except Exception:
@@ -1495,6 +1512,101 @@ class MainWindow(QMainWindow):
                 self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
                 return
 
+            # Exclude completed input missions (isDone=True) before generating new plans.
+            mission_whitelist: Set[int] = set()
+            for source in (ctx.get("mission_ids"), staged.get("mission_ids")):
+                for value in source or []:
+                    try:
+                        mission_whitelist.add(int(value))
+                    except Exception:
+                        continue
+
+            filtered_cmpk_path = cmpk_path
+            try:
+                with cmpk_path.open("r", encoding="utf-8") as fh:
+                    cmpk_data = json.load(fh)
+            except Exception as exc:
+                self.log_sig.emit(f"[WARN] Failed to load 0201 for mission filtering: {exc}")
+            else:
+                mission_list = cmpk_data.get("inputMissionList")
+                if isinstance(mission_list, list):
+                    filtered_list = []
+                    removed_ids: list[str] = []
+                    converted_ids: list[str] = []
+                    width_adjusted_ids: list[str] = []
+                    active_ids: list[int] = []
+                    for mission in mission_list:
+                        mid_raw = mission.get("inputMissionID")
+                        try:
+                            mid_int = int(mid_raw)
+                        except Exception:
+                            mid_int = None
+                        if mission_whitelist and (mid_int is None or mid_int not in mission_whitelist):
+                            removed_ids.append(str(mid_raw))
+                            continue
+                        if bool(mission.get("isDone")):
+                            removed_ids.append(str(mid_raw))
+                            continue
+                        mtype = mission.get("inputMissionType")
+                        if not isinstance(mtype, int) or mtype == 0:
+                            detail = mission.get("missionDetail") or {}
+                            if detail.get("lineList"):
+                                mission["inputMissionType"] = 1
+                                mtype = 1
+                                converted_ids.append(f"{mid_raw}->1")
+                            elif detail.get("areaList"):
+                                mission["inputMissionType"] = 2
+                                mtype = 2
+                                converted_ids.append(f"{mid_raw}->2")
+                            else:
+                                removed_ids.append(str(mid_raw))
+                                continue
+                        if mtype == 1:
+                            detail = mission.get("missionDetail") or {}
+                            for entry in detail.get("lineList") or []:
+                                try:
+                                    width_val = float(entry.get("width", 0))
+                                except Exception:
+                                    width_val = 0.0
+                                if width_val <= 0:
+                                    entry["width"] = 1000
+                                    width_adjusted_ids.append(str(mid_raw))
+                        filtered_list.append(mission)
+                        if mid_int is not None:
+                            active_ids.append(mid_int)
+                    if not filtered_list:
+                        self.log_sig.emit("[WARN] No pending missions remain after filtering; skipping replan pipeline.")
+                        self._plan_status = "replan_skipped"
+                        self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
+                        return
+                    if active_ids:
+                        ctx["mission_ids"] = active_ids
+
+                    if len(filtered_list) != len(mission_list) or (mission_whitelist and set(active_ids) != mission_whitelist):
+                        cmpk_data["inputMissionList"] = filtered_list
+                        filtered_dir = out_root_base / "_filtered"
+                        filtered_dir.mkdir(parents=True, exist_ok=True)
+                        filtered_cmpk_path = filtered_dir / cmpk_path.name
+                        try:
+                            filtered_cmpk_path.write_text(
+                                json.dumps(cmpk_data, ensure_ascii=False, indent=2),
+                                encoding="utf-8",
+                            )
+                            cmpk_path = filtered_cmpk_path
+                        except Exception as exc:
+                            self.log_sig.emit(f"[WARN] Failed to persist filtered 0201 snapshot: {exc}")
+                        else:
+                            removed_summary = ", ".join(removed_ids) if removed_ids else "-"
+                            converted_summary = ", ".join(converted_ids) if converted_ids else "-"
+                            width_summary = ", ".join(width_adjusted_ids) if width_adjusted_ids else "-"
+                            self.log_sig.emit(
+                                "[INFO] Filtered completed input missions "
+                                f"(removed={removed_summary or '-'}, converted={converted_summary or '-'}, "
+                                f"widthAdjusted={width_summary or '-'})"
+                            )
+                else:
+                    self.log_sig.emit("[WARN] 0201 payload missing valid inputMissionList; continuing without filtering")
+
             ctx['cmpk_path'] = str(cmpk_path)
             ctx['mrpk_path'] = str(mrpk_path)
 
@@ -1506,12 +1618,11 @@ class MainWindow(QMainWindow):
                 except Exception:
                     plan_ids.append(None)
 
-            option_names = list(ctx.get('option_names') or staged.get('option_names') or [])
-            plan_count = max(len(plan_ids), len(option_names), 1)
+            raw_option_values = list(ctx.get('option_names') or staged.get('option_names') or [])
+            plan_count = max(len(plan_ids), len(raw_option_values), 1)
             while len(plan_ids) < plan_count:
                 plan_ids.append(None)
-            while len(option_names) < plan_count:
-                option_names.append(f'option{len(option_names) + 1}')
+            option_codes = ensure_option_code_sequence(raw_option_values, plan_count)
 
             try:
                 cmpk_id = int(Path(cmpk_path).stem)
@@ -1560,14 +1671,14 @@ class MainWindow(QMainWindow):
                 return assigned
 
             generated_plan_ids: list[int] = []
-            option_names_out: list[str] = []
+            option_codes_out: list[int] = []
             total_imp_files = 0
             total_fp_files = 0
 
             for idx in range(plan_count):
                 variant_no = idx + 1
                 requested_plan_id = plan_ids[idx]
-                option_name = option_names[idx]
+                option_code = option_codes[idx]
 
                 iter_out_root = out_root_base / f'variant_{variant_no:02d}'
                 if iter_out_root.exists():
@@ -1687,7 +1798,11 @@ class MainWindow(QMainWindow):
                 self.log_sig.emit(f"[OK] Stored variant {variant_no}: MissionPlanID={plan_id}, IMP={len(imp_pkgs)}, FlightPath={fp_count_0303 + fp_count_0304}")
 
                 generated_plan_ids.append(plan_id)
-                option_names_out.append(option_name)
+                option_codes_out.append(int(option_code))
+                self.log_sig.emit(
+                    f"[INFO] Option mapping #{variant_no}: "
+                    f"planID={plan_id}, optionCode={option_code}({option_code_to_label(option_code)})"
+                )
 
                 try:
                     shutil.rmtree(iter_out_root)
@@ -1705,7 +1820,7 @@ class MainWindow(QMainWindow):
             self._last_mission_plan_ids = generated_plan_ids
             self._last_mission_plan_id = generated_plan_ids[0] if generated_plan_ids else None
             ctx['plan_ids'] = generated_plan_ids
-            ctx['option_names'] = option_names_out
+            ctx['option_names'] = option_codes_out
             self._active_plan_context = ctx
 
             try:
@@ -1734,7 +1849,7 @@ class MainWindow(QMainWindow):
                 plan_state=self._plan_status,
             )
 
-            self._schedule_plan_delivery(generated_plan_ids, option_names_out, reason)
+            self._schedule_plan_delivery(generated_plan_ids, option_codes_out, reason)
 
         except Exception as exc:
             self.log_sig.emit(f"[ERR] Replan pipeline failed: {exc}")

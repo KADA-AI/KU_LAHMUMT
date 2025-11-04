@@ -22,6 +22,7 @@ def _sw_code(default: str = "MMR") -> str:
     }.get(role, default)
 
 WP_INTERVAL_M = 500.0        # Waypoint 간격(m) ─ 기본값
+Altitude_LAH = 1000
 
 # ── 고정 WP 확장 블록 ─────────────────────────────────────────────
 _DEFAULT_WP_EXT = OrderedDict([
@@ -206,7 +207,7 @@ def build_lah_flight_plans_from_mrpk(
 
         # start
         st_lat, st_lon = start_map.get(aid, (wplist[0]["coordinate"]["latitude"], wplist[0]["coordinate"]["longitude"]))
-        start = {"latitude": st_lat, "longitude": st_lon, "altitude": 600}
+        start = {"latitude": st_lat, "longitude": st_lon, "altitude": Altitude_LAH}
         eta_s = _dist_ms(start, wplist[0]["coordinate"])
         wp_start = _mk_wp(st_lat, st_lon, start["altitude"], eta_s)
 
@@ -214,10 +215,10 @@ def build_lah_flight_plans_from_mrpk(
         rtb = rtb_map.get(aid)
         if rtb:
             end   = rtb
-            alt_e = int(rtb.get("altitude", 600))
+            alt_e = int(rtb.get("altitude", Altitude_LAH))
         else:
             end   = wplist[-1]["coordinate"]
-            alt_e = int(end.get("altitude", 600))
+            alt_e = int(end.get("altitude", Altitude_LAH))
         eta_e = _dist_ms(wplist[-1]["coordinate"], end)
         wp_rtb = _mk_wp(end["latitude"], end["longitude"], alt_e, eta_e)
 
@@ -314,7 +315,7 @@ def build_lah_flight_plans_fixed(
                         ("coordinate", {
                             "latitude":  round(float(sample.get("lat", 0.0)), 6),
                             "longitude": round(float(sample.get("lon", 0.0)), 6),
-                            "altitude":  600,
+                            "altitude":  Altitude_LAH,
                         }),
                         ("speed", cruise_speed),
                         ("eta",   eta_ms),
@@ -344,7 +345,7 @@ def build_lah_flight_plans_fixed(
                     ("coordinate", {
                         "latitude":  round(lat, 6),
                         "longitude": round(lon, 6),
-                        "altitude":  600,
+                        "altitude":  Altitude_LAH,
                     }),
                     ("speed", cruise_speed),
                     ("eta",   eta_ms),

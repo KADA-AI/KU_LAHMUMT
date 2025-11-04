@@ -3,6 +3,11 @@
 from Tabs.csc_tab_base import CSCTabBase
 import time
 
+from modules.common.option_codes import (
+    DEFAULT_OPTION_CODE_SEQUENCE,
+    normalize_option_code,
+)
+
 _EPOCH2000_MS = 946684800000
 def _now_ms_since_2000():
     return int(time.time() * 1000) - _EPOCH2000_MS
@@ -57,9 +62,10 @@ class DecisionSupportTab(CSCTabBase):
                 except Exception:
                     option_id = idx + 1
                 raw_name = entry.get("optionName")
-                option_name = str(raw_name).strip() if raw_name is not None else ""
-                if not option_name:
-                    option_name = f"option{option_id}"
+                option_name = normalize_option_code(
+                    raw_name,
+                    fallback=DEFAULT_OPTION_CODE_SEQUENCE[idx] if idx < len(DEFAULT_OPTION_CODE_SEQUENCE) else DEFAULT_OPTION_CODE_SEQUENCE[-1],
+                )
                 option_list.append({
                     "optionID": option_id,
                     "optionName": option_name,
@@ -75,7 +81,7 @@ class DecisionSupportTab(CSCTabBase):
                 fallback_plan = int(getattr(self, "_last_mission_plan_id", 0) or 0)
                 option_list.append({
                     "optionID": 1,
-                    "optionName": "option1",
+                    "optionName": DEFAULT_OPTION_CODE_SEQUENCE[0],
                     "missionPlanID": fallback_plan,
                     "survivalRate": 1,
                     "timeContraction": 1,

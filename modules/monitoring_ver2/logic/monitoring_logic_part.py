@@ -1,12 +1,10 @@
-﻿# logic/monitoring_logic_part.py: '紐⑤땲?곕쭅' ?꾨찓?몄뿉 ????몃? 鍮꾩쫰?덉뒪 濡쒖쭅??援ы쁽?⑸땲??
-
+﻿
 from datetime import datetime, timezone
 from dataclasses import asdict
 
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
-# --- ?곗씠??紐⑤뜽 import ---
 from data.message_models import (
     ModuleStatusModelModel,
     MissionProgressBodyModel,
@@ -21,12 +19,18 @@ from data.message_models import (
 )
 from push.push_center import push_message
 from .monitoring_actual_logic import run_monitoring_procedure
+from .replan_actual_logic import run_replan_procedure
 import udp_reporter
 import socket
 import json
 import os
 import math
 from modules.common import db_paths
+from modules.monitoring_ver2.utils.vehicle_status import (
+    MANNED_AIRCRAFT_IDS,
+    UNMANNED_AIRCRAFT_IDS,
+    write_vehicle_status,
+)
 
 
 def _resolve_fuel_capacity() -> float:
@@ -41,12 +45,12 @@ def _resolve_fuel_capacity() -> float:
 
 
 FUEL_CAPACITY_LITERS = _resolve_fuel_capacity()
+
 COLLAB_REPLAN_REASON_REEXECUTE = "협업기저임무 재수행에 대한 재계획"
 COLLAB_REPLAN_REASON_REINPUT = "협업기저임무 재입력에 대한 재계획"
-COLLAB_REPLAN_DEFAULT_SOURCE = "MonitoringModule"
+COLLAB_REPLAN_DEFAULT_SOURCE = "MSM"
 
 
-# --- 諛섑솚 媛?ν븳 紐⑤뱺 Push 硫붿떆吏 蹂몃Ц ??낆쓣 ?뺤쓽 ---
 
 def _inform_info_module(msg_id: str, body: dict):
     try:
@@ -105,7 +109,6 @@ class MonitoringLogic:
             Tuple[Optional[int], Optional[int]]
         ] = None
         self._collab_replan_waiting_for_new_input_logged: bool = False
-        self._collab_last_replan_context: Optional[Dict[str, Any]] = None
         self._used_option_ids: Set[int] = set()
         self._allocated_plan_ids: Set[int] = set()
         self._existing_mission_plan_ids: Set[int] = set()
@@ -115,11 +118,75 @@ class MonitoringLogic:
         self._input_mission_package_id: Optional[int] = None
         self._input_mission_plan_path: Optional[Path] = None
         self._input_mission_index_map: Dict[int, int] = {}
+        self._input_mission_order: List[int] = []
         self._input_plan_lookup_failed: bool = False
         try:
             self.manager.logic_store.set_data("collab_pause_active", False)
         except Exception:
             pass
+        self._availability_base: Set[int] = set()
+        self._availability_health_block: Set[int] = set()
+        self._availability_mandatory_override: Dict[int, bool] = {}
+
+    def _recompute_availability(self) -> None:
+        available: Set[int] = set(self._availability_base)
+        if self._availability_health_block:
+            available.difference_update(self._availability_health_block)
+        for aid, forced in self._availability_mandatory_override.items():
+            if forced:
+                available.add(aid)
+            else:
+                available.discard(aid)
+        ordered = sorted(available)
+        try:
+            self.manager.logic_store.set_data("input_plan_available_aircraft", ordered)
+        except Exception:
+            pass
+        write_vehicle_status(ordered)
+
+    def _set_baseline_availability(self, aircraft_ids: Iterable[int]) -> None:
+        baseline: Set[int] = set()
+        for value in aircraft_ids or []:
+            try:
+                baseline.add(int(value))
+            except (TypeError, ValueError):
+                continue
+        if baseline != self._availability_base:
+            self._availability_base = baseline
+            if self._availability_health_block:
+                self._availability_health_block = {
+                    aid for aid in self._availability_health_block if aid in baseline
+                }
+            if self._availability_mandatory_override:
+                self._availability_mandatory_override = {
+                    aid: flag
+                    for aid, flag in self._availability_mandatory_override.items()
+                    if aid in baseline
+                }
+            try:
+                self.manager.logic_store.set_data(
+                    "availability_baseline", sorted(self._availability_base)
+                )
+            except Exception:
+                pass
+            self._recompute_availability()
+
+    def _update_health_based_availability(self, agent_states: Iterable[Any]) -> None:
+        if agent_states is None:
+            return
+        unhealthy: Set[int] = set()
+        for agent_state in agent_states:
+            aircraft_id = self._to_int(self._safe_get(agent_state, "aircraftID", "AircraftID"))
+            if aircraft_id is None:
+                continue
+            health_code = self._to_int(self._safe_get(agent_state, "health", "Health"))
+            if health_code is None:
+                continue
+            if health_code != 1:
+                unhealthy.add(aircraft_id)
+        if unhealthy != self._availability_health_block:
+            self._availability_health_block = unhealthy
+            self._recompute_availability()
 
     # ------------------------------------------------------------------ #
     # Message Hooks
@@ -128,6 +195,8 @@ class MonitoringLogic:
     def handle_message(self, msg_id: str, data: Any) -> None:
         if msg_id == "0803":
             self._handle_collab_command(data)
+        elif msg_id == "0802":
+            self._handle_mandatory_command(data)
         elif msg_id == "0201":
             self._handle_new_input_plan(data)
         elif msg_id == "0305":
@@ -350,7 +419,8 @@ class MonitoringLogic:
             plan_data = json.load(fh)
 
         aircraft_map: Dict[int, Dict[str, Any]] = {}
-        input_ids = set()
+        input_ids: List[int] = []
+        input_id_seen: Set[int] = set()
 
         for entry in plan_data.get("aircraftList", []):
             try:
@@ -388,9 +458,15 @@ class MonitoringLogic:
                 input_mission_id = related.get("inputMissionID")
                 if input_mission_id is not None:
                     try:
-                        input_ids.add(int(input_mission_id))
+                        normalized_id = int(input_mission_id)
                     except (TypeError, ValueError):
-                        pass
+                        normalized_id = None
+                    if (
+                        normalized_id is not None
+                        and normalized_id not in input_id_seen
+                    ):
+                        input_id_seen.add(normalized_id)
+                        input_ids.append(normalized_id)
 
                 waypoint_ids = []
                 if path_id is not None:
@@ -447,7 +523,7 @@ class MonitoringLogic:
             "missionPlanID": mission_plan_id,
             "inputMissionPackageID": plan_data.get("inputMissionPackageID"),
             "aircraft": aircraft_map,
-            "inputMissionIDs": sorted(input_ids),
+            "inputMissionIDs": list(input_ids),
         }
 
     def _initialize_input_tracker(self, context: Dict[str, Any]) -> None:
@@ -520,6 +596,36 @@ class MonitoringLogic:
         self._current_input_mission_id = None
         self._input_completion_notified = set()
 
+    def _extract_available_ids_from_payload(self, payload: Any) -> List[int]:
+        raw_list = self._safe_get(payload, "availableAircraftList", "AvailableAircraftList")
+        extracted: List[int] = []
+        if raw_list is None:
+            return extracted
+        for item in raw_list:
+            candidate = self._safe_get(item, "aircraftID", "AircraftID")
+            if candidate is None:
+                continue
+            try:
+                extracted.append(int(candidate))
+            except (TypeError, ValueError):
+                continue
+        return extracted
+
+    def _load_available_ids_from_package(self, package_id: Optional[int]) -> List[int]:
+        if package_id is None:
+            return []
+        try:
+            plan_path = db_paths.get_db_subpath("InputMissionPlan", f"{int(package_id)}.json")
+        except Exception:
+            return []
+        if not plan_path.exists():
+            return []
+        try:
+            data = json.loads(plan_path.read_text(encoding="utf-8"))
+        except Exception:
+            return []
+        return self._extract_available_ids_from_payload(data)
+
     def _refresh_input_mission_index_map(self, force: bool = False) -> Dict[int, int]:
         if not force and self._input_mission_index_map:
             return self._input_mission_index_map
@@ -553,6 +659,9 @@ class MonitoringLogic:
             self._input_mission_index_map = mapping
             return mapping
         mission_list = data.get("inputMissionList")
+        available_ids: Set[int] = set()
+        order: List[int] = []
+        order_seen: Set[int] = set()
         if isinstance(mission_list, list):
             for idx, mission in enumerate(mission_list):
                 mission_id = mission.get("inputMissionID")
@@ -561,8 +670,27 @@ class MonitoringLogic:
                 except (TypeError, ValueError):
                     continue
                 mapping[mission_id_int] = idx
+                if mission_id_int not in order_seen:
+                    order_seen.add(mission_id_int)
+                    order.append(mission_id_int)
+        self._input_mission_order = order
+        available_list = data.get("availableAircraftList")
+        if isinstance(available_list, list):
+            for item in available_list:
+                if isinstance(item, dict):
+                    candidate = item.get("aircraftID")
+                else:
+                    candidate = getattr(item, "aircraftID", None)
+                try:
+                    if candidate is None:
+                        continue
+                    available_ids.add(int(candidate))
+                except (TypeError, ValueError):
+                    continue
         self._input_plan_lookup_failed = False
         self._input_mission_index_map = mapping
+        stored_ids = sorted(available_ids)
+        self._set_baseline_availability(stored_ids)
         return mapping
 
     def _resolve_mission_tracker_key(
@@ -590,19 +718,95 @@ class MonitoringLogic:
         except Exception:
             pass
 
-    def _find_next_input_mission_id(self, initial: bool = False) -> Optional[int]:
-        raw_ids: List[Any] = []
-        if self._plan_context:
-            raw_ids = list(self._plan_context.get("inputMissionIDs") or [])
-        if not raw_ids:
-            raw_ids = list(self._input_mission_tracker.keys())
-        normalized_ids: List[int] = []
-        for value in raw_ids:
+    def _handle_mandatory_command(self, data: Any) -> None:
+        aircraft_id = self._to_int(self._safe_get(data, "aircraftID", "AircraftID"))
+        mandatory_type = self._to_int(
+            self._safe_get(data, "mandatoryType", "MandatoryType")
+        )
+        if aircraft_id is None or mandatory_type is None:
+            return
+
+        reason_map = {
+            1: "강제대기로 인한 재계획",
+            2: "강제귀환으로 인한 재계획",
+            3: "강제임무복귀로 인한 재계획",
+        }
+        replan_reason = reason_map.get(mandatory_type)
+        if replan_reason:
             try:
-                normalized_ids.append(int(value))
+                setattr(data, "replan_reason", replan_reason)
+            except Exception:
+                pass
+
+        availability_updated = False
+        if mandatory_type in (1, 2):
+            availability_updated = self._set_aircraft_availability(aircraft_id, False)
+        elif mandatory_type == 3:
+            availability_updated = self._set_aircraft_availability(aircraft_id, True)
+
+        if availability_updated:
+            self.manager._log(
+                "MON_LOGIC",
+                "INFO",
+                f"0802 mandatoryType={mandatory_type} applied; aircraft {aircraft_id} "
+                f"{'available' if mandatory_type == 3 else 'unavailable'}.",
+            )
+
+        # Trigger immediate replan when system is in execution/auto mode.
+        try:
+            system_mode = int(self.manager.logic_store.get_data("SystemMode") or 0)
+        except (TypeError, ValueError):
+            system_mode = 0
+        if system_mode in (3, 4):
+            try:
+                run_replan_procedure(self.manager)
+            except Exception as exc:
+                self.manager._log(
+                    "MON_LOGIC",
+                    "ERROR",
+                    f"Failed to run replan after 0802 command: {exc}",
+                )
+
+    def _set_aircraft_availability(self, aircraft_id: int, available: bool) -> bool:
+        if aircraft_id is None:
+            return False
+        previous = self._availability_mandatory_override.get(aircraft_id)
+        if previous == available:
+            # still recompute to ensure ordering consistent when no baseline yet
+            self._recompute_availability()
+            return False
+        self._availability_mandatory_override[aircraft_id] = available
+        self._recompute_availability()
+        return True
+
+    def _find_next_input_mission_id(self, initial: bool = False) -> Optional[int]:
+        if self._input_mission_order:
+            source_iterable: Iterable[Any] = list(self._input_mission_order)
+        elif self._plan_context:
+            source_iterable = list(self._plan_context.get("inputMissionIDs") or [])
+        else:
+            source_iterable = list(self._input_mission_tracker.keys())
+        normalized_ids: List[int] = []
+        seen: Set[int] = set()
+        for value in source_iterable:
+            try:
+                candidate = int(value)
             except (TypeError, ValueError):
                 continue
-        normalized_ids = sorted(set(normalized_ids))
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            normalized_ids.append(candidate)
+        if not normalized_ids:
+            for value in self._input_mission_tracker.keys():
+                try:
+                    candidate = int(value)
+                except (TypeError, ValueError):
+                    continue
+                if candidate in seen:
+                    continue
+                seen.add(candidate)
+                normalized_ids.append(candidate)
         if not normalized_ids:
             return None
         current = None if initial else self._current_input_mission_id
@@ -667,6 +871,11 @@ class MonitoringLogic:
                 self.manager._log(
                     "MON_LOGIC", "INFO", "0401 agent status received. Running monitoring cycle."
                 )
+                try:
+                    agent_states = getattr(data_401, "agentStateList", None)
+                except Exception:
+                    agent_states = None
+                self._update_health_based_availability(agent_states)
                 # 紐⑤땲?곕쭅 ?덉감 ?ㅽ뻾?섏뿬 0501 硫붿떆吏 蹂몃Ц ?앹꽦
                 if self._current_input_mission_id is None:
                     self._current_input_mission_id = self._find_next_input_mission_id(
@@ -719,8 +928,6 @@ class MonitoringLogic:
                                 {
                                     "id": aircraft_id,
                                     "warning": "unknown",
-                                    "fuelLiters": None,
-                                    "fuelPercent": None,
                                 }
                             )
                             prev_warnings[aircraft_id] = "unknown"
@@ -749,8 +956,6 @@ class MonitoringLogic:
                             {
                                 "id": aircraft_id,
                                 "warning": text,
-                                "fuelLiters": round(fuel_liters, 2),
-                                "fuelPercent": round(fuel_percent, 1),
                             }
                         )
 
@@ -768,8 +973,6 @@ class MonitoringLogic:
                                     "source": "MSM",
                                     "aircraftID": aircraft_id,
                                     "fuelLevel": fuel_level,
-                                    "fuelLiters": round(fuel_liters, 2),
-                                    "fuelPercent": round(fuel_percent, 1),
                                 }
                                 push_message(
                                     "0504",
@@ -804,27 +1007,22 @@ class MonitoringLogic:
                 )
 
                 if body_0501:
-                    # 0501 硫붿떆吏 諛쒖떊
-                    # print(f"body_0501: {body_0501}")
                     push_message(
                         "0501", self.manager.node_messenger, body_dict=body_0501
                     )
                     self.manager._log(
                         "MON_LOGIC", "INFO", "0501 mission progress message sent."
                     )
-                    # PushStorage?????
+
                     self.manager.push_store.add_data("0501", body_0501)
-                    # LogicStorage?먮룄 ???
                     self.manager.logic_store.set_data("0501_data", body_0501)
-                    # UDP ?듭? 異붽?
                     udp_reporter.notify_tx("0501")
 
-                    # GUI ?낅뜲?댄듃 肄쒕갚 ?몄텧 (0501? 濡쒖쭅?먯꽌 ?앹꽦???곗씠?곗씠誘濡?'logic' ??낆쑝濡??꾨떖)
                     if self.manager.gui_update_callback:
                         self.manager.gui_update_callback("logic", "0501", body_0501)
 
-                # fuel_data占쏙옙 LogicStorage占쏙옙 占쏙옙占쏙옙占싹곤옙 GUI 占쏙옙占쏙옙占쏙옙트
-                if feul_data:  # feul_data占쏙옙 占쏙옙占쏙옙占쏙옙占?占쏙옙占쏙옙 占쏙옙荑∽옙占?처占쏙옙
+
+                if feul_data:  
                     self.manager.logic_store.set_data("fuel_data", feul_data)
                     if self.manager.gui_update_callback:
                         self.manager.gui_update_callback(
@@ -855,7 +1053,6 @@ class MonitoringLogic:
         if execute_val == 2:
             self._activate_collab_pause(data)
             self._register_collab_replan_trigger(data)
-            self._reset_last_replan_completion()
             self._maybe_stage_replan(reason="rx_0803")
         else:
             self._deactivate_collab_pause(reason=f"execute={execute_val} command received")
@@ -869,6 +1066,12 @@ class MonitoringLogic:
         previous_key = self._latest_input_plan_key
         current_key = (package_id, timestamp)
         self._latest_input_plan_key = current_key
+        available_ids = self._extract_available_ids_from_payload(data)
+        if (not available_ids) and package_id is not None:
+            available_ids = self._load_available_ids_from_package(package_id)
+        if available_ids:
+            self._set_baseline_availability(available_ids)
+
         if self._collab_replan_pending:
             self._maybe_stage_replan(reason="rx_0201", input_plan=data)
             return
@@ -1040,8 +1243,11 @@ class MonitoringLogic:
         package_id = self._to_int(self._safe_get(plan_payload, "inputMissionPackageID"))
         timestamp = self._to_int(self._safe_get(plan_payload, "timestamp", "Timestamp"))
         current_key = (package_id, timestamp)
+        reason_str = str(reason or "")
+        is_input_refresh = reason_str.startswith("rx_0201")
         if (
-            self._collab_replan_required_input_key is not None
+            not is_input_refresh
+            and self._collab_replan_required_input_key is not None
             and current_key == self._collab_replan_required_input_key
         ):
             if not self._collab_replan_waiting_for_new_input_logged:
@@ -1054,6 +1260,8 @@ class MonitoringLogic:
             return
         self._collab_replan_waiting_for_new_input_logged = False
         self._latest_input_plan_key = current_key
+        if not is_input_refresh and current_key == self._collab_last_replan_key:
+            return
         payload = self._build_replan_body(plan_payload)
         if payload is None:
             return
@@ -1065,7 +1273,6 @@ class MonitoringLogic:
             self._collab_replan_required_input_key = current_key
             self._collab_replan_pending = False
             self._collab_replan_inflight = True
-            self._collab_last_replan_context = dict(context)
             self._enter_collab_reexecute_mode(context.get("timestamp"))
         else:
             self.manager._log(
@@ -1540,7 +1747,8 @@ class MonitoringLogic:
         mission_list = getattr(data, "inputMissionList", None)
         if mission_list is None and isinstance(data, dict):
             mission_list = data.get("inputMissionList")
-        ids: Set[int] = set()
+        ids: List[int] = []
+        seen: Set[int] = set()
         for item in mission_list or []:
             is_done_val = self._safe_get(item, "isDone", "IsDone")
             try:
@@ -1556,10 +1764,14 @@ class MonitoringLogic:
             if value is None:
                 continue
             try:
-                ids.add(int(value))
+                candidate = int(value)
             except (TypeError, ValueError):
                 continue
-        return sorted(ids)
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            ids.append(candidate)
+        return ids
 
     def _resolve_mission_plan_id(self, data: Any, timestamp: int) -> int:
         if self._current_mission_plan_id is not None:
@@ -1756,14 +1968,13 @@ class MonitoringLogic:
                 pass
 
     def generate_body_for(self, msg_id: str) -> PushBodyType:
-        """硫붿떆吏 ID???곕씪 ?곗씠???대옒???몄뒪?댁뒪瑜??앹꽦?섏뿬 諛섑솚?⑸땲??"""
         timestamp = int(
             (
                 datetime.now(timezone.utc) - datetime(2000, 1, 1, tzinfo=timezone.utc)
             ).total_seconds()
             * 1000
         )
-        source_module = "MonitoringModule"
+        source_module = "MSM"
 
         if msg_id == "0102":
             return ModuleStatusModelModel(
@@ -1785,6 +1996,4 @@ class MonitoringLogic:
             )
 
         raise ValueError(f"Body generation not implemented for msg_id: {msg_id}")
-
-
 

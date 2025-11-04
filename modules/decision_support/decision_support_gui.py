@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys, os, threading, re, json
+from typing import Any
 os.environ["KU_ROLE"] = "decision"  # MOB
 from pathlib import Path
 
@@ -49,6 +50,11 @@ PROJECT_ROOT, COMMON_DIR = _bootstrap_paths()
 from modules.common.status_reporter import send_status_ok
 from modules.common.ctrl_listener import start_ctrl_listener, env_ctrl_port
 from modules.common import db_paths
+from modules.common.option_codes import (
+    DEFAULT_OPTION_CODE_SEQUENCE,
+    normalize_option_code,
+    option_code_to_label,
+)
 from receive_center import register_listener
 from modules.decision_support.core import (
     MonitorBroadcaster,
@@ -202,6 +208,7 @@ class MainWindow(QMainWindow):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.setWindowTitle('의사결정(MOB)')
+        # default footprint sized so multiple GUIs can coexist comfortably
         self.resize(1100, 700)
 
         # 전원/버스/디듀프 상태
@@ -680,15 +687,30 @@ class MainWindow(QMainWindow):
 
 
     def _push_0701_from_entries(self, option_entries: list[dict]) -> None:
-        entries = [  # normalize copy to avoid mutating cached list
-            {
-                "optionID": int(entry["optionID"]),
-                "missionPlanID": int(entry["missionPlanID"]),
-                "optionName": str(entry.get("optionName", f"option{entry['optionID']}")),
-            }
-            for entry in option_entries
-            if entry and "optionID" in entry and "missionPlanID" in entry
-        ]
+        entries: list[dict[str, Any]] = []
+        defaults = list(DEFAULT_OPTION_CODE_SEQUENCE) or [1]
+        for idx, entry in enumerate(option_entries):
+            if not entry or "optionID" not in entry or "missionPlanID" not in entry:
+                continue
+            try:
+                option_id = int(entry["optionID"])
+                mission_plan_id = int(entry["missionPlanID"])
+            except Exception:
+                continue
+            code = normalize_option_code(
+                entry.get("optionName"),
+                fallback=defaults[idx] if idx < len(defaults) else defaults[-1],
+            )
+            if code is None:
+                code = defaults[-1]
+            entries.append(
+                {
+                    "optionID": option_id,
+                    "missionPlanID": mission_plan_id,
+                    "optionName": code,
+                    "optionLabel": option_code_to_label(code),
+                }
+            )
         if not entries:
             self._append_log_line("[0701] option 목록이 비어 전송 생략")
             return

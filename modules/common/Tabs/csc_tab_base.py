@@ -131,6 +131,7 @@ class CSCTabBase(QWidget):
         self.log_tx = self._make_log()
         self.log_rx = self._make_log()
 
+
         left = self._side("발신", self.tbl_tx, self.log_tx)
         right = self._side("수신", self.tbl_rx, self.log_rx)
         body = QHBoxLayout()

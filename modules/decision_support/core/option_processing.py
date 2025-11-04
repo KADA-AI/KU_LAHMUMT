@@ -9,6 +9,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Sequence, Optional
 
+from modules.common.option_codes import (
+    DEFAULT_OPTION_CODE_SEQUENCE,
+    normalize_option_code,
+    option_code_to_label,
+)
 from .time_utils import now_ms_since_2000
 
 
@@ -55,11 +60,15 @@ class OptionRequestDecoder:
             except Exception:
                 continue
             name_value = item.get("optionName")
+            code = normalize_option_code(name_value)
+            if code is None:
+                continue
             result.append(
                 {
                     "optionID": option_id,
                     "missionPlanID": mission_plan_id,
-                    "optionName": str(name_value) if name_value is not None else f"option{option_id}",
+                    "optionName": code,
+                    "optionLabel": option_code_to_label(code),
                 }
             )
         return result
@@ -85,6 +94,7 @@ class OptionPayloadBuilder:
             {"survivalRate": 0, "timeContraction": 0, "recogEffectiveness": 0}
         ]
         fallback = templates[-1]
+        default_codes = list(DEFAULT_OPTION_CODE_SEQUENCE) or [1]
         for idx, entry in enumerate(entries):
             metrics = templates[idx] if idx < len(templates) else fallback
             try:
@@ -92,11 +102,13 @@ class OptionPayloadBuilder:
                 mission_plan_id = int(entry["missionPlanID"])
             except Exception:
                 continue
-            name = str(entry.get("optionName") or f"option{option_id}")
+            code = normalize_option_code(entry.get("optionName"))
+            if code is None:
+                code = default_codes[idx] if idx < len(default_codes) else default_codes[-1]
             option_list.append(
                 {
                     "optionID": option_id,
-                    "optionName": name,
+                    "optionName": code,
                     "missionPlanID": mission_plan_id,
                     "survivalRate": int(metrics.get("survivalRate", 0)),
                     "timeContraction": int(metrics.get("timeContraction", 0)),

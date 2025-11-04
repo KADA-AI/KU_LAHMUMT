@@ -11,7 +11,6 @@ for _p in (_ROOT, _ROOT / "modules", _ROOT / "modules" / "common"):
     _ps = str(_p)
     if _p.exists() and _ps not in sys.path:
         sys.path.insert(0, _ps)
-
 from modules.common.qt_env import ensure_qt_platform
 ensure_qt_platform()
 
@@ -132,6 +131,7 @@ class MainWindow(QMainWindow):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.setWindowTitle('데이터 상태 정보')
+        # default footprint sized so multiple GUIs can coexist comfortably
         self.resize(1100, 700)
 
         # 파워/상태
@@ -569,7 +569,8 @@ class MainWindow(QMainWindow):
 # ───────── 엔트리 ─────────
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    win = MainWindow(); win.show()
+    win = MainWindow()
+    win.show()
     sys.exit(app.exec_())
 
 

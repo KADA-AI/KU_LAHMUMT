@@ -15,7 +15,7 @@ from PyQt5.QtWidgets import (
     QGraphicsScene,
 )
 from PyQt5.QtGui import QKeySequence, QPixmap, QPainter
-from PyQt5.QtCore import Qt, pyqtSignal, QRectF
+from PyQt5.QtCore import Qt, pyqtSignal, QRectF, QTimer
 
 from .cards import Card
 
@@ -56,6 +56,7 @@ class _ZoomableGraphicsView(QGraphicsView):
         self._scale = 1.0
         self._min_scale = 0.1
         self._max_scale = 12.0
+        self._fit_pending = False
 
     def set_image(self, pm: QPixmap):
         self._pixmap_item.setPixmap(pm)
@@ -64,6 +65,31 @@ class _ZoomableGraphicsView(QGraphicsView):
         self.resetTransform()
         self._fit_scale = 1.0
         self._scale = 1.0
+        self._fit_pending = True
+        QTimer.singleShot(0, self._apply_fit_scale)
+
+    def _compute_fit_scale(self) -> float:
+        pm = self._pixmap_item.pixmap()
+        if pm.isNull():
+            return 1.0
+        viewport = self.viewport().size()
+        if viewport.width() <= 0 or viewport.height() <= 0:
+            return 1.0
+        scale_x = viewport.width() / pm.width()
+        scale_y = viewport.height() / pm.height()
+        fit_scale = min(scale_x, scale_y)
+        if fit_scale >= 1.0:
+            return 1.0
+        return max(self._min_scale, min(self._max_scale, fit_scale))
+
+    def _apply_fit_scale(self):
+        if self._pixmap_item.pixmap().isNull():
+            return
+        fit_scale = self._compute_fit_scale()
+        self._fit_scale = fit_scale
+        self._scale = fit_scale
+        self._apply_scale()
+        self._fit_pending = False
 
     def _apply_scale(self):
         self.resetTransform()
@@ -93,6 +119,19 @@ class _ZoomableGraphicsView(QGraphicsView):
             event.accept()
             return
         super().wheelEvent(event)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self._pixmap_item.pixmap().isNull():
+            return
+        fit_scale = self._compute_fit_scale()
+        if self._fit_pending or abs(self._scale - self._fit_scale) < 1e-3:
+            self._fit_scale = fit_scale
+            self._scale = fit_scale
+            self._apply_scale()
+            self._fit_pending = False
+        else:
+            self._fit_scale = fit_scale
 
 
 class OperationFlowPanel(Card):

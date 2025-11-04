@@ -564,7 +564,8 @@ class IdRelationshipTab(QWidget):
         widget.setUniformItemSizes(False)
         widget.setWordWrap(False)
         widget.setObjectName(placeholder.replace(" ", "_").lower())
-        widget.setMinimumWidth(180)
+        # narrower minimum so the Mission Planning window can shrink comfortably
+        widget.setMinimumWidth(50)
         return widget
 
     def _wrap_list(self, title: str, widget: QListWidget) -> QWidget:

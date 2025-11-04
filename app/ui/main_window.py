@@ -15,7 +15,7 @@ import os, subprocess, json, socket, shutil
 from pathlib import Path
 from modules.common import db_paths
 
-APP_TITLE = "KU Mission Decision Support Dashboard (v251029)"
+APP_TITLE = "KU Mission Decision Support Dashboard (v251103)"
 SW_UPDATE_FILE = db_paths.PROJECT_ROOT / "memo" / "SW_UPDATE_LOG.txt"
 SW_MEMO_FILE = db_paths.PROJECT_ROOT / "memo" / "SW_MEMO_NOTE.txt"
 REFERENCE_PDF_PATH = db_paths.PROJECT_ROOT / "ref" / "04. 모듈 간 인터페이스 설계-v7-20250917_133206.pdf"
@@ -223,7 +223,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(APP_TITLE)
-        self.resize(1800, 900)
+        self.resize(1200, 820)
 
         self._db_path_line: QLineEdit = None
         self._scenario_root_line: QLineEdit = None
@@ -247,6 +247,7 @@ class MainWindow(QMainWindow):
         self.btn_integration_module = None
         self.btn_overwrite_020x = None
         self.btn_reference_pdf = None
+        self.btn_decision_reset = None
         self._role_processes = {}
         self._sw_notes_dialog = None
         self._sw_notes_panel = None
@@ -765,6 +766,16 @@ class MainWindow(QMainWindow):
             self.btn_reference_pdf.clicked.connect(self._open_reference_pdf)
             body.addWidget(self.btn_reference_pdf)
 
+            self.btn_decision_reset = QPushButton("의사결정 모듈 초기화", placeholder)
+            self.btn_decision_reset.setObjectName("BtnDecisionReset")
+            self.btn_decision_reset.setMinimumHeight(34)
+            self.btn_decision_reset.setStyleSheet(
+                "QPushButton { background-color: #111827; color: #f9fafb; font-weight: 600; }"
+                "QPushButton:hover { background-color: #1f2937; }"
+                "QPushButton:pressed { background-color: #0f172a; }"
+            )
+            body.addWidget(self.btn_decision_reset)
+
             body.addStretch(1)
 
         grid.addWidget(placeholder, row0, col0, row_end - row0, col_end - col0)
@@ -973,7 +984,7 @@ class MainWindow(QMainWindow):
         if not zone:
             return
         for col in range(zone["c0"], zone["c0"] + zone["cs"]):
-            grid.setColumnStretch(col, 2)
+            grid.setColumnStretch(col, 1)
 
     def _add_zone(self, grid: QGridLayout, w: QWidget, key: str):
         """Add widget to the grid using ZONES metadata."""

@@ -16,7 +16,7 @@ class BaseChecklistDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle(title)
         self.setModal(False)
-        self.setMinimumWidth(520)
+        self.setMinimumWidth(400)
         self._desc = item_desc
         self._labels: Dict[int, QLabel] = {}
         lay = QVBoxLayout()

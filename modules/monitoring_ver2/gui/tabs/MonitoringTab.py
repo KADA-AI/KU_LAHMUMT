@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor
@@ -31,6 +31,7 @@ class MonitoringTab(QWidget):
         super().__init__(parent)
         self.manager = manager
         self.uav_aircraft_ids = [4, 5, 6]
+        self.manned_aircraft_ids = [1, 2, 3]
 
         # UI 구성 요소
         self.system_mode_combo: QComboBox | None = None
@@ -42,6 +43,8 @@ class MonitoringTab(QWidget):
         self.plan_completion_value: QLabel | None = None
         self.input_table: QTableWidget | None = None
         self.mission_table: QTableWidget | None = None
+        self.aircraft_availability_labels: Dict[int, QLabel] = {}
+        self._availability_label_text: Dict[int, str] = {}
 
         self._init_ui()
         self.refresh_display(("logic", "SystemMode"))
@@ -72,6 +75,9 @@ class MonitoringTab(QWidget):
             self.progress_bars.append(progress_bar)
             progress_layout.addWidget(progress_bar)
         layout.addWidget(progress_groupbox)
+
+        # 항공기 가용 상태
+        self._build_availability_section(layout)
 
         # 임무 구조 오버뷰
         overview_layout = QHBoxLayout()
@@ -117,6 +123,135 @@ class MonitoringTab(QWidget):
         overview_layout.addWidget(mission_group, stretch=3)
 
         layout.addLayout(overview_layout)
+
+    def _build_availability_section(self, parent_layout: QVBoxLayout) -> None:
+        availability_group = QGroupBox("항공기 가용 상태")
+        form_layout = QFormLayout()
+        form_layout.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        form_layout.setFormAlignment(Qt.AlignLeft | Qt.AlignTop)
+        form_layout.setHorizontalSpacing(12)
+        form_layout.setVerticalSpacing(6)
+
+        def _make_row(label_text: str, ids: List[int], prefix: str) -> QWidget:
+            container = QWidget()
+            row_layout = QHBoxLayout(container)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(8)
+            for aircraft_id in ids:
+                availability_label = self._create_availability_label(
+                    f"{prefix} {aircraft_id}", aircraft_id
+                )
+                row_layout.addWidget(availability_label)
+            row_layout.addStretch()
+            form_layout.addRow(label_text, container)
+            return container
+
+        _make_row("유인기:", self.manned_aircraft_ids, "유인")
+        _make_row("무인기:", self.uav_aircraft_ids, "무인")
+
+        availability_group.setLayout(form_layout)
+        parent_layout.addWidget(availability_group)
+
+    def _create_availability_label(self, base_text: str, aircraft_id: int) -> QLabel:
+        label = QLabel(f"{base_text} (미확인)")
+        label.setAlignment(Qt.AlignCenter)
+        label.setMinimumWidth(86)
+        label.setStyleSheet(self._availability_style("unknown"))
+        self.aircraft_availability_labels[aircraft_id] = label
+        self._availability_label_text[aircraft_id] = base_text
+        return label
+
+    @staticmethod
+    def _availability_style(status: str) -> str:
+        palette = {
+            "available": ("#2ecc71", "#ffffff"),
+            "unavailable": ("#e74c3c", "#ffffff"),
+            "unknown": ("#95a5a6", "#ffffff"),
+        }
+        bg, fg = palette.get(status, palette["unknown"])
+        return (
+            f"padding: 4px 10px; border-radius: 6px; background-color: {bg};"
+            f" color: {fg}; font-weight: 600;"
+        )
+
+    def _update_aircraft_availability(self) -> None:
+        available_ids, has_reference = self._collect_available_aircraft_ids()
+        for aircraft_id, label in self.aircraft_availability_labels.items():
+            base_text = self._availability_label_text.get(
+                aircraft_id, f"ID {aircraft_id}"
+            )
+            if not has_reference:
+                suffix = "미확인"
+                status = "unknown"
+            elif aircraft_id in available_ids:
+                suffix = "가용"
+                status = "available"
+            else:
+                suffix = "비가용"
+                status = "unavailable"
+            label.setText(f"{base_text} ({suffix})")
+            label.setStyleSheet(self._availability_style(status))
+
+    def _collect_available_aircraft_ids(self) -> Tuple[Set[int], bool]:
+        available: Set[int] = set()
+        # 1) Use mission plan file snapshot stored in logic_store
+        try:
+            stored_available = self.manager.logic_store.get_data(
+                "input_plan_available_aircraft"
+            )
+        except Exception:
+            stored_available = None
+        if stored_available is not None:
+            if isinstance(stored_available, Iterable) and not isinstance(
+                stored_available, (str, bytes)
+            ):
+                for value in stored_available:
+                    try:
+                        available.add(int(value))
+                    except (TypeError, ValueError):
+                        continue
+            return available, True
+
+        raw_list = None
+        try:
+            input_plan = self.manager.receive_store.get_data("0201")
+        except Exception:
+            input_plan = None
+
+        if input_plan is not None:
+            if hasattr(input_plan, "availableAircraftList"):
+                raw_list = getattr(input_plan, "availableAircraftList")
+            elif isinstance(input_plan, dict):
+                raw_list = input_plan.get("availableAircraftList")
+
+        if raw_list is not None:
+            for item in raw_list or []:
+                aircraft_value = None
+                if isinstance(item, dict):
+                    aircraft_value = item.get("aircraftID")
+                else:
+                    aircraft_value = getattr(item, "aircraftID", None)
+                try:
+                    if aircraft_value is None:
+                        continue
+                    available.add(int(aircraft_value))
+                except (TypeError, ValueError):
+                    continue
+            return available, True
+
+        context = self.manager.logic_store.get_data("current_mission_plan")
+        if isinstance(context, dict):
+            aircraft_map = context.get("aircraft")
+            if isinstance(aircraft_map, dict):
+                for key in aircraft_map.keys():
+                    try:
+                        available.add(int(key))
+                    except (TypeError, ValueError):
+                        continue
+                if available:
+                    return available, True
+
+        return set(), False
 
     @staticmethod
     def _prepare_table(table: QTableWidget, *, stretch_last: bool = False) -> None:
@@ -395,3 +530,5 @@ class MonitoringTab(QWidget):
                 if background:
                     for col in range(self.mission_table.columnCount()):
                         self.mission_table.item(row, col).setBackground(background)
+
+        self._update_aircraft_availability()

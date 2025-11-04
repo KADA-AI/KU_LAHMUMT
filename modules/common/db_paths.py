@@ -369,11 +369,10 @@ def ensure_db_payload(name: str) -> Path:
     return dest
 
 _DB_SUBDIRS = (
-    "cache",
     "FlightPath",
     "IndividualMissionPlan",
     "InputMissionPlan",
-    "Logs",
+    "VehicleStatus",
     "MissionPlan",
     "MissionPlanOptionInfo",
     "MissionReferenceInfo",

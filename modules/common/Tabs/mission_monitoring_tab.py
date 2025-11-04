@@ -2,6 +2,11 @@
 from typing import Any, Dict, List, Optional
 import json, re
 
+from modules.common.option_codes import (
+    DEFAULT_OPTION_CODE_SEQUENCE,
+    ensure_option_code_sequence,
+)
+
 from Tabs.csc_tab_base import CSCTabBase, _now_ms_since_2000
 
 
@@ -224,16 +229,28 @@ class MissionMonitoringTab(CSCTabBase):
                 if mid is not None
             ]
             plan_ids: List[int] = [int(pid) for pid in ctx.get("plan_ids", [])]
-            option_names: List[str] = list(ctx.get("option_names", []))
-            while len(option_names) < len(plan_ids):
-                option_names.append(f"옵션{len(option_names) + 1}")
+            raw_option_values: List[Any] = list(ctx.get("option_names", []))
+            target_count = max(len(plan_ids), len(raw_option_values), 1) if plan_ids else len(raw_option_values) or 1
+            option_codes = ensure_option_code_sequence(raw_option_values, target_count)
+            while len(option_codes) < len(plan_ids):
+                fallback_idx = len(option_codes)
+                fallback_code = (
+                    DEFAULT_OPTION_CODE_SEQUENCE[fallback_idx]
+                    if fallback_idx < len(DEFAULT_OPTION_CODE_SEQUENCE)
+                    else DEFAULT_OPTION_CODE_SEQUENCE[-1]
+                )
+                option_codes.append(fallback_code)
             options = []
             for idx, pid in enumerate(plan_ids, start=1):
-                name = option_names[idx - 1] if idx - 1 < len(option_names) else f"옵션{idx}"
+                code = (
+                    option_codes[idx - 1]
+                    if idx - 1 < len(option_codes)
+                    else DEFAULT_OPTION_CODE_SEQUENCE[min(idx - 1, len(DEFAULT_OPTION_CODE_SEQUENCE) - 1)]
+                )
                 options.append(
                     {
                         "optionID": idx,
-                        "optionName": name,
+                        "optionName": code,
                         "missionPlanID": pid,
                     }
                 )
@@ -242,7 +259,7 @@ class MissionMonitoringTab(CSCTabBase):
                 options.append(
                     {
                         "optionID": 1,
-                        "optionName": "시스템추천",
+                        "optionName": DEFAULT_OPTION_CODE_SEQUENCE[0],
                         "missionPlanID": pid,
                     }
                 )

@@ -14,14 +14,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from PyQt5.QtCore import pyqtSignal, Qt, pyqtSlot
-from PyQt5.QtWidgets import (
-    QApplication,
-    QMainWindow,
-    QTabWidget,
-    QTextEdit,
-    QDockWidget,
-)
+from PyQt5.QtCore import pyqtSignal, pyqtSlot
+from PyQt5.QtWidgets import QApplication, QMainWindow, QTabWidget
 
 # os.environ["KU_ROLE"] = "monitoring"
 
@@ -72,12 +66,8 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.monitoring_tab, "모니터링 요약")
         self.tabs.addTab(self.replan_tab, "재계획 판단")
 
-        # --- 로그 창 추가 ---
-        self.log_dock = QDockWidget("로그", self)
-        self.log_widget = QTextEdit()
-        self.log_widget.setReadOnly(True)
-        self.log_dock.setWidget(self.log_widget)
-        self.addDockWidget(Qt.BottomDockWidgetArea, self.log_dock)
+        # 로그인 (Dock) UI는 사용자가 원치 않아 기본적으로 생성하지 않는다.
+        self.log_widget = None
 
         # 업데이트 유형에 따라 처리할 탭들을 리스트로 매핑한다.
         self.update_handlers = {
@@ -93,6 +83,8 @@ class MainWindow(QMainWindow):
     @pyqtSlot(str)
     def _append_log_to_widget(self, message: str) -> None:
         """GUI 스레드에서 로그 위젯에 메시지를 추가한다."""
+        if self.log_widget is None:
+            return
         self.log_widget.append(message)
 
     def add_log_message(
