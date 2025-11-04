@@ -20,6 +20,9 @@ from PyQt5.QtWidgets import (
     QHeaderView,
     QPushButton,
     QMessageBox,
+    QDialog,
+    QDialogButtonBox,
+    QTextEdit,
 )
 from PyQt5.QtGui import QColor
 from PyQt5.QtCore import Qt
@@ -154,8 +157,8 @@ class MonitoringCSCTab(QWidget):
         return tbl
 
     def _make_rx_table(self) -> QTableWidget:
-        tbl = QTableWidget(0, 3)
-        tbl.setHorizontalHeaderLabels(["Message ID", "Message Name", "상태"])
+        tbl = QTableWidget(0, 4)
+        tbl.setHorizontalHeaderLabels(["Message ID", "Message Name", "상태", "데이터"])
         tbl.verticalHeader().setVisible(False)
         tbl.setEditTriggers(QTableWidget.NoEditTriggers)
         tbl.setSelectionBehavior(QTableWidget.SelectRows)
@@ -163,6 +166,7 @@ class MonitoringCSCTab(QWidget):
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.Stretch)
         header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
         return tbl
 
     def _populate_tx_table(self):
@@ -197,6 +201,9 @@ class MonitoringCSCTab(QWidget):
             self.tbl_rx.setItem(row, 1, name_item)
             self.tbl_rx.setItem(row, 2, status_item)
 
+            btn_view = QPushButton("보기")
+            btn_view.clicked.connect(lambda _, r=row: self._handle_rx_view_clicked(r))
+            self.tbl_rx.setCellWidget(row, 3, btn_view)
 
             self.rx_row_map[msg_id] = row
             self.rx_history[msg_id] = deque(maxlen=self.MAX_HISTORY)
@@ -315,20 +322,23 @@ class MonitoringCSCTab(QWidget):
         for msg_id, row in self.rx_row_map.items():
             data_obj = all_data.get(msg_id)
             dq = self.rx_history[msg_id]
-            item = self.tbl_rx.item(row, 2)
+            status_item = self.tbl_rx.item(row, 2)
             if data_obj:
                 entry = self._serialize_obj(data_obj)
                 if not dq or dq[0] != entry:
                     dq.appendleft(entry)
                     self._append_rx_log(msg_id, entry)
                 status = self._format_status("수신 완료", entry.get("timestamp"))
-                if item:
-                    item.setText(status)
-                    item.setForeground(QColor("blue"))
+                if status_item:
+                    status_item.setText(status)
+                    status_item.setForeground(QColor("blue"))
             else:
-                if item:
-                    item.setText("수신 전")
-                    item.setForeground(QColor("black"))
+                if status_item:
+                    status_item.setText("수신 대기")
+                    status_item.setForeground(QColor("black"))
+            id_item = self.tbl_rx.item(row, 0)
+            if id_item:
+                id_item.setData(Qt.UserRole, list(dq))
 
     def set_replan_context(self, context: Dict[str, Any] | None, body: Any | None = None) -> None:
         """Store the prepared 0902 context so it can be dispatched on demand."""
@@ -476,6 +486,70 @@ class MonitoringCSCTab(QWidget):
             self.log_rx.setPlainText(text)
         else:
             self.log_rx.append(text)
+
+    def _handle_rx_view_clicked(self, row: int) -> None:
+        if not (0 <= row < self.tbl_rx.rowCount()):
+            return
+        id_item = self.tbl_rx.item(row, 0)
+        if id_item is None:
+            return
+        msg_id = id_item.text()
+        history = list(self.rx_history.get(msg_id) or [])
+        if not history:
+            self._show_history_dialog(msg_id, "수신 데이터가 없습니다.")
+            return
+        total = len(history)
+        recent_entries = history[:10]
+        dialog_text = self._format_history_dialog_text(recent_entries, total)
+        self._show_history_dialog(msg_id, dialog_text)
+
+    def _format_history_dialog_text(self, entries: List[dict], total: int) -> str:
+        if not entries:
+            return "수신 데이터가 없습니다."
+        separator = "=" * 64
+        sections: List[str] = []
+        for idx, entry in enumerate(entries, 1):
+            ts_value = self._extract_timestamp_from_entry(entry)
+            ts_text = self._format_time(ts_value) if ts_value is not None else None
+            header_tokens = [f"{idx}/{total}"]
+            if ts_text:
+                header_tokens.append(ts_text)
+            header = " ".join(header_tokens)
+            body = json.dumps(entry, ensure_ascii=False, indent=2)
+            sections.append(f"{separator}\n[{header}]\n{body}")
+        return "\n".join(sections)
+
+    def _extract_timestamp_from_entry(self, entry: dict) -> Optional[int]:
+        if not isinstance(entry, dict):
+            return None
+        for key in ("timestamp", "Timestamp", "ts", "time", "timeStamp", "updateTime"):
+            if key not in entry:
+                continue
+            value = entry.get(key)
+            if value in (None, "", 0):
+                continue
+            if isinstance(value, (int, float)):
+                return int(value)
+            if isinstance(value, str):
+                try:
+                    return int(float(value))
+                except ValueError:
+                    continue
+        return None
+
+    def _show_history_dialog(self, msg_id: str, text: str) -> None:
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"{msg_id} 수신 데이터")
+        layout = QVBoxLayout(dlg)
+        viewer = QTextEdit()
+        viewer.setReadOnly(True)
+        viewer.setPlainText(text)
+        layout.addWidget(viewer)
+        buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        buttons.rejected.connect(dlg.reject)
+        layout.addWidget(buttons)
+        dlg.resize(600, 480)
+        dlg.exec_()
 
     def _format_status(self, prefix: str, timestamp) -> str:
         ts = self._format_time(timestamp)

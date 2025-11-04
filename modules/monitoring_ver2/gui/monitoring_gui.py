@@ -21,6 +21,7 @@ from PyQt5.QtWidgets import QApplication, QMainWindow, QTabWidget
 
 # 분리된 탭들을 임포트
 from modules.monitoring_ver2.gui.tabs.MonitoringTab import MonitoringTab
+from modules.monitoring_ver2.gui.tabs.ReplanRulesInfoTab import ReplanRulesInfoTab
 from modules.monitoring_ver2.gui.tabs.ReplanTab import ReplanTab
 from modules.monitoring_ver2.gui.tabs.MonitoringCSCTab import MonitoringCSCTab
 from modules.monitoring_ver2.gui.tabs.SystemModeControlTab import SystemModeControlTab
@@ -57,6 +58,7 @@ class MainWindow(QMainWindow):
 
         # 각 탭 인스턴스 생성
         self.monitoring_tab = MonitoringTab(manager=self.manager)
+        self.replan_rules_info_tab = ReplanRulesInfoTab(manager=self.manager)
         self.replan_tab = ReplanTab(manager=self.manager)
         self.csc_tab = MonitoringCSCTab(manager=self.manager)
         self._auto_initplan_triggered = False
@@ -64,6 +66,7 @@ class MainWindow(QMainWindow):
         # 탭 위젯에 탭 추가
         self.tabs.addTab(self.csc_tab, "모니터링 CSC")
         self.tabs.addTab(self.monitoring_tab, "모니터링 요약")
+        self.tabs.addTab(self.replan_rules_info_tab, "재계획 규칙 정보")
         self.tabs.addTab(self.replan_tab, "재계획 판단")
 
         # 로그인 (Dock) UI는 사용자가 원치 않아 기본적으로 생성하지 않는다.
@@ -71,8 +74,8 @@ class MainWindow(QMainWindow):
 
         # 업데이트 유형에 따라 처리할 탭들을 리스트로 매핑한다.
         self.update_handlers = {
-            "receive": [self.monitoring_tab, self.replan_tab, self.csc_tab],
-            "logic": [self.monitoring_tab, self.replan_tab, self.csc_tab],
+            "receive": [self.monitoring_tab, self.replan_rules_info_tab, self.replan_tab, self.csc_tab],
+            "logic": [self.monitoring_tab, self.replan_rules_info_tab, self.replan_tab, self.csc_tab],
             "send": [self.csc_tab],
         }
 

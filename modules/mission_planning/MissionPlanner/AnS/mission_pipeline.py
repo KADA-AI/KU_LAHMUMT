@@ -4,7 +4,7 @@ from __future__ import annotations
 import random
 import string
 import os, json, math, shutil, time
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Set
 import cv2
 from datetime import datetime, timezone, timedelta
 import numpy as np
@@ -24,6 +24,8 @@ from shapely.geometry import LineString, Polygon, box
 from shapely.ops import linemerge
 from shapely.affinity import translate
 
+from modules.common import db_paths
+
 # ==== 외부 의존 모듈 경로 맞춰 주세요 ====
 from .env_patternselection import UnifiedMissionEnvironment
 from .task_patterns_ver2 import mission_patterns
@@ -34,7 +36,7 @@ from data_def.mission_helpers import now_ms_since_2000
 # DEM.jpg 는 KU/AnS 폴더 내부에 둔다고 가정
 DEM_PATH       = os.path.join(os.path.dirname(__file__), "DEM.jpg")
 DEM_IMG        = cv2.imread(DEM_PATH, cv2.IMREAD_GRAYSCALE) if os.path.exists(DEM_PATH) else None
-DEM_RESOLUTION = 100.0   # 1 pixel = 100 m (GUI 와 동일)
+DEM_RESOLUTION = 100.0   # 1 pixel = 100 m (GUI 와 동일)
 _ID_COUNTER_FILE = os.path.join(os.path.dirname(__file__), "_id_counters.json")
 
 # ──────────────────────────────────────────────────────────────
@@ -56,6 +58,116 @@ def _xy2llh(x, y, lat0, lon0):
     lat = lat0 + math.degrees(y/_R)
     lon = lon0 + math.degrees(x/(_R*math.cos(lat0_r)))
     return lat, lon
+
+
+def _extract_aircraft_id(entry) -> Optional[int]:
+    """Return aircraft ID as int from dict/int/str representations."""
+    if entry is None:
+        return None
+    if isinstance(entry, dict):
+        entry = entry.get("aircraftID")
+    if isinstance(entry, int):
+        return entry
+    if isinstance(entry, str):
+        token = entry.strip().upper()
+        if token.startswith(("UAV", "LAH")):
+            token = "".join(ch for ch in token if ch.isdigit())
+        try:
+            return int(token)
+        except ValueError:
+            return None
+    try:
+        return int(entry)
+    except (TypeError, ValueError):
+        return None
+
+
+def _load_vehicle_status_available() -> Optional[Set[int]]:
+    """Read Logs/.../VehicleStatus/status.json if present and return available IDs."""
+    try:
+        status_path = db_paths.get_db_subpath("VehicleStatus", "status.json")
+    except Exception:
+        return None
+    if not status_path.exists():
+        return None
+    try:
+        with status_path.open("r", encoding="utf-8") as fh:
+            payload = json.load(fh)
+    except Exception:
+        return None
+
+    available: Set[int] = set()
+    raw_list = payload.get("available")
+    if isinstance(raw_list, list):
+        for item in raw_list:
+            try:
+                available.add(int(item))
+            except (TypeError, ValueError):
+                continue
+
+    def _merge_status_map(name: str) -> None:
+        mapping = payload.get(name)
+        if not isinstance(mapping, dict):
+            return
+        for key, value in mapping.items():
+            try:
+                aid = int(key)
+            except (TypeError, ValueError):
+                continue
+            flag: bool
+            if isinstance(value, (int, float)):
+                flag = value != 0
+            elif isinstance(value, str):
+                flag = value.strip().lower() not in ("", "0", "false", "no")
+            else:
+                flag = bool(value)
+            if flag:
+                available.add(aid)
+            else:
+                available.discard(aid)
+
+    _merge_status_map("manned")
+    _merge_status_map("unmanned")
+
+    if not available and not isinstance(raw_list, list):
+        return None
+    return available
+
+
+def _apply_vehicle_status_filter(cmpk: dict, log: Callable[[str], None]) -> None:
+    """Mutate CMPK's availableAircraftList to respect VehicleStatus snapshot."""
+    status_available = _load_vehicle_status_available()
+    if status_available is None:
+        return
+
+    original = cmpk.get("availableAircraftList") or []
+    filtered = []
+    removed: Set[int] = set()
+    kept_ids: Set[int] = set()
+    kept_unknown = False
+    for entry in original:
+        aid = _extract_aircraft_id(entry)
+        if aid is None:
+            kept_unknown = True
+            filtered.append(entry)
+            continue
+        if aid in status_available:
+            filtered.append(entry)
+            kept_ids.add(aid)
+        else:
+            removed.add(aid)
+
+    cmpk["availableAircraftList"] = filtered
+    if removed:
+        log(f"    ▸ VehicleStatus 적용: 불가 기체 제외 {sorted(removed)}")
+    elif kept_ids:
+        log(f"    ▸ VehicleStatus 적용: 사용 가능한 기체 {sorted(kept_ids)}")
+    elif len(status_available) == 0:
+        log("    ▸ VehicleStatus 적용: status.json 상 사용 가능 기체가 없습니다.")
+    if kept_unknown:
+        log("    ▸ VehicleStatus 적용: ID 해석 불가 항목은 그대로 유지했습니다.")
+    if not filtered:
+        log("    ▸ VehicleStatus 적용 결과 사용 가능한 기체가 없습니다.")
 
 # ── Half-plane(직선) clipper ──────────────────────────────────
 def _clip_poly(poly: List[Tuple[float,float]],
@@ -543,16 +655,9 @@ def save_lah_tasks(cmpk: dict, out_dir: str, log):
     # ── LAH 기체 추출 ─────────────────────────────────────────
     lah_ids: list[int] = []
     for ac in cmpk.get("availableAircraftList", []):
-        # dict → 숫자 꺼내기
-        if isinstance(ac, dict):
-            ac = ac.get("aircraftID")
-        # 숫자 / 문자열 모두 처리
-        try:
-            n = int(ac)
-            if 1 <= n <= 3:
-                lah_ids.append(n)
-        except Exception:
-            pass
+        n = _extract_aircraft_id(ac)
+        if n is not None and 1 <= n <= 3:
+            lah_ids.append(n)
     if not lah_ids:
         log("[save_lah_tasks] LAH가 없습니다.");  return []
 
@@ -788,6 +893,8 @@ def run_divide_and_pattern(
     log("[1] CMPK 로드")
     with open(cmpk_path, "r", encoding="utf-8") as f:
         cmpk = json.load(f)
+
+    _apply_vehicle_status_filter(cmpk, log)
 
     log("    MRPK 로드")
     with open(ref_path, "r", encoding="utf-8") as f:
