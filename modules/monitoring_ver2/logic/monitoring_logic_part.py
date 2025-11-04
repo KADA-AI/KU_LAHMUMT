@@ -1,6 +1,7 @@
 ﻿
 from datetime import datetime, timezone
 from dataclasses import asdict
+import time
 
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
@@ -49,7 +50,10 @@ FUEL_CAPACITY_LITERS = _resolve_fuel_capacity()
 COLLAB_REPLAN_REASON_REEXECUTE = "협업기저임무 재수행에 대한 재계획"
 COLLAB_REPLAN_REASON_REINPUT = "협업기저임무 재입력에 대한 재계획"
 COLLAB_REPLAN_DEFAULT_SOURCE = "MSM"
-
+FORCED_HOLD_DELAY_SECONDS = 10.0
+FORCED_HOLD_DELAY_REASON = "강제대기 후 10초 경과"
+FORCED_HOLD_DEADLINE_ATTR = "_hold_defer_deadline"
+FORCED_HOLD_REASON_ATTR = "_hold_defer_reason"
 
 
 def _inform_info_module(msg_id: str, body: dict):
@@ -752,7 +756,35 @@ class MonitoringLogic:
                 f"{'available' if mandatory_type == 3 else 'unavailable'}.",
             )
 
-        # Trigger immediate replan when system is in execution/auto mode.
+        if mandatory_type == 1:
+            defer_deadline = time.monotonic() + FORCED_HOLD_DELAY_SECONDS
+            try:
+                setattr(data, FORCED_HOLD_DEADLINE_ATTR, defer_deadline)
+                setattr(data, FORCED_HOLD_REASON_ATTR, FORCED_HOLD_DELAY_REASON)
+            except Exception:
+                pass
+            self.manager._log(
+                "MON_LOGIC",
+                "INFO",
+                "0802 강제대기 명령 수신 – 10초 경과 후 재계획을 시도합니다.",
+            )
+            return
+
+        try:
+            if hasattr(data, FORCED_HOLD_DEADLINE_ATTR):
+                delattr(data, FORCED_HOLD_DEADLINE_ATTR)
+        except Exception:
+            pass
+        try:
+            if hasattr(data, FORCED_HOLD_REASON_ATTR):
+                delattr(data, FORCED_HOLD_REASON_ATTR)
+        except Exception:
+            pass
+
+        if mandatory_type in (2, 3):
+            self._trigger_replan_if_active()
+
+    def _trigger_replan_if_active(self) -> None:
         try:
             system_mode = int(self.manager.logic_store.get_data("SystemMode") or 0)
         except (TypeError, ValueError):
@@ -764,7 +796,7 @@ class MonitoringLogic:
                 self.manager._log(
                     "MON_LOGIC",
                     "ERROR",
-                    f"Failed to run replan after 0802 command: {exc}",
+                    f"Failed to run replan after forced command: {exc}",
                 )
 
     def _set_aircraft_availability(self, aircraft_id: int, available: bool) -> bool:

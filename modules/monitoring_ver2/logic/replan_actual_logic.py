@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -18,6 +19,12 @@ from data.message_models import (
     ReplanRequestTimeStampModel,
 )
 from push.message0902_push import make_and_push as push_message_0902
+
+
+FORCED_HOLD_DELAY_SECONDS = 10.0
+FORCED_HOLD_DELAY_REASON = "강제대기 후 10초 경과"
+FORCED_HOLD_DEADLINE_ATTR = "_hold_defer_deadline"
+FORCED_HOLD_REASON_ATTR = "_hold_defer_reason"
 
 
 def _now_timestamp_ms() -> int:
@@ -144,6 +151,58 @@ def judge_replan_situation(manager) -> List[Dict[str, Any]]:
     for msg_id, reason_data in operator_inputs.items():
         if not reason_data:
             continue
+        if msg_id == "0802":
+            mandatory_type_raw = getattr(reason_data, "mandatoryType", None)
+            try:
+                mandatory_type = int(mandatory_type_raw)
+            except (TypeError, ValueError):
+                mandatory_type = None
+            if mandatory_type == 1:
+                now = time.monotonic()
+                deadline = getattr(reason_data, FORCED_HOLD_DEADLINE_ATTR, None)
+                if deadline is None:
+                    try:
+                        setattr(
+                            reason_data,
+                            FORCED_HOLD_DEADLINE_ATTR,
+                            now + FORCED_HOLD_DELAY_SECONDS,
+                        )
+                    except Exception:
+                        pass
+                    continue
+                try:
+                    deadline_value = float(deadline)
+                except (TypeError, ValueError):
+                    try:
+                        setattr(
+                            reason_data,
+                            FORCED_HOLD_DEADLINE_ATTR,
+                            now + FORCED_HOLD_DELAY_SECONDS,
+                        )
+                    except Exception:
+                        pass
+                    continue
+                if now < deadline_value:
+                    continue
+                try:
+                    hold_reason = getattr(
+                        reason_data,
+                        FORCED_HOLD_REASON_ATTR,
+                        FORCED_HOLD_DELAY_REASON,
+                    )
+                    setattr(reason_data, "replan_reason", hold_reason)
+                except Exception:
+                    pass
+                try:
+                    if hasattr(reason_data, FORCED_HOLD_DEADLINE_ATTR):
+                        delattr(reason_data, FORCED_HOLD_DEADLINE_ATTR)
+                except Exception:
+                    pass
+                try:
+                    if hasattr(reason_data, FORCED_HOLD_REASON_ATTR):
+                        delattr(reason_data, FORCED_HOLD_REASON_ATTR)
+                except Exception:
+                    pass
 
         current_ts = getattr(reason_data, "timestamp", None)
         if current_ts is None:
@@ -299,12 +358,108 @@ def _gather_plan_context(manager) -> Tuple[Dict[str, Any], Dict[int, bool], Any]
     return plan_context, normalized_status, monitoring_logic
 
 
+def _load_latest_input_plan_ids(
+    excluded_input_ids: Set[int],
+) -> List[int]:
+    try:
+        plan_root = db_paths.get_db_subpath("InputMissionPlan")
+    except Exception:
+        return []
+
+    try:
+        latest_path = max(
+            (p for p in plan_root.glob("*.json") if p.is_file()),
+            key=lambda p: p.stat().st_mtime,
+        )
+    except ValueError:
+        return []
+    except Exception:
+        return []
+
+    try:
+        with latest_path.open("r", encoding="utf-8") as fh:
+            plan_data = json.load(fh)
+    except Exception:
+        return []
+
+    mission_list = plan_data.get("inputMissionList") or []
+    latest_ids: List[int] = []
+    for mission in mission_list:
+        if _safe_get(mission, "isDone", "IsDone"):
+            continue
+        input_id = _safe_int(_safe_get(mission, "inputMissionID", "InputMissionID"))
+        if (
+            input_id is None
+            or input_id <= 0
+            or input_id in excluded_input_ids
+        ):
+            continue
+        latest_ids.append(input_id)
+    return latest_ids
+
+
+def _resolve_input_plan_payload(manager, plan_context: Dict[str, Any]) -> Tuple[Any, List[Any]]:
+    """
+    Retrieve the latest input mission plan payload along with its mission list.
+    Falls back to disk when no in-memory copy is available.
+    """
+    input_plan = manager.receive_store.get_data("0201")
+    if input_plan is None:
+        package_id = _safe_int(
+            _safe_get(plan_context, "inputMissionPackageID", "InputMissionPackageID")
+        )
+        if package_id is not None:
+            try:
+                plan_path = db_paths.get_db_subpath("InputMissionPlan", f"{package_id}.json")
+                with plan_path.open("r", encoding="utf-8") as fh:
+                    input_plan = json.load(fh)
+            except Exception:
+                input_plan = None
+
+    mission_list = (
+        _safe_get(input_plan, "inputMissionList", "InputMissionList") if input_plan else None
+    )
+    if mission_list is None:
+        normalized: List[Any] = []
+    elif isinstance(mission_list, list):
+        normalized = mission_list
+    elif isinstance(mission_list, tuple):
+        normalized = list(mission_list)
+    else:
+        try:
+            normalized = list(mission_list)  # type: ignore[arg-type]
+        except Exception:
+            normalized = [mission_list]
+    return input_plan, normalized
+
+
 def _collect_replan_inputs(
     manager,
     excluded_aircraft: Set[int],
-) -> Tuple[List[int], Dict[str, Any], Any, Dict[int, bool], Set[int]]:
+) -> Tuple[List[int], Dict[str, Any], Any, Dict[int, bool], Set[int], Set[int]]:
     plan_context, status_map, monitoring_logic = _gather_plan_context(manager)
     aircraft_map = plan_context.get("aircraft") or {}
+    _, input_mission_list = _resolve_input_plan_payload(manager, plan_context)
+
+    completed_input_ids: Set[int] = set()
+    for payload in aircraft_map.values():
+        missions = (payload or {}).get("missions") or []
+        for mission in missions:
+            if _safe_get(mission, "isDone", "IsDone"):
+                completed_id = _safe_int(
+                    _safe_get(mission, "inputMissionID", "InputMissionID", "inputMissionId")
+                )
+                if completed_id is not None and completed_id > 0:
+                    completed_input_ids.add(completed_id)
+
+    for mission in input_mission_list:
+        if not _safe_get(mission, "isDone", "IsDone"):
+            continue
+        completed_id = _safe_int(
+            _safe_get(mission, "inputMissionID", "InputMissionID", "inputMissionId")
+        )
+        if completed_id is not None and completed_id > 0:
+            completed_input_ids.add(completed_id)
 
     excluded_input_ids: Set[int] = set()
     for aircraft_key, payload in aircraft_map.items():
@@ -316,45 +471,58 @@ def _collect_replan_inputs(
         missions = (payload or {}).get("missions") or []
         for mission in missions:
             input_id = _safe_int(_safe_get(mission, "inputMissionID", "inputMissionId"))
-            if input_id is not None:
+            if input_id is not None and input_id > 0:
                 excluded_input_ids.add(input_id)
 
     candidate_ids: List[int] = []
     raw_ids = plan_context.get("inputMissionIDs") or []
     for value in raw_ids:
         value_int = _safe_int(value)
-        if value_int is not None:
+        if (
+            value_int is not None
+            and value_int > 0
+            and value_int not in completed_input_ids
+        ):
             candidate_ids.append(value_int)
 
     if not candidate_ids:
-        candidate_ids.extend(status_map.keys())
+        for key in status_map.keys():
+            key_int = _safe_int(key)
+            if (
+                key_int is not None
+                and key_int > 0
+                and key_int not in completed_input_ids
+            ):
+                candidate_ids.append(key_int)
 
     if not candidate_ids:
         for payload in aircraft_map.values():
             missions = (payload or {}).get("missions") or []
             for mission in missions:
                 input_id = _safe_int(_safe_get(mission, "inputMissionID", "inputMissionId"))
-                if input_id is not None:
+                if (
+                    input_id is not None
+                    and input_id > 0
+                    and input_id not in completed_input_ids
+                ):
                     candidate_ids.append(input_id)
 
     if not candidate_ids:
-        input_plan = manager.receive_store.get_data("0201")
-        if input_plan is None:
-            package_id = _safe_int(_safe_get(plan_context, "inputMissionPackageID", "InputMissionPackageID"))
-            if package_id is not None:
-                try:
-                    plan_path = db_paths.get_db_subpath("InputMissionPlan", f"{package_id}.json")
-                    with plan_path.open('r', encoding='utf-8') as fh:
-                        input_plan = json.load(fh)
-                except Exception:
-                    input_plan = None
-        mission_list = _safe_get(input_plan, "inputMissionList", "InputMissionList") if input_plan else []
-        for mission in mission_list or []:
+        for mission in input_mission_list:
             if _safe_get(mission, "isDone", "IsDone"):
                 continue
-            input_id = _safe_int(_safe_get(mission, "inputMissionID", "InputMissionID"))
-            if input_id is not None:
+            input_id = _safe_int(
+                _safe_get(mission, "inputMissionID", "InputMissionID", "inputMissionId")
+            )
+            if (
+                input_id is not None
+                and input_id > 0
+                and input_id not in completed_input_ids
+            ):
                 candidate_ids.append(input_id)
+
+    if not candidate_ids:
+        candidate_ids.extend(_load_latest_input_plan_ids(excluded_input_ids))
 
     filtered_ids: List[int] = []
     seen: Set[int] = set()
@@ -364,11 +532,20 @@ def _collect_replan_inputs(
         seen.add(candidate)
         if candidate in excluded_input_ids:
             continue
+        if candidate in completed_input_ids:
+            continue
         if status_map.get(candidate):
             continue
         filtered_ids.append(candidate)
 
-    return filtered_ids, plan_context, monitoring_logic, status_map, excluded_input_ids
+    return (
+        filtered_ids,
+        plan_context,
+        monitoring_logic,
+        status_map,
+        excluded_input_ids,
+        completed_input_ids,
+    )
 
 
 
@@ -458,49 +635,88 @@ def determine_level_and_send_request(manager, confirmed_request: Optional[Dict[s
         monitoring_logic,
         status_map,
         excluded_input_ids,
+        completed_input_ids,
     ) = _collect_replan_inputs(manager, excluded_aircraft_ids)
 
     if not input_ids:
         fallback_ids: List[int] = []
         for key, done in status_map.items():
+            key_int = _safe_int(key)
+            if key_int is None or key_int <= 0:
+                continue
             if done:
                 continue
-            if key in excluded_input_ids:
+            if key_int in excluded_input_ids:
                 continue
-            fallback_ids.append(key)
+            if key_int in completed_input_ids:
+                continue
+            fallback_ids.append(key_int)
         if fallback_ids:
             input_ids = fallback_ids
     if not input_ids:
-        input_plan = manager.receive_store.get_data("0201")
-        if input_plan is None:
-            package_id = _safe_int(_safe_get(plan_context, "inputMissionPackageID", "InputMissionPackageID"))
-            if package_id is not None:
-                try:
-                    plan_path = db_paths.get_db_subpath("InputMissionPlan", f"{package_id}.json")
-                    with plan_path.open('r', encoding='utf-8') as fh:
-                        input_plan = json.load(fh)
-                except Exception:
-                    input_plan = None
-        mission_list = _safe_get(input_plan, "inputMissionList", "InputMissionList") if input_plan else []
+        _, mission_list = _resolve_input_plan_payload(manager, plan_context)
         derived = []
-        for mission in mission_list or []:
+        for mission in mission_list:
             if _safe_get(mission, "isDone", "IsDone"):
                 continue
-            input_id = _safe_int(_safe_get(mission, "inputMissionID", "InputMissionID"))
-            if input_id is None:
+            input_id = _safe_int(
+                _safe_get(mission, "inputMissionID", "InputMissionID", "inputMissionId")
+            )
+            if input_id is None or input_id <= 0:
                 continue
             if input_id in excluded_input_ids:
+                continue
+            if input_id in completed_input_ids:
                 continue
             derived.append(input_id)
         if derived:
             existing: Set[int] = set(input_ids)
             for value in derived:
+                if value in existing or value <= 0:
+                    continue
+                if value in completed_input_ids:
+                    continue
+                existing.add(value)
+                input_ids.append(value)
+    if not input_ids:
+        latest_ids = _load_latest_input_plan_ids(excluded_input_ids)
+        if latest_ids:
+            existing: Set[int] = set(input_ids)
+            for value in latest_ids:
+                if value <= 0:
+                    continue
+                if value in completed_input_ids:
+                    continue
                 if value in existing:
                     continue
                 existing.add(value)
                 input_ids.append(value)
+    latest_ids_override = _load_latest_input_plan_ids(set())
+    if latest_ids_override:
+        override_ids: List[int] = []
+        seen_override: Set[int] = set()
+        for value in latest_ids_override:
+            if value is None or value <= 0:
+                continue
+            if value in seen_override:
+                continue
+            seen_override.add(value)
+            override_ids.append(value)
+        input_ids = override_ids
+    filtered_input_ids: List[int] = []
+    seen_inputs: Set[int] = set()
+    for value in input_ids:
+        if value is None or value <= 0:
+            continue
+        if value in seen_inputs:
+            continue
+        seen_inputs.add(value)
+        filtered_input_ids.append(value)
+
+    input_ids = filtered_input_ids
     input_models = [InputMissionIDModel(inputMissionID=i) for i in input_ids]
     if not input_models:
+        input_ids = [0]
         input_models = [InputMissionIDModel(inputMissionID=0)]
 
     option_models: List[OptionListModel] = []
