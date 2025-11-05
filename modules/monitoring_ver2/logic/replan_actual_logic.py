@@ -132,6 +132,7 @@ def _convert_trigger_for_ui(replan_info: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+
 def judge_replan_situation(manager) -> List[Dict[str, Any]]:
     """monitoring_backup 버전의 재계획 상황 판단 로직."""
     replan_situations: List[Dict[str, Any]] = []
@@ -152,58 +153,6 @@ def judge_replan_situation(manager) -> List[Dict[str, Any]]:
     for msg_id, reason_data in operator_inputs.items():
         if not reason_data:
             continue
-        if msg_id == "0802":
-            mandatory_type_raw = getattr(reason_data, "mandatoryType", None)
-            try:
-                mandatory_type = int(mandatory_type_raw)
-            except (TypeError, ValueError):
-                mandatory_type = None
-            if mandatory_type == 1:
-                now = time.monotonic()
-                deadline = getattr(reason_data, FORCED_HOLD_DEADLINE_ATTR, None)
-                if deadline is None:
-                    try:
-                        setattr(
-                            reason_data,
-                            FORCED_HOLD_DEADLINE_ATTR,
-                            now + FORCED_HOLD_DELAY_SECONDS,
-                        )
-                    except Exception:
-                        pass
-                    continue
-                try:
-                    deadline_value = float(deadline)
-                except (TypeError, ValueError):
-                    try:
-                        setattr(
-                            reason_data,
-                            FORCED_HOLD_DEADLINE_ATTR,
-                            now + FORCED_HOLD_DELAY_SECONDS,
-                        )
-                    except Exception:
-                        pass
-                    continue
-                if now < deadline_value:
-                    continue
-                try:
-                    hold_reason = getattr(
-                        reason_data,
-                        FORCED_HOLD_REASON_ATTR,
-                        FORCED_HOLD_DELAY_REASON,
-                    )
-                    setattr(reason_data, "replan_reason", hold_reason)
-                except Exception:
-                    pass
-                try:
-                    if hasattr(reason_data, FORCED_HOLD_DEADLINE_ATTR):
-                        delattr(reason_data, FORCED_HOLD_DEADLINE_ATTR)
-                except Exception:
-                    pass
-                try:
-                    if hasattr(reason_data, FORCED_HOLD_REASON_ATTR):
-                        delattr(reason_data, FORCED_HOLD_REASON_ATTR)
-                except Exception:
-                    pass
 
         current_ts = getattr(reason_data, "timestamp", None)
         if current_ts is None:
@@ -233,7 +182,6 @@ def judge_replan_situation(manager) -> List[Dict[str, Any]]:
         replan_situations.append(replan_info)
         manager.logic_store.set_data(last_ts_key, current_ts)
 
-    # 0402에 대한 재계획 이벤트 분석    
     if msg_0402:
         current_ts = getattr(msg_0402, "timestamp", None)
         if current_ts is None:

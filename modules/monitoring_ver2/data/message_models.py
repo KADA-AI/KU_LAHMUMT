@@ -494,8 +494,10 @@ class BattlefieldSituationAwarenessInfoModel:
 
     timestamp: int
     source: str
-    roiInfoList: List["ROIInfoModel"]
-    situationAwarenessInfoList: List["SituationAwarenessInfoModel"]
+    roiInfoList: List["ROIInfoModel"] = field(default_factory=list)
+    situationAwarenessInfoList: List["SituationAwarenessInfoModel"] = field(default_factory=list)
+    roiInfo: Optional["ROIInfoModel"] = None
+    targetList: List["TargetInfoModel"] = field(default_factory=list)
 
 
 @dataclass
@@ -510,6 +512,22 @@ class SituationAwarenessInfoModel:
     aircraftID: int
     coordinate: CoordinateModel
     fov: float
+
+
+@dataclass
+class TargetWatcherModel:
+    aircraftID: Optional[int] = None
+
+
+@dataclass
+class TargetInfoModel:
+    targetID: Optional[int] = None
+    targetType: Optional[int] = None
+    coordinate: Optional[CoordinateModel] = None
+    watcher: Optional[TargetWatcherModel] = None
+    targetInFrame: Optional[bool] = None
+    isDestroyed: Optional[bool] = None
+    threat: Optional[float] = None
 
 
 # ----------------- Message 0601 (BaseBehavior) ----------------- #

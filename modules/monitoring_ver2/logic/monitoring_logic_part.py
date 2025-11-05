@@ -21,7 +21,11 @@ from data.message_models import (
 from push.push_center import push_message
 from .monitoring_actual_logic import run_monitoring_procedure
 from .replan_actual_logic import run_replan_procedure
-from .replan_utils import ensure_replan_level_details_file
+from .replan_utils import (
+    ensure_replan_level_details_file,
+    load_target_info,
+    update_target_info_from_0402,
+)
 import udp_reporter
 import socket
 import json
@@ -235,6 +239,8 @@ class MonitoringLogic:
             self._handle_collab_command(data)
         elif msg_id == "0802":
             self._handle_mandatory_command(data)
+        elif msg_id == "0402":
+            self._handle_situation_awareness(data)
         elif msg_id == "0201":
             self._handle_new_input_plan(data)
         elif msg_id == "0305":
@@ -755,6 +761,58 @@ class MonitoringLogic:
             )
         except Exception:
             pass
+
+    def _handle_situation_awareness(self, data: Any) -> None:
+        try:
+            previous = load_target_info()
+        except Exception:
+            previous = {"targetList": {}}
+        try:
+            info = update_target_info_from_0402(data)
+        except Exception as exc:
+            self.manager._log(
+                "MON_LOGIC",
+                "WARN",
+                f"0402 targetInfo 업데이트 실패: {exc}",
+            )
+            return
+
+        try:
+            self.manager.logic_store.set_data("targetInfo", info)
+        except Exception:
+            pass
+
+        prev_targets: Dict[str, Dict[str, Any]] = (previous or {}).get("targetList") or {}
+        new_targets: Dict[str, Dict[str, Any]] = info.get("targetList") or {}
+
+        prev_count = len(prev_targets)
+        new_count = len(new_targets)
+        if new_count != prev_count:
+            self.manager._log(
+                "MON_LOGIC",
+                "INFO",
+                f"0402 targetInfo 갱신: 대상 수 {prev_count} → {new_count}",
+            )
+
+        if new_targets:
+            sample_key, sample_value = next(iter(new_targets.items()))
+            coord = sample_value.get("coordinate") or {}
+            watcher_id = sample_value.get("watcherID")
+            if sample_key.startswith("unknown-"):
+                self.manager._log(
+                    "MON_LOGIC",
+                    "INFO",
+                    f"0402 ROI 업데이트: key={sample_key}, watcher={watcher_id}, "
+                    f"lat={coord.get('latitude')}, lon={coord.get('longitude')}",
+                )
+            else:
+                self.manager._log(
+                    "MON_LOGIC",
+                    "INFO",
+                    f"0402 타겟 업데이트: key={sample_key}, watcher={watcher_id}, "
+                    f"threat={sample_value.get('threat')}, "
+                    f"lat={coord.get('latitude')}, lon={coord.get('longitude')}",
+                )
 
     def _handle_mandatory_command(self, data: Any) -> None:
         aircraft_id = self._to_int(self._safe_get(data, "aircraftID", "AircraftID"))
