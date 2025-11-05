@@ -1522,7 +1522,7 @@ class MonitoringLogic:
             ensure_replan_level_details_file()
         except Exception as exc:
             try:
-                self.manager._log("MON_LOGIC", "WARN", f"[COLLAB] replanLevelDetails 준비 실패: {exc}")
+                self.manager._log("MON_LOGIC", "WARN", f"[COLLAB] replanInfo 준비 실패: {exc}")
             except Exception:
                 pass
         body_dict = asdict(replan_body)

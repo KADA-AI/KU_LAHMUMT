@@ -390,7 +390,7 @@ class MonitoringCSCTab(QWidget):
             ensure_replan_level_details_file()
         except Exception as exc:
             try:
-                self.manager._log("MON_CSC", "WARN", f"replanLevelDetails 준비 실패: {exc}")
+                self.manager._log("MON_CSC", "WARN", f"replanInfo 준비 실패: {exc}")
             except Exception:
                 pass
 

@@ -9,7 +9,7 @@ from modules.common import db_paths
 # --------------------------------------------------------------------------- #
 # File names
 # --------------------------------------------------------------------------- #
-_REPLAN_DETAILS_NAME = "replanLevelDetails.json"
+_REPLAN_DETAILS_NAME = "replanInfo.json"
 _TARGET_INFO_NAME = "targetInfo.json"
 
 # --------------------------------------------------------------------------- #
@@ -34,13 +34,13 @@ DEFAULT_REPLAN_DETAILS: Dict[str, Any] = {
 # --------------------------------------------------------------------------- #
 def ensure_replan_level_details_file(initial_data: Optional[Dict[str, Any]] = None) -> Path:
     """
-    Ensure DSS_Internal/replanLevelDetails.json exists.
+    Ensure DSS_Internal/replanInfo.json exists.
     """
     return _ensure_file(_REPLAN_DETAILS_NAME, initial_data or DEFAULT_REPLAN_DETAILS)
 
 
 def load_replan_level_details() -> Dict[str, Any]:
-    """Load the current replanLevelDetails structure from disk."""
+    """Load the current replanInfo structure from disk."""
     path = ensure_replan_level_details_file()
     try:
         raw = path.read_text(encoding="utf-8")
@@ -53,7 +53,7 @@ def load_replan_level_details() -> Dict[str, Any]:
 
 
 def save_replan_level_details(data: Dict[str, Any]) -> None:
-    """Persist the supplied replanLevelDetails structure to disk."""
+    """Persist the supplied replanInfo structure to disk."""
     _write_json(ensure_replan_level_details_file(), data)
 
 

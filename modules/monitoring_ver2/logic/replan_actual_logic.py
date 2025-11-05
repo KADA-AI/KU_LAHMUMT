@@ -644,40 +644,39 @@ def _fallback_option_list(manager, timestamp_ms: int) -> Tuple[List[OptionListMo
         )
     return options, mission_plan_ids
 
-def determine_level_and_send_request(manager, confirmed_request: Optional[Dict[str, Any]]) -> None:
-    """Build and send a 0902 replan request based on the confirmed trigger."""
-    if not confirmed_request:
-        manager.logic_store.set_data(
-            "final_replan_output",
-            FinalReplanOutput(
-                new_plan={"status": "no_change"},
-                replan_status="COMPLETED",
-                final_replan_type=None,
-            ),
-        )
-        return
 
-    msg_id = str(confirmed_request.get("original_message_id") or "").zfill(4)
+def _derive_replan_situation(msg_id: str, confirmed_request: Dict[str, Any]) -> str:
     raw_situation = (
         confirmed_request.get(REPLAN_FIELD_SITUATION)
         or confirmed_request.get("situation")
         or ""
     )
     replan_situation = str(raw_situation).strip()
-    if not replan_situation:
-        if msg_id == "0801":
-            replan_situation = "운용자 명령 재계획"
-        elif msg_id == "0802":
-            replan_situation = "강제 명령 재계획"
-        else:
-            replan_situation = "운용자 요청 재계획"
+    if replan_situation:
+        return replan_situation
 
+    if msg_id == "0801":
+        return "운용자 명령 재계획"
+    if msg_id == "0802":
+        return "강제 명령 재계획"
+    return "운용자 요청 재계획"
+
+
+def _determine_replan_level(msg_id: str, replan_situation: str) -> int:
     if "운용자" in replan_situation or msg_id in ("0801", "0802"):
-        replan_level = 1
-    else:
-        replan_level = 2
+        return 1
+    return 2
 
+
+def _prepare_common_replan_payload(
+    manager,
+    confirmed_request: Dict[str, Any],
+    *,
+    msg_id: str,
+) -> Dict[str, Any]:
     timestamp_ms = _now_timestamp_ms()
+    replan_situation = _derive_replan_situation(msg_id, confirmed_request)
+    replan_level = _determine_replan_level(msg_id, replan_situation)
     reason_text = _format_replan_reason(confirmed_request)
 
     excluded_aircraft_ids = _extract_forced_aircraft_ids(confirmed_request)
@@ -768,6 +767,76 @@ def determine_level_and_send_request(manager, confirmed_request: Optional[Dict[s
         option_models, mission_plan_ids = _fallback_option_list(manager, timestamp_ms)
     if not mission_plan_ids:
         mission_plan_ids = [opt.missionPlanID for opt in option_models]
+
+    return {
+        "timestamp_ms": timestamp_ms,
+        "replan_situation": replan_situation,
+        "replan_level": replan_level,
+        "reason_text": reason_text,
+        "input_ids": input_ids,
+        "input_models": input_models,
+        "option_models": option_models,
+        "mission_plan_ids": mission_plan_ids,
+        "excluded_aircraft_ids": excluded_aircraft_ids,
+        "excluded_input_ids": excluded_input_ids,
+    }
+
+
+def _prepare_replan_payload_for_0402(manager, confirmed_request: Dict[str, Any]) -> Dict[str, Any]:
+    """0402 기반 재계획 준비 구간 (현재는 기본 로직과 동일)."""
+    return _prepare_common_replan_payload(manager, confirmed_request, msg_id="0402")
+
+
+def _prepare_replan_payload_for_0801(manager, confirmed_request: Dict[str, Any]) -> Dict[str, Any]:
+    """0801 기반 재계획 준비 구간 (현재는 기본 로직과 동일)."""
+    return _prepare_common_replan_payload(manager, confirmed_request, msg_id="0801")
+
+
+def _prepare_replan_payload_for_0802(manager, confirmed_request: Dict[str, Any]) -> Dict[str, Any]:
+    """0802 기반 재계획 준비 구간 (현재는 기본 로직과 동일)."""
+    return _prepare_common_replan_payload(manager, confirmed_request, msg_id="0802")
+
+
+def _prepare_replan_payload_default(
+    manager, confirmed_request: Dict[str, Any], msg_id: str
+) -> Dict[str, Any]:
+    """그 외 메시지에 대한 기본 재계획 준비 구간."""
+    return _prepare_common_replan_payload(manager, confirmed_request, msg_id=msg_id)
+
+
+def determine_level_and_send_request(manager, confirmed_request: Optional[Dict[str, Any]]) -> None:
+    """Build and send a 0902 replan request based on the confirmed trigger."""
+    if not confirmed_request:
+        manager.logic_store.set_data(
+            "final_replan_output",
+            FinalReplanOutput(
+                new_plan={"status": "no_change"},
+                replan_status="COMPLETED",
+                final_replan_type=None,
+            ),
+        )
+        return
+
+    msg_id = str(confirmed_request.get("original_message_id") or "").zfill(4)
+    if msg_id == "0402":
+        preparation = _prepare_replan_payload_for_0402(manager, confirmed_request)
+    elif msg_id == "0801":
+        preparation = _prepare_replan_payload_for_0801(manager, confirmed_request)
+    elif msg_id == "0802":
+        preparation = _prepare_replan_payload_for_0802(manager, confirmed_request)
+    else:
+        preparation = _prepare_replan_payload_default(manager, confirmed_request, msg_id)
+
+    timestamp_ms = preparation["timestamp_ms"]
+    replan_situation = preparation["replan_situation"]
+    replan_level = preparation["replan_level"]
+    reason_text = preparation["reason_text"]
+    input_ids = preparation["input_ids"]
+    input_models = preparation["input_models"]
+    option_models = preparation["option_models"]
+    mission_plan_ids = preparation["mission_plan_ids"]
+    excluded_aircraft_ids = preparation["excluded_aircraft_ids"]
+    excluded_input_ids = preparation["excluded_input_ids"]
 
     try:
         ensure_replan_level_details_file()
