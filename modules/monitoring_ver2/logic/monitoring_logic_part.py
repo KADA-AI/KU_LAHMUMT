@@ -768,7 +768,7 @@ class MonitoringLogic:
         except Exception:
             previous = {"targetList": {}}
         try:
-            info = update_target_info_from_0402(data)
+            info, new_detections = update_target_info_from_0402(data)
         except Exception as exc:
             self.manager._log(
                 "MON_LOGIC",
@@ -779,8 +779,16 @@ class MonitoringLogic:
 
         try:
             self.manager.logic_store.set_data("targetInfo", info)
+            self.manager.logic_store.set_data("targetInfoNewDetections", new_detections)
         except Exception:
             pass
+        else:
+            if new_detections:
+                self.manager._log(
+                    "MON_LOGIC",
+                    "INFO",
+                    f"0402 신규 표적 감지 {len(new_detections)}건",
+                )
 
         prev_targets: Dict[str, Dict[str, Any]] = (previous or {}).get("targetList") or {}
         new_targets: Dict[str, Dict[str, Any]] = info.get("targetList") or {}

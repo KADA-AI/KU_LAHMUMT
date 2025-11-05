@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Dict, Iterable, Optional, List, Tuple
 
 from modules.common import db_paths
 
@@ -110,7 +110,7 @@ def save_target_info(data: Dict[str, Any]) -> None:
     _write_json(ensure_target_info_file(), data)
 
 
-def update_target_info_from_0402(message: Any) -> Dict[str, Any]:
+def update_target_info_from_0402(message: Any) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
     """
     Update targetInfo.json with the latest snapshot extracted from a 0402 message.
 
@@ -122,6 +122,10 @@ def update_target_info_from_0402(message: Any) -> Dict[str, Any]:
                 ...
             }
         }
+
+    Returns:
+        (updated_snapshot, newly_detected_targets)
+        newly_detected_targets contains entries that should trigger replan logic.
     """
     if isinstance(message, (str, bytes, bytearray)):
         try:
@@ -130,20 +134,28 @@ def update_target_info_from_0402(message: Any) -> Dict[str, Any]:
             message = {}
 
     if isinstance(message, (list, tuple, set)):
-        info = load_target_info()
+        info_result: Dict[str, Any] | None = None
+        detections: List[Dict[str, Any]] = []
         for item in message:
-            info = update_target_info_from_0402(item)
-        return info
+            info_result, newly = update_target_info_from_0402(item)
+            detections.extend(newly)
+        if info_result is None:
+            info_result = load_target_info()
+        return info_result, detections
 
     info = load_target_info()
-    target_map: Dict[str, Dict[str, Any]] = {
+    tracking_map: Dict[str, Dict[str, Any]] = {
         str(k): dict(v) if isinstance(v, dict) else {}
         for k, v in info.get("targetList", {}).items()
+    }
+    target_map: Dict[str, Dict[str, Any]] = {
+        key: dict(value) for key, value in tracking_map.items()
     }
 
     timestamp = _to_int(_safe_get(message, "timestamp", "Timestamp"))
     roi_entries = _extract_roi_entries(message)
     target_entries = _extract_target_entries(message)
+    new_targets: List[Dict[str, Any]] = []
 
     if roi_entries:
         for roi_entry in roi_entries:
@@ -153,9 +165,45 @@ def update_target_info_from_0402(message: Any) -> Dict[str, Any]:
         key = _make_target_key(entry)
         if key is None:
             continue
-        serialized = _serialize_target(entry, timestamp, existing=target_map.get(key))
+        existing_entry = target_map.get(key)
+        serialized = _serialize_target(entry, timestamp, existing=existing_entry)
         if serialized:
+            target_id = entry.get("targetID")
+            serialized["targetID"] = target_id
+
+            existed_before = key in tracking_map
+            if not existed_before and target_id is not None:
+                handled_elsewhere = False
+                for prev_entry in tracking_map.values():
+                    if not isinstance(prev_entry, dict):
+                        continue
+                    if prev_entry.get("targetID") != target_id:
+                        continue
+                    prev_used = _to_int(prev_entry.get("isUsed"))
+                    prev_ignored = _to_int(prev_entry.get("isIgnored"))
+                    if prev_used == 1 or prev_ignored == 1:
+                        handled_elsewhere = True
+                        break
+
+                serialized["isUsed"] = 1
+                if not handled_elsewhere:
+                    new_targets.append(
+                        {
+                            "key": key,
+                            "targetID": target_id,
+                            "watcherID": serialized.get("watcherID"),
+                            "targetType": serialized.get("targetType"),
+                            "coordinate": serialized.get("coordinate"),
+                            "firstDetected": serialized.get("firstDetected"),
+                            "lastUpdated": serialized.get("lastUpdated"),
+                            "elapsedMs": serialized.get("sinceFirstDetectedMs"),
+                            "threat": serialized.get("threat"),
+                            "timestamp": timestamp,
+                        }
+                    )
+
             target_map[key] = serialized
+            tracking_map[key] = dict(serialized)
 
     _prune_resolved_roi_entries(target_map)
 
@@ -163,7 +211,7 @@ def update_target_info_from_0402(message: Any) -> Dict[str, Any]:
         "targetList": dict(sorted(target_map.items())),
     }
     save_target_info(canonical)
-    return canonical
+    return canonical, new_targets
 
 
 # --------------------------------------------------------------------------- #
@@ -377,6 +425,7 @@ def _serialize_target(
     first_detected = _first_detected_timestamp()
 
     serialized: Dict[str, Any] = {
+        "targetID": target_id,
         "watcherID": watcher_id,
         "targetType": entry.get("targetType"),
         "coordinate": entry.get("coordinate"),
