@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 from PyQt5.QtCore import qInstallMessageHandler, QtMsgType, QObject, pyqtSignal, QTimer, QMetaObject, Qt, Q_ARG, pyqtSlot
-from PyQt5.QtGui import QCursor
+from PyQt5.QtGui import QCursor, QTextCursor
 from PyQt5.QtWidgets import QApplication, QTextEdit, QPlainTextEdit
 
 from modules.common.states.manager import StateManager
@@ -244,6 +244,8 @@ class DashboardOrchestrator(QObject):
         super().__init__(window)
         self.win = window
         self.widgets = self._resolve_widgets(window)
+        self._log_line_limit = self._resolve_log_limit()
+        self._apply_log_limits()
         self._apply_dashboard_button_styles()
         self.msg_map = _load_tab_defs()
         self._wire_operation_panel()
@@ -710,6 +712,59 @@ class DashboardOrchestrator(QObject):
                     ops_panel = None
 
         return {"flow": flow, "log_edit": log_edit, "operation_panel": ops_panel, **modules}
+
+    def _resolve_log_limit(self) -> int:
+        raw = (os.getenv("KU_MON_LOG_MAX_LINES") or "10").strip()
+        try:
+            value = int(raw)
+        except ValueError:
+            value = 10
+        return max(0, value)
+
+    def _apply_log_limits(self) -> None:
+        limit = getattr(self, "_log_line_limit", 10)
+        self._configure_text_widget(self.widgets.get("log_edit"), limit)
+        for key in ("assignment", "monitoring", "decision", "info"):
+            widget = self.widgets.get(key)
+            if widget is None:
+                continue
+            if hasattr(widget, "set_log_max_lines"):
+                try:
+                    widget.set_log_max_lines(limit)
+                    continue
+                except Exception:
+                    pass
+            log_widget = getattr(widget, "log", None)
+            self._configure_text_widget(log_widget, limit)
+
+    def _configure_text_widget(self, widget, limit: int) -> None:
+        if widget is None:
+            return
+        try:
+            doc = widget.document()
+        except Exception:
+            return
+        try:
+            doc.setMaximumBlockCount(limit)
+        except Exception:
+            pass
+        self._truncate_text_widget(widget, limit)
+
+    def _truncate_text_widget(self, widget, limit: int) -> None:
+        if widget is None:
+            return
+        if limit <= 0:
+            return
+        try:
+            doc = widget.document()
+            while doc.blockCount() > limit:
+                cursor = QTextCursor(doc)
+                cursor.movePosition(QTextCursor.Start)
+                cursor.select(QTextCursor.BlockUnderCursor)
+                cursor.removeSelectedText()
+                cursor.deleteChar()
+        except Exception:
+            pass
 
     def _recently_seen(self, tag: str, mid: str, window: float = 0.3) -> bool:
         import time

@@ -28,6 +28,7 @@ from PyQt5.QtGui import QColor
 from PyQt5.QtCore import Qt
 
 from modules.monitoring_ver2.config import PUSH_MESSAGES, RECEIVE_MESSAGES, SYSTEM_MODE_OPTIONS
+from modules.monitoring_ver2.logic.replan_utils import ensure_replan_level_details_file
 from push.push_center import push_message
 from data.message_models import (
     ModuleStatusModelModel,
@@ -59,7 +60,7 @@ def to_dict(obj):
 class MonitoringCSCTab(QWidget):
     """Monitoring CSC view with transmit/receive tables and history."""
 
-    MAX_HISTORY = 50
+    MAX_HISTORY = 10
 
     def __init__(self, manager, parent=None):
         super().__init__(parent)
@@ -384,6 +385,14 @@ class MonitoringCSCTab(QWidget):
         else:
             body_dict = to_dict(payload)
             store_obj = body_dict
+
+        try:
+            ensure_replan_level_details_file()
+        except Exception as exc:
+            try:
+                self.manager._log("MON_CSC", "WARN", f"replanLevelDetails 준비 실패: {exc}")
+            except Exception:
+                pass
 
         try:
             push_message("0902", self.manager.node_messenger, body_dict=body_dict)

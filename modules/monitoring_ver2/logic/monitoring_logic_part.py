@@ -21,6 +21,7 @@ from data.message_models import (
 from push.push_center import push_message
 from .monitoring_actual_logic import run_monitoring_procedure
 from .replan_actual_logic import run_replan_procedure
+from .replan_utils import ensure_replan_level_details_file
 import udp_reporter
 import socket
 import json
@@ -178,18 +179,51 @@ class MonitoringLogic:
     def _update_health_based_availability(self, agent_states: Iterable[Any]) -> None:
         if agent_states is None:
             return
+
         unhealthy: Set[int] = set()
+        observed: Set[int] = set()
+
         for agent_state in agent_states:
             aircraft_id = self._to_int(self._safe_get(agent_state, "aircraftID", "AircraftID"))
             if aircraft_id is None:
                 continue
+
+            observed.add(aircraft_id)
+
             health_code = self._to_int(self._safe_get(agent_state, "health", "Health"))
-            if health_code is None:
-                continue
-            if health_code != 1:
+            if health_code is None or health_code != 1:
                 unhealthy.add(aircraft_id)
-        if unhealthy != self._availability_health_block:
-            self._availability_health_block = unhealthy
+                continue
+
+            coord = self._safe_get(agent_state, "coordinate", "Coordinate")
+            if coord is None:
+                unhealthy.add(aircraft_id)
+                continue
+            latitude = self._safe_get(coord, "latitude", "Latitude")
+            longitude = self._safe_get(coord, "longitude", "Longitude")
+            altitude = self._safe_get(coord, "altitude", "Altitude")
+            if latitude is None or longitude is None or altitude is None:
+                unhealthy.add(aircraft_id)
+                continue
+
+            fuel_value = self._safe_get(agent_state, "fuel", "Fuel")
+            if fuel_value is None:
+                unhealthy.add(aircraft_id)
+                continue
+
+        expected_ids: Set[int] = set(self._availability_base)
+        if self._availability_mandatory_override:
+            for aid, forced in self._availability_mandatory_override.items():
+                if forced:
+                    expected_ids.add(aid)
+                else:
+                    expected_ids.discard(aid)
+
+        missing_ids = {aid for aid in expected_ids if aid not in observed}
+        combined_unhealthy = unhealthy.union(missing_ids)
+
+        if combined_unhealthy != self._availability_health_block:
+            self._availability_health_block = combined_unhealthy
             self._recompute_availability()
 
     # ------------------------------------------------------------------ #
@@ -1418,6 +1452,13 @@ class MonitoringLogic:
     def _dispatch_collab_replan(
         self, replan_body: ReplanRequestBodyModel, context: Dict[str, Any]
     ) -> bool:
+        try:
+            ensure_replan_level_details_file()
+        except Exception as exc:
+            try:
+                self.manager._log("MON_LOGIC", "WARN", f"[COLLAB] replanLevelDetails 준비 실패: {exc}")
+            except Exception:
+                pass
         body_dict = asdict(replan_body)
         try:
             push_message("0902", self.manager.node_messenger, body_dict=body_dict)

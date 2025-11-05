@@ -25,7 +25,7 @@ PushBody = Union[
 class PushStorage:
     """외부로 전송(Push)한 메시지의 이력을 데이터 클래스 객체로 저장합니다."""
 
-    def __init__(self, max_history_per_key: int = 50):
+    def __init__(self, max_history_per_key: int = 10):
         # 이제 저장소는 메시지 ID를 키로, PushBody 객체들의 리스트를 값으로 가집니다.
         self._data: Dict[str, List[PushBody]] = {}
         self.max_history = max_history_per_key

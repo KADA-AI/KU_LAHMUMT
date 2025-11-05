@@ -19,6 +19,7 @@ from data.message_models import (
     ReplanRequestTimeStampModel,
 )
 from push.message0902_push import make_and_push as push_message_0902
+from .replan_utils import ensure_replan_level_details_file
 
 
 FORCED_HOLD_DELAY_SECONDS = 10.0
@@ -232,6 +233,7 @@ def judge_replan_situation(manager) -> List[Dict[str, Any]]:
         replan_situations.append(replan_info)
         manager.logic_store.set_data(last_ts_key, current_ts)
 
+    # 0402에 대한 재계획 이벤트 분석    
     if msg_0402:
         current_ts = getattr(msg_0402, "timestamp", None)
         if current_ts is None:
@@ -730,6 +732,14 @@ def determine_level_and_send_request(manager, confirmed_request: Optional[Dict[s
         option_models, mission_plan_ids = _fallback_option_list(manager, timestamp_ms)
     if not mission_plan_ids:
         mission_plan_ids = [opt.missionPlanID for opt in option_models]
+
+    try:
+        ensure_replan_level_details_file()
+    except Exception as exc:
+        try:
+            manager._log("REPLAN_PUSH", "WARN", f"replanLevelDetails 파일 준비 실패: {exc}")
+        except Exception:
+            pass
 
     replan_body = ReplanRequestBodyModel(
         source="MSM",

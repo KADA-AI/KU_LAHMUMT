@@ -5,7 +5,10 @@ from PyQt5.QtWidgets import (
     QAbstractItemView, QHeaderView
 )
 from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QTextCursor
 from .cards import Card
+
+_DEFAULT_MAX_LOG_LINES = 10
 
 class ModuleWithLog(Card):
     """
@@ -96,6 +99,8 @@ class ModuleWithLog(Card):
         self.log.setObjectName("LogBox")
         self.log.setReadOnly(True)
         self.log.setMinimumHeight(140)
+        self._log_max_blocks = _DEFAULT_MAX_LOG_LINES
+        self._configure_log_limits()
         root.addWidget(self.log, 1)
 
         self.body_layout.addLayout(root, 1)
@@ -192,6 +197,15 @@ class ModuleWithLog(Card):
         for code, cnt in rows:
             self._set_count(self.table_tx, str(code), int(cnt), self.tx_row, self.tx_counts)
 
+    def set_log_max_lines(self, limit: int) -> None:
+        """외부에서 로그 최대 라인 수를 조정할 때 사용."""
+        try:
+            limit_val = max(0, int(limit))
+        except (TypeError, ValueError):
+            limit_val = _DEFAULT_MAX_LOG_LINES
+        self._log_max_blocks = limit_val
+        self._configure_log_limits()
+
     def append_log(self, text: str):
         """
         같은 텍스트가 짧은 시간(0.8s) 안에 연속으로 들어오면 중복 로깅을 막는다.
@@ -210,6 +224,35 @@ class ModuleWithLog(Card):
             pass
 
         self.log.append(text)
+        self._truncate_log_history()
+
+    def _configure_log_limits(self) -> None:
+        """Apply max block count to the log widget and trim existing entries."""
+        if self.log is None:
+            return
+        try:
+            doc = self.log.document()
+            doc.setMaximumBlockCount(self._log_max_blocks)
+        except Exception:
+            pass
+        self._truncate_log_history()
+
+    def _truncate_log_history(self) -> None:
+        """Drop old log blocks beyond the configured maximum."""
+        if self.log is None:
+            return
+        if self._log_max_blocks <= 0:
+            return
+        try:
+            doc = self.log.document()
+            while doc.blockCount() > self._log_max_blocks:
+                cursor = QTextCursor(doc)
+                cursor.movePosition(QTextCursor.Start)
+                cursor.select(QTextCursor.BlockUnderCursor)
+                cursor.removeSelectedText()
+                cursor.deleteChar()
+        except Exception:
+            pass
 
     def set_mode_text(self, text: str):
         """

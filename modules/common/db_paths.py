@@ -369,6 +369,7 @@ def ensure_db_payload(name: str) -> Path:
     return dest
 
 _DB_SUBDIRS = (
+    "DSS_Internal",
     "FlightPath",
     "IndividualMissionPlan",
     "InputMissionPlan",

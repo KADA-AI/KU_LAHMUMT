@@ -95,42 +95,15 @@ def _load_vehicle_status_available() -> Optional[Set[int]]:
             payload = json.load(fh)
     except Exception:
         return None
-
-    available: Set[int] = set()
-    raw_list = payload.get("available")
-    if isinstance(raw_list, list):
-        for item in raw_list:
-            try:
-                available.add(int(item))
-            except (TypeError, ValueError):
-                continue
-
-    def _merge_status_map(name: str) -> None:
-        mapping = payload.get(name)
-        if not isinstance(mapping, dict):
-            return
-        for key, value in mapping.items():
-            try:
-                aid = int(key)
-            except (TypeError, ValueError):
-                continue
-            flag: bool
-            if isinstance(value, (int, float)):
-                flag = value != 0
-            elif isinstance(value, str):
-                flag = value.strip().lower() not in ("", "0", "false", "no")
-            else:
-                flag = bool(value)
-            if flag:
-                available.add(aid)
-            else:
-                available.discard(aid)
-
-    _merge_status_map("manned")
-    _merge_status_map("unmanned")
-
-    if not available and not isinstance(raw_list, list):
+    raw = payload.get("available")
+    if not isinstance(raw, list):
         return None
+    available: Set[int] = set()
+    for item in raw:
+        try:
+            available.add(int(item))
+        except (TypeError, ValueError):
+            continue
     return available
 
 
