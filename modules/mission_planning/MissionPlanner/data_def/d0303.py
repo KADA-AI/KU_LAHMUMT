@@ -4,7 +4,7 @@ import math
 from collections import OrderedDict
 from copy import deepcopy
 from typing import List, Tuple                       # ★ 추가
-from .mission_helpers import now_ms_since_2000
+from .mission_helpers import now_ms_since_2000, terrain_elev
 from .id_allocator import next_waypoint_id as _next_waypoint_id
 from UAV_missionPlanning import UAVMissionPlanner
 from Aisle_Sweep_CPP_shoot_plan import RectanglePath
@@ -80,6 +80,10 @@ PATTERN_DISPATCH = {
     12: "은엄폐", #해당 점에서 고도를 최대한(안전고도까지) 낮춰서 숨어있음(유인기만 사용)
 }
 
+def _dem_alt(lat: float, lon: float) -> int:
+    """DEM 기반 고도를 정수(m)로 반환."""
+    return int(round(terrain_elev(lat, lon)))
+
 def _poly_sweeps_general(
     poly_llh: list[tuple[float,float]],
     anchor_llh: tuple[float,float],
@@ -122,7 +126,11 @@ def _poly_sweeps_general(
             p1, p2 = hits[0], hits[1]
             for x,y in (p1,p2):
                 lat, lon = xy_to_llh(x,y,lat0,lon0)
-                coord_list.append({"latitude":lat,"longitude":lon,"altitude":50})
+                coord_list.append({
+                    "latitude": lat,
+                    "longitude": lon,
+                    "altitude": _dem_alt(lat, lon),
+                })
     return coord_list
 
 def _cpp_line_search(
@@ -152,8 +160,8 @@ def _cpp_line_search(
         s_lat, s_lon = xy_to_llh(*s_xy, lat0, lon0)
         e_lat, e_lon = xy_to_llh(*e_xy, lat0, lon0)
         coord_list.extend([
-            {"latitude": s_lat, "longitude": s_lon, "altitude": 50},
-            {"latitude": e_lat, "longitude": e_lon, "altitude": 50},
+            {"latitude": s_lat, "longitude": s_lon, "altitude": _dem_alt(s_lat, s_lon)},
+            {"latitude": e_lat, "longitude": e_lon, "altitude": _dem_alt(e_lat, e_lon)},
         ])
     return coord_list
 
@@ -483,8 +491,8 @@ def build_flight_plans(
                     s_lat, s_lon = planner._proj_back(s_xy[0], s_xy[1])[::-1]
                     e_lat, e_lon = planner._proj_back(e_xy[0], e_xy[1])[::-1]
                     coord_list = [
-                        {"latitude": s_lat, "longitude": s_lon, "altitude": 50},
-                        {"latitude": e_lat, "longitude": e_lon, "altitude": 50},
+                        {"latitude": s_lat, "longitude": s_lon, "altitude": _dem_alt(s_lat, s_lon)},
+                        {"latitude": e_lat, "longitude": e_lon, "altitude": _dem_alt(e_lat, e_lon)},
                     ]
 
                     wplist.append(OrderedDict([

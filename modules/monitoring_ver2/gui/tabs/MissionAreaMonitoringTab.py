@@ -4,10 +4,23 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
+import numpy as np
+
 try:
-    from PIL import Image  # type: ignore
+    import rasterio  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    rasterio = None
+
+try:
+    from PIL import Image, ImageOps  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
     Image = None
+    ImageOps = None
+
+try:
+    from matplotlib import cm  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    cm = None
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QPixmap, QPainter, QImage
@@ -186,23 +199,70 @@ class MissionAreaMonitoringTab(QWidget):
     def _load_resource_image(self) -> None:
         if self._image_loaded:
             return
-        if Image is None:
-            self._image_status_label.setText("Pillow 모듈이 없어 이미지를 표시할 수 없습니다.")
-            return
         if not RESOURCE_PATH.exists():
             self._image_status_label.setText(f"지도 파일 없음: {RESOURCE_PATH.name}")
             return
+
+        arr = None
         try:
-            with Image.open(RESOURCE_PATH) as img:
-                rgb = img.convert("RGB")
-                width, height = rgb.size
-                self._image_bytes = rgb.tobytes()
-                bytes_per_line = width * 3
-                qimage = QImage(self._image_bytes, width, height, bytes_per_line, QImage.Format_RGB888)
-            pixmap = QPixmap.fromImage(qimage)
+            if rasterio is not None:
+                with rasterio.open(RESOURCE_PATH) as ds:
+                    data = ds.read(1, masked=True)
+                    arr = data.astype(np.float32)
+                    mask = np.ma.getmaskarray(data)
+                    if mask is np.ma.nomask:
+                        mask = np.zeros_like(arr, dtype=bool)
+                    arr = np.where(mask, np.nan, arr)
+            elif Image is not None:
+                with Image.open(RESOURCE_PATH) as img:
+                    arr = np.array(img, dtype=np.float32)
+            else:
+                self._image_status_label.setText("rasterio/Pillow가 없어 미리보기를 만들 수 없습니다.")
+                return
         except Exception as exc:  # pragma: no cover - defensive
-            self._image_status_label.setText(f"로드 실패: {exc}")
+            self._image_status_label.setText(f"DEM 읽기 실패: {exc}")
             return
+
+        valid = ~np.isnan(arr)
+        if not valid.any():
+            self._image_status_label.setText("유효한 픽셀이 없습니다.")
+            return
+
+        clipped = arr[valid]
+        v_min = np.percentile(clipped, 1.0)
+        v_max = np.percentile(clipped, 99.0)
+        if v_max <= v_min:
+            v_max = v_min + 1.0
+        norm = np.clip((arr - v_min) / (v_max - v_min), 0.0, 1.0)
+        norm[~valid] = np.nan
+
+        try:
+            if cm is not None:
+                cmap = cm.get_cmap("terrain")
+                rgba = cmap(np.nan_to_num(norm, nan=0.0))
+                rgba[..., 3] = np.where(valid, 1.0, 0.0)
+                rgb_arr = (rgba[..., :3] * 255).astype(np.uint8)
+            elif ImageOps is not None and Image is not None:
+                norm_img = Image.fromarray(
+                    np.nan_to_num(norm, nan=0.0, posinf=0.0, neginf=0.0) * 255
+                .astype(np.uint8),
+                    mode="L",
+                )
+                norm_img = ImageOps.autocontrast(norm_img)
+                colored = ImageOps.colorize(norm_img, "#29434E", "#FFE7A9")
+                rgb_arr = np.array(colored, dtype=np.uint8)
+            else:
+                base = np.nan_to_num(norm, nan=0.0)
+                rgb_arr = np.repeat((base * 255).astype(np.uint8)[..., None], 3, axis=2)
+        except Exception as exc:  # pragma: no cover - defensive
+            self._image_status_label.setText(f"색상 변환 실패: {exc}")
+            return
+
+        height, width, _ = rgb_arr.shape
+        bytes_per_line = width * 3
+        self._image_bytes = rgb_arr.tobytes()
+        qimage = QImage(self._image_bytes, width, height, bytes_per_line, QImage.Format_RGB888)
+        pixmap = QPixmap.fromImage(qimage)
         self._image_view.set_pixmap(pixmap)
         self._pixmap_cache = pixmap
         self._image_loaded = True
