@@ -19,6 +19,7 @@ from data.message_models import (
     ReplanRequestTimeStampModel,
 )
 from push.message0902_push import make_and_push as push_message_0902
+from modules.monitoring_ver2.utils.create_0201_attack import create_attack_plan_from_target
 from .replan_utils import ensure_replan_level_details_file, mark_targets_as_used
 
 
@@ -211,6 +212,62 @@ def _find_detail_payload(replan_info: Dict[str, Any]) -> Any:
             except Exception:
                 continue
     return None
+
+
+def _resolve_target_list(detail_payload: Any) -> Optional[List[Any]]:
+    if detail_payload is None:
+        return None
+    candidate_keys = ("targets", "targetList", "newTargets")
+    if isinstance(detail_payload, dict):
+        for key in candidate_keys:
+            value = detail_payload.get(key)
+            if value:
+                return value
+    for key in candidate_keys:
+        if hasattr(detail_payload, key):
+            value = getattr(detail_payload, key)
+            if value:
+                return value
+    return None
+
+
+def _extract_primary_target(detail_payload: Any) -> Any:
+    targets = _resolve_target_list(detail_payload)
+    if not targets:
+        return None
+    for entry in targets:
+        if entry is None:
+            continue
+        if isinstance(entry, dict):
+            coord = entry.get("coordinate") or entry.get("Coordinate")
+        else:
+            coord = getattr(entry, "coordinate", None) or getattr(entry, "Coordinate", None)
+        if coord:
+            return entry
+    return None
+
+
+def _create_attack_plan_file(detail_payload: Any, manager) -> Optional[str]:
+    target_entry = _extract_primary_target(detail_payload)
+    if not target_entry:
+        return None
+    try:
+        path, meta = create_attack_plan_from_target(target_entry=target_entry)
+    except Exception as exc:
+        try:
+            manager._log("REPLAN_PUSH", "WARN", f"Attack 0201 preparation failed: {exc}")
+        except Exception:
+            pass
+        return None
+    try:
+        manager._log(
+            "REPLAN_PUSH",
+            "INFO",
+            f"Attack 0201 stub ready ({meta.get('output_path')}); missionID={meta.get('mission_id')}",
+        )
+    except Exception:
+        pass
+    return meta.get("output_path")
 
 def judge_replan_situation(manager) -> List[Dict[str, Any]]:
     """Evaluate incoming messages and determine whether a replan should be triggered."""
@@ -818,7 +875,11 @@ def determine_level_and_send_request(manager, confirmed_request: Optional[Dict[s
         return
 
     msg_id = str(confirmed_request.get("original_message_id") or "").zfill(4)
+    detail_payload = _find_detail_payload(confirmed_request)
+    attack_plan_path = None
+
     if msg_id == "0402":
+        attack_plan_path = _create_attack_plan_file(detail_payload, manager)
         preparation = _prepare_replan_payload_for_0402(manager, confirmed_request)
     elif msg_id == "0801":
         preparation = _prepare_replan_payload_for_0801(manager, confirmed_request)
@@ -837,6 +898,12 @@ def determine_level_and_send_request(manager, confirmed_request: Optional[Dict[s
     mission_plan_ids = preparation["mission_plan_ids"]
     excluded_aircraft_ids = preparation["excluded_aircraft_ids"]
     excluded_input_ids = preparation["excluded_input_ids"]
+
+    if msg_id == "0402" and option_models:
+        try:
+            option_models[0].optionName = "공격추천"
+        except Exception:
+            pass
 
     try:
         ensure_replan_level_details_file()
@@ -863,7 +930,6 @@ def determine_level_and_send_request(manager, confirmed_request: Optional[Dict[s
     udp_reporter.notify_tx("0902")
 
     if msg_id == "0402":
-        detail_payload = _find_detail_payload(confirmed_request)
         targets_payload = None
         if isinstance(detail_payload, dict):
             targets_payload = detail_payload.get("targets")

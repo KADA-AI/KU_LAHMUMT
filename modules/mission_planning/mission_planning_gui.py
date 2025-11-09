@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys, os, threading, json, re, time, shutil, socket
 os.environ["KU_ROLE"] = "mission"  # MMR
 from pathlib import Path
-from typing import Dict, Optional, Set
+from typing import Dict, Optional, Set, List
 
 _ROOT = Path(__file__).resolve().parents[2]  # .../KU_LAHMUMT
 for _p in (_ROOT, _ROOT / "modules", _ROOT / "modules" / "common"):
@@ -1620,6 +1620,34 @@ class MainWindow(QMainWindow):
             while len(plan_ids) < plan_count:
                 plan_ids.append(None)
             option_codes = ensure_option_code_sequence(raw_option_values, plan_count)
+            option_labels: List[str] = []
+            for idx in range(plan_count):
+                label = ""
+                if idx < len(raw_option_values):
+                    value = raw_option_values[idx]
+                    label = str(value).strip() if value is not None else ""
+                option_labels.append(label)
+            attack_option_indices: Set[int] = {idx for idx, label in enumerate(option_labels) if label == "공격추천"}
+            attack_cmpk_path: Optional[Path] = None
+            if attack_option_indices:
+                dss_dir = db_root / 'DSS_Internal'
+                attack_candidates: List[Path] = []
+                if dss_dir.exists():
+                    attack_candidates.extend(sorted(dss_dir.glob("0201_*.json")))
+                    attack_candidates.extend(sorted(dss_dir.glob("0201_attack*.json")))
+                if attack_candidates:
+                    attack_cmpk_path = max(attack_candidates, key=lambda p: p.stat().st_mtime)
+                else:
+                    legacy_attack = dss_dir / '0201_attack.json'
+                    if legacy_attack.exists():
+                        attack_cmpk_path = legacy_attack
+                if attack_cmpk_path:
+                    self.log_sig.emit(
+                        f"[INFO] 공격추천 옵션에 {attack_cmpk_path.name} 적용: {sorted(idx + 1 for idx in attack_option_indices)}"
+                    )
+                else:
+                    self.log_sig.emit("[WARN] 공격추천 옵션이 있으나 공격용 0201 파일을 찾지 못했습니다. 기본 0201 사용.")
+                    attack_option_indices.clear()
 
             try:
                 cmpk_id = int(Path(cmpk_path).stem)
@@ -1676,6 +1704,12 @@ class MainWindow(QMainWindow):
                 variant_no = idx + 1
                 requested_plan_id = plan_ids[idx]
                 option_code = option_codes[idx]
+                cmpk_source_path = cmpk_path
+                if attack_cmpk_path is not None and idx in attack_option_indices:
+                    cmpk_source_path = attack_cmpk_path
+                    self.log_sig.emit(
+                        f"[variant {variant_no}] 공격추천 전용 0201 적용: {cmpk_source_path.name}"
+                    )
 
                 iter_out_root = out_root_base / f'variant_{variant_no:02d}'
                 if iter_out_root.exists():
@@ -1684,7 +1718,7 @@ class MainWindow(QMainWindow):
 
                 self.log_sig.emit(f"[STEP 1.{variant_no}] Divide & Pattern start")
                 imp_paths = run_divide_and_pattern(
-                    str(cmpk_path),
+                    str(cmpk_source_path),
                     str(mrpk_path),
                     str(iter_out_root),
                     log=lambda msg, n=variant_no: self.log_sig.emit(f"[variant {n}] {msg}")
@@ -1697,7 +1731,7 @@ class MainWindow(QMainWindow):
                 self.log_sig.emit(f"[OK] IMP generated: {len(imp_paths)} file(s) (variant={variant_no})")
 
                 mp_tmp = iter_out_root / f"MissionPlan_{int(time.time()*1000)}.json"
-                build_mission_plan_0301(str(cmpk_path), str(mrpk_path), imp_paths, str(mp_tmp))
+                build_mission_plan_0301(str(cmpk_source_path), str(mrpk_path), imp_paths, str(mp_tmp))
                 with mp_tmp.open(encoding='utf-8') as f:
                     mp_json = json.load(f)
                 imp_id_map = {a.get('aircraftID'): a.get('individualMissionPackageID') for a in mp_json.get('aircraftList', [])}
