@@ -777,6 +777,7 @@ class MonitoringLogic:
             )
             return
 
+        replan_triggered = False
         try:
             self.manager.logic_store.set_data("targetInfo", info)
             self.manager.logic_store.set_data("targetInfoNewDetections", new_detections)
@@ -789,6 +790,15 @@ class MonitoringLogic:
                     "INFO",
                     f"0402 신규 표적 감지 {len(new_detections)}건",
                 )
+                try:
+                    self._trigger_replan_if_active()
+                    replan_triggered = True
+                except Exception as exc:
+                    self.manager._log(
+                        "MON_LOGIC",
+                        "WARN",
+                        f"새 표적 감지 후 재계획 트리거 시도 실패: {exc}",
+                    )
 
         prev_targets: Dict[str, Dict[str, Any]] = (previous or {}).get("targetList") or {}
         new_targets: Dict[str, Dict[str, Any]] = info.get("targetList") or {}
@@ -820,6 +830,33 @@ class MonitoringLogic:
                     f"0402 타겟 업데이트: key={sample_key}, watcher={watcher_id}, "
                     f"threat={sample_value.get('threat')}, "
                     f"lat={coord.get('latitude')}, lon={coord.get('longitude')}",
+                )
+
+        pending_targets: List[str] = []
+        for key, entry in new_targets.items():
+            if not isinstance(entry, dict):
+                continue
+            if self._to_int(entry.get("isUsed")) == 1:
+                continue
+            if self._to_int(entry.get("isIgnored")) == 1:
+                continue
+            if bool(entry.get("isDestroyed")):
+                continue
+            pending_targets.append(str(key))
+
+        if pending_targets and not replan_triggered:
+            self.manager._log(
+                "MON_LOGIC",
+                "INFO",
+                f"isUsed=0 상태 표적 재계획 확인 요청 (count={len(pending_targets)}, sample={pending_targets[0]})",
+            )
+            try:
+                self._trigger_replan_if_active()
+            except Exception as exc:
+                self.manager._log(
+                    "MON_LOGIC",
+                    "WARN",
+                    f"기존 표적 재확인 재계획 트리거 실패: {exc}",
                 )
 
     def _handle_mandatory_command(self, data: Any) -> None:

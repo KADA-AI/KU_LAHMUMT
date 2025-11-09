@@ -160,15 +160,121 @@ def _clip_poly(poly: List[Tuple[float,float]],
             out.append((x1 + t*(x2-x1),  y1 + t*(y2-y1)))
     return out
 
-from shapely.geometry import LineString, Polygon, box
+from shapely.geometry import LineString, Polygon, box, Point
 import numpy as np
+from shapely.strtree import STRtree
+from shapely.ops import linemerge, unary_union, split
+from shapely.affinity import translate
+
 
 def divide_corridor_polyline(line_seg: dict, uav_cnt: int) -> list[dict]:
-    """
-    꺾인 Center-line 을 폭(width) 기준으로 uav_cnt 개 Strip 으로 분할.
-    오프셋 실패(vector too long)나 폭 > 세그먼트 길이 상황에서
-    자동으로 직사각형 방식으로 대체 처리한다.
-    """
+    # ─────────────────────────────────────────────────────────
+    # ★ 교차점(비인접 세그먼트 간) 탐지
+    # ─────────────────────────────────────────────────────────
+    def _non_adjacent_cross_points(xy_np: np.ndarray):
+        segs = [LineString([xy_np[i], xy_np[i+1]]) for i in range(len(xy_np)-1)]
+        pts = []
+        if not segs:
+            return pts
+
+        # 빠른 경로: STRtree + query_bulk (Shapely 2.x 권장)
+        try:
+            tree = STRtree(segs)
+            # query_bulk는 (hit_idx, tree_idx) 2xN 배열을 돌려줌
+            import numpy as _np
+            pairs = _np.array(tree.query_bulk(segs)).T
+            seen = set()
+            for i, j in pairs:
+                if i == j:       # 자기자신
+                    continue
+                if abs(i - j) <= 1:  # 인접 세그먼트는 허용 → 스킵
+                    continue
+                if i > j:
+                    i, j = j, i
+                if (i, j) in seen:
+                    continue
+                seen.add((i, j))
+                inter = segs[i].intersection(segs[j])
+                if inter.is_empty:
+                    continue
+                if inter.geom_type == "Point":
+                    pts.append(inter)
+                elif inter.geom_type == "MultiPoint":
+                    pts.extend(list(inter.geoms))
+            return pts
+        except Exception:
+            # 느린 경로: O(n²) 전수 검사 (환경/버전 이슈 시 안전)
+            for i in range(len(segs)):
+                # i와 인접한 j(i-1, i, i+1)는 스킵 → i+2부터
+                for j in range(i+2, len(segs)):
+                    inter = segs[i].intersection(segs[j])
+                    if inter.is_empty:
+                        continue
+                    if inter.geom_type == "Point":
+                        pts.append(inter)
+                    elif inter.geom_type == "MultiPoint":
+                        pts.extend(list(inter.geoms))
+            return pts
+
+    # ─────────────────────────────────────────────────────────
+    # ★ (교체) 교차점 주변 컷아웃(원형) 작성
+    # ─────────────────────────────────────────────────────────
+    def _build_cross_cutmask(xy_np: np.ndarray, cut_radius: float):
+        pts = _non_adjacent_cross_points(xy_np)
+        if not pts:
+            return None
+        disks = [p.buffer(cut_radius, cap_style=1, join_style=1) for p in pts]
+        return unary_union(disks) if len(disks) > 1 else disks[0]
+
+    # ─────────────────────────────────────────────────────────
+    # ★ 교차(자가교차/비인접 세그먼트)로 생기는 '렌즈' 영역 마스크
+    #   - 각 세그먼트의 buffer(r) 쌍 교집합을 모아 union
+    #   - 약간 키워서(ε) 끈끈이 연결까지 차단
+    # ─────────────────────────────────────────────────────────
+    def _spurious_overlap_mask(center_xy: np.ndarray, width: float):
+        if center_xy is None or len(center_xy) < 3:
+            return None
+
+        r = width * 0.5
+        # 세그먼트 라인 & 버퍼 준비
+        segs  = [LineString([center_xy[i], center_xy[i+1]]) for i in range(len(center_xy)-1)]
+        buffs = [s.buffer(r, cap_style=CAP_SQUARE, join_style=JOIN_MITRE, mitre_limit=MITRE_LIMIT)
+                 for s in segs]
+
+        # 후보쌍 추출 (빠른 경로: query_bulk)
+        try:
+            import numpy as _np
+            tree  = STRtree(buffs)
+            pairs = _np.array(tree.query_bulk(buffs)).T
+        except Exception:
+            pairs = [(i, j) for i in range(len(buffs)) for j in range(i+1, len(buffs))]
+
+        cuts, seen = [], set()
+        for i, j in pairs:
+            if i == j or abs(i - j) <= 1:   # 자기/인접 세그먼트는 허용 (연결 유지)
+                continue
+            if i > j:
+                i, j = j, i
+            if (i, j) in seen:
+                continue
+            seen.add((i, j))
+
+            inter = buffs[i].intersection(buffs[j])
+            if inter.is_empty:
+                continue
+            # 너무 작은 찌꺼기 제외 (폭^2 대비 비율)
+            if inter.area < (width * width * 0.02):
+                continue
+            cuts.append(inter)
+
+        if not cuts:
+            return None
+
+        # 렌즈 영역을 조금 키워 연결고리까지 잘라낸다 (폭의 6% 정도)
+        mask = unary_union(cuts).buffer(width * 0.06, cap_style=1, join_style=1)
+        return mask if (mask and not mask.is_empty) else None
+
+    # ── 이하 기존 로직 (전개 생략 없이 핵심만 표시) ──────────
     if uav_cnt < 1:
         raise ValueError("uav_cnt must be ≥ 1")
 
@@ -177,34 +283,50 @@ def divide_corridor_polyline(line_seg: dict, uav_cnt: int) -> list[dict]:
         raise ValueError("coordinateList must contain ≥ 2 points")
 
     lat0, lon0 = coords_llh[0]["latitude"], coords_llh[0]["longitude"]
-
-    # ── 1) LLH → ENU ──────────────────────────────────────────
     xy = np.array([llh_to_xy(p["latitude"], p["longitude"], lat0, lon0)
-                   for p in coords_llh])
+                   for p in coords_llh], dtype=float)
     line_world = LineString(xy)
 
-    total_w  = float(line_seg["width"])
-    indiv_w  = total_w / uav_cnt
-    half_w   = total_w * 0.5
+    total_w = float(line_seg["width"])
+    indiv_w = total_w / uav_cnt
+    half_w  = total_w * 0.5
+
+    JOIN_MITRE  = 2
+    CAP_SQUARE  = 2
+    MITRE_LIMIT = 10.0
+
+    def _largest_polygon(g):
+        if isinstance(g, Polygon):
+            return g
+        if g.geom_type == "MultiPolygon":
+            return max(g.geoms, key=lambda a: a.area) if g.geoms else Polygon()
+        if g.geom_type == "GeometryCollection":
+            polys = [h for h in g.geoms if isinstance(h, Polygon)]
+            return max(polys, key=lambda a: a.area) if polys else Polygon()
+        return Polygon()
+
+    def _offset_line(ls: LineString, dist: float):
+        side = "left" if dist >= 0 else "right"
+        return ls.parallel_offset(abs(dist), side,
+                                  join_style=JOIN_MITRE, mitre_limit=MITRE_LIMIT)
+
+    corridor_poly = line_world.buffer(
+        half_w, cap_style=CAP_SQUARE, join_style=JOIN_MITRE, mitre_limit=MITRE_LIMIT
+    )
+    if not corridor_poly.is_valid:
+        corridor_poly = corridor_poly.buffer(0)
+
+    # ★ 교차부 컷아웃 마스크(폴리라인 전체 기준 1회만 계산)
+    cross_cutmask = _build_cross_cutmask(xy, cut_radius=indiv_w * 0.51)
 
     strips: list[dict] = []
     for i in range(uav_cnt):
-        d_outer  =  half_w - i * indiv_w          # 왼쪽(+)
+        d_outer  =  half_w - i * indiv_w
         d_inner  =  d_outer - indiv_w
         d_center =  d_outer - indiv_w * 0.5
 
         try:
-            # ── 2) offset 선 생성 (에러시 except 로) ───────────
-            l_out = line_world.parallel_offset(
-                d_outer, "left", join_style=2, mitre_limit=1.0)
-            l_in  = line_world.parallel_offset(
-                d_inner, "left", join_style=2, mitre_limit=1.0)
-
-            poly_xy = list(l_out.coords) + list(reversed(l_in.coords))
-            poly    = Polygon(poly_xy)
-
-            center_ls = line_world.parallel_offset(
-                d_center, "left", join_style=2, mitre_limit=1.0)
+            center_ls = _offset_line(line_world, d_center)
 
             center_geom = center_ls
             if center_geom.geom_type == "MultiLineString":
@@ -214,11 +336,10 @@ def divide_corridor_polyline(line_seg: dict, uav_cnt: int) -> list[dict]:
                 center_geom = max(lines, key=lambda g: g.length) if lines else LineString()
 
             if isinstance(center_geom, LineString) and not center_geom.is_empty:
-                center_xy = np.array(center_geom.coords)
+                center_xy = np.array(center_geom.coords, dtype=float)
             else:
-                # fallback: use endpoints only
-                cs_xy = np.array(center_ls.coords[0])
-                ce_xy = np.array(center_ls.coords[-1])
+                cs_xy = np.array(center_ls.coords[0], dtype=float)
+                ce_xy = np.array(center_ls.coords[-1], dtype=float)
                 center_xy = np.vstack([cs_xy, ce_xy])
 
             if len(center_xy) >= 2:
@@ -227,62 +348,248 @@ def divide_corridor_polyline(line_seg: dict, uav_cnt: int) -> list[dict]:
                 if dist_start > dist_end:
                     center_xy = center_xy[::-1]
 
-        except Exception:   # vector too long 등
-            # ── 2') 직사각형 fallback ─────────────────────────
+            strip_poly = LineString(center_xy).buffer(
+                indiv_w * 0.5, cap_style=CAP_SQUARE, join_style=JOIN_MITRE, mitre_limit=MITRE_LIMIT
+            )
+            if not strip_poly.is_valid:
+                strip_poly = strip_poly.buffer(0)
+
+            poly = strip_poly.intersection(corridor_poly)
+            if not poly.is_valid:
+                poly = poly.buffer(0)
+
+        except Exception:
             buf_poly = line_world.buffer(indiv_w * 0.5,
-                                         cap_style=2, join_style=2)
+                                         cap_style=CAP_SQUARE, join_style=JOIN_MITRE, mitre_limit=MITRE_LIMIT)
 
             v = xy[1] - xy[0];  v /= np.linalg.norm(v)
             w = np.array([-v[1], v[0]])
             offset_dist = -half_w + (i + 0.5) * indiv_w
+            strip_poly = translate(buf_poly, xoff=w[0]*offset_dist, yoff=w[1]*offset_dist)
+            poly = strip_poly.intersection(corridor_poly)
+            if not poly.is_valid:
+                poly = poly.buffer(0)
+            center_xy = np.array([pt + w * offset_dist for pt in xy], dtype=float)
 
-            # ★ 메서드 대신 함수 translate() 사용
-            strip_poly = translate(buf_poly,
-                                   xoff = w[0] * offset_dist,
-                                   yoff = w[1] * offset_dist)
+        if poly.is_empty or (not isinstance(poly, Polygon)) or len(poly.exterior.coords) < 4:
+            raise ValueError(f"strip #{i+1} polygon empty after generation")
 
-            poly   = strip_poly
-            center_xy = np.array([pt + w * offset_dist for pt in xy])
+        # ─────────────────────────────────────────────
+        # ★ 최종: 비인접 세그먼트 교차부 '컷아웃' 적용
+        # ─────────────────────────────────────────────
+        if (cross_cutmask is not None) and (not cross_cutmask.is_empty):
+            cut_result = poly.difference(cross_cutmask)
+            if not cut_result.is_empty:
+                poly = cut_result
 
-        if poly.is_empty or len(poly.exterior.coords) < 4:
-            raise ValueError(f"strip #{i+1} polygon empty after fallback")
+        # ─────────────────────────────────────────────
+        # ★ 교차부 렌즈 마스크 차감 + 조각 분해 처리
+        # ─────────────────────────────────────────────
+        spmask = _spurious_overlap_mask(center_xy, indiv_w)
+        if (spmask is not None) and (not spmask.is_empty):
+            # 차감
+            cut_geom = poly.difference(spmask)
+            if not cut_geom.is_empty:
+                poly = cut_geom
 
-        # ── 3) XY → LLH 변환 ─────────────────────────────────
-        coord_llh = [{"latitude":  _xy2llh(x, y, lat0, lon0)[0],
-                      "longitude": _xy2llh(x, y, lat0, lon0)[1],
-                      "altitude":  coords_llh[0].get("altitude", 0)}
-                      for x, y in poly.exterior.coords[:-1]]
+        # 결과가 MultiPolygon/GeometryCollection이면 조각별로 처리
+        pieces = []
+        if isinstance(poly, Polygon):
+            pieces = [poly]
+        elif poly.geom_type in ("MultiPolygon", "GeometryCollection"):
+            pieces = [g for g in poly.geoms if isinstance(g, Polygon)]
 
-        center_llh = [{
-            "latitude":  _xy2llh(float(px), float(py), lat0, lon0)[0],
-            "longitude": _xy2llh(float(px), float(py), lat0, lon0)[1],
-            "altitude":  coords_llh[0].get("altitude", 0),
-        } for px, py in center_xy]
-        if not center_llh:
-            # fallback: use segment endpoints if something went wrong
-            cs_xy = xy[0]; ce_xy = xy[-1]
-            center_llh = [
-                {"latitude": _xy2llh(*cs_xy, lat0, lon0)[0],
-                 "longitude": _xy2llh(*cs_xy, lat0, lon0)[1],
+        if not pieces:
+            raise ValueError(f"strip #{i+1} polygon empty after cutting")
+
+        # ── XY → LLH & strips에 조각별로 push ───────────────
+        for piece in pieces:
+            if piece.is_empty or len(piece.exterior.coords) < 4:
+                continue
+
+            coord_llh = [{
+                "latitude":  _xy2llh(float(x), float(y), lat0, lon0)[0],
+                "longitude": _xy2llh(float(x), float(y), lat0, lon0)[1],
+                "altitude":  coords_llh[0].get("altitude", 0)
+            } for (x, y) in list(piece.exterior.coords)[:-1]]
+
+            center_llh = [{
+                "latitude":  _xy2llh(float(px), float(py), lat0, lon0)[0],
+                "longitude": _xy2llh(float(px), float(py), lat0, lon0)[1],
+                "altitude":  coords_llh[0].get("altitude", 0),
+            } for (px, py) in center_xy] or [
+                {"latitude": _xy2llh(*xy[0], lat0, lon0)[0],
+                 "longitude": _xy2llh(*xy[0], lat0, lon0)[1],
                  "altitude": coords_llh[0].get("altitude", 0)},
-                {"latitude": _xy2llh(*ce_xy, lat0, lon0)[0],
-                 "longitude": _xy2llh(*ce_xy, lat0, lon0)[1],
+                {"latitude": _xy2llh(*xy[-1], lat0, lon0)[0],
+                 "longitude": _xy2llh(*xy[-1], lat0, lon0)[1],
                  "altitude": coords_llh[-1].get("altitude", 0)},
             ]
 
-        # ── 4) DEM 기반 고도 통계 ───────────────────────────
-        mean_alt, var_alt = altitude_stats_llh(coord_llh)
+            mean_alt, var_alt = altitude_stats_llh(coord_llh)
 
-        strips.append({
-            "Geometry":        "Area",
-            "width":           indiv_w,
-            "Centerline":      center_llh,
-            "coordinateList":  coord_llh,
-            "meanAltitude":    mean_alt,
-            "altitudeVariance":var_alt
-        })
+            strips.append({
+                "Geometry":         "Area",
+                "width":            indiv_w,
+                "Centerline":       center_llh,
+                "coordinateList":   coord_llh,
+                "meanAltitude":     mean_alt,
+                "altitudeVariance": var_alt
+            })
 
     return strips
+
+# def divide_corridor_polyline(line_seg: dict, uav_cnt: int) -> list[dict]:
+#     """
+#     꺾인 Center-line을 폭(width) 기준으로 uav_cnt개 Strip으로 분할.
+#     급격한 굴절에서 '이중 꺾임'이 생기지 않도록,
+#     ★ parallel_offset -> (센터라인 offset) + buffer + 전체코리도어 clip 방식으로 생성.
+#     """
+#     if uav_cnt < 1:
+#         raise ValueError("uav_cnt must be ≥ 1")
+
+#     coords_llh = line_seg["coordinateList"]
+#     if len(coords_llh) < 2:
+#         raise ValueError("coordinateList must contain ≥ 2 points")
+
+#     lat0, lon0 = coords_llh[0]["latitude"], coords_llh[0]["longitude"]
+
+#     # ── 1) LLH → ENU ──────────────────────────────────────────
+#     xy = np.array([llh_to_xy(p["latitude"], p["longitude"], lat0, lon0)
+#                    for p in coords_llh])
+#     line_world = LineString(xy)
+
+#     total_w = float(line_seg["width"])
+#     indiv_w = total_w / uav_cnt
+#     half_w  = total_w * 0.5
+
+#     # ★ 상수: miter를 항상 1점으로 유지하도록 크게 설정
+#     JOIN_MITRE   = 2
+#     CAP_SQUARE   = 2
+#     MITRE_LIMIT  = 10.0  # 90°(≈1.414)~급각에서도 bevel로 바뀌지 않게 충분히 크게
+
+#     # ★ 부동소수 오차로 생기는 미세한 찌꺼기 제거용
+#     def _largest_polygon(g):
+#         if isinstance(g, Polygon):
+#             return g
+#         if g.geom_type == "MultiPolygon":
+#             return max(g.geoms, key=lambda a: a.area) if g.geoms else Polygon()
+#         if g.geom_type == "GeometryCollection":
+#             polys = [h for h in g.geoms if isinstance(h, Polygon)]
+#             return max(polys, key=lambda a: a.area) if polys else Polygon()
+#         return Polygon()
+
+#     # ★ offset 거리에 따라 side 자동
+#     def _offset_line(ls: LineString, dist: float):
+#         side = "left" if dist >= 0 else "right"
+#         return ls.parallel_offset(abs(dist), side,
+#                                   join_style=JOIN_MITRE, mitre_limit=MITRE_LIMIT)
+
+#     # ★ 전체 코리도어(= 총 폭) 폴리곤: 모든 스트립을 여기 안에서만 허용
+#     corridor_poly = line_world.buffer(
+#         half_w, cap_style=CAP_SQUARE, join_style=JOIN_MITRE, mitre_limit=MITRE_LIMIT
+#     )
+#     if not corridor_poly.is_valid:
+#         corridor_poly = corridor_poly.buffer(0)
+
+#     strips: list[dict] = []
+#     for i in range(uav_cnt):
+#         d_outer  =  half_w - i * indiv_w          # 왼쪽(+)
+#         d_inner  =  d_outer - indiv_w
+#         d_center =  d_outer - indiv_w * 0.5
+
+#         try:
+#             # ── 2) ★ 센터라인 offset → buffer 로 스트립 생성 ─────────
+#             center_ls = _offset_line(line_world, d_center)
+
+#             center_geom = center_ls
+#             if center_geom.geom_type == "MultiLineString":
+#                 center_geom = linemerge(center_geom)
+#             if center_geom.geom_type == "GeometryCollection":
+#                 lines = [g for g in center_geom.geoms if isinstance(g, LineString)]
+#                 center_geom = max(lines, key=lambda g: g.length) if lines else LineString()
+
+#             if isinstance(center_geom, LineString) and not center_geom.is_empty:
+#                 center_xy = np.array(center_geom.coords, dtype=float)
+#             else:
+#                 # fallback: endpoints만
+#                 cs_xy = np.array(center_ls.coords[0], dtype=float)
+#                 ce_xy = np.array(center_ls.coords[-1], dtype=float)
+#                 center_xy = np.vstack([cs_xy, ce_xy])
+
+#             # 원래 라인의 시작점 방향과 정렬
+#             if len(center_xy) >= 2:
+#                 dist_start = np.linalg.norm(center_xy[0] - xy[0])
+#                 dist_end   = np.linalg.norm(center_xy[-1] - xy[0])
+#                 if dist_start > dist_end:
+#                     center_xy = center_xy[::-1]
+
+#             # ★ 핵심: buffer로 폴리곤 생성(코너당 꼭짓점 1개, miter 유지)
+#             strip_poly = LineString(center_xy).buffer(
+#                 indiv_w * 0.5, cap_style=CAP_SQUARE, join_style=JOIN_MITRE, mitre_limit=MITRE_LIMIT
+#             )
+#             if not strip_poly.is_valid:
+#                 strip_poly = strip_poly.buffer(0)
+
+#             # ★ 전체 코리도어로 clip하여 넘침 방지
+#             poly = _largest_polygon(strip_poly.intersection(corridor_poly))
+#             if not poly.is_valid:
+#                 poly = poly.buffer(0)
+
+#         except Exception:
+#             # ── 2') 기존 직사각형 fallback ─────────────────────────
+#             buf_poly = line_world.buffer(indiv_w * 0.5,
+#                                          cap_style=CAP_SQUARE, join_style=JOIN_MITRE, mitre_limit=MITRE_LIMIT)
+
+#             v = xy[1] - xy[0];  v /= np.linalg.norm(v)
+#             w = np.array([-v[1], v[0]])
+#             offset_dist = -half_w + (i + 0.5) * indiv_w
+
+#             strip_poly = translate(buf_poly, xoff=w[0]*offset_dist, yoff=w[1]*offset_dist)
+#             poly = _largest_polygon(strip_poly.intersection(corridor_poly))
+#             center_xy = np.array([pt + w * offset_dist for pt in xy], dtype=float)
+
+#         if poly.is_empty or (not isinstance(poly, Polygon)) or len(poly.exterior.coords) < 4:
+#             raise ValueError(f"strip #{i+1} polygon empty after generation")
+
+#         # ── 3) XY → LLH 변환 ─────────────────────────────────
+#         coord_llh = [{
+#             "latitude":  _xy2llh(float(x), float(y), lat0, lon0)[0],
+#             "longitude": _xy2llh(float(x), float(y), lat0, lon0)[1],
+#             "altitude":  coords_llh[0].get("altitude", 0)
+#         } for (x, y) in list(poly.exterior.coords)[:-1]]
+
+#         center_llh = [{
+#             "latitude":  _xy2llh(float(px), float(py), lat0, lon0)[0],
+#             "longitude": _xy2llh(float(px), float(py), lat0, lon0)[1],
+#             "altitude":  coords_llh[0].get("altitude", 0),
+#         } for (px, py) in center_xy]
+#         if not center_llh:
+#             cs_xy = xy[0]; ce_xy = xy[-1]
+#             center_llh = [
+#                 {"latitude": _xy2llh(*map(float, cs_xy), lat0, lon0)[0],
+#                  "longitude": _xy2llh(*map(float, cs_xy), lat0, lon0)[1],
+#                  "altitude": coords_llh[0].get("altitude", 0)},
+#                 {"latitude": _xy2llh(*map(float, ce_xy), lat0, lon0)[0],
+#                  "longitude": _xy2llh(*map(float, ce_xy), lat0, lon0)[1],
+#                  "altitude": coords_llh[-1].get("altitude", 0)},
+#             ]
+
+#         # ── 4) DEM 기반 고도 통계 ───────────────────────────
+#         mean_alt, var_alt = altitude_stats_llh(coord_llh)
+
+#         strips.append({
+#             "Geometry":         "Area",
+#             "width":            indiv_w,
+#             "Centerline":       center_llh,
+#             "coordinateList":   coord_llh,
+#             "meanAltitude":     mean_alt,
+#             "altitudeVariance": var_alt
+#         })
+
+#     return strips
+
+
 
 
 def divide_search_area_clip(

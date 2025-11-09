@@ -19,7 +19,7 @@ from data.message_models import (
     ReplanRequestTimeStampModel,
 )
 from push.message0902_push import make_and_push as push_message_0902
-from .replan_utils import ensure_replan_level_details_file
+from .replan_utils import ensure_replan_level_details_file, mark_targets_as_used
 
 
 FORCED_HOLD_DELAY_SECONDS = 10.0
@@ -861,6 +861,36 @@ def determine_level_and_send_request(manager, confirmed_request: Optional[Dict[s
     push_message_0902(replan_body, manager.node_messenger)
     manager.push_store.add_data("0902", replan_body)
     udp_reporter.notify_tx("0902")
+
+    if msg_id == "0402":
+        detail_payload = _find_detail_payload(confirmed_request)
+        targets_payload = None
+        if isinstance(detail_payload, dict):
+            targets_payload = detail_payload.get("targets")
+        elif hasattr(detail_payload, "targets"):
+            targets_payload = getattr(detail_payload, "targets")
+
+        if targets_payload:
+            if isinstance(targets_payload, (list, tuple, set)):
+                targets_iterable = list(targets_payload)
+            else:
+                targets_iterable = [targets_payload]
+            try:
+                updated_info = mark_targets_as_used(targets_iterable)
+            except Exception as exc:
+                try:
+                    manager._log(
+                        "REPLAN_PUSH",
+                        "WARN",
+                        f"Failed to mark targets as used after 0902: {exc}",
+                    )
+                except Exception:
+                    pass
+            else:
+                try:
+                    manager.logic_store.set_data("targetInfo", updated_info)
+                except Exception:
+                    pass
 
     manager._log(
         "REPLAN_PUSH",

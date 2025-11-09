@@ -23,6 +23,7 @@ def _sw_code(default: str = "MMR") -> str:
 
 WP_INTERVAL_M = 500.0        # Waypoint 간격(m) ─ 기본값
 Altitude_LAH = 1000
+HOVER_HOLD_SEC = 300         # 첫 WP hovering 시간(초) – 약 5분
 
 # ── 고정 WP 확장 블록 ─────────────────────────────────────────────
 _DEFAULT_WP_EXT = OrderedDict([
@@ -358,6 +359,14 @@ def build_lah_flight_plans_fixed(
         for i in range(len(wplist) - 1):
             wplist[i]["nextWaypointID"] = wplist[i + 1]["waypointID"]
         if wplist:
+            first_wp = wplist[0]
+            first_wp["speed"] = 0
+            hover = first_wp.get("hovering")
+            if isinstance(hover, dict):
+                hover["time"] = HOVER_HOLD_SEC
+            else:
+                first_wp["hovering"] = {"time": HOVER_HOLD_SEC}
+
             wplist[-1]["ecf"] = 1.0
 
         packets.append(OrderedDict([

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional, List, Tuple
+from typing import Any, Dict, Iterable, Optional, List, Tuple, Set
 
 from modules.common import db_paths
 
@@ -185,7 +185,6 @@ def update_target_info_from_0402(message: Any) -> Tuple[Dict[str, Any], List[Dic
                         handled_elsewhere = True
                         break
 
-                serialized["isUsed"] = 1
                 if not handled_elsewhere:
                     new_targets.append(
                         {
@@ -212,6 +211,82 @@ def update_target_info_from_0402(message: Any) -> Tuple[Dict[str, Any], List[Dic
     }
     save_target_info(canonical)
     return canonical, new_targets
+
+
+def mark_targets_as_used(target_entries: Iterable[Any]) -> Dict[str, Any]:
+    """
+    Update targetInfo.json so that provided targets are marked with isUsed=1.
+
+    target_entries may contain dicts produced by update_target_info_from_0402 (with "key"),
+    or direct key strings/objects convertible to str.
+    """
+    info = load_target_info()
+    target_map = info.get("targetList")
+    if not isinstance(target_map, dict):
+        target_map = {}
+        info["targetList"] = target_map
+
+    updated = False
+
+    for entry in target_entries or []:
+        if entry is None:
+            continue
+
+        candidate_keys: List[str] = []
+        target_id: Optional[int] = None
+        watcher_id: Optional[int] = None
+
+        if isinstance(entry, dict):
+            key_value = entry.get("key")
+            if key_value is not None:
+                candidate_keys.append(str(key_value))
+            target_id = _to_int(entry.get("targetID"))
+            watcher_id = _to_int(entry.get("watcherID"))
+            derived_key = _make_target_key({"targetID": target_id, "watcherID": watcher_id})
+            if derived_key:
+                candidate_keys.append(derived_key)
+            if target_id is not None:
+                candidate_keys.append(str(target_id))
+        else:
+            candidate_keys.append(str(entry))
+
+        # Remove duplicates while preserving order
+        seen: Set[str] = set()
+        unique_keys: List[str] = []
+        for key_str in candidate_keys:
+            if key_str and key_str not in seen:
+                seen.add(key_str)
+                unique_keys.append(key_str)
+
+        matched = False
+        for key_str in unique_keys:
+            target_entry = target_map.get(key_str)
+            if isinstance(target_entry, dict):
+                matched = True
+                if _to_int(target_entry.get("isUsed")) != 1:
+                    target_entry["isUsed"] = 1
+                    updated = True
+
+        if matched:
+            continue
+
+        if target_id is None:
+            continue
+
+        for existing_key, target_entry in target_map.items():
+            if not isinstance(target_entry, dict):
+                continue
+            if _to_int(target_entry.get("targetID")) != target_id:
+                continue
+            matched = True
+            if _to_int(target_entry.get("isUsed")) != 1:
+                target_entry["isUsed"] = 1
+                updated = True
+
+    if updated:
+        save_target_info(info)
+
+    return info
 
 
 # --------------------------------------------------------------------------- #

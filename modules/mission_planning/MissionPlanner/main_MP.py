@@ -34,7 +34,6 @@ from data_def import (
     mission_helpers as mh,
     d0301, d0302, d0303,
     d0304,          # ← 100 m 분할
-    d0304_RL as d4rl   # ← RL 버전 (별칭)
 )
 from data_def.mission_helpers import now_ms_since_2000
 from data_def.mission_helpers import terrain_elev
@@ -135,6 +134,9 @@ class MainGUI(QWidget):
         self.default_dir = base / "plannedMission" / "임무계획"
         self.default_dir.mkdir(parents=True, exist_ok=True)
 
+        # 지도 상태(중심/줌) 기억
+        self._map_view_state: dict | None = None
+
     def _init_save_dirs(self):
         """
         plannedMission/database 하위 필요한 폴더 자동 생성
@@ -160,16 +162,84 @@ class MainGUI(QWidget):
         ch.registerObject("bridge", mh.bridge)
         self.map_view.page().setWebChannel(ch)
         self.map_view.setUrl(QUrl.fromLocalFile(os.path.join(os.getcwd(), "map.html")))
+        self.map_view.loadFinished.connect(self._on_map_load_finished)
         self.map_lay.addWidget(self.map_view)
         mh.bridge.pointClicked.connect(self._handle_point)
 
     def _rebuild_map(self):
+        self._capture_map_view_state(self._reload_map_content)
+
+    def _reload_map_content(self):
         self._write_map_html()
-        self.map_view.reload()
+        try:
+            self.map_view.reload()
+        except Exception:
+            pass
+
+    def _capture_map_view_state(self, callback=None):
+        """현재 지도 화면(center/zoom)을 저장한 뒤 callback 실행."""
+        if not hasattr(self, "map_view"):
+            if callback:
+                callback()
+            return
+
+        script = """
+            (function() {
+                var map = null;
+                for (var k in window) {
+                    if (window[k] instanceof L.Map) { map = window[k]; break; }
+                }
+                if (!map) { return null; }
+                var c = map.getCenter();
+                return {lat: c.lat, lng: c.lng, zoom: map.getZoom()};
+            })();
+        """
+        def _store_view(result):
+            if isinstance(result, dict) and "lat" in result and "lng" in result:
+                self._map_view_state = result
+            if callback:
+                callback()
+        try:
+            self.map_view.page().runJavaScript(script, _store_view)
+        except Exception:
+            if callback:
+                callback()
+
+    def _on_map_load_finished(self, ok: bool):
+        if not ok or not self._map_view_state:
+            return
+        lat = float(self._map_view_state.get("lat", 0.0))
+        lng = float(self._map_view_state.get("lng", 0.0))
+        zoom = int(self._map_view_state.get("zoom", 14))
+        script = f"""
+            (function() {{
+                var map = null;
+                for (var k in window) {{
+                    if (window[k] instanceof L.Map) {{ map = window[k]; break; }}
+                }}
+                if (map) {{
+                    map.setView([{lat}, {lng}], {zoom});
+                }}
+            }})();
+        """
+        try:
+            self.map_view.page().runJavaScript(script)
+        except Exception:
+            pass
 
     def _write_map_html(self):
-        center = [38.128774, 127.318005]
-        fmap   = folium.Map(location=center, zoom_start=14)
+        state = getattr(self, "_map_view_state", None) or {}
+        try:
+            center = [
+                float(state.get("lat", 38.128774)),
+                float(state.get("lng", 127.318005)),
+            ]
+            zoom = int(state.get("zoom", 14))
+        except Exception:
+            center = [38.128774, 127.318005]
+            zoom = 14
+
+        fmap = folium.Map(location=center, zoom_start=zoom)
         
         _js_links = []
         hover_specs = []
@@ -1173,19 +1243,6 @@ class MainGUI(QWidget):
     def _build_tab_0304(self):
         tab = QWidget(); lay = QVBoxLayout(tab)
 
-        # ── 생성 모드 선택 ───────────────────────────────
-        self.cmb_mode = QComboBox()
-        self.cmb_mode.addItems(["100 m 분할 (기본)", "RL 모델 사용"])
-        lay.addWidget(self.cmb_mode)
-
-        # ── (RL 전용) 모델·VecNorm 경로 입력 ─────────────
-        form = QFormLayout()
-        self.le_model   = QLineEdit(r"models\lah_model.zip")
-        self.le_vecnorm = QLineEdit(r"models\lah_model.pkl")
-        form.addRow("PPO Model (.zip):",   self.le_model)
-        form.addRow("VecNormalize (.pkl):", self.le_vecnorm)
-        lay.addLayout(form)
-
         # ── 버튼 영역 ───────────────────────────────────
         btn_gen  = QPushButton("Generate 0304 FlightPlan")
         btn_gen.clicked.connect(self._refresh_0304)
@@ -1430,24 +1487,11 @@ class MainGUI(QWidget):
             QMessageBox.information(self, "Check Missions", "All checks passed!")
 
     def _refresh_0304(self):
-        mode = self.cmb_mode.currentText()
-
-        if mode.startswith("100"):
-            fp = d0304.build_lah_flight_plans_fixed(
-                self.missions,
-                cruise_speed = self.CRUISE_SP,
-                wp_alloc     = self.wp_alloc,
-            )
-        else:
-            model_path   = self.le_model.text().strip()
-            vecnorm_path = self.le_vecnorm.text().strip() or None
-            fp = d4rl.build_lah_flight_plans_rl(
-                self.missions,
-                model_path   = model_path,
-                vecnorm_path = vecnorm_path,
-                cruise_speed = self.CRUISE_SP,
-                wp_alloc     = self.wp_alloc,
-            )
+        fp = d0304.build_lah_flight_plans_fixed(
+            self.missions,
+            cruise_speed = self.CRUISE_SP,
+            wp_alloc     = self.wp_alloc,
+        )
 
         self.flight_plans_0304 = fp
         self.log0304.setPlainText(json.dumps(fp, indent=2, ensure_ascii=False))

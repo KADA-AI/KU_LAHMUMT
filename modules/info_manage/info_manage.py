@@ -185,7 +185,7 @@ class MainWindow(QMainWindow):
         self._install_test_shortcuts()
 
         # GUI 표시 후 status=1 한 번 송신
-        QTimer.singleShot(800, lambda: send_status_ok("INF"))
+        QTimer.singleShot(2000, lambda: send_status_ok("INF"))
 
         # CTRL 리스너: self_check ON → status=1 송신
         def _on_ctrl(payload: dict):

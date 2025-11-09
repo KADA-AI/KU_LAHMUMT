@@ -132,6 +132,26 @@ def _z4(s: str) -> str:
     s = str(s).strip()
     return s.zfill(4) if s.isdigit() and len(s) < 4 else s
 
+class MissionAreaMonitoringTab(QWidget):
+    """Placeholder tab for the upcoming mission area monitoring feature."""
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(32, 32, 32, 32)
+        layout.setSpacing(12)
+
+        msg = QLabel("\uc784\ubb34\uc601\uc5ed \ubaa8\ub2c8\ud130\ub9c1 \ud0ed\uc740 \uc900\ube44 \uc911\uc785\ub2c8\ub2e4.")
+        msg.setAlignment(Qt.AlignCenter)
+        msg.setWordWrap(True)
+        msg.setStyleSheet("color:#666; font-size:15px;")
+
+        layout.addStretch(1)
+        layout.addWidget(msg, alignment=Qt.AlignCenter)
+        layout.addStretch(1)
+
+
 # ───────── 메인 윈도우 ─────────
 class MainWindow(QMainWindow):
     ctrl_payload = pyqtSignal(dict)
@@ -163,6 +183,7 @@ class MainWindow(QMainWindow):
 
         self._tabs = tabs
         self._tab = MissionMonitoringTab(messenger=NodeMessenger)
+        self._mission_area_tab = MissionAreaMonitoringTab()
         self._install_mode_parsefail_log_filter()
 
         def _override_body(mid: str):
@@ -182,6 +203,7 @@ class MainWindow(QMainWindow):
         self._install_power_gate_hooks()  # TX 차단 가드
         self._install_mon_wires()         # ★ 모니터링 전송 훅 (TX/MODE)
         tabs.addTab(self._tab, "임무 모니터링·판단 CSC")
+        tabs.addTab(self._mission_area_tab, "\uc784\ubb34\uc601\uc5ed\ubaa8\ub2c8\ud130\ub9c1")
 
         # ───── 상단 슬라이더 바 ─────
         top = QWidget()

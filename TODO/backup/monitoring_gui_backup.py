@@ -184,7 +184,7 @@ class MainWindow(QMainWindow):
         self._start_control_udp()
         self._install_test_shortcuts()
 
-        QTimer.singleShot(800, lambda: send_status_ok("MSM"))
+        QTimer.singleShot(2000, lambda: send_status_ok("MSM"))
 
         def _on_ctrl(payload: dict):
             try:

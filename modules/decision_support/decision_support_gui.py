@@ -271,7 +271,7 @@ class MainWindow(QMainWindow):
         self._install_test_shortcuts()
 
         # GUI 표시 후 상태 OK(=1) 1회 송신
-        QTimer.singleShot(800, lambda: send_status_ok("MOB"))
+        QTimer.singleShot(2000, lambda: send_status_ok("MOB"))
 
         # 외부 self_check=1 수신 시 상태 OK 재송신
         start_ctrl_listener(env_ctrl_port(45983),

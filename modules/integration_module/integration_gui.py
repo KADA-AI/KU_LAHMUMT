@@ -1583,7 +1583,7 @@ class MainWindow(QMainWindow):
         self._start_control_udp()
 
         # GUI 표시 후 상태 OK 송신(모듈 코드: INT)
-        QTimer.singleShot(800, lambda: send_status_ok("INT"))
+        QTimer.singleShot(2000, lambda: send_status_ok("INT"))
 
         # 외부 self_check=1 수신 시에도 상태 OK 송신
         start_ctrl_listener(env_ctrl_port(45985), lambda payload: (

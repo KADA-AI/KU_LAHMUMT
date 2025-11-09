@@ -1,0 +1,31 @@
+[
+  {
+    "timestamp": 815733747335,
+    "source": "MMR",
+    "replanRequestTime": {
+      "replanRequestTimestamp": 815733747335
+    },
+    "replanLevel": 1,
+    "inputMissionIDList": [
+      {
+        "inputMissionID": 70000001
+      },
+      {
+        "inputMissionID": 70000002
+      },
+      {
+        "inputMissionID": 70000003
+      }
+    ],
+    "individualMissionIDList": [],
+    "priorMissionList": [],
+    "replanReason": "초기임무재계획",
+    "pendingOptionList": [
+      {
+        "optionID": 1,
+        "optionName": "시스템추천",
+        "missionPlanID": 700000001
+      }
+    ]
+  }
+]
