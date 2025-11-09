@@ -21,6 +21,7 @@ from PyQt5.QtWidgets import QApplication, QMainWindow, QTabWidget
 
 # 분리된 탭들을 임포트
 from modules.monitoring_ver2.gui.tabs.MonitoringTab import MonitoringTab
+from modules.monitoring_ver2.gui.tabs.MissionAreaMonitoringTab import MissionAreaMonitoringTab
 from modules.monitoring_ver2.gui.tabs.ReplanRulesInfoTab import ReplanRulesInfoTab
 from modules.monitoring_ver2.gui.tabs.ReplanTab import ReplanTab
 from modules.monitoring_ver2.gui.tabs.MonitoringCSCTab import MonitoringCSCTab
@@ -58,6 +59,7 @@ class MainWindow(QMainWindow):
 
         # 각 탭 인스턴스 생성
         self.monitoring_tab = MonitoringTab(manager=self.manager)
+        self.mission_area_tab = MissionAreaMonitoringTab(manager=self.manager)
         self.replan_rules_info_tab = ReplanRulesInfoTab(manager=self.manager)
         self.replan_tab = ReplanTab(manager=self.manager)
         self.csc_tab = MonitoringCSCTab(manager=self.manager)
@@ -66,6 +68,7 @@ class MainWindow(QMainWindow):
         # 탭 위젯에 탭 추가
         self.tabs.addTab(self.csc_tab, "모니터링 CSC")
         self.tabs.addTab(self.monitoring_tab, "모니터링 요약")
+        self.tabs.addTab(self.mission_area_tab, "임무영역 모니터링")
         self.tabs.addTab(self.replan_rules_info_tab, "재계획 규칙 정보")
         self.tabs.addTab(self.replan_tab, "재계획 판단")
 
@@ -73,9 +76,10 @@ class MainWindow(QMainWindow):
         self.log_widget = None
 
         # 업데이트 유형에 따라 처리할 탭들을 리스트로 매핑한다.
+        base_handlers = [self.monitoring_tab, self.mission_area_tab, self.replan_rules_info_tab, self.replan_tab, self.csc_tab]
         self.update_handlers = {
-            "receive": [self.monitoring_tab, self.replan_rules_info_tab, self.replan_tab, self.csc_tab],
-            "logic": [self.monitoring_tab, self.replan_rules_info_tab, self.replan_tab, self.csc_tab],
+            "receive": base_handlers,
+            "logic": base_handlers,
             "send": [self.csc_tab],
         }
 

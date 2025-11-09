@@ -3,7 +3,9 @@ mission_helpers.py
 공통 유틸리티 · 지도-JS 브릿지 · 간단한 ‘임무 메타’ 다이얼로그
 """
 
-import os, random, folium, json
+import random, folium, json
+from functools import lru_cache
+from pathlib import Path
 from branca.colormap import linear
 from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot
 from PyQt5.QtWidgets import (QDialog, QGridLayout, QLabel, QComboBox,
@@ -11,25 +13,49 @@ from PyQt5.QtWidgets import (QDialog, QGridLayout, QLabel, QComboBox,
 from folium import CircleMarker   # 파일 맨 위 import
 import math
 import rasterio
-from rasterio.transform import array_bounds
 from data_def.id_allocator import next_individual_mission_id, next_path_id
 
 
-_DEM_PATH = r"resources\n38_e127_1arc_v3.dt2"   # 실제 DEM 경로
+_PROJECT_ROOT = Path(__file__).resolve().parents[4]
+_DEM_PATH = _PROJECT_ROOT / "resource" / "n38_e127_1arc_v3.tif"   # ? GeoTIFF ??
+
+
+@lru_cache(maxsize=1)
+def _load_dem_data():
+    """
+    GeoTIFF? ???? 1? ?? ? ???.
+    """
+    if not _DEM_PATH.exists():
+        raise FileNotFoundError(f"DEM ??? ?? ? ????: {_DEM_PATH}")
+
+    with rasterio.open(_DEM_PATH) as src:
+        band = src.read(1)              # ?? ?? (??)
+        transform = src.transform
+        bounds = src.bounds
+        nodata = src.nodata
+
+    return band, transform, bounds, nodata
+
 
 def terrain_elev(lat: float, lon: float) -> float:
-    """위·경도(°) → DEM 고도(m).  범위 밖이면 0."""
-    with rasterio.open(_DEM_PATH, "r") as src:
-        h, w = src.height, src.width
-        tr   = src.transform
-        left, bottom, right, top = array_bounds(h, w, tr)
-        if not (bottom <= lat <= top and left <= lon <= right):
-            return 0.0
-        col_f, row_f = (~tr) * (lon, lat)
-        row = int(max(0, min(h-1, round(row_f))))
-        col = int(max(0, min(w-1, round(col_f))))
-        return float(src.read(1)[row, col])
-    
+    """??(?????)? ???? GeoTIFF ??(m). ?? ??? 0."""
+    band, transform, bounds, nodata = _load_dem_data()
+
+    if not (bounds.bottom <= lat <= bounds.top and bounds.left <= lon <= bounds.right):
+        return 0.0
+
+    col_f, row_f = (~transform) * (lon, lat)
+    max_row, max_col = band.shape[0] - 1, band.shape[1] - 1
+    row = int(max(0, min(max_row, round(row_f))))
+    col = int(max(0, min(max_col, round(col_f))))
+
+    value = float(band[row, col])
+    if math.isnan(value):
+        return 0.0
+    if nodata is not None and math.isclose(value, nodata, abs_tol=1e-3):
+        return 0.0
+    return value
+
 # ────────────────── 데이터·랜덤 헬퍼 ──────────────────
 def rand_coord() -> dict:
     """임의 좌표 (위·경·고도) 하나 생성"""

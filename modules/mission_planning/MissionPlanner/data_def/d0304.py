@@ -367,6 +367,15 @@ def build_lah_flight_plans_fixed(
             else:
                 first_wp["hovering"] = {"time": HOVER_HOLD_SEC}
 
+            last_wp = wplist[-1]
+            if last_wp is not first_wp:
+                last_wp["speed"] = 0
+                hover_last = last_wp.get("hovering")
+                if isinstance(hover_last, dict):
+                    hover_last["time"] = HOVER_HOLD_SEC
+                else:
+                    last_wp["hovering"] = {"time": HOVER_HOLD_SEC}
+
             wplist[-1]["ecf"] = 1.0
 
         packets.append(OrderedDict([
