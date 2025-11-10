@@ -914,17 +914,21 @@ class MainWindow(QMainWindow):
             self._append_log_line("[BLOCK] Power OFF -> push sequence blocked")
             return
         payload = self._pending_plan_push or {}
+        force_direct = bool(payload.get("force_direct_update"))
         plan_ids = list(payload.get("plan_ids") or [])
         option_names = list(payload.get("option_names") or [])
         reason = payload.get("reason") or "init-plan"
 
         is_execution_mode = False
-        try:
-            mode_slider = getattr(self, "mode_slider", None)
-            if mode_slider is not None:
-                is_execution_mode = int(mode_slider.value()) == 4
-        except Exception:
-            is_execution_mode = False
+        if not force_direct:
+            try:
+                mode_slider = getattr(self, "mode_slider", None)
+                if mode_slider is not None:
+                    is_execution_mode = int(mode_slider.value()) == 4
+            except Exception:
+                is_execution_mode = False
+        else:
+            self._append_log_line("[INFO] replanLevel=4 → skip 0901/0701, direct 0903 delivery")
 
         if not plan_ids:
             self._append_log_line("[WARN] No missionPlanID to push (0301)")
@@ -937,7 +941,7 @@ class MainWindow(QMainWindow):
 
         plan_meta = payload.get("option_meta") or {}
 
-        if is_execution_mode:
+        if is_execution_mode and not force_direct:
             self._append_log_line("[INFO] Execution mode -> sending 0901 instead of 0903")
             QTimer.singleShot(900, lambda meta=plan_meta: self._push_0901_options(plan_ids, option_names, meta))
         else:
@@ -2294,7 +2298,19 @@ class MainWindow(QMainWindow):
                 plan_state=self._plan_status,
             )
 
-            self._schedule_plan_delivery(generated_plan_ids, option_codes_out, reason, plan_meta_map)
+            force_direct_update = False
+            try:
+                force_direct_update = int(ctx.get("replan_level", 0)) == 4
+            except Exception:
+                force_direct_update = False
+
+            self._schedule_plan_delivery(
+                generated_plan_ids,
+                option_codes_out,
+                reason,
+                plan_meta_map,
+                force_direct_update=force_direct_update,
+            )
 
         except Exception as exc:
             self.log_sig.emit(f"[ERR] Replan pipeline failed: {exc}")
@@ -2309,12 +2325,21 @@ class MainWindow(QMainWindow):
             pass
         super().closeEvent(event)
 
-    def _schedule_plan_delivery(self, plan_ids, option_names, reason, option_meta=None):
+    def _schedule_plan_delivery(
+        self,
+        plan_ids,
+        option_names,
+        reason,
+        option_meta=None,
+        *,
+        force_direct_update: bool = False,
+    ):
         self._pending_plan_push = {
             "plan_ids":     list(plan_ids or []),
             "option_names": list(option_names or []),
             "reason":       reason,
             "option_meta":  dict(option_meta or {}),
+            "force_direct_update": bool(force_direct_update),
         }
         try:
             self._scheduled_0301_plan_ids = [int(pid) for pid in (plan_ids or []) if pid is not None]
