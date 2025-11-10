@@ -96,15 +96,27 @@ class OptionPayloadBuilder:
         fallback = templates[-1]
         default_codes = list(DEFAULT_OPTION_CODE_SEQUENCE) or [1]
         for idx, entry in enumerate(entries):
-            metrics = templates[idx] if idx < len(templates) else fallback
+            meta = entry.get("optionMeta") or {}
+            if meta.get("attack"):
+                metrics = {"survivalRate": -1, "timeContraction": -1, "recogEffectiveness": 0}
+                code = 2
+            else:
+                metrics = templates[idx] if idx < len(templates) else fallback
+                code = normalize_option_code(entry.get("optionName"))
+                if code is None:
+                    code = default_codes[idx] if idx < len(default_codes) else default_codes[-1]
             try:
                 option_id = int(entry["optionID"])
                 mission_plan_id = int(entry["missionPlanID"])
             except Exception:
                 continue
-            code = normalize_option_code(entry.get("optionName"))
-            if code is None:
-                code = default_codes[idx] if idx < len(default_codes) else default_codes[-1]
+            target_count = meta.get("targetCount")
+            try:
+                target_value = int(target_count)
+            except Exception:
+                target_value = 0
+            if meta.get("attack") and target_value <= 0:
+                target_value = 1
             option_list.append(
                 {
                     "optionID": option_id,
@@ -114,7 +126,7 @@ class OptionPayloadBuilder:
                     "timeContraction": int(metrics.get("timeContraction", 0)),
                     "recogEffectiveness": int(metrics.get("recogEffectiveness", 0)),
                     "distance": 50000,
-                    "target": 0,
+                    "target": max(0, target_value),
                 }
             )
         return option_list

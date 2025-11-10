@@ -4,31 +4,65 @@ mission_helpers.py
 """
 
 import random, folium, json
+import math
+import re
 from functools import lru_cache
 from pathlib import Path
+from typing import Iterable, Tuple
+
 from branca.colormap import linear
 from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot
 from PyQt5.QtWidgets import (QDialog, QGridLayout, QLabel, QComboBox,
                              QDialogButtonBox, QDoubleSpinBox)
-from folium import CircleMarker   # 파일 맨 위 import
-import math
+from folium import CircleMarker   # ?뚯씪 留???import
 import rasterio
 from data_def.id_allocator import next_individual_mission_id, next_path_id
 
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[4]
-_DEM_PATH = _PROJECT_ROOT / "resource" / "n38_e127_1arc_v3.tif"   # ? GeoTIFF ??
+_DEM_DIR = _PROJECT_ROOT / "resource"
+_DEM_TILE_RE = re.compile(r"([ns])(\d+)_([ew])(\d+)", re.IGNORECASE)
+
+
+def _scan_dem_tiles() -> Tuple[Tuple[Path, Tuple[float, float, float, float]], ...]:
+    """
+    resource/ 밑의 GeoTIFF 타일 목록을 (Path, (lat0, lat1, lon0, lon1)) 형태로 돌려준다.
+    파일명이 n37_e127_* 같이 규칙을 따라야 범위 계산 가능.
+    """
+    if not _DEM_DIR.exists():
+        raise FileNotFoundError(f"DEM 디렉터리를 찾을 수 없습니다: {_DEM_DIR}")
+
+    tiles = []
+    for tif in sorted(_DEM_DIR.glob("*.tif")):
+        match = _DEM_TILE_RE.search(tif.stem)
+        if not match:
+            continue
+        lat_sign = 1 if match.group(1).lower() == "n" else -1
+        lon_sign = 1 if match.group(3).lower() == "e" else -1
+        lat0 = lat_sign * int(match.group(2))
+        lon0 = lon_sign * int(match.group(4))
+        lat1 = lat0 + lat_sign
+        lon1 = lon0 + lon_sign
+        tiles.append((tif, (min(lat0, lat1), max(lat0, lat1),
+                            min(lon0, lon1), max(lon0, lon1))))
+
+    if not tiles:
+        raise FileNotFoundError(f"resource/ 아래에서 사용할 GeoTIFF (*.tif)를 찾지 못했습니다: {_DEM_DIR}")
+    return tuple(tiles)
 
 
 @lru_cache(maxsize=1)
-def _load_dem_data():
-    """
-    GeoTIFF? ???? 1? ?? ? ???.
-    """
-    if not _DEM_PATH.exists():
-        raise FileNotFoundError(f"DEM ??? ?? ? ????: {_DEM_PATH}")
+def _available_dem_tiles():
+    return _scan_dem_tiles()
 
-    with rasterio.open(_DEM_PATH) as src:
+
+@lru_cache(maxsize=None)
+def _load_dem_data(path: Path):
+    """단일 GeoTIFF 타일을 캐시와 함께 로드."""
+    if not path.exists():
+        raise FileNotFoundError(f"DEM 파일을 찾을 수 없습니다: {path}")
+
+    with rasterio.open(path) as src:
         band = src.read(1)              # ?? ?? (??)
         transform = src.transform
         bounds = src.bounds
@@ -37,12 +71,31 @@ def _load_dem_data():
     return band, transform, bounds, nodata
 
 
+def _candidate_tiles(lat: float, lon: float) -> Iterable[Path]:
+    """주어진 좌표를 포함할 수 있는 타일 Path 후보 리스트."""
+    for path, (lat0, lat1, lon0, lon1) in _available_dem_tiles():
+        if lat0 <= lat <= lat1 and lon0 <= lon <= lon1:
+            yield path
+
+
 def terrain_elev(lat: float, lon: float) -> float:
     """??(?????)? ???? GeoTIFF ??(m). ?? ??? 0."""
-    band, transform, bounds, nodata = _load_dem_data()
-
-    if not (bounds.bottom <= lat <= bounds.top and bounds.left <= lon <= bounds.right):
+    chosen_tile = None
+    for path in _candidate_tiles(lat, lon):
+        band, transform, bounds, nodata = _load_dem_data(path)
+        if bounds.bottom <= lat <= bounds.top and bounds.left <= lon <= bounds.right:
+            chosen_tile = (band, transform, bounds, nodata)
+            break
+    else:
+        for path, _approx in _available_dem_tiles():
+            band, transform, bounds, nodata = _load_dem_data(path)
+            if bounds.bottom <= lat <= bounds.top and bounds.left <= lon <= bounds.right:
+                chosen_tile = (band, transform, bounds, nodata)
+                break
+    if chosen_tile is None:
         return 0.0
+
+    band, transform, bounds, nodata = chosen_tile
 
     col_f, row_f = (~transform) * (lon, lat)
     max_row, max_col = band.shape[0] - 1, band.shape[1] - 1
@@ -56,7 +109,6 @@ def terrain_elev(lat: float, lon: float) -> float:
         return 0.0
     return value
 
-# ────────────────── 데이터·랜덤 헬퍼 ──────────────────
 def rand_coord() -> dict:
     """임의 좌표 (위·경·고도) 하나 생성"""
     return {

@@ -37,6 +37,8 @@ from modules.monitoring_ver2.utils.vehicle_status import (
     UNMANNED_AIRCRAFT_IDS,
     write_vehicle_status,
 )
+from modules.monitoring_ver2.logic.prior_mission_replan import PriorMissionReplanCoordinator
+from modules.monitoring_ver2.utils.mission_progress_logger import MissionProgressExporter
 
 
 def _resolve_fuel_capacity() -> float:
@@ -136,6 +138,21 @@ class MonitoringLogic:
         self._availability_base: Set[int] = set()
         self._availability_health_block: Set[int] = set()
         self._availability_mandatory_override: Dict[int, bool] = {}
+        self._mission_progress_exporter = MissionProgressExporter(
+            log_callback=self.manager._log
+        )
+        self._prior_mission_replan = PriorMissionReplanCoordinator(manager)
+
+    def trigger_prior_mission_replan(self) -> None:
+        """Expose prior mission replan processing for immediate 0202 handling."""
+        try:
+            self._prior_mission_replan.process(self._plan_context)
+        except Exception as exc:
+            self.manager._log(
+                "PRIOR_MISSION",
+                "WARN",
+                f"0202 replan handler failed: {exc}",
+            )
 
     def _recompute_availability(self) -> None:
         available: Set[int] = set(self._availability_base)
@@ -413,6 +430,7 @@ class MonitoringLogic:
         previous_plan_id = self._current_mission_plan_id
         tracker_initialized = bool(self._input_mission_tracker)
         self._plan_context = context
+        self._mission_progress_exporter.reset()
         self._current_mission_plan_id = mission_plan_id
         reinitialized = (
             previous_plan_id != mission_plan_id or not tracker_initialized
@@ -1056,6 +1074,29 @@ class MonitoringLogic:
                 )
 
                 self._update_input_mission_progress(mission_status)
+                if plan_context:
+                    snapshot_ts = body_0501.get("timestamp") if isinstance(body_0501, dict) else None
+                    try:
+                        self._mission_progress_exporter.write_snapshot(
+                            plan_context,
+                            mission_status,
+                            timestamp_ms=snapshot_ts,
+                            mission_plan_id=current_plan_id,
+                        )
+                    except Exception as exc:
+                        self.manager._log(
+                            "MISSION_PROGRESS",
+                            "WARN",
+                            f"Failed to export mission snapshot: {exc}",
+                        )
+                    try:
+                        self._prior_mission_replan.process(plan_context)
+                    except Exception as exc:
+                        self.manager._log(
+                            "PRIOR_MISSION",
+                            "WARN",
+                            f"0202 replan handler failed: {exc}",
+                        )
 
                 # ?곕즺 寃쎄퀬 濡쒖쭅
                 feul_data = []
@@ -1481,8 +1522,12 @@ class MonitoringLogic:
             input_models.append(InputMissionIDModel(inputMissionID=0))
         individual_ids: List[int] = []
         individual_models: List[IndividualMissionIDListModel] = []
-        prior_ids = self._collect_prior_mission_ids()
-        prior_models = [PriorMissionListModel(priorMissionID=i) for i in prior_ids]
+        prior_ids: List[int] = self._collect_prior_mission_ids()
+        prior_models: List[PriorMissionListModel] = [
+            PriorMissionListModel(priorMissionID=pid)
+            for pid in prior_ids
+            if pid is not None
+        ]
         mission_plan_id = self._resolve_mission_plan_id(input_plan, timestamp)
         option_models, new_plan_ids = self._build_collab_option_list()
         replan_level = trigger.get("replanLevel", 3)
@@ -1538,19 +1583,8 @@ class MonitoringLogic:
         return sorted(ids)
 
     def _collect_prior_mission_ids(self) -> List[int]:
-        try:
-            prior = self.manager.receive_store.get_data("0202")
-        except Exception:
-            prior = None
-        mission_list = getattr(prior, "priorMissionList", None)
-        if mission_list is None and isinstance(prior, dict):
-            mission_list = prior.get("priorMissionList")
-        ids: Set[int] = set()
-        for item in mission_list or []:
-            value = self._to_int(self._safe_get(item, "priorMissionID", "PriorMissionID"))
-            if value is not None:
-                ids.add(value)
-        return sorted(ids)
+        """Legacy helper retained for compatibility; 0202 기반 재계획은 별도 파이프라인 사용."""
+        return []
 
     def _dispatch_collab_replan(
         self, replan_body: ReplanRequestBodyModel, context: Dict[str, Any]
@@ -1627,9 +1661,6 @@ class MonitoringLogic:
                 pass
         if status == 2:
             self._finalize_collab_replan(status_entry.get("reason"))
-        elif status == 1 and not self._collab_replan_inflight:
-            self._collab_replan_inflight = True
-            self._enter_collab_reexecute_mode(status_entry.get("timestamp"))
 
     def _finalize_collab_replan(self, reason: Optional[str]) -> None:
         self._collab_replan_inflight = False

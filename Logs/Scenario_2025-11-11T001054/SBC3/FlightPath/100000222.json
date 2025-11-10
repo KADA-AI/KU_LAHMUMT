@@ -1,0 +1,33 @@
+{
+  "timestamp": 816102741510,
+  "Source": "MMR",
+  "pathID": 100000222,
+  "aircraftID": 1,
+  "lahWaypointList": [
+    {
+      "waypointID": 2020,
+      "coordinate": {
+        "latitude": 37.87866,
+        "longitude": 128.21211,
+        "altitude": 1000
+      },
+      "speed": 0,
+      "eta": 0,
+      "ecf": 1.0,
+      "nextWaypointID": 0,
+      "hovering": {
+        "time": 300
+      },
+      "loiter": {
+        "radius": 0,
+        "direction": 0,
+        "time": 0,
+        "speed": 0
+      },
+      "attack": {
+        "targetID": 0,
+        "weaponType": 0
+      }
+    }
+  ]
+}

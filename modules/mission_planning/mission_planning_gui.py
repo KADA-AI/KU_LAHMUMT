@@ -2,10 +2,10 @@
 # mission_planning_gui.py – 임무 할당·계획수립 전용 GUI (S110 플로우 대응)
 from __future__ import annotations
 
-import sys, os, threading, json, re, time, shutil, socket
+import sys, os, threading, json, re, time, shutil, socket, subprocess
 os.environ["KU_ROLE"] = "mission"  # MMR
 from pathlib import Path
-from typing import Dict, Optional, Set, List
+from typing import Any, Dict, Optional, Set, List
 
 _ROOT = Path(__file__).resolve().parents[2]  # .../KU_LAHMUMT
 for _p in (_ROOT, _ROOT / "modules", _ROOT / "modules" / "common"):
@@ -575,6 +575,161 @@ class MainWindow(QMainWindow):
             except Exception:
                 self._append_log_line(f"[WARN] Listener registration failed for {msg_id}")
 
+    def _load_attack_context(self, cmpk_path: Path) -> Optional[Dict[str, Any]]:
+        try:
+            with cmpk_path.open("r", encoding="utf-8") as fh:
+                data = json.load(fh)
+        except Exception as exc:
+            try:
+                self.log_sig.emit(f"[WARN] 공격용 0201 메타데이터 읽기 실패({cmpk_path.name}): {exc}")
+            except Exception:
+                pass
+            return None
+        context = data.get("_attackContext") or data.get("attackContext")
+        if isinstance(context, dict):
+            return context
+        return None
+
+    def _compute_attack_waypoint(self, friendly: Dict[str, Any], target: Dict[str, Any], variant_no: int) -> Dict[str, float]:
+        fallback = {
+            "latitude": float(target.get("latitude") or friendly.get("latitude") or 0.0),
+            "longitude": float(target.get("longitude") or friendly.get("longitude") or 0.0),
+            "altitude": float(target.get("altitude") or friendly.get("altitude") or 0.0),
+        }
+        script_path = PROJECT_ROOT / "modules" / "mission_planning" / "MissionPlanner" / "data_def" / "lah_attack_assistance.py"
+        friendly_lat = friendly.get("latitude")
+        friendly_lon = friendly.get("longitude")
+        target_lat = target.get("latitude")
+        target_lon = target.get("longitude")
+        if script_path.exists() and friendly_lat is not None and friendly_lon is not None and target_lat is not None and target_lon is not None:
+            cmd = [
+                sys.executable or "python",
+                str(script_path),
+                "--friendly-lat",
+                str(friendly_lat),
+                "--friendly-lon",
+                str(friendly_lon),
+                "--enemy-lat",
+                str(target_lat),
+                "--enemy-lon",
+                str(target_lon),
+                "--output-json",
+            ]
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+                if result.returncode == 0:
+                    data = json.loads(result.stdout or "{}")
+                    attack_point = data.get("attack_point") or {}
+                    lat_val = attack_point.get("lat") or attack_point.get("latitude") or target_lat
+                    lon_val = attack_point.get("lon") or attack_point.get("longitude") or target_lon
+                    alt_val = attack_point.get("alt_m") or attack_point.get("altitude") or target.get("altitude") or friendly.get("altitude") or 0.0
+                    return {
+                        "latitude": float(lat_val),
+                        "longitude": float(lon_val),
+                        "altitude": float(alt_val),
+                    }
+                else:
+                    stderr_msg = (result.stderr or "").strip()
+                    self.log_sig.emit(
+                        f"[WARN] 공격 추천 좌표 계산 실패(variant={variant_no}, code={result.returncode}): {stderr_msg}"
+                    )
+            except Exception as exc:
+                try:
+                    self.log_sig.emit(f"[WARN] 공격 추천 좌표 계산 중 예외 발생(variant={variant_no}): {exc}")
+                except Exception:
+                    pass
+        return fallback
+
+    def _apply_attack_customizations(
+        self,
+        missions: List[Dict[str, Any]],
+        flight_plans_0304: List[Dict[str, Any]],
+        attack_context: Dict[str, Any],
+        variant_no: int,
+    ) -> None:
+        target = attack_context.get("target") or {}
+        target_lat = target.get("latitude")
+        target_lon = target.get("longitude")
+        if target_lat is None or target_lon is None:
+            self.log_sig.emit(f"[WARN] 공격추천 옵션(variant={variant_no})에 target 좌표 정보가 없어 기본 임무를 유지합니다.")
+            return
+        target_coord = {
+            "latitude": float(target_lat),
+            "longitude": float(target_lon),
+            "altitude": float(target.get("altitude") or 0.0),
+        }
+        manned_missions = [im for im in missions if int(im.get("aircraftID", 0)) in (1, 2)]
+        if not manned_missions:
+            self.log_sig.emit(f"[WARN] 공격추천 옵션(variant={variant_no}) 대상 유인기 임무를 찾지 못했습니다.")
+            return
+        manned_missions.sort(key=lambda im: int(im.get("individualMissionID") or 0))
+        primary_mission = manned_missions[0]
+        mission_info = primary_mission.get("individualMissionInfo") or {}
+        coord_list = mission_info.get("coordinateList") or []
+        friendly_coord = None
+        if coord_list and isinstance(coord_list[0], dict):
+            friendly_coord = {
+                "latitude": coord_list[0].get("latitude"),
+                "longitude": coord_list[0].get("longitude"),
+                "altitude": coord_list[0].get("altitude", 0.0),
+            }
+        if friendly_coord is None or friendly_coord.get("latitude") is None or friendly_coord.get("longitude") is None:
+            friendly_coord = dict(target_coord)
+        attack_waypoint = self._compute_attack_waypoint(friendly_coord, target_coord, variant_no)
+        target_id = attack_context.get("targetID")
+        mission_info_override = {
+            "individualMissionType": 2,
+            "patternType": 2,
+            "autoZoomIn": False,
+            "coordinateList": [
+                {
+                    "latitude": attack_waypoint["latitude"],
+                    "longitude": attack_waypoint["longitude"],
+                    "altitude": attack_waypoint["altitude"],
+                }
+            ],
+        }
+        if target_id is not None:
+            mission_info_override["targetID"] = target_id
+        primary_mission["individualMissionInfo"] = mission_info_override
+        primary_mission["isDone"] = False
+        attack_path_id = int(primary_mission.get("pathID") or 0)
+        attack_aircraft_id = int(primary_mission.get("aircraftID") or 0)
+        waypoint_entry = {
+            "waypointID": 100,
+            "coordinate": {
+                "latitude": attack_waypoint["latitude"],
+                "longitude": attack_waypoint["longitude"],
+                "altitude": attack_waypoint["altitude"],
+            },
+            "speed": 0,
+            "eta": 0,
+            "ecf": 1.0,
+            "nextWaypointID": 0,
+            "hovering": {"time": 0},
+            "loiter": {"radius": 0, "direction": 0, "time": 0, "speed": 0},
+            "attack": {
+                "targetID": int(target_id) if target_id is not None else 0,
+                "weaponType": 2,
+            },
+        }
+        replaced_fp = False
+        for fp in flight_plans_0304 or []:
+            try:
+                fp_path_id = int(fp.get("pathID"))
+            except Exception:
+                fp_path_id = None
+            if fp_path_id == attack_path_id and int(fp.get("aircraftID", 0)) == attack_aircraft_id:
+                fp["lahWaypointList"] = [waypoint_entry]
+                replaced_fp = True
+                break
+        if not replaced_fp:
+            self.log_sig.emit(f"[WARN] 공격 추천 비행경로를 덮어쓸 pathID {attack_path_id}를 찾지 못했습니다.")
+        else:
+            self.log_sig.emit(
+                f"[variant {variant_no}] 공격추천 임무 설정 완료 (aircraft={attack_aircraft_id}, targetID={target_id})"
+            )
+
     def _on_input_payload_0201(self, msg_id, payload):
         self._handle_latest_input_payload(msg_id, payload)
 
@@ -780,9 +935,11 @@ class MainWindow(QMainWindow):
         # send 0305 completion
         QTimer.singleShot(600, lambda: self._push_0305(status=2, reason=reason))
 
+        plan_meta = payload.get("option_meta") or {}
+
         if is_execution_mode:
             self._append_log_line("[INFO] Execution mode -> sending 0901 instead of 0903")
-            QTimer.singleShot(900, lambda: self._push_0901_options(plan_ids, option_names))
+            QTimer.singleShot(900, lambda meta=plan_meta: self._push_0901_options(plan_ids, option_names, meta))
         else:
             base_delay = 900
             scheduled = False
@@ -1008,7 +1165,7 @@ class MainWindow(QMainWindow):
             ids.append(self._option_id_counter)
         return ids
 
-    def _push_0901_options(self, plan_ids, option_names):
+    def _push_0901_options(self, plan_ids, option_names, plan_meta=None):
         """Push option info request using supplied plan IDs."""
         try:
             from push_center import push_message
@@ -1019,6 +1176,7 @@ class MainWindow(QMainWindow):
             ts = _now_ms_since_2000()
             plan_list = list(plan_ids or [])
             name_list = list(option_names or [])
+            meta_map = dict(plan_meta or {})
             valid_entries: list[tuple[int, int]] = []
             defaults = list(DEFAULT_OPTION_CODE_SEQUENCE) or [1]
             for idx, plan_id in enumerate(plan_list, 1):
@@ -1038,10 +1196,13 @@ class MainWindow(QMainWindow):
                 self.log_sig.emit("[WARN] 0901 skipped: no entries")
                 return
             option_ids = self._allocate_option_ids(len(valid_entries))
-            entries = [
-                {"optionID": oid, "optionName": code, "missionPlanID": pid}
-                for oid, (pid, code) in zip(option_ids, valid_entries)
-            ]
+            entries = []
+            for oid, (pid, code) in zip(option_ids, valid_entries):
+                entry = {"optionID": oid, "optionName": code, "missionPlanID": pid}
+                meta = meta_map.get(pid)
+                if meta:
+                    entry["optionMeta"] = meta
+                entries.append(entry)
             body = {
                 "timestamp": ts,
                 "source": "MMR",
@@ -1258,7 +1419,6 @@ class MainWindow(QMainWindow):
         if not payload:
             self._append_log_line("[ERR] 0902 payload parse failed")
             return
-
         staged = self._staged_plan_context if isinstance(getattr(self, '_staged_plan_context', {}), dict) else {}
 
         # 0902에서 옵션/계획 ID 추출
@@ -1397,6 +1557,192 @@ class MainWindow(QMainWindow):
                 return fixed
 
             db_root = db_paths.get_active_db_root()
+
+            def _locate_prior_mission_plan():
+                dss_dir = db_root / 'DSS_Internal'
+                if not dss_dir.exists():
+                    return None
+                candidates = sorted(
+                    (p for p in dss_dir.glob("0201_*.json") if p.is_file()),
+                    key=lambda p: p.stat().st_mtime,
+                    reverse=True,
+                )
+                for candidate in candidates:
+                    try:
+                        data = json.loads(candidate.read_text(encoding='utf-8'))
+                    except Exception:
+                        continue
+                    ctx = data.get("_priorMissionContext")
+                    if isinstance(ctx, dict):
+                        return candidate, ctx
+                return None
+
+            def _apply_prior_mission_customizations(
+                missions,
+                flight_plans_0303,
+                context,
+                variant_no,
+                pid_map,
+                generated_path_ids,
+            ):
+                if not isinstance(context, dict):
+                    return
+
+                def _to_int(value, default=None):
+                    try:
+                        iv = int(value)
+                        return iv
+                    except Exception:
+                        return default
+
+                def _to_float(value, default=None):
+                    try:
+                        fv = float(value)
+                        return fv
+                    except Exception:
+                        return default
+
+                input_mission_id = _to_int(context.get("inputMissionID")) or _to_int(context.get("mission_id"))
+                if input_mission_id is None:
+                    self.log_sig.emit(f"[WARN] Prior mission customization skipped (variant={variant_no}): missing inputMissionID")
+                    return
+
+                coord = context.get("coordinate") or {}
+                lat = _to_float(coord.get("latitude"))
+                lon = _to_float(coord.get("longitude"))
+                alt = _to_float(coord.get("altitude"), 800.0)
+                if lat is None or lon is None:
+                    self.log_sig.emit(f"[WARN] Prior mission customization skipped (variant={variant_no}): coordinate missing")
+                    return
+
+                prior_mission_id = _to_int(context.get("priorMissionID"), 0) or 0
+                mission_type = _to_int(context.get("missionType"), 1) or 1
+                target_id = _to_int(context.get("targetID"))
+                preferred_aircraft_ids = (4, 5, 6)
+
+                mission_entry = None
+                fallback_entry = None
+                for im in missions:
+                    rel = im.get("relatedMission") or {}
+                    if _to_int(rel.get("inputMissionID")) != input_mission_id:
+                        continue
+                    fallback_entry = im if fallback_entry is None else fallback_entry
+                    if _to_int(im.get("aircraftID")) in preferred_aircraft_ids:
+                        mission_entry = im
+                        break
+                if mission_entry is None:
+                    mission_entry = fallback_entry
+                if mission_entry is None:
+                    self.log_sig.emit(f"[WARN] Prior mission customization skipped (variant={variant_no}): matching mission not found")
+                    return
+
+                aircraft_id = _to_int(mission_entry.get("aircraftID"))
+                if aircraft_id not in preferred_aircraft_ids:
+                    aircraft_id = preferred_aircraft_ids[0]
+                    mission_entry["aircraftID"] = aircraft_id
+
+                path_id = _to_int(mission_entry.get("pathID"))
+                if not path_id or path_id <= 0:
+                    path_id = next_path_id(aircraft_id)
+                    mission_entry["pathID"] = path_id
+                generated_path_ids.add(path_id)
+                pid_map[(aircraft_id, _to_int(mission_entry.get("individualMissionID")))] = path_id
+
+                rel_block = dict(mission_entry.get("relatedMission") or {})
+                rel_block["relatedMissionType"] = 2
+                rel_block["inputMissionID"] = input_mission_id
+                rel_block["priorMissionID"] = prior_mission_id
+                mission_entry["relatedMission"] = rel_block
+                mission_entry["isDone"] = False
+
+                mission_info = dict(mission_entry.get("individualMissionInfo") or {})
+                mission_info["individualMissionType"] = 1 if mission_type == 2 else 5
+                mission_info["patternType"] = 1
+                mission_info["autoZoomIn"] = True
+                mission_info["coordinateList"] = [
+                    {
+                        "latitude": lat,
+                        "longitude": lon,
+                        "altitude": int(round(alt)),
+                    }
+                ]
+                mission_info["lineList"] = []
+                mission_info["areaList"] = []
+                mission_info["targetID"] = target_id if (mission_type == 2 and target_id is not None) else 0
+                mission_entry["individualMissionInfo"] = mission_info
+
+                flight_entry = None
+                for fp in flight_plans_0303 or []:
+                    if _to_int(fp.get("aircraftID")) == aircraft_id:
+                        flight_entry = fp
+                        break
+                if flight_entry is None:
+                    flight_entry = {
+                        "timestamp": _now_ms_since_2000(),
+                        "Source": "MMR",
+                        "pathID": path_id,
+                        "aircraftID": aircraft_id,
+                        "isFormationFlight": False,
+                        "waypointList": [],
+                    }
+                    flight_plans_0303.append(flight_entry)
+                else:
+                    flight_entry["pathID"] = path_id
+                    flight_entry["aircraftID"] = aircraft_id
+
+                filming_property = {
+                    "fieldOfView": 15,
+                    "sensorType": 1,
+                    "operationMode": 3 if mission_type == 2 else 1,
+                }
+                if mission_type == 2 and target_id is not None:
+                    filming_property["autoTracking"] = {"targetID": target_id}
+                else:
+                    filming_property["coordinateOrientation"] = {
+                        "coordinate": {
+                            "latitude": lat,
+                            "longitude": lon,
+                            "altitude": 0,
+                        }
+                    }
+
+                waypoint_id = 1
+                try:
+                    if flight_entry.get("waypointList"):
+                        waypoint_id = _to_int(flight_entry["waypointList"][0].get("waypointID")) or 1
+                except Exception:
+                    waypoint_id = 1
+
+                waypoint = {
+                    "waypointID": waypoint_id,
+                    "coordinate": {
+                        "latitude": lat,
+                        "longitude": lon,
+                        "altitude": int(round(alt)),
+                    },
+                    "speed": 35.0,
+                    "eta": 300,
+                    "ecf": 0.0,
+                    "nextWaypointID": 0,
+                    "waypointPassType": 2,
+                    "filmingProperty": filming_property,
+                    "loiterProperty": {
+                        "radius": 400,
+                        "direction": 1,
+                        "time": 300,
+                        "speed": 3,
+                    },
+                }
+
+                flight_entry["timestamp"] = _now_ms_since_2000()
+                flight_entry["Source"] = flight_entry.get("Source") or "MMR"
+                flight_entry["isFormationFlight"] = False
+                flight_entry["waypointList"] = [waypoint]
+
+                self.log_sig.emit(
+                    f"[variant {variant_no}] Prior mission customization applied "
+                    f"(aircraft={aircraft_id}, inputMissionID={input_mission_id})"
+                )
             dir_0201 = db_root / 'InputMissionPlan'
             dir_0203 = db_root / 'MissionReferenceInfo'
             out_root_base = db_root / 'mission_output'
@@ -1628,6 +1974,9 @@ class MainWindow(QMainWindow):
                     label = str(value).strip() if value is not None else ""
                 option_labels.append(label)
             attack_option_indices: Set[int] = {idx for idx, label in enumerate(option_labels) if label == "공격추천"}
+            for attack_idx in attack_option_indices:
+                if 0 <= attack_idx < len(option_codes):
+                    option_codes[attack_idx] = 2
             attack_cmpk_path: Optional[Path] = None
             if attack_option_indices:
                 dss_dir = db_root / 'DSS_Internal'
@@ -1648,6 +1997,22 @@ class MainWindow(QMainWindow):
                 else:
                     self.log_sig.emit("[WARN] 공격추천 옵션이 있으나 공격용 0201 파일을 찾지 못했습니다. 기본 0201 사용.")
                     attack_option_indices.clear()
+
+            prior_option_indices: Set[int] = {idx for idx, label in enumerate(option_labels) if label == "선행임무 재계획"}
+            prior_variant_contexts: Dict[int, Dict[str, Any]] = {}
+            if prior_option_indices:
+                prior_plan = _locate_prior_mission_plan()
+                if prior_plan is None:
+                    self.log_sig.emit("[WARN] 선행임무 재계획 옵션이 있으나 DSS_Internal/0201_prior 데이터를 찾지 못했습니다.")
+                    prior_option_indices.clear()
+                else:
+                    prior_path, prior_ctx = prior_plan
+                    for idx in prior_option_indices:
+                        prior_variant_contexts[idx] = {"path": prior_path, "context": prior_ctx}
+                    self.log_sig.emit(
+                        f"[INFO] 선행임무 재계획 옵션에 {prior_path.name} 적용: "
+                        f"{sorted(i + 1 for i in prior_option_indices)}"
+                    )
 
             try:
                 cmpk_id = int(Path(cmpk_path).stem)
@@ -1697,6 +2062,7 @@ class MainWindow(QMainWindow):
 
             generated_plan_ids: list[int] = []
             option_codes_out: list[int] = []
+            plan_meta_map: Dict[int, Dict[str, Any]] = {}
             total_imp_files = 0
             total_fp_files = 0
 
@@ -1705,10 +2071,20 @@ class MainWindow(QMainWindow):
                 requested_plan_id = plan_ids[idx]
                 option_code = option_codes[idx]
                 cmpk_source_path = cmpk_path
+                variant_attack_context: Optional[Dict[str, Any]] = None
+                variant_prior_context: Optional[Dict[str, Any]] = None
                 if attack_cmpk_path is not None and idx in attack_option_indices:
                     cmpk_source_path = attack_cmpk_path
                     self.log_sig.emit(
                         f"[variant {variant_no}] 공격추천 전용 0201 적용: {cmpk_source_path.name}"
+                    )
+                    variant_attack_context = self._load_attack_context(cmpk_source_path)
+                if idx in prior_variant_contexts:
+                    prior_info = prior_variant_contexts[idx]
+                    cmpk_source_path = prior_info["path"]
+                    variant_prior_context = prior_info.get("context")
+                    self.log_sig.emit(
+                        f"[variant {variant_no}] 선행임무 0201 적용: {cmpk_source_path.name}"
                     )
 
                 iter_out_root = out_root_base / f'variant_{variant_no:02d}'
@@ -1773,6 +2149,18 @@ class MainWindow(QMainWindow):
                 flight_plans_0303 = d0303.build_flight_plans(unmanned, wp_alloc, 40.0, turn_step_deg=15.0) if unmanned else []
                 flight_plans_0304 = d0304.build_lah_flight_plans_fixed(manned, cruise_speed=40.0, wp_alloc=wp_alloc) if manned else []
 
+                if variant_attack_context:
+                    self._apply_attack_customizations(missions, flight_plans_0304 or [], variant_attack_context, variant_no)
+                if variant_prior_context:
+                    _apply_prior_mission_customizations(
+                        missions,
+                        flight_plans_0303,
+                        variant_prior_context,
+                        variant_no,
+                        pid_map,
+                        generated_path_ids,
+                    )
+
                 for fp in (flight_plans_0303 or []) + (flight_plans_0304 or []):
                     pid_val = fp.get('pathID')
                     if pid_val is not None:
@@ -1797,6 +2185,31 @@ class MainWindow(QMainWindow):
                     preferred_plan_id = None
                 plan_id = _allocate_plan_id(preferred_plan_id)
                 mp_json['missionPlanID'] = plan_id
+                plan_meta_entry = plan_meta_map.setdefault(plan_id, {})
+                if variant_attack_context:
+                    plan_meta_entry.update(
+                        {
+                            "attack": True,
+                            "targetCount": int(variant_attack_context.get("targetCount") or 1),
+                            "targetID": variant_attack_context.get("targetID"),
+                        }
+                    )
+                if variant_prior_context:
+                    try:
+                        prior_mid = int(variant_prior_context.get("priorMissionID") or 0)
+                    except Exception:
+                        prior_mid = 0
+                    try:
+                        prior_input_id = int(variant_prior_context.get("inputMissionID") or 0)
+                    except Exception:
+                        prior_input_id = 0
+                    plan_meta_entry.update(
+                        {
+                            "priorMission": True,
+                            "priorMissionID": prior_mid,
+                            "inputMissionID": prior_input_id,
+                        }
+                    )
 
                 (dir_mp / f"{plan_id}.json").write_text(json.dumps(mp_json, indent=2, ensure_ascii=False), encoding='utf-8')
 
@@ -1852,6 +2265,7 @@ class MainWindow(QMainWindow):
             self._last_mission_plan_id = generated_plan_ids[0] if generated_plan_ids else None
             ctx['plan_ids'] = generated_plan_ids
             ctx['option_names'] = option_codes_out
+            ctx["_option_meta"] = dict(plan_meta_map)
             self._active_plan_context = ctx
 
             try:
@@ -1880,7 +2294,7 @@ class MainWindow(QMainWindow):
                 plan_state=self._plan_status,
             )
 
-            self._schedule_plan_delivery(generated_plan_ids, option_codes_out, reason)
+            self._schedule_plan_delivery(generated_plan_ids, option_codes_out, reason, plan_meta_map)
 
         except Exception as exc:
             self.log_sig.emit(f"[ERR] Replan pipeline failed: {exc}")
@@ -1895,11 +2309,12 @@ class MainWindow(QMainWindow):
             pass
         super().closeEvent(event)
 
-    def _schedule_plan_delivery(self, plan_ids, option_names, reason):
+    def _schedule_plan_delivery(self, plan_ids, option_names, reason, option_meta=None):
         self._pending_plan_push = {
             "plan_ids":     list(plan_ids or []),
             "option_names": list(option_names or []),
             "reason":       reason,
+            "option_meta":  dict(option_meta or {}),
         }
         try:
             self._scheduled_0301_plan_ids = [int(pid) for pid in (plan_ids or []) if pid is not None]

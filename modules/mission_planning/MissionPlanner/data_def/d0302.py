@@ -168,17 +168,21 @@ def _validate_mission_packages(
 
             # ── RelatedMission 검증
             rel = im["relatedMission"]
-            if rel.get("relatedMissionType") != 1:
+            rel_type = rel.get("relatedMissionType")
+            if rel_type not in (1, 2):
                 raise ValueError(
-                    f"[0302] IM {im_id}: relatedMissionType must be 1"
+                    f"[0302] IM {im_id}: relatedMissionType must be 1 or 2"
                 )
             im_input_id = rel.get("inputMissionID")
             if not isinstance(im_input_id, int) or im_input_id <= 0:
                 raise ValueError(
                     f"[0302] IM {im_id}: inputMissionID must be a positive integer"
                 )
-            if rel.get("priorMissionID", 0) not in (0,):
-                raise ValueError(f"[0302] IM {im_id}: priorMissionID must be 0")
+            prior_id = rel.get("priorMissionID", 0)
+            if rel_type == 1 and prior_id not in (0,):
+                raise ValueError(f"[0302] IM {im_id}: priorMissionID must be 0 for relatedMissionType=1")
+            if rel_type == 2 and (not isinstance(prior_id, int) or prior_id <= 0):
+                raise ValueError(f"[0302] IM {im_id}: priorMissionID must be positive for relatedMissionType=2")
 
             # ── Mission-Type별 필수 데이터 검증 --------------
             if mission_type in _MISSION_NEEDS_COORD and not mission_info.get("coordinateList"):

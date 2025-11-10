@@ -5,24 +5,6 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
-import numpy as np
-
-try:
-    import rasterio  # type: ignore
-except Exception:  # pragma: no cover - optional dependency
-    rasterio = None
-
-try:
-    from PIL import Image, ImageOps  # type: ignore
-except Exception:  # pragma: no cover - defensive
-    Image = None
-    ImageOps = None
-
-try:
-    from matplotlib import cm  # type: ignore
-except Exception:  # pragma: no cover - defensive
-    cm = None
-
 from PyQt5.QtCore import Qt, QPointF, QRectF
 from PyQt5.QtGui import (
     QPixmap,
@@ -52,8 +34,6 @@ from PyQt5.QtWidgets import (
 from modules.common import db_paths
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
-RESOURCE_PATH = PROJECT_ROOT / "resource" / "n38_e127_1arc_v3.tif"
-DEM_LIGHTEN_RATIO = 0.3
 
 MISSION_TYPE_STYLES = {
     3: {"stroke": "#ff7043", "fill": "#ffd8c2", "width": 2.2, "label": "협업기저임무"},
@@ -110,7 +90,7 @@ class MissionAreaMonitoringTab(QWidget):
         layout.setContentsMargins(24, 20, 24, 20)
         layout.setSpacing(18)
 
-        title = QLabel("임무영역 모니터링")
+        title = QLabel("Stack 기반 모니터링")
         title.setAlignment(Qt.AlignCenter)
         title.setStyleSheet("font-size:17px; font-weight:600;")
 
@@ -141,7 +121,7 @@ class MissionAreaMonitoringTab(QWidget):
         left_layout.setSpacing(6)
 
         map_header = QHBoxLayout()
-        map_title = QLabel("지형 미리보기 (resource/n38_e127_1arc_v3.tif)")
+        map_title = QLabel("지형 미리보기 (비활성화)")
         map_title.setStyleSheet("font-weight:600;")
         map_header.addWidget(map_title)
         map_header.addStretch(1)
@@ -490,95 +470,26 @@ class MissionAreaMonitoringTab(QWidget):
     def _load_resource_image(self) -> None:
         if self._image_loaded:
             return
-        if not RESOURCE_PATH.exists():
-            self._image_status_label.setText(f"지도 파일 없음: {RESOURCE_PATH.name}")
-            return
+        width, height = 640, 360
+        placeholder = QPixmap(width, height)
+        placeholder.fill(QColor(32, 32, 48))
 
-        arr: Optional[np.ndarray] = None
-        bounds = None
-        shape = None
-        try:
-            if rasterio is not None:
-                with rasterio.open(RESOURCE_PATH) as ds:
-                    data = ds.read(1, masked=True)
-                    arr = data.astype(np.float32)
-                    mask = np.ma.getmaskarray(data)
-                    if mask is np.ma.nomask:
-                        mask = np.zeros_like(arr, dtype=bool)
-                    arr = np.where(mask, np.nan, arr)
-                    bounds = ds.bounds
-                    shape = (ds.height, ds.width)
-                    self._dem_transform = ds.transform
-                    try:
-                        self._dem_inv_transform = ~ds.transform
-                    except Exception:
-                        self._dem_inv_transform = None
-                    self._dem_crs = ds.crs
-            elif Image is not None:
-                with Image.open(RESOURCE_PATH) as img:
-                    arr = np.array(img.convert("L"), dtype=np.float32)
-                    shape = arr.shape
-                    self._dem_transform = None
-                    self._dem_inv_transform = None
-                    self._dem_crs = None
-            else:
-                self._image_status_label.setText("rasterio 또는 Pillow가 없어 미리보기를 만들 수 없습니다.")
-                return
-        except Exception as exc:  # pragma: no cover - defensive
-            self._image_status_label.setText(f"DEM 읽기 실패: {exc}")
-            return
+        painter = QPainter(placeholder)
+        painter.setPen(QPen(QColor('#bbbbbb')))
+        painter.drawText(
+            placeholder.rect(),
+            Qt.AlignCenter,
+            '지형 미리보기 비활성화',
+        )
+        painter.end()
 
-        valid = ~np.isnan(arr)
-        if not valid.any():
-            self._image_status_label.setText("유효한 픽셀이 없습니다.")
-            return
-
-        clipped = arr[valid]
-        v_min = np.percentile(clipped, 1.0)
-        v_max = np.percentile(clipped, 99.0)
-        if v_max <= v_min:
-            v_max = v_min + 1.0
-        norm = np.clip((arr - v_min) / (v_max - v_min), 0.0, 1.0)
-        norm[~valid] = np.nan
-
-        try:
-            if cm is not None:
-                cmap = cm.get_cmap("terrain")
-                rgba = cmap(np.nan_to_num(norm, nan=0.0))
-                rgba[..., 3] = np.where(valid, 1.0, 0.0)
-                rgb_arr = (rgba[..., :3] * 255).astype(np.uint8)
-            elif ImageOps is not None and Image is not None:
-                norm_img = Image.fromarray(
-                    np.nan_to_num(norm, nan=0.0, posinf=0.0, neginf=0.0) * 255
-                .astype(np.uint8),
-                    mode="L",
-                )
-                norm_img = ImageOps.autocontrast(norm_img)
-                colored = ImageOps.colorize(norm_img, "#29434E", "#FFE7A9")
-                rgb_arr = np.array(colored, dtype=np.uint8)
-            else:
-                base = np.nan_to_num(norm, nan=0.0)
-                rgb_arr = np.repeat((base * 255).astype(np.uint8)[..., None], 3, axis=2)
-        except Exception as exc:  # pragma: no cover - defensive
-            self._image_status_label.setText(f"색상 변환 실패: {exc}")
-            return
-
-        rgb_arr = np.clip(
-            rgb_arr * (1.0 - DEM_LIGHTEN_RATIO) + 255 * DEM_LIGHTEN_RATIO, 0, 255
-        ).astype(np.uint8)
-        height, width, _ = rgb_arr.shape
-        bytes_per_line = width * 3
-        self._image_bytes = rgb_arr.tobytes()
-        qimage = QImage(self._image_bytes, width, height, bytes_per_line, QImage.Format_RGB888)
-        pixmap = QPixmap.fromImage(qimage)
-        self._image_view.set_pixmap(pixmap)
-        self._pixmap_cache = pixmap
-        if bounds and shape:
-            self._dem_bounds = (bounds.left, bounds.bottom, bounds.right, bounds.top)
-        if shape:
-            self._dem_size = (shape[1], shape[0])
+        self._image_view.set_pixmap(placeholder)
+        self._pixmap_cache = placeholder
+        self._dem_bounds = None
+        self._dem_size = (width, height)
         self._image_loaded = True
-        self._image_status_label.setText(RESOURCE_PATH.name)
+        self._image_status_label.setText('지도 미표시')
+
 
     @staticmethod
     def _to_int(value: Any) -> Optional[int]:

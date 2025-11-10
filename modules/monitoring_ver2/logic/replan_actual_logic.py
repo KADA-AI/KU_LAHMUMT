@@ -19,8 +19,7 @@ from data.message_models import (
     ReplanRequestTimeStampModel,
 )
 from push.message0902_push import make_and_push as push_message_0902
-from modules.monitoring_ver2.utils.create_0201_attack import create_attack_plan_from_target
-from .replan_utils import ensure_replan_level_details_file, mark_targets_as_used
+from .replan_utils import ensure_replan_level_details_file
 
 
 FORCED_HOLD_DELAY_SECONDS = 10.0
@@ -28,15 +27,6 @@ FORCED_HOLD_DELAY_REASON = "강제대기 후 10초 경과"
 FORCED_HOLD_DEADLINE_ATTR = "_hold_defer_deadline"
 FORCED_HOLD_REASON_ATTR = "_hold_defer_reason"
 
-TARGET_TYPE_LABELS = {
-    0: "None",
-    1: "전차",
-    2: "장갑차",
-    3: "방사포",
-    4: "곡사포",
-    5: "고정고사포",
-    6: "군인",
-}
 REPLAN_FIELD_SITUATION = "재계획상황"
 REPLAN_FIELD_CONDITION = "재계획조건"
 REPLAN_FIELD_REASON = "재계획사유"
@@ -71,26 +61,6 @@ def _serialize_reason(data: Any) -> str:
         return json.dumps(str(data), ensure_ascii=False)
 
 
-def _extract_first_mission_type(detail: Any) -> Optional[int]:
-    """Return the first missionType from a PriorMissionInfo payload."""
-    try:
-        if hasattr(detail, "priorMissionList"):
-            prior_list = detail.priorMissionList
-        elif isinstance(detail, dict):
-            prior_list = detail.get("priorMissionList")
-        else:
-            prior_list = None
-        if not prior_list:
-            return None
-        first = prior_list[0]
-        if isinstance(first, dict):
-            return int(first.get("missionType")) if first.get("missionType") is not None else None
-        if hasattr(first, "missionType"):
-            return int(first.missionType)
-    except Exception:
-        return None
-    return None
-
 
 def _extract_mandatory_type(detail: Any) -> Optional[int]:
     """Return the mandatoryType from a ForcedCommand payload."""
@@ -111,10 +81,6 @@ def _format_replan_reason(replan_info: Dict[str, Any]) -> str:
     msg_id = str(replan_info.get("original_message_id") or "").zfill(4)
     detail = _find_detail_payload(replan_info)
 
-    if msg_id == "0202":
-        mission_type = _extract_first_mission_type(detail)
-        mission_desc = {1: "의무투입 재계획", 2: "재배치 재계획"}.get(mission_type)
-        return f"임무 재계획 요청({mission_desc})" if mission_desc else "임무 재계획 요청"
 
     if msg_id == "0801":
         return "운용자 명령으로 인한 재계획"
@@ -127,56 +93,6 @@ def _format_replan_reason(replan_info: Dict[str, Any]) -> str:
         }.get(_extract_mandatory_type(detail))
         return mandatory_desc or "강제명령으로 인한 재계획"
 
-    if msg_id == "0402":
-        detail_obj = None
-        if isinstance(detail, str):
-            try:
-                detail_obj = json.loads(detail)
-            except Exception:
-                detail_obj = None
-        elif isinstance(detail, dict):
-            detail_obj = detail
-
-        targets = []
-        if isinstance(detail_obj, dict):
-            maybe_targets = detail_obj.get("targets")
-            if isinstance(maybe_targets, list):
-                targets = maybe_targets
-        elif isinstance(detail, list):
-            targets = detail
-
-        summary_parts: List[str] = []
-        for target in targets:
-            if not isinstance(target, dict):
-                continue
-            watcher_raw = target.get("watcherID")
-            target_raw = target.get("targetID")
-            type_raw = target.get("targetType")
-
-            try:
-                watcher_id = int(watcher_raw) if watcher_raw is not None else None
-            except (TypeError, ValueError):
-                watcher_id = None
-            try:
-                target_id = int(target_raw) if target_raw is not None else None
-            except (TypeError, ValueError):
-                target_id = None
-            try:
-                type_id = int(type_raw) if type_raw is not None else None
-            except (TypeError, ValueError):
-                type_id = None
-
-            watcher_label = f"{watcher_id}번 무인기" if watcher_id is not None else "무인기"
-            if target_id is not None:
-                target_label = f"target ID {target_id}번"
-            else:
-                target_label = f"target ID {target_raw}"
-            type_name = TARGET_TYPE_LABELS.get(type_id, "알 수 없음")
-            summary_parts.append(f"{watcher_label}의 {target_label}({type_name}) 최초 발견")
-
-        if summary_parts:
-            return "0402 신규 표적 감지: " + "; ".join(summary_parts)
-        return "0402 신규 표적 감지"
 
     return _serialize_reason(replan_info)
 
@@ -214,80 +130,26 @@ def _find_detail_payload(replan_info: Dict[str, Any]) -> Any:
     return None
 
 
-def _resolve_target_list(detail_payload: Any) -> Optional[List[Any]]:
-    if detail_payload is None:
-        return None
-    candidate_keys = ("targets", "targetList", "newTargets")
-    if isinstance(detail_payload, dict):
-        for key in candidate_keys:
-            value = detail_payload.get(key)
-            if value:
-                return value
-    for key in candidate_keys:
-        if hasattr(detail_payload, key):
-            value = getattr(detail_payload, key)
-            if value:
-                return value
-    return None
 
 
-def _extract_primary_target(detail_payload: Any) -> Any:
-    targets = _resolve_target_list(detail_payload)
-    if not targets:
-        return None
-    for entry in targets:
-        if entry is None:
-            continue
-        if isinstance(entry, dict):
-            coord = entry.get("coordinate") or entry.get("Coordinate")
-        else:
-            coord = getattr(entry, "coordinate", None) or getattr(entry, "Coordinate", None)
-        if coord:
-            return entry
-    return None
 
-
-def _create_attack_plan_file(detail_payload: Any, manager) -> Optional[str]:
-    target_entry = _extract_primary_target(detail_payload)
-    if not target_entry:
-        return None
-    try:
-        path, meta = create_attack_plan_from_target(target_entry=target_entry)
-    except Exception as exc:
-        try:
-            manager._log("REPLAN_PUSH", "WARN", f"Attack 0201 preparation failed: {exc}")
-        except Exception:
-            pass
-        return None
-    try:
-        manager._log(
-            "REPLAN_PUSH",
-            "INFO",
-            f"Attack 0201 stub ready ({meta.get('output_path')}); missionID={meta.get('mission_id')}",
-        )
-    except Exception:
-        pass
-    return meta.get("output_path")
 
 def judge_replan_situation(manager) -> List[Dict[str, Any]]:
     """Evaluate incoming messages and determine whether a replan should be triggered."""
     replan_situations: List[Dict[str, Any]] = []
 
-    msg_0202 = manager.receive_store.get_data("0202")
-    msg_0402 = manager.receive_store.get_data("0402")
     msg_0801 = manager.receive_store.get_data("0801")
     msg_0802 = manager.receive_store.get_data("0802")
 
     manager._log(
         "REPLAN_JUDGE",
         "INFO",
-        f"Replan judge inputs -> 0202:{msg_0202 is not None}, "
-        f"0801:{msg_0801 is not None}, 0802:{msg_0802 is not None}, 0402:{msg_0402 is not None}",
+        f"Replan judge inputs -> 0801:{msg_0801 is not None}, "
+        f"0802:{msg_0802 is not None}",
     )
 
-    operator_inputs = {"0202": msg_0202, "0801": msg_0801, "0802": msg_0802}
+    operator_inputs = {"0801": msg_0801, "0802": msg_0802}
     operator_situation_labels = {
-        "0202": "운용자 요청 재계획",
         "0801": "운용자 명령 재계획",
         "0802": "강제 명령 재계획",
     }
@@ -317,7 +179,6 @@ def judge_replan_situation(manager) -> List[Dict[str, Any]]:
         )
 
         fallback_reason = {
-            "0202": "운용자 임무 재계획 요청",
             "0801": "운용자 명령",
             "0802": "강제 명령",
         }.get(msg_id, f"운용자 요청 ({msg_id})")
@@ -332,50 +193,7 @@ def judge_replan_situation(manager) -> List[Dict[str, Any]]:
         replan_situations.append(replan_info)
         manager.logic_store.set_data(last_ts_key, current_ts)
 
-    if msg_0402:
-        current_ts = getattr(msg_0402, "timestamp", None)
-        if current_ts is None:
-            manager._log(
-                "REPLAN_JUDGE",
-                "WARN",
-                "0402 message missing timestamp; cannot evaluate new target trigger.",
-            )
-        else:
-            last_ts_key = "replan_last_ts_0402"
-            last_ts = manager.logic_store.get_data(last_ts_key)
-            if current_ts == last_ts:
-                manager.logic_store.set_data("targetInfoNewDetections", [])
-            else:
-                new_targets = manager.logic_store.get_data("targetInfoNewDetections") or []
-                filtered_targets = [dict(target) for target in new_targets if isinstance(target, dict)]
-
-                if filtered_targets:
-                    manager._log(
-                        "REPLAN_JUDGE",
-                        "INFO",
-                        f"0402 new target trigger registered (count={len(filtered_targets)}, ts={current_ts}).",
-                    )
-                    replan_info = {
-                        REPLAN_FIELD_SITUATION: "표적 재계획",
-                        REPLAN_FIELD_CONDITION: "new_target_detected",
-                        REPLAN_FIELD_REASON: "0402 new target detected",
-                        REPLAN_FIELD_DETAIL: {
-                            "timestamp": current_ts,
-                            "targets": filtered_targets,
-                        },
-                        "original_message_id": "0402",
-                    }
-                    replan_situations.append(replan_info)
-                else:
-                    manager._log(
-                        "REPLAN_JUDGE",
-                        "INFO",
-                        f"0402 message received without actionable targets (ts={current_ts}); skipping trigger.",
-                    )
-
-                manager.logic_store.set_data("targetInfoNewDetections", [])
-                manager.logic_store.set_data(last_ts_key, current_ts)
-
+    return replan_situations
     return replan_situations
 
 def manage_replan_triggers(manager) -> Optional[Dict[str, Any]]:
@@ -839,9 +657,6 @@ def _prepare_common_replan_payload(
     }
 
 
-def _prepare_replan_payload_for_0402(manager, confirmed_request: Dict[str, Any]) -> Dict[str, Any]:
-    """0402 기반 재계획 준비 구간 (현재는 기본 로직과 동일)."""
-    return _prepare_common_replan_payload(manager, confirmed_request, msg_id="0402")
 
 
 def _prepare_replan_payload_for_0801(manager, confirmed_request: Dict[str, Any]) -> Dict[str, Any]:
@@ -878,10 +693,7 @@ def determine_level_and_send_request(manager, confirmed_request: Optional[Dict[s
     detail_payload = _find_detail_payload(confirmed_request)
     attack_plan_path = None
 
-    if msg_id == "0402":
-        attack_plan_path = _create_attack_plan_file(detail_payload, manager)
-        preparation = _prepare_replan_payload_for_0402(manager, confirmed_request)
-    elif msg_id == "0801":
+    if msg_id == "0801":
         preparation = _prepare_replan_payload_for_0801(manager, confirmed_request)
     elif msg_id == "0802":
         preparation = _prepare_replan_payload_for_0802(manager, confirmed_request)
@@ -899,11 +711,9 @@ def determine_level_and_send_request(manager, confirmed_request: Optional[Dict[s
     excluded_aircraft_ids = preparation["excluded_aircraft_ids"]
     excluded_input_ids = preparation["excluded_input_ids"]
 
-    if msg_id == "0402" and option_models:
-        try:
-            option_models[0].optionName = "공격추천"
-        except Exception:
-            pass
+
+
+
 
     try:
         ensure_replan_level_details_file()
@@ -929,35 +739,8 @@ def determine_level_and_send_request(manager, confirmed_request: Optional[Dict[s
     manager.push_store.add_data("0902", replan_body)
     udp_reporter.notify_tx("0902")
 
-    if msg_id == "0402":
-        targets_payload = None
-        if isinstance(detail_payload, dict):
-            targets_payload = detail_payload.get("targets")
-        elif hasattr(detail_payload, "targets"):
-            targets_payload = getattr(detail_payload, "targets")
 
-        if targets_payload:
-            if isinstance(targets_payload, (list, tuple, set)):
-                targets_iterable = list(targets_payload)
-            else:
-                targets_iterable = [targets_payload]
-            try:
-                updated_info = mark_targets_as_used(targets_iterable)
-            except Exception as exc:
-                try:
-                    manager._log(
-                        "REPLAN_PUSH",
-                        "WARN",
-                        f"Failed to mark targets as used after 0902: {exc}",
-                    )
-                except Exception:
-                    pass
-            else:
-                try:
-                    manager.logic_store.set_data("targetInfo", updated_info)
-                except Exception:
-                    pass
-
+    manager._log
     manager._log(
         "REPLAN_PUSH",
         "INFO",

@@ -706,6 +706,7 @@ class IndividualMissionIDListModel:
 @dataclass
 class PriorMissionListModel:
     priorMissionID: int
+    missionType: int = 0
 
 
 @dataclass

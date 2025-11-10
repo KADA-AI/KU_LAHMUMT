@@ -80,6 +80,14 @@ class MonitoringManager:
         except Exception as exc:
             self._log("MON_MGR", "ERROR", f"logic message hook failed: {exc}")
 
+        if msg_id == "0202":
+            try:
+                self.logic_handler.monitoring_logic.trigger_prior_mission_replan()
+            except AttributeError:
+                pass
+            except Exception as exc:
+                self._log("MON_MGR", "WARN", f"Immediate 0202 replan trigger failed: {exc}")
+
         # 메시지 ID에 따라 시스템 모드를 업데이트
         if msg_id == "0101" and hasattr(data_object, "systemMode"):
             self.set_system_mode(data_object.systemMode)

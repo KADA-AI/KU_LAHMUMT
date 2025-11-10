@@ -68,7 +68,7 @@ class MainWindow(QMainWindow):
         # 탭 위젯에 탭 추가
         self.tabs.addTab(self.csc_tab, "모니터링 CSC")
         self.tabs.addTab(self.monitoring_tab, "모니터링 요약")
-        self.tabs.addTab(self.mission_area_tab, "임무영역 모니터링")
+        self.tabs.addTab(self.mission_area_tab, "Stack 기반 모니터링")
         self.tabs.addTab(self.replan_rules_info_tab, "재계획 규칙 정보")
         self.tabs.addTab(self.replan_tab, "재계획 판단")
 
