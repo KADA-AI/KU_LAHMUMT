@@ -141,7 +141,7 @@ class MonitoringLogic:
         self._mission_progress_exporter = MissionProgressExporter(
             log_callback=self.manager._log
         )
-        self._prior_mission_replan = PriorMissionReplanCoordinator(manager)
+        self._prior_mission_replan = PriorMissionReplanCoordinator(self)
 
     def trigger_prior_mission_replan(self) -> None:
         """Expose prior mission replan processing for immediate 0202 handling."""
@@ -1583,8 +1583,17 @@ class MonitoringLogic:
         return sorted(ids)
 
     def _collect_prior_mission_ids(self) -> List[int]:
-        """Legacy helper retained for compatibility; 0202 기반 재계획은 별도 파이프라인 사용."""
-        return []
+        try:
+            prior = self.manager.receive_store.get_data("0202")
+        except Exception:
+            prior = None
+        mission_list = self._safe_get(prior, "priorMissionList", "PriorMissionList")
+        ids: Set[int] = set()
+        for item in mission_list or []:
+            value = self._to_int(self._safe_get(item, "priorMissionID", "PriorMissionID"))
+            if value is not None:
+                ids.add(value)
+        return sorted(ids)
 
     def _dispatch_collab_replan(
         self, replan_body: ReplanRequestBodyModel, context: Dict[str, Any]
