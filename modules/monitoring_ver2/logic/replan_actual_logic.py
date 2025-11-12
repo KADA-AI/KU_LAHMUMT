@@ -620,7 +620,6 @@ def _determine_replan_level(msg_id: str, replan_situation: str) -> int:
 TARGET_OPTION_PRESETS: Tuple[Tuple[int, str, int], ...] = (
     (4, "공격 특화", 700000005),
     (5, "공격 배제", 700000006),
-    (6, "시스템 추천", 700000007),
 )
 
 

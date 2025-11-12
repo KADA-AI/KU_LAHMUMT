@@ -181,6 +181,8 @@ def run_prior_mission_pipeline(
 
         prior_mission_id = _to_int(detail.get("priorMissionID"))
         mission_type = _to_int(detail.get("missionType"))
+        target_orientation = detail.get("targetOrientation") or {}
+        target_id = _to_int(target_orientation.get("targetID"))
         aircraft_id = _to_int(detail.get("aircraftID"))
         path_id = _to_int(detail.get("pathID"))
         source_plan_id = _to_int(detail.get("sourceMissionPlanID"))
@@ -219,23 +221,41 @@ def run_prior_mission_pipeline(
             return None
         option_names = _ensure_option_names(plan_ids, ctx.get("option_names") or [])
 
-        if prior_mission_id is None or mission_type is None:
+        prior_record = None
+        if (
+            prior_mission_id is None
+            or mission_type is None
+            or target_id is None
+            or target_coord.get("latitude") is None
+            or target_coord.get("longitude") is None
+        ):
             prior_record = _load_prior_record_from_db(prior_mission_id)
             if prior_record:
                 if prior_mission_id is None:
                     prior_mission_id = prior_record.get("priorMissionID")
                 if mission_type is None:
                     mission_type = prior_record.get("missionType")
-                if target_coord.get("latitude") is None or target_coord.get("longitude") is None:
-                    coord_block = prior_record.get("coordinate")
-                    if coord_block:
-                        target_coord["latitude"] = coord_block.get("latitude")
-                        target_coord["longitude"] = coord_block.get("longitude")
-                        target_coord["altitude"] = coord_block.get("altitude")
-                        emit(
-                            "[PRIOR][STEP2] Target coordinate 보강: PriorMissionInfo 최신 기록에서 좌표 복구."
-                        )
-        elif target_coord.get("latitude") is None or target_coord.get("longitude") is None:
+                if target_id is None:
+                    target_id = prior_record.get("targetID")
+                coord_block = prior_record.get("coordinate")
+                if coord_block and (
+                    target_coord.get("latitude") is None or target_coord.get("longitude") is None
+                ):
+                    target_coord["latitude"] = coord_block.get("latitude")
+                    target_coord["longitude"] = coord_block.get("longitude")
+                    target_coord["altitude"] = coord_block.get("altitude")
+                    emit("[PRIOR][STEP2] Target coordinate 보강: PriorMissionInfo 최신 기록에서 좌표 복구.")
+
+        target_tracking_entry = None
+        if mission_type == 2:
+            target_tracking_entry = _load_target_tracking_entry(target_id)
+            if target_tracking_entry:
+                coord_block = target_tracking_entry.get("coordinate") or {}
+                if coord_block:
+                    target_coord["latitude"] = coord_block.get("latitude")
+                    target_coord["longitude"] = coord_block.get("longitude")
+                    target_coord["altitude"] = coord_block.get("altitude")
+        if target_coord.get("latitude") is None or target_coord.get("longitude") is None:
             fallback_coord = _load_prior_coordinate_from_db(prior_mission_id)
             if fallback_coord:
                 target_coord["latitude"] = fallback_coord.get("latitude")
@@ -253,8 +273,23 @@ def run_prior_mission_pipeline(
         if "altitude" not in target_coord:
             target_coord["altitude"] = None
 
-        selected_agent_summary, selected_agent_distance_m = _select_nearest_agent(lat, lon, agent_summaries)
-        _log_step3_nearest_agent(emit, selected_agent_summary, selected_agent_distance_m)
+        if mission_type == 2 and target_tracking_entry:
+            watcher_id = _to_int(target_tracking_entry.get("watcherID"))
+            if watcher_id is not None:
+                selected_agent_summary = next(
+                    (summary for summary in agent_summaries if summary.aircraft_id == watcher_id),
+                    None,
+                )
+                selected_agent_distance_m = None
+                if selected_agent_summary:
+                    emit(
+                        f"[PRIOR][STEP3] Target-tracking watcher UAV {watcher_id} selected (targetID={target_id})."
+                    )
+        if selected_agent_summary is None:
+            selected_agent_summary, selected_agent_distance_m = _select_nearest_agent(
+                lat, lon, agent_summaries
+            )
+            _log_step3_nearest_agent(emit, selected_agent_summary, selected_agent_distance_m)
 
         if selected_agent_summary is None:
             return None
@@ -349,12 +384,15 @@ def run_prior_mission_pipeline(
         target_mission_entry["isDone"] = False
         new_imp_data["individualMissionPackageID"] = new_imp_id
 
+        target_tracking_payload = {"targetID": target_id} if mission_type == 2 and target_id is not None else None
         removed_wp_id, inserted_wp = _inject_prior_waypoint(
             new_fp_data,
             current_waypoint_id,
             previous_waypoint_id,
             target_coord,
             new_waypoint_id,
+            mission_type=mission_type,
+            target_tracking=target_tracking_payload,
         )
         inserted_wp_id = new_waypoint_id
         new_fp_data["pathID"] = new_path_id
@@ -620,6 +658,9 @@ def _inject_prior_waypoint(
     previous_waypoint_id: Optional[int],
     target_coord: Dict[str, float],
     new_waypoint_id: int,
+    *,
+    mission_type: Optional[int] = None,
+    target_tracking: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Optional[int], Dict[str, Any]]:
     waypoint_list = list(flight_path.get("waypointList") or [])
     current_index = None
@@ -682,6 +723,14 @@ def _inject_prior_waypoint(
             "speed": 30,
         },
     }
+
+    if mission_type == 2:
+        filming = inserted_wp.get("filmingProperty") or {}
+        filming["operationMode"] = 3
+        inserted_wp["filmingProperty"] = filming
+        target_track_id = _to_int((target_tracking or {}).get("targetID"))
+        if target_track_id is not None:
+            inserted_wp["autoTracking"] = {"targetID": target_track_id}
 
     waypoint_list.insert(current_index, inserted_wp)
     if preceding_index >= 0:
@@ -746,6 +795,27 @@ def _preview_value(value: Any, limit: int = 256) -> str:
     if len(text) > limit:
         return text[: limit - 3] + "..."
     return text
+def _load_target_tracking_entry(target_id: Optional[int]) -> Optional[Dict[str, Any]]:
+    if target_id is None:
+        return None
+    try:
+        target_path = db_paths.get_db_subpath("DSS_Internal", "targetInfo.json")
+        data = json.loads(target_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    target_list = data.get("targetList")
+    if not isinstance(target_list, dict):
+        return None
+    for entry in target_list.values():
+        if not isinstance(entry, dict):
+            continue
+        entry_target_id = _to_int(entry.get("targetID"))
+        if entry_target_id != target_id:
+            continue
+        return entry
+    return None
+
+
 def _load_prior_coordinate_from_db(prior_mission_id: Optional[int]) -> Optional[Dict[str, float]]:
     if prior_mission_id is None:
         return None
@@ -801,10 +871,12 @@ def _load_prior_record_from_db(prior_mission_id: Optional[int]) -> Optional[Dict
             if isinstance(payload.get("coordinateOrientation"), dict)
             else None
         )
+        target_block = payload.get("targetOrientation") or {}
         record = {
             "priorMissionID": payload.get("priorMissionID"),
             "missionType": payload.get("missionType"),
             "coordinate": coord_block,
+            "targetID": _to_int(target_block.get("targetID")),
         }
         return record
     return None

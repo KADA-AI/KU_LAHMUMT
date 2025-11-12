@@ -1,0 +1,69 @@
+{
+  "timestamp": 816296225854,
+  "reason": "선행임무 : 표적추적",
+  "priorMissionID": 1,
+  "missionType": 2,
+  "targetCoordinate": {
+    "latitude": 38.141353607177734,
+    "longitude": 127.31487274169922,
+    "altitude": -38
+  },
+  "selectedAircraftID": 4,
+  "sourceMissionPlanID": 700000001,
+  "sourceIndividualMissionPackageID": 800010101,
+  "sourcePathID": 400000005,
+  "currentWaypointID": 20,
+  "removedWaypointID": 19,
+  "insertedWaypoint": {
+    "waypointID": 655,
+    "coordinate": {
+      "latitude": 38.141353607177734,
+      "longitude": 127.31487274169922,
+      "altitude": -38
+    },
+    "speed": 30.0,
+    "eta": 30,
+    "ecf": 0.0,
+    "nextWaypointID": 20,
+    "waypointPassType": 2,
+    "filmingProperty": {
+      "fieldOfView": 5.0,
+      "sensorType": 1,
+      "operationMode": 3,
+      "coordinateOrientation": {
+        "coordinate": {
+          "latitude": 38.141353607177734,
+          "longitude": 127.31487274169922,
+          "altitude": -38
+        }
+      }
+    },
+    "loiterProperty": {
+      "radius": 400,
+      "direction": 1,
+      "time": 30,
+      "speed": 30
+    },
+    "autoTracking": {
+      "targetID": 7
+    }
+  },
+  "telemetrySnapshot": null,
+  "generatedMissionPlanID": 700000010,
+  "generatedIndividualMissionPackageID": 800010134,
+  "generatedIndividualMissionID": 900121814,
+  "generatedPathID": 400000039,
+  "logMessages": [
+    "[PRIOR] detail keys: ∅",
+    "[PRIOR] sourceMissionPlanID resolved from mission_progress (planID=700000001).",
+    "[PRIOR][STEP1] Loaded 0401 snapshot with 3 unmanned entries (saved_at=2025-11-12T20:57:05.663221+00:00).",
+    "[PRIOR][STEP1] UAV 4: currentWP=20, coord=(38.148426, 127.324081, alt=450.0)",
+    "[PRIOR][STEP1] UAV 5: currentWP=52, coord=(38.146626, 127.327301, alt=450.0)",
+    "[PRIOR][STEP1] UAV 6: currentWP=85, coord=(38.145111, 127.330345, alt=450.0)",
+    "[PRIOR][STEP2] Target coordinate (0202) → (38.141354, 127.314873, alt=-38.0)",
+    "[PRIOR][STEP3] Nearest UAV 4 selected based on 0401 snapshot (currentWP=20, distance≈1125.6 m).",
+    "[PRIOR][STEP4] Reserved new waypoint ID 655 for UAV 4 (currentWP=20, distance≈1125.6 m).",
+    "[PRIOR] Allocated IDs -> plan:700000010 imp:800010134 path:400000039 indiv:900121814 wp:655",
+    "[PRIOR] Stored new artifacts -> plan:700000010.json, imp:800010134.json, fp:400000039.json"
+  ]
+}

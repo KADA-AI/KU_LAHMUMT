@@ -12,6 +12,7 @@ import tempfile
 from collections import defaultdict
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from html import escape
 from itertools import cycle
 from pathlib import Path
 from typing import Any, Iterable, Optional
@@ -33,6 +34,7 @@ from PyQt5.QtWidgets import (
     QPlainTextEdit,
     QVBoxLayout,
     QWidget,
+    QCheckBox,
 )
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 
@@ -131,6 +133,7 @@ class MissionPlanVisualizer(QWidget):
         self.connected_entries: list[ConnectedEntry] = []
         self.entries_by_input: dict[int, list[ConnectedEntry]] = defaultdict(list)
         self.paths_data: dict[int, FlightPathEntry] = {}
+        self.path_to_entries: defaultdict[int, list[ConnectedEntry]] = defaultdict(list)
         self.connected_plans: dict[int, dict[str, Any]] = {}
 
         self._mission_row_lookup: dict[int, int] = {}
@@ -177,6 +180,35 @@ class MissionPlanVisualizer(QWidget):
         self.connection_label = QLabel("연결된 MissionPlan/Individual 정보가 여기에 표시됩니다.")
         self.connection_label.setWordWrap(True)
         side_layout.addWidget(self.connection_label)
+
+        layer_row = QHBoxLayout()
+        layer_row.addWidget(QLabel("레이어:"))
+        self.chk_input = QCheckBox("Input")
+        self.chk_input.setChecked(True)
+        self.chk_input.stateChanged.connect(self._render_map)
+        layer_row.addWidget(self.chk_input)
+
+        self.chk_individual = QCheckBox("Individual")
+        self.chk_individual.setChecked(True)
+        self.chk_individual.stateChanged.connect(self._render_map)
+        layer_row.addWidget(self.chk_individual)
+
+        self.chk_paths = QCheckBox("Path")
+        self.chk_paths.setChecked(True)
+        self.chk_paths.stateChanged.connect(self._render_map)
+        layer_row.addWidget(self.chk_paths)
+
+        self.chk_waypoints = QCheckBox("WP")
+        self.chk_waypoints.setChecked(True)
+        self.chk_waypoints.stateChanged.connect(self._render_map)
+        layer_row.addWidget(self.chk_waypoints)
+
+        self.chk_focus_only = QCheckBox("선택만 보기")
+        self.chk_focus_only.setToolTip("체크 시 선택한 항목과 연결된 레이어만 표시합니다.")
+        self.chk_focus_only.stateChanged.connect(self._render_map)
+        layer_row.addWidget(self.chk_focus_only)
+        layer_row.addStretch(1)
+        side_layout.addLayout(layer_row)
 
         side_layout.addWidget(QLabel("Input 임무 목록"))
         self.mission_list = QListWidget()
@@ -253,6 +285,7 @@ class MissionPlanVisualizer(QWidget):
         self.entries_by_input = defaultdict(list)
         self.paths_data.clear()
         self.connected_plans.clear()
+        self.path_to_entries = defaultdict(list)
 
         if self.package_id is None or self.db_root is None or not self.db_root.exists():
             self.connection_label.setText("연결된 데이터를 찾을 수 없습니다.")
@@ -294,6 +327,8 @@ class MissionPlanVisualizer(QWidget):
                 entries.append(entry)
                 if entry.input_mission_id is not None:
                     self.entries_by_input[int(entry.input_mission_id)].append(entry)
+                if entry.path_id is not None:
+                    self.path_to_entries[int(entry.path_id)].append(entry)
 
         self.connected_entries = entries
         aircraft_ids = sorted(
@@ -595,9 +630,16 @@ class MissionPlanVisualizer(QWidget):
         focus_entry = self._current_individual_entry()
         focus_input_id = self._current_focus_id or (focus_entry.input_mission_id if focus_entry else None)
 
-        self._draw_input_missions(fmap, missions, focus_input_id)
-        self._draw_individual_missions(fmap, focus_entry, focus_input_id)
-        self._draw_flight_paths(fmap, focus_entry)
+        show_input = getattr(self, "chk_input", None).isChecked() if hasattr(self, "chk_input") else True
+        show_individual = getattr(self, "chk_individual", None).isChecked() if hasattr(self, "chk_individual") else True
+        show_paths = getattr(self, "chk_paths", None).isChecked() if hasattr(self, "chk_paths") else True
+        show_waypoints = getattr(self, "chk_waypoints", None).isChecked() if hasattr(self, "chk_waypoints") else True
+        focus_only = getattr(self, "chk_focus_only", None).isChecked() if hasattr(self, "chk_focus_only") else False
+
+        self._draw_input_missions(fmap, missions, focus_input_id, focus_only, show_input)
+        self._draw_individual_missions(fmap, focus_entry, focus_input_id, focus_only, show_individual)
+        self._draw_flight_paths(fmap, focus_entry, focus_input_id, focus_only, show_paths)
+        self._draw_waypoints(fmap, focus_entry, focus_input_id, focus_only, show_waypoints)
         self._attach_legend(fmap, missions, focus_input_id, focus_entry)
         self._write_map(fmap)
 
@@ -606,12 +648,22 @@ class MissionPlanVisualizer(QWidget):
         fmap: folium.Map,
         missions: list[dict[str, Any]],
         focus_input_id: Optional[int],
+        focus_only: bool,
+        show_layer: bool,
     ) -> None:
+        if not show_layer:
+            return
+        enforce_focus = focus_only and focus_input_id is not None
         for mission in missions:
             mission_id = mission.get("inputMissionID")
             detail = mission.get("missionDetail") or {}
             color = self._color_for_mission(mission_id)
-            highlight = focus_input_id is None or mission_id == focus_input_id
+            if enforce_focus and mission_id != focus_input_id:
+                continue
+            if focus_only and focus_input_id is None:
+                highlight = True
+            else:
+                highlight = focus_input_id is None or mission_id == focus_input_id
             tone = color if highlight else "#B0B4B8"
             opacity = 0.9 if highlight else 0.32
             linked = len(self.entries_by_input.get(int(mission_id or -1), []))
@@ -625,18 +677,28 @@ class MissionPlanVisualizer(QWidget):
         fmap: folium.Map,
         focus_entry: Optional[ConnectedEntry],
         focus_input_id: Optional[int],
+        focus_only: bool,
+        show_layer: bool,
     ) -> None:
-        if not self.connected_entries:
+        if not self.connected_entries or not show_layer:
             return
 
         for entry in self.connected_entries:
             color = self._color_for_aircraft(entry.aircraft_id)
+            highlight = True
             if focus_entry:
                 highlight = entry is focus_entry
             elif focus_input_id is not None and entry.input_mission_id is not None:
                 highlight = int(entry.input_mission_id) == int(focus_input_id)
-            else:
-                highlight = True
+
+            if focus_only:
+                if focus_entry and entry is not focus_entry:
+                    continue
+                if focus_entry is None and focus_input_id is not None:
+                    if entry.input_mission_id != focus_input_id:
+                        continue
+                if focus_entry is None and focus_input_id is None:
+                    highlight = True
 
             tone = color if highlight else "#8b939c"
             opacity = 0.9 if highlight else 0.25
@@ -648,21 +710,32 @@ class MissionPlanVisualizer(QWidget):
             )
             self._draw_geometry(entry.info or {}, fmap, tone, opacity, tooltip)
 
-    def _draw_flight_paths(self, fmap: folium.Map, focus_entry: Optional[ConnectedEntry]) -> None:
-        if not self.paths_data:
+    def _draw_flight_paths(
+        self,
+        fmap: folium.Map,
+        focus_entry: Optional[ConnectedEntry],
+        focus_input_id: Optional[int],
+        focus_only: bool,
+        show_layer: bool,
+    ) -> None:
+        if not self.paths_data or not show_layer:
             return
 
-        focus_path_id = focus_entry.path_id if focus_entry else None
+        selected_paths = self._collect_target_paths(focus_entry, focus_input_id)
+        target_paths = selected_paths if focus_only else None
 
         for path_id, fp_entry in self.paths_data.items():
+            if target_paths is not None:
+                if not target_paths:
+                    continue
+                if path_id not in target_paths:
+                    continue
             coords = [(lat, lon) for lat, lon, _ in fp_entry.coordinates]
             if len(coords) < 2:
                 continue
             color = self._color_for_aircraft(fp_entry.aircraft_id)
-            if focus_path_id:
-                highlight = path_id == focus_path_id
-            elif focus_entry:
-                highlight = path_id == focus_entry.path_id
+            if selected_paths:
+                highlight = path_id in selected_paths
             else:
                 highlight = True
 
@@ -680,6 +753,51 @@ class MissionPlanVisualizer(QWidget):
                 dash_array="6,6",
                 tooltip=tooltip,
             ).add_to(fmap)
+
+    def _draw_waypoints(
+        self,
+        fmap: folium.Map,
+        focus_entry: Optional[ConnectedEntry],
+        focus_input_id: Optional[int],
+        focus_only: bool,
+        show_layer: bool,
+    ) -> None:
+        if not self.paths_data or not show_layer:
+            return
+
+        selected_paths = self._collect_target_paths(focus_entry, focus_input_id)
+        target_paths = selected_paths if focus_only else None
+
+        for path_id, fp_entry in self.paths_data.items():
+            if target_paths is not None:
+                if not target_paths:
+                    continue
+                if path_id not in target_paths:
+                    continue
+
+            color = self._color_for_aircraft(fp_entry.aircraft_id)
+            tone = color if not selected_paths or path_id in selected_paths else "#6c757d"
+            for idx, waypoint in enumerate(fp_entry.waypoints or []):
+                coord = waypoint.get("coordinate") or {}
+                lat = coord.get("latitude")
+                lon = coord.get("longitude")
+                if lat is None or lon is None:
+                    continue
+
+                wp_id = waypoint.get("waypointID") or idx + 1
+                tooltip = f"WP {wp_id} | Path {path_id} | AC {fp_entry.aircraft_id or '-'}"
+                popup_html = self._waypoint_popup_html(path_id, waypoint, fp_entry)
+                marker = folium.CircleMarker(
+                    location=(lat, lon),
+                    radius=4 if selected_paths and path_id not in selected_paths else 6,
+                    color=tone,
+                    fill=True,
+                    fill_color=tone,
+                    fill_opacity=0.95,
+                    tooltip=tooltip,
+                )
+                marker.add_child(folium.Popup(popup_html, max_width=420))
+                marker.add_to(fmap)
 
     def _draw_geometry(
         self,
@@ -903,6 +1021,63 @@ class MissionPlanVisualizer(QWidget):
             alt = coord.get("altitude", "N/A")
             lines.append(f"  - ({lat:.6f}, {lon:.6f}, alt={alt})")
         return "\n".join(lines) or "  - 없음"
+
+    def _collect_target_paths(
+        self,
+        focus_entry: Optional[ConnectedEntry],
+        focus_input_id: Optional[int],
+    ) -> set[int]:
+        targets: set[int] = set()
+        if focus_entry and focus_entry.path_id:
+            targets.add(int(focus_entry.path_id))
+        if focus_input_id is not None:
+            for entry in self.entries_by_input.get(int(focus_input_id), []):
+                if entry.path_id is not None:
+                    targets.add(int(entry.path_id))
+        return targets
+
+    def _waypoint_popup_html(
+        self,
+        path_id: int,
+        waypoint: dict[str, Any],
+        fp_entry: FlightPathEntry,
+    ) -> str:
+        coord = waypoint.get("coordinate") or {}
+        hovering = waypoint.get("hovering") or {}
+        loiter = waypoint.get("loiter") or {}
+        attack = waypoint.get("attack") or {}
+        linked = self.path_to_entries.get(path_id, [])
+
+        def fmt(title: str, value: Any) -> str:
+            return f"<b>{escape(title)}</b>: {escape(str(value))}"
+
+        lines = [
+            f"<b>Path {path_id}</b> / AC {escape(str(fp_entry.aircraft_id or '-'))}",
+            fmt("WaypointID", waypoint.get("waypointID", "-")),
+            fmt("Coordinate", f"{coord.get('latitude', '-')}, {coord.get('longitude', '-')}, ALT {coord.get('altitude', '-')}"),
+            fmt("ETA", waypoint.get("eta", "-")),
+            fmt("Speed", waypoint.get("speed", "-")),
+            fmt("Next WP", waypoint.get("nextWaypointID", "-")),
+        ]
+
+        if hovering:
+            lines.append(fmt("Hover", hovering.get("time", "-")))
+        if loiter:
+            lines.append(fmt("Loiter", f"R{loiter.get('radius', '-')}, T{loiter.get('time', '-')}"))
+        if attack and any(attack.values()):
+            lines.append(fmt("Attack", f"TGT {attack.get('targetID', '-')}, Weapon {attack.get('weaponType', '-')}"))
+
+        if linked:
+            mission_lines = "<br>".join(
+                escape(
+                    f"Input {entry.input_mission_id or '-'} | IMP {entry.individual_package_id} | IM {entry.individual_mission_id} | Plan {', '.join(str(pid) for pid in entry.plan_ids) or '-'}"
+                )
+                for entry in linked
+            )
+        else:
+            mission_lines = "없음"
+        lines.append(f"<b>Linked Missions</b><br>{mission_lines}")
+        return "<br>".join(lines)
 
     def _detect_db_root(self, file_path: Path) -> Path:
         """Try to locate the scenario root that contains mission artifacts."""
