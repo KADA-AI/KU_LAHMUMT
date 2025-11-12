@@ -310,6 +310,7 @@ class MainWindow(QMainWindow):
             "option_names": option_names,
             "replan_level": payload.get("replanLevel", 1),
             "reason": payload.get("replanReason") or payload.get("replanRequest") or "",
+            "replan_detail": payload.get("replanDetail"),
         }
 
     def _stage_replan_context(

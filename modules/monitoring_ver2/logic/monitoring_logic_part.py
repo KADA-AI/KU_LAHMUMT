@@ -1,6 +1,7 @@
 ﻿
 from datetime import datetime, timezone
 from dataclasses import asdict
+import threading
 import time
 
 from pathlib import Path
@@ -20,11 +21,17 @@ from data.message_models import (
 )
 from push.push_center import push_message
 from .monitoring_actual_logic import run_monitoring_procedure
-from .replan_actual_logic import run_replan_procedure
+from .replan_actual_logic import (
+    run_replan_procedure,
+    REPLAN_FIELD_DETAIL,
+    REPLAN_FIELD_REASON,
+    REPLAN_FIELD_SITUATION,
+)
 from .replan_utils import (
     ensure_replan_level_details_file,
     load_target_info,
     update_target_info_from_0402,
+    mark_targets_as_used,
 )
 import udp_reporter
 import socket
@@ -61,6 +68,25 @@ FORCED_HOLD_DELAY_SECONDS = 10.0
 FORCED_HOLD_DELAY_REASON = "강제대기 후 10초 경과"
 FORCED_HOLD_DEADLINE_ATTR = "_hold_defer_deadline"
 FORCED_HOLD_REASON_ATTR = "_hold_defer_reason"
+FORCED_HOLD_STATE_KEY = "forced_hold_state_map"
+TARGET_REPLAN_SITUATION_LABEL = "0402 표적 탐지 재계획"
+ROI_REPLAN_SITUATION_LABEL = "0402 ROI 지속 재계획"
+ROI_CAUTION_TIMEOUT_SECONDS = 10.0
+TARGET_TYPE_LABELS = {
+    None: "표적",
+    0: "표적",
+    1: "전차",
+    2: "장갑차",
+    3: "방사포",
+    4: "곡사포",
+    5: "고정고사포",
+    6: "군인",
+}
+WATCHER_CALLSIGN_MAP = {
+    4: "무인기 1번",
+    5: "무인기 2번",
+    6: "무인기 3번",
+}
 
 
 def _inform_info_module(msg_id: str, body: dict):
@@ -121,6 +147,7 @@ class MonitoringLogic:
         ] = None
         self._collab_replan_waiting_for_new_input_logged: bool = False
         self._used_option_ids: Set[int] = set()
+        self._target_trigger_history: Dict[str, int] = {}
         self._allocated_plan_ids: Set[int] = set()
         self._existing_mission_plan_ids: Set[int] = set()
         self._pending_mission_plan_id: Optional[int] = None
@@ -142,6 +169,11 @@ class MonitoringLogic:
             log_callback=self.manager._log
         )
         self._prior_mission_replan = PriorMissionReplanCoordinator(self)
+        self._roi_caution_active: bool = False
+        self._roi_caution_started_ms: Optional[int] = None
+        self._roi_caution_timer: Optional[threading.Timer] = None
+        self._roi_caution_snapshot: List[Dict[str, Any]] = []
+        self._roi_caution_triggered: bool = False
 
     def trigger_prior_mission_replan(self) -> None:
         """Expose prior mission replan processing for immediate 0202 handling."""
@@ -781,6 +813,7 @@ class MonitoringLogic:
             pass
 
     def _handle_situation_awareness(self, data: Any) -> None:
+        message_ts = self._to_int(self._safe_get(data, "timestamp", "Timestamp"))
         try:
             previous = load_target_info()
         except Exception:
@@ -796,6 +829,22 @@ class MonitoringLogic:
             return
 
         replan_triggered = False
+        prev_targets: Dict[str, Dict[str, Any]] = (previous or {}).get("targetList") or {}
+        new_targets: Dict[str, Dict[str, Any]] = info.get("targetList") or {}
+
+        if new_targets:
+            target_replan_triggered = self._process_target_replan_candidates(new_targets)
+            if target_replan_triggered:
+                replan_triggered = True
+                try:
+                    self._trigger_replan_if_active()
+                except Exception as exc:
+                    self.manager._log(
+                        "MON_LOGIC",
+                        "WARN",
+                        f"0402 표적 기반 재계획 트리거 실행 실패: {exc}",
+                    )
+
         try:
             self.manager.logic_store.set_data("targetInfo", info)
             self.manager.logic_store.set_data("targetInfoNewDetections", new_detections)
@@ -808,18 +857,16 @@ class MonitoringLogic:
                     "INFO",
                     f"0402 신규 표적 감지 {len(new_detections)}건",
                 )
-                try:
-                    self._trigger_replan_if_active()
-                    replan_triggered = True
-                except Exception as exc:
-                    self.manager._log(
-                        "MON_LOGIC",
-                        "WARN",
-                        f"새 표적 감지 후 재계획 트리거 시도 실패: {exc}",
-                    )
-
-        prev_targets: Dict[str, Dict[str, Any]] = (previous or {}).get("targetList") or {}
-        new_targets: Dict[str, Dict[str, Any]] = info.get("targetList") or {}
+                if not replan_triggered:
+                    try:
+                        self._trigger_replan_if_active()
+                        replan_triggered = True
+                    except Exception as exc:
+                        self.manager._log(
+                            "MON_LOGIC",
+                            "WARN",
+                            f"새 표적 감지 후 재계획 트리거 시도 실패: {exc}",
+                        )
 
         prev_count = len(prev_targets)
         new_count = len(new_targets)
@@ -850,6 +897,9 @@ class MonitoringLogic:
                     f"lat={coord.get('latitude')}, lon={coord.get('longitude')}",
                 )
 
+        roi_entries = self._collect_active_roi_entries(new_targets)
+        self._update_roi_caution_state(roi_entries, message_ts)
+
         pending_targets: List[str] = []
         for key, entry in new_targets.items():
             if not isinstance(entry, dict):
@@ -877,6 +927,318 @@ class MonitoringLogic:
                     f"기존 표적 재확인 재계획 트리거 실패: {exc}",
                 )
 
+    def _process_target_replan_candidates(self, target_map: Dict[str, Any]) -> bool:
+        """
+        Scan DSS targetInfo data for actionable targets (isUsed=0, known target) and
+        enqueue replan situations with descriptive reasons. Returns True if at least one
+        new trigger was added.
+        """
+        if not isinstance(target_map, dict):
+            self._target_trigger_history.clear()
+            return False
+
+        triggered = False
+        actionable_keys: Set[str] = set()
+
+        for key, entry in target_map.items():
+            key_str = str(key)
+            if not self._is_actionable_target_entry(key_str, entry):
+                continue
+            keep_history = True
+
+            previous = self._target_trigger_history.get(key_str)
+            last_updated = self._extract_target_timestamp(entry)
+            if last_updated is None and previous is not None:
+                last_updated = previous
+            if previous is not None and last_updated is not None and last_updated <= previous:
+                actionable_keys.add(key_str)
+                continue
+
+            payload = self._build_target_replan_payload(key_str, entry)
+            if not payload:
+                actionable_keys.add(key_str)
+                continue
+
+            self._append_replan_situation(payload)
+            if last_updated is not None:
+                self._target_trigger_history[key_str] = last_updated
+            else:
+                self._target_trigger_history[key_str] = self._current_time_ms()
+
+            reason = payload.get(REPLAN_FIELD_REASON, "")
+            self.manager._log(
+                "MON_LOGIC",
+                "INFO",
+                f"0402 표적 기반 재계획 트리거 적재: key={key_str}, reason={reason}",
+            )
+            triggered = True
+            keep_history = False
+
+            self._mark_target_as_used_for_trigger(key_str, entry)
+
+            if keep_history:
+                actionable_keys.add(key_str)
+
+        stale_keys = [key for key in self._target_trigger_history.keys() if key not in actionable_keys]
+        for key in stale_keys:
+            self._target_trigger_history.pop(key, None)
+
+        return triggered
+
+    def _is_actionable_target_entry(self, key: str, entry: Any) -> bool:
+        if not isinstance(entry, dict):
+            return False
+        if key.startswith("unknown-"):
+            return False
+        target_id = self._to_int(entry.get("targetID"))
+        if target_id is None:
+            return False
+        if self._to_int(entry.get("isUsed")) == 1:
+            return False
+        if self._to_int(entry.get("isIgnored")) == 1:
+            return False
+        if bool(entry.get("isDestroyed")):
+            return False
+        return True
+
+    def _extract_target_timestamp(self, entry: Dict[str, Any]) -> Optional[int]:
+        if not isinstance(entry, dict):
+            return None
+        for field in ("lastUpdated", "LastUpdated", "timestamp", "Timestamp", "lastObserved"):
+            value = entry.get(field)
+            ts = self._to_int(value)
+            if ts is not None:
+                return ts
+        return self._to_int(entry.get("firstDetected"))
+
+    def _build_target_replan_payload(self, key: str, entry: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        target_id = self._to_int(entry.get("targetID"))
+        if target_id is None:
+            return None
+        watcher_id = self._to_int(entry.get("watcherID"))
+        if watcher_id is None:
+            watcher_id = self._extract_watcher_from_key(key)
+        target_type = self._to_int(entry.get("targetType"))
+        reason = self._format_target_reason(watcher_id, target_type, target_id)
+        detail_payload = {
+            "trigger": "0402",
+            "targetKey": key,
+            "targetID": target_id,
+            "watcherID": watcher_id,
+            "targetType": target_type,
+            "threat": entry.get("threat"),
+            "targetInFrame": entry.get("targetInFrame"),
+            "coordinate": entry.get("coordinate"),
+            "preferredOptionCount": 3,
+            "snapshot": entry,
+        }
+        return {
+            REPLAN_FIELD_SITUATION: TARGET_REPLAN_SITUATION_LABEL,
+            REPLAN_FIELD_REASON: reason,
+            REPLAN_FIELD_DETAIL: detail_payload,
+            "original_message_id": "0402",
+        }
+
+    def _append_replan_situation(self, payload: Dict[str, Any]) -> None:
+        try:
+            existing = self.manager.logic_store.get_data("ReplanSituations")
+        except Exception:
+            existing = None
+        if not isinstance(existing, list):
+            existing = []
+        existing.append(payload)
+        self.manager.logic_store.set_data("ReplanSituations", existing)
+        # expose for UI immediately
+        try:
+            self.manager.logic_store.set_data(
+                "replan_triggers",
+                [payload],
+            )
+        except Exception:
+            pass
+
+    def _mark_target_as_used_for_trigger(self, key: str, entry: Dict[str, Any]) -> None:
+        target_id = self._to_int(entry.get("targetID"))
+        watcher_id = self._to_int(entry.get("watcherID"))
+        payload = {"key": key, "targetID": target_id, "watcherID": watcher_id}
+        try:
+            mark_targets_as_used([payload])
+        except Exception as exc:
+            self.manager._log(
+                "MON_LOGIC",
+                "WARN",
+                f"0402 표적 isUsed 업데이트 실패(key={key}): {exc}",
+            )
+            return
+        if isinstance(entry, dict):
+            entry["isUsed"] = 1
+
+    def _extract_watcher_from_key(self, key: str) -> Optional[int]:
+        parts = str(key).split("-")
+        if len(parts) != 2:
+            return None
+        return self._to_int(parts[1])
+
+    def _format_target_reason(
+        self,
+        watcher_id: Optional[int],
+        target_type: Optional[int],
+        target_id: int,
+    ) -> str:
+        watcher_label = self._format_watcher_label(watcher_id)
+        target_label = self._resolve_target_type_label(target_type)
+        return f"{watcher_label} - {target_label}(ID-{target_id}) 발견으로 인한 재계획"
+
+    def _format_watcher_label(self, watcher_id: Optional[int]) -> str:
+        if watcher_id is None:
+            return "무인기"
+        return WATCHER_CALLSIGN_MAP.get(watcher_id, f"무인기 {watcher_id}")
+
+    def _resolve_target_type_label(self, target_type: Optional[int]) -> str:
+        if target_type in TARGET_TYPE_LABELS:
+            return TARGET_TYPE_LABELS[target_type]
+        if target_type is None:
+            return TARGET_TYPE_LABELS[None]
+        return TARGET_TYPE_LABELS.get(None, "표적")
+
+    def _collect_active_roi_entries(self, target_map: Dict[str, Any]) -> List[Dict[str, Any]]:
+        entries: List[Dict[str, Any]] = []
+        if not isinstance(target_map, dict):
+            return entries
+        for key, entry in target_map.items():
+            key_str = str(key)
+            if not key_str.startswith("unknown-"):
+                continue
+            if not isinstance(entry, dict):
+                continue
+            if bool(entry.get("isDestroyed")):
+                continue
+            watcher_id = self._to_int(entry.get("watcherID"))
+            if watcher_id is None:
+                watcher_id = self._extract_watcher_from_key(key_str)
+            entries.append(
+                {
+                    "key": key_str,
+                    "watcherID": watcher_id,
+                    "coordinate": entry.get("coordinate"),
+                    "threat": entry.get("threat"),
+                    "targetInFrame": entry.get("targetInFrame"),
+                    "lastUpdated": self._extract_target_timestamp(entry),
+                }
+            )
+        return entries
+
+    def _update_roi_caution_state(
+        self, roi_entries: List[Dict[str, Any]], timestamp_ms: Optional[int]
+    ) -> None:
+        if roi_entries:
+            self._set_roi_caution_state(True, timestamp_ms, roi_entries)
+        else:
+            self._set_roi_caution_state(False, None, [])
+
+    def _set_roi_caution_state(
+        self,
+        active: bool,
+        timestamp_ms: Optional[int],
+        roi_entries: List[Dict[str, Any]],
+    ) -> None:
+        if active:
+            self._roi_caution_snapshot = list(roi_entries)
+            if self._roi_caution_active:
+                return
+            self._roi_caution_active = True
+            self._roi_caution_triggered = False
+            self._roi_caution_started_ms = timestamp_ms or self._current_time_ms()
+            self.manager._log(
+                "MON_LOGIC",
+                "INFO",
+                f"0402 ROI caution 모드 ON (count={len(roi_entries)}, timeout={ROI_CAUTION_TIMEOUT_SECONDS}s)",
+            )
+            self._schedule_roi_caution_check()
+        else:
+            if not self._roi_caution_active:
+                return
+            self._roi_caution_active = False
+            self._roi_caution_triggered = False
+            self._roi_caution_started_ms = None
+            self._roi_caution_snapshot = []
+            self._cancel_roi_caution_timer()
+            self.manager._log("MON_LOGIC", "INFO", "0402 ROI caution 모드 OFF")
+
+    def _schedule_roi_caution_check(self) -> None:
+        self._cancel_roi_caution_timer()
+        timer = threading.Timer(ROI_CAUTION_TIMEOUT_SECONDS, self._roi_caution_timeout_fired)
+        timer.daemon = True
+        self._roi_caution_timer = timer
+        timer.start()
+
+    def _cancel_roi_caution_timer(self) -> None:
+        timer = self._roi_caution_timer
+        if timer is not None:
+            try:
+                timer.cancel()
+            except Exception:
+                pass
+        self._roi_caution_timer = None
+
+    def _roi_caution_timeout_fired(self) -> None:
+        self._roi_caution_timer = None
+        if not self._roi_caution_active or self._roi_caution_triggered:
+            return
+        roi_entries = list(self._roi_caution_snapshot)
+        if not roi_entries:
+            try:
+                target_info = self.manager.logic_store.get_data("targetInfo") or {}
+            except Exception:
+                target_info = {}
+            roi_entries = self._collect_active_roi_entries(target_info.get("targetList") or {})
+            self._roi_caution_snapshot = list(roi_entries)
+        if not roi_entries:
+            self._set_roi_caution_state(False, None, [])
+            return
+        self._roi_caution_triggered = True
+        self.manager._log(
+            "MON_LOGIC",
+            "INFO",
+            "0402 ROI caution 10초 지속 → 재계획 트리거",
+        )
+        self._trigger_roi_timeout_replan(roi_entries)
+
+    def _trigger_roi_timeout_replan(self, roi_entries: List[Dict[str, Any]]) -> None:
+        payload = self._build_roi_replan_payload(roi_entries)
+        if not payload:
+            return
+        self._append_replan_situation(payload)
+        try:
+            self._trigger_replan_if_active()
+        except Exception as exc:
+            self.manager._log(
+                "MON_LOGIC",
+                "WARN",
+                f"0402 ROI 기반 재계획 트리거 실행 실패: {exc}",
+            )
+
+    def _build_roi_replan_payload(
+        self, roi_entries: List[Dict[str, Any]]
+    ) -> Optional[Dict[str, Any]]:
+        if not roi_entries:
+            return None
+        sample = roi_entries[0]
+        watcher_label = self._format_watcher_label(self._to_int(sample.get("watcherID")))
+        reason = f"{watcher_label} ROI 지속 감시 (count={len(roi_entries)})"
+        detail_payload = {
+            "trigger": "0402_ROI",
+            "roiEntries": roi_entries,
+            "cautionStartedMs": self._roi_caution_started_ms,
+            "timeoutSeconds": ROI_CAUTION_TIMEOUT_SECONDS,
+        }
+        return {
+            REPLAN_FIELD_SITUATION: ROI_REPLAN_SITUATION_LABEL,
+            REPLAN_FIELD_REASON: reason,
+            REPLAN_FIELD_DETAIL: detail_payload,
+            "original_message_id": "0402",
+        }
+
     def _handle_mandatory_command(self, data: Any) -> None:
         aircraft_id = self._to_int(self._safe_get(data, "aircraftID", "AircraftID"))
         mandatory_type = self._to_int(
@@ -884,6 +1246,9 @@ class MonitoringLogic:
         )
         if aircraft_id is None or mandatory_type is None:
             return
+
+        hold_state_obj = self.manager.logic_store.get_data(FORCED_HOLD_STATE_KEY)
+        hold_state = dict(hold_state_obj) if isinstance(hold_state_obj, dict) else {}
 
         reason_map = {
             1: "강제대기로 인한 재계획",
@@ -918,12 +1283,44 @@ class MonitoringLogic:
                 setattr(data, FORCED_HOLD_REASON_ATTR, FORCED_HOLD_DELAY_REASON)
             except Exception:
                 pass
+            hold_state[aircraft_id] = {
+                "deadline": defer_deadline,
+                "timestamp": getattr(data, "timestamp", None),
+            }
+            self.manager.logic_store.set_data(FORCED_HOLD_STATE_KEY, hold_state)
             self.manager._log(
                 "MON_LOGIC",
                 "INFO",
                 "0802 강제대기 명령 수신 – 10초 경과 후 재계획을 시도합니다.",
             )
             return
+
+        hold_info = hold_state.get(aircraft_id)
+        if mandatory_type == 3 and hold_info:
+            deadline_value = hold_info.get("deadline")
+            if isinstance(deadline_value, (int, float)) and time.monotonic() < deadline_value:
+                hold_state.pop(aircraft_id, None)
+                self.manager.logic_store.set_data(FORCED_HOLD_STATE_KEY, hold_state)
+                self.manager._log(
+                    "MON_LOGIC",
+                    "INFO",
+                    f"0802 강제임무복귀 명령이 강제대기 유예({FORCED_HOLD_DELAY_SECONDS:.0f}s) 내에 수신되어 재계획을 생략합니다. 대상 기체={aircraft_id}",
+                )
+                try:
+                    if hasattr(data, FORCED_HOLD_DEADLINE_ATTR):
+                        delattr(data, FORCED_HOLD_DEADLINE_ATTR)
+                except Exception:
+                    pass
+                try:
+                    if hasattr(data, FORCED_HOLD_REASON_ATTR):
+                        delattr(data, FORCED_HOLD_REASON_ATTR)
+                except Exception:
+                    pass
+                return
+
+        if hold_info and mandatory_type in (2, 3):
+            hold_state.pop(aircraft_id, None)
+            self.manager.logic_store.set_data(FORCED_HOLD_STATE_KEY, hold_state)
 
         try:
             if hasattr(data, FORCED_HOLD_DEADLINE_ATTR):
@@ -936,7 +1333,13 @@ class MonitoringLogic:
         except Exception:
             pass
 
-        if mandatory_type in (2, 3):
+        should_trigger_replan = False
+        if mandatory_type == 2:
+            should_trigger_replan = True
+        elif mandatory_type == 3:
+            should_trigger_replan = True
+
+        if should_trigger_replan:
             self._trigger_replan_if_active()
 
     def _trigger_replan_if_active(self) -> None:

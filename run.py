@@ -287,7 +287,6 @@ class DashboardOrchestrator(QObject):
 
         # 시작 시 전원 OFF
         self._set_mode_text_all("전원 OFF")
-        self._broadcast_ctrl({"cmd": "mode", "text": "전원 OFF"})
 
         self._module_mode = {"assignment": "전원 OFF", "monitoring": "전원 OFF", "decision": "전원 OFF", "info": "전원 OFF"}
 
@@ -1091,11 +1090,6 @@ class DashboardOrchestrator(QObject):
             self._set_mode_text_all("모듈 초기화 대기")
         except Exception:
             pass
-        try:
-            self._broadcast_ctrl({"cmd": "mode", "text": "모듈 초기화 대기"})
-        except Exception:
-            pass
-
 
     # --------- 모드/CTRL/런처/로깅 유틸 ---------
     def _log_assignment(self, text: str):
@@ -1108,13 +1102,11 @@ class DashboardOrchestrator(QObject):
     def _enter_standby(self):
         self._self_check_all(False)
         self._set_mode_text_all("대기모드")
-        self._broadcast_ctrl({"cmd": "mode", "text": "대기모드"})
         self._safe_log("모든 SW 대기모드 진입")
 
     def _enter_initial_plan(self):
         self._self_check_all(False)
         self._set_mode_text_all("초기임무계획")
-        self._broadcast_ctrl({"cmd": "mode", "text": "초기임무계획"})
         self._safe_log("모든 SW 초기임무계획 모드")
 
     def _self_check_all(self, on: bool = True):

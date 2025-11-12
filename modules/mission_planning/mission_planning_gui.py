@@ -2,7 +2,7 @@
 # mission_planning_gui.py – 임무 할당·계획수립 전용 GUI (S110 플로우 대응)
 from __future__ import annotations
 
-import sys, os, threading, json, re, time, shutil, socket, subprocess
+import sys, os, threading, json, re, time, shutil, socket, subprocess, math, copy
 os.environ["KU_ROLE"] = "mission"  # MMR
 from pathlib import Path
 from typing import Any, Dict, Optional, Set, List
@@ -590,6 +590,35 @@ class MainWindow(QMainWindow):
             return context
         return None
 
+    def _build_attack_context_from_replan_detail(self, detail: Any) -> Optional[Dict[str, Any]]:
+        if not isinstance(detail, dict):
+            return None
+        coordinate = detail.get("coordinate") or detail.get("targetCoordinate") or {}
+        lat = coordinate.get("latitude")
+        lon = coordinate.get("longitude")
+        if lat is None or lon is None:
+            return None
+        altitude = coordinate.get("altitude") or 0.0
+        try:
+            lat = float(lat)
+            lon = float(lon)
+            altitude = float(altitude)
+        except Exception:
+            return None
+        target_context = {
+            "target": {
+                "latitude": lat,
+                "longitude": lon,
+                "altitude": altitude,
+            },
+            "targetID": detail.get("targetID"),
+            "detail": detail,
+        }
+        watcher_id = detail.get("watcherID")
+        if watcher_id is not None:
+            target_context["watcherID"] = watcher_id
+        return target_context
+
     def _compute_attack_waypoint(self, friendly: Dict[str, Any], target: Dict[str, Any], variant_no: int) -> Dict[str, float]:
         fallback = {
             "latitude": float(target.get("latitude") or friendly.get("latitude") or 0.0),
@@ -646,21 +675,76 @@ class MainWindow(QMainWindow):
         flight_plans_0304: List[Dict[str, Any]],
         attack_context: Dict[str, Any],
         variant_no: int,
+        *,
+        replan_detail: Optional[Dict[str, Any]] = None,
     ) -> None:
+        def _normalize_coord(raw: Optional[Dict[str, Any]]) -> Optional[Dict[str, float]]:
+            if not isinstance(raw, dict):
+                return None
+            lat = raw.get("latitude")
+            lon = raw.get("longitude")
+            if lat is None or lon is None:
+                return None
+            alt = raw.get("altitude", 0.0)
+            try:
+                return {
+                    "latitude": float(lat),
+                    "longitude": float(lon),
+                    "altitude": float(alt),
+                }
+            except Exception:
+                return None
+
+        def _estimate_eta_ms(p0: Dict[str, float], p1: Dict[str, float], speed_mps: float = 40.0) -> int:
+            lat1, lon1 = p0["latitude"], p0["longitude"]
+            lat2, lon2 = p1["latitude"], p1["longitude"]
+            k = 111_132.92
+            cos = math.cos(math.radians((lat1 + lat2) / 2))
+            dx = (lon2 - lon1) * k * cos
+            dy = (lat2 - lat1) * k
+            dist_m = math.hypot(dx, dy)
+            if dist_m <= 0 or speed_mps <= 0:
+                return 0
+            return int(round(1000 * dist_m / speed_mps))
+
+        def _build_wp_entry(
+            coord: Dict[str, float],
+            waypoint_id: int,
+            next_waypoint_id: int,
+            eta_ms: int,
+            *,
+            target_id_value: int,
+            weapon_type_value: int,
+            ecf_value: float,
+            speed_value: float = 40.0,
+        ) -> Dict[str, Any]:
+            return {
+                "waypointID": waypoint_id,
+                "coordinate": {
+                    "latitude": round(coord["latitude"], 6),
+                    "longitude": round(coord["longitude"], 6),
+                    "altitude": int(round(coord.get("altitude", 0.0))),
+                },
+                "speed": speed_value,
+                "eta": int(eta_ms),
+                "ecf": float(ecf_value),
+                "nextWaypointID": next_waypoint_id,
+                "hovering": {"time": 0},
+                "loiter": {"radius": 0, "direction": 0, "time": 0, "speed": 0},
+                "attack": {
+                    "targetID": max(0, int(target_id_value)),
+                    "weaponType": max(0, int(weapon_type_value)),
+                },
+            }
+
         target = attack_context.get("target") or {}
-        target_lat = target.get("latitude")
-        target_lon = target.get("longitude")
-        if target_lat is None or target_lon is None:
-            self.log_sig.emit(f"[WARN] 공격추천 옵션(variant={variant_no})에 target 좌표 정보가 없어 기본 임무를 유지합니다.")
+        target_coord = _normalize_coord(target)
+        if target_coord is None:
+            self.log_sig.emit(f"[WARN] 공격 옵션(variant={variant_no})에 target 좌표 정보가 없어 기본 임무를 유지합니다.")
             return
-        target_coord = {
-            "latitude": float(target_lat),
-            "longitude": float(target_lon),
-            "altitude": float(target.get("altitude") or 0.0),
-        }
         manned_missions = [im for im in missions if int(im.get("aircraftID", 0)) in (1, 2)]
         if not manned_missions:
-            self.log_sig.emit(f"[WARN] 공격추천 옵션(variant={variant_no}) 대상 유인기 임무를 찾지 못했습니다.")
+            self.log_sig.emit(f"[WARN] 공격 옵션(variant={variant_no}) 대상 유인기 임무를 찾지 못했습니다.")
             return
         manned_missions.sort(key=lambda im: int(im.get("individualMissionID") or 0))
         primary_mission = manned_missions[0]
@@ -668,51 +752,71 @@ class MainWindow(QMainWindow):
         coord_list = mission_info.get("coordinateList") or []
         friendly_coord = None
         if coord_list and isinstance(coord_list[0], dict):
-            friendly_coord = {
-                "latitude": coord_list[0].get("latitude"),
-                "longitude": coord_list[0].get("longitude"),
-                "altitude": coord_list[0].get("altitude", 0.0),
-            }
-        if friendly_coord is None or friendly_coord.get("latitude") is None or friendly_coord.get("longitude") is None:
+            friendly_coord = _normalize_coord(coord_list[0])
+        if friendly_coord is None:
             friendly_coord = dict(target_coord)
         attack_waypoint = self._compute_attack_waypoint(friendly_coord, target_coord, variant_no)
         target_id = attack_context.get("targetID")
+        try:
+            target_id_int = int(target_id) if target_id is not None else 0
+        except Exception:
+            target_id_int = 0
+
+        coordinate_entries: List[Dict[str, float]] = []
+        if friendly_coord:
+            coordinate_entries.append(
+                {
+                    "latitude": friendly_coord["latitude"],
+                    "longitude": friendly_coord["longitude"],
+                    "altitude": friendly_coord.get("altitude", 0.0),
+                }
+            )
+        coordinate_entries.append(
+            {
+                "latitude": target_coord["latitude"],
+                "longitude": target_coord["longitude"],
+                "altitude": target_coord.get("altitude", 0.0),
+            }
+        )
+
         mission_info_override = {
             "individualMissionType": 2,
             "patternType": 2,
-            "autoZoomIn": False,
-            "coordinateList": [
-                {
-                    "latitude": attack_waypoint["latitude"],
-                    "longitude": attack_waypoint["longitude"],
-                    "altitude": attack_waypoint["altitude"],
-                }
-            ],
+            "autoZoomIn": 0,
+            "coordinateList": coordinate_entries,
         }
-        if target_id is not None:
-            mission_info_override["targetID"] = target_id
+        if target_id_int:
+            mission_info_override["targetID"] = target_id_int
+        if replan_detail:
+            mission_info_override["_attackDetail"] = replan_detail
         primary_mission["individualMissionInfo"] = mission_info_override
         primary_mission["isDone"] = False
+
         attack_path_id = int(primary_mission.get("pathID") or 0)
         attack_aircraft_id = int(primary_mission.get("aircraftID") or 0)
-        waypoint_entry = {
-            "waypointID": 100,
-            "coordinate": {
-                "latitude": attack_waypoint["latitude"],
-                "longitude": attack_waypoint["longitude"],
-                "altitude": attack_waypoint["altitude"],
-            },
-            "speed": 0,
-            "eta": 0,
-            "ecf": 1.0,
-            "nextWaypointID": 0,
-            "hovering": {"time": 0},
-            "loiter": {"radius": 0, "direction": 0, "time": 0, "speed": 0},
-            "attack": {
-                "targetID": int(target_id) if target_id is not None else 0,
-                "weaponType": 2,
-            },
-        }
+        base_wp_id = 10_000 + variant_no * 10
+        approach_coord = friendly_coord or dict(attack_waypoint)
+        travel_eta_ms = _estimate_eta_ms(approach_coord, attack_waypoint)
+
+        start_wp = _build_wp_entry(
+            approach_coord,
+            waypoint_id=base_wp_id,
+            next_waypoint_id=base_wp_id + 1,
+            eta_ms=0,
+            target_id_value=0,
+            weapon_type_value=0,
+            ecf_value=0.0,
+        )
+        attack_wp = _build_wp_entry(
+            attack_waypoint,
+            waypoint_id=base_wp_id + 1,
+            next_waypoint_id=0,
+            eta_ms=travel_eta_ms,
+            target_id_value=target_id_int,
+            weapon_type_value=1,
+            ecf_value=1.0,
+        )
+
         replaced_fp = False
         for fp in flight_plans_0304 or []:
             try:
@@ -720,14 +824,14 @@ class MainWindow(QMainWindow):
             except Exception:
                 fp_path_id = None
             if fp_path_id == attack_path_id and int(fp.get("aircraftID", 0)) == attack_aircraft_id:
-                fp["lahWaypointList"] = [waypoint_entry]
+                fp["lahWaypointList"] = [start_wp, attack_wp]
                 replaced_fp = True
                 break
         if not replaced_fp:
-            self.log_sig.emit(f"[WARN] 공격 추천 비행경로를 덮어쓸 pathID {attack_path_id}를 찾지 못했습니다.")
+            self.log_sig.emit(f"[WARN] 공격 비행경로를 덮어쓸 pathID {attack_path_id}를 찾지 못했습니다.")
         else:
             self.log_sig.emit(
-                f"[variant {variant_no}] 공격추천 임무 설정 완료 (aircraft={attack_aircraft_id}, targetID={target_id})"
+                f"[variant {variant_no}] 공격 임무 설정 완료 (aircraft={attack_aircraft_id}, targetID={target_id_int})"
             )
 
     def _on_input_payload_0201(self, msg_id, payload):
@@ -1452,6 +1556,9 @@ class MainWindow(QMainWindow):
         if option_names: ctx["option_names"] = option_names
         if mission_ids:  ctx["mission_ids"] = mission_ids
         ctx["reason"] = reason
+        detail_payload = payload.get("replanDetail")
+        if detail_payload is not None:
+            ctx["replan_detail"] = detail_payload
         try:
             ctx["replan_level"] = int(payload.get("replanLevel", ctx.get("replan_level", 1)))
         except Exception:
@@ -1463,7 +1570,7 @@ class MainWindow(QMainWindow):
         self._active_plan_context = ctx
         summary = ", ".join(str(pid) for pid in ctx.get("plan_ids", [])) or "-"
         self._append_log_line(f"[AUTO] 0902 received (planIds={summary})")
-        self._schedule_replan_pipeline(delay_ms=1500)
+        self._schedule_replan_pipeline(delay_ms=100)
 
     # ───────── 재계획 파이프라인(파일 생성/저장 후 0301만 송신) ─────────
     def _schedule_replan_pipeline(self, delay_ms: int = 1000) -> None:
@@ -1977,10 +2084,17 @@ class MainWindow(QMainWindow):
                     value = raw_option_values[idx]
                     label = str(value).strip() if value is not None else ""
                 option_labels.append(label)
-            attack_option_indices: Set[int] = {idx for idx, label in enumerate(option_labels) if label == "공격추천"}
+            attack_option_labels = {"공격추천", "공격 특화"}
+            attack_option_indices: Set[int] = {
+                idx for idx, label in enumerate(option_labels) if label in attack_option_labels
+            }
             for attack_idx in attack_option_indices:
                 if 0 <= attack_idx < len(option_codes):
                     option_codes[attack_idx] = 2
+            shared_attack_detail = ctx.get("replan_detail") if isinstance(ctx.get("replan_detail"), dict) else None
+            shared_attack_context = (
+                self._build_attack_context_from_replan_detail(shared_attack_detail) if shared_attack_detail else None
+            )
             attack_cmpk_path: Optional[Path] = None
             if attack_option_indices:
                 dss_dir = db_root / 'DSS_Internal'
@@ -1996,10 +2110,10 @@ class MainWindow(QMainWindow):
                         attack_cmpk_path = legacy_attack
                 if attack_cmpk_path:
                     self.log_sig.emit(
-                        f"[INFO] 공격추천 옵션에 {attack_cmpk_path.name} 적용: {sorted(idx + 1 for idx in attack_option_indices)}"
+                        f"[INFO] 공격 옵션에 {attack_cmpk_path.name} 적용: {sorted(idx + 1 for idx in attack_option_indices)}"
                     )
-                else:
-                    self.log_sig.emit("[WARN] 공격추천 옵션이 있으나 공격용 0201 파일을 찾지 못했습니다. 기본 0201 사용.")
+                elif shared_attack_context is None:
+                    self.log_sig.emit("[WARN] 공격 옵션이 있으나 활용 가능한 대상 정보가 없어 기본 임무를 유지합니다.")
                     attack_option_indices.clear()
 
             prior_option_indices: Set[int] = {idx for idx, label in enumerate(option_labels) if label == "선행임무 재계획"}
@@ -2077,12 +2191,17 @@ class MainWindow(QMainWindow):
                 cmpk_source_path = cmpk_path
                 variant_attack_context: Optional[Dict[str, Any]] = None
                 variant_prior_context: Optional[Dict[str, Any]] = None
-                if attack_cmpk_path is not None and idx in attack_option_indices:
+                attack_option_selected = idx in attack_option_indices
+                if attack_option_selected and attack_cmpk_path is not None:
                     cmpk_source_path = attack_cmpk_path
                     self.log_sig.emit(
-                        f"[variant {variant_no}] 공격추천 전용 0201 적용: {cmpk_source_path.name}"
+                        f"[variant {variant_no}] 공격 전용 0201 적용: {cmpk_source_path.name}"
                     )
-                    variant_attack_context = self._load_attack_context(cmpk_source_path)
+                if attack_option_selected:
+                    if shared_attack_context:
+                        variant_attack_context = copy.deepcopy(shared_attack_context)
+                    elif attack_cmpk_path is not None:
+                        variant_attack_context = self._load_attack_context(cmpk_source_path)
                 if idx in prior_variant_contexts:
                     prior_info = prior_variant_contexts[idx]
                     cmpk_source_path = prior_info["path"]
@@ -2154,7 +2273,13 @@ class MainWindow(QMainWindow):
                 flight_plans_0304 = d0304.build_lah_flight_plans_fixed(manned, cruise_speed=40.0, wp_alloc=wp_alloc) if manned else []
 
                 if variant_attack_context:
-                    self._apply_attack_customizations(missions, flight_plans_0304 or [], variant_attack_context, variant_no)
+                    self._apply_attack_customizations(
+                        missions,
+                        flight_plans_0304 or [],
+                        variant_attack_context,
+                        variant_no,
+                        replan_detail=shared_attack_detail,
+                    )
                 if variant_prior_context:
                     _apply_prior_mission_customizations(
                         missions,
@@ -2191,13 +2316,14 @@ class MainWindow(QMainWindow):
                 mp_json['missionPlanID'] = plan_id
                 plan_meta_entry = plan_meta_map.setdefault(plan_id, {})
                 if variant_attack_context:
-                    plan_meta_entry.update(
-                        {
-                            "attack": True,
-                            "targetCount": int(variant_attack_context.get("targetCount") or 1),
-                            "targetID": variant_attack_context.get("targetID"),
-                        }
-                    )
+                    attack_meta = {
+                        "attack": True,
+                        "targetCount": int(variant_attack_context.get("targetCount") or 1),
+                        "targetID": variant_attack_context.get("targetID"),
+                    }
+                    if shared_attack_detail:
+                        attack_meta["replanDetail"] = shared_attack_detail
+                    plan_meta_entry.update(attack_meta)
                 if variant_prior_context:
                     try:
                         prior_mid = int(variant_prior_context.get("priorMissionID") or 0)

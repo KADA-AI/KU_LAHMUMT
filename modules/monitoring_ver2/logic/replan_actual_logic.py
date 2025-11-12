@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -19,13 +20,14 @@ from data.message_models import (
     ReplanRequestTimeStampModel,
 )
 from push.message0902_push import make_and_push as push_message_0902
-from .replan_utils import ensure_replan_level_details_file
+from .replan_utils import ensure_replan_level_details_file, mark_targets_as_used
 
 
 FORCED_HOLD_DELAY_SECONDS = 10.0
 FORCED_HOLD_DELAY_REASON = "강제대기 후 10초 경과"
 FORCED_HOLD_DEADLINE_ATTR = "_hold_defer_deadline"
 FORCED_HOLD_REASON_ATTR = "_hold_defer_reason"
+FORCED_HOLD_STATE_KEY = "forced_hold_state_map"
 
 REPLAN_FIELD_SITUATION = "재계획상황"
 REPLAN_FIELD_CONDITION = "재계획조건"
@@ -79,6 +81,15 @@ def _extract_mandatory_type(detail: Any) -> Optional[int]:
 def _format_replan_reason(replan_info: Dict[str, Any]) -> str:
     """Generate human readable replanReason text for selected triggers."""
     msg_id = str(replan_info.get("original_message_id") or "").zfill(4)
+    explicit_reason = replan_info.get(REPLAN_FIELD_REASON)
+    if explicit_reason is not None:
+        try:
+            reason_text = str(explicit_reason).strip()
+        except Exception:
+            reason_text = str(explicit_reason)
+        if reason_text:
+            return reason_text
+
     detail = _find_detail_payload(replan_info)
 
 
@@ -154,6 +165,9 @@ def judge_replan_situation(manager) -> List[Dict[str, Any]]:
         "0802": "강제 명령 재계획",
     }
 
+    forced_hold_state_obj = manager.logic_store.get_data(FORCED_HOLD_STATE_KEY)
+    forced_hold_state = dict(forced_hold_state_obj) if isinstance(forced_hold_state_obj, dict) else {}
+
     for msg_id, reason_data in operator_inputs.items():
         if not reason_data:
             continue
@@ -171,6 +185,63 @@ def judge_replan_situation(manager) -> List[Dict[str, Any]]:
         last_ts = manager.logic_store.get_data(last_ts_key)
         if current_ts == last_ts:
             continue
+
+        if msg_id == "0802":
+            mandatory_value = getattr(reason_data, "mandatoryType", None)
+            mandatory_type = _safe_int(mandatory_value)
+            aircraft_value = getattr(reason_data, "aircraftID", None)
+            aircraft_int = _safe_int(aircraft_value)
+
+            if mandatory_type == 1:
+                defer_deadline = getattr(reason_data, FORCED_HOLD_DEADLINE_ATTR, None)
+                if isinstance(defer_deadline, (int, float)):
+                    now = time.monotonic()
+                    if now < defer_deadline:
+                        continue
+
+                    delay_reason = getattr(reason_data, FORCED_HOLD_REASON_ATTR, None)
+                    if delay_reason:
+                        try:
+                            setattr(reason_data, "replan_reason", delay_reason)
+                        except Exception:
+                            pass
+
+                    aircraft_id = getattr(reason_data, "aircraftID", None)
+                    manager._log(
+                        "REPLAN_JUDGE",
+                        "INFO",
+                        f"0802 강제대기 지연({FORCED_HOLD_DELAY_SECONDS:.0f}s) 경과 – 대상 기체 {aircraft_id} 재계획 검토.",
+                    )
+
+                    for attr_name in (FORCED_HOLD_DEADLINE_ATTR, FORCED_HOLD_REASON_ATTR):
+                        if hasattr(reason_data, attr_name):
+                            try:
+                                delattr(reason_data, attr_name)
+                            except Exception:
+                                pass
+
+                    if aircraft_int is not None and aircraft_int in forced_hold_state:
+                        updated_state = dict(forced_hold_state)
+                        updated_state.pop(aircraft_int, None)
+                        manager.logic_store.set_data(FORCED_HOLD_STATE_KEY, updated_state)
+                        forced_hold_state = updated_state
+
+            if mandatory_type == 3 and aircraft_int is not None:
+                hold_info = forced_hold_state.get(aircraft_int)
+                if hold_info:
+                    deadline_value = hold_info.get("deadline")
+                    updated_state = dict(forced_hold_state)
+                    updated_state.pop(aircraft_int, None)
+                    manager.logic_store.set_data(FORCED_HOLD_STATE_KEY, updated_state)
+                    forced_hold_state = updated_state
+                    if isinstance(deadline_value, (int, float)) and time.monotonic() < deadline_value:
+                        manager._log(
+                            "REPLAN_JUDGE",
+                            "INFO",
+                            f"0802 강제임무복귀 명령이 강제대기 유예({FORCED_HOLD_DELAY_SECONDS:.0f}s) 내에 수신되어 재계획 후보에서 제외합니다. 대상 기체={aircraft_id}",
+                        )
+                        manager.logic_store.set_data(last_ts_key, current_ts)
+                        continue
 
         manager._log(
             "REPLAN_JUDGE",
@@ -193,7 +264,6 @@ def judge_replan_situation(manager) -> List[Dict[str, Any]]:
         replan_situations.append(replan_info)
         manager.logic_store.set_data(last_ts_key, current_ts)
 
-    return replan_situations
     return replan_situations
 
 def manage_replan_triggers(manager) -> Optional[Dict[str, Any]]:
@@ -543,6 +613,41 @@ def _determine_replan_level(msg_id: str, replan_situation: str) -> int:
     return 2
 
 
+TARGET_OPTION_PRESETS: Tuple[Tuple[int, str, int], ...] = (
+    (4, "공격 특화", 700000005),
+    (5, "공격 배제", 700000006),
+    (6, "시스템 추천", 700000007),
+)
+
+
+def _is_target_detection_trigger(detail_payload: Any) -> bool:
+    return isinstance(detail_payload, dict) and str(detail_payload.get("trigger") or "").upper() == "0402"
+
+
+def _pending_input_ids_from_plan(manager, plan_context: Dict[str, Any]) -> List[int]:
+    _, mission_list = _resolve_input_plan_payload(manager, plan_context)
+    pending: List[int] = []
+    seen: Set[int] = set()
+    for mission in mission_list:
+        if _safe_get(mission, "isDone", "IsDone"):
+            continue
+        input_id = _safe_int(_safe_get(mission, "inputMissionID", "InputMissionID", "inputMissionId"))
+        if input_id is None or input_id <= 0 or input_id in seen:
+            continue
+        seen.add(input_id)
+        pending.append(input_id)
+    return pending
+
+
+def _build_target_detection_option_list() -> Tuple[List[OptionListModel], List[int]]:
+    options: List[OptionListModel] = []
+    mission_plan_ids: List[int] = []
+    for option_id, name, plan_id in TARGET_OPTION_PRESETS:
+        options.append(OptionListModel(optionID=option_id, optionName=name, missionPlanID=plan_id))
+        mission_plan_ids.append(plan_id)
+    return options, mission_plan_ids
+
+
 def _prepare_common_replan_payload(
     manager,
     confirmed_request: Dict[str, Any],
@@ -553,6 +658,8 @@ def _prepare_common_replan_payload(
     replan_situation = _derive_replan_situation(msg_id, confirmed_request)
     replan_level = _determine_replan_level(msg_id, replan_situation)
     reason_text = _format_replan_reason(confirmed_request)
+    detail_payload = _find_detail_payload(confirmed_request)
+    is_target_trigger = _is_target_detection_trigger(detail_payload)
 
     excluded_aircraft_ids = _extract_forced_aircraft_ids(confirmed_request)
     (
@@ -619,6 +726,11 @@ def _prepare_common_replan_payload(
         if override_ids:
             input_ids = override_ids
 
+    if is_target_trigger:
+        target_input_ids = _pending_input_ids_from_plan(manager, plan_context)
+        if target_input_ids:
+            input_ids = target_input_ids
+
     filtered_input_ids: List[int] = []
     seen_inputs: Set[int] = set()
     for value in input_ids:
@@ -633,7 +745,9 @@ def _prepare_common_replan_payload(
         input_ids = [0]
         input_models = [InputMissionIDModel(inputMissionID=0)]
 
-    if monitoring_logic is not None and hasattr(monitoring_logic, "_build_collab_option_list"):
+    if is_target_trigger:
+        option_models, mission_plan_ids = _build_target_detection_option_list()
+    elif monitoring_logic is not None and hasattr(monitoring_logic, "_build_collab_option_list"):
         try:
             option_models, mission_plan_ids = monitoring_logic._build_collab_option_list()
         except Exception:
@@ -657,6 +771,25 @@ def _prepare_common_replan_payload(
     }
 
 
+def _mark_targets_from_replan_detail(manager, detail_payload: Any) -> None:
+    if not isinstance(detail_payload, dict):
+        return
+    trigger_id = str(detail_payload.get("trigger") or "")
+    if trigger_id != "0402":
+        return
+    payload = {
+        "key": detail_payload.get("targetKey"),
+        "targetID": detail_payload.get("targetID"),
+        "watcherID": detail_payload.get("watcherID"),
+    }
+    try:
+        mark_targets_as_used([payload])
+    except Exception as exc:
+        manager._log(
+            "REPLAN_PUSH",
+            "WARN",
+            f"targetInfo isUsed 업데이트 실패(key={payload.get('key')}): {exc}",
+        )
 
 
 def _prepare_replan_payload_for_0801(manager, confirmed_request: Dict[str, Any]) -> Dict[str, Any]:
@@ -735,9 +868,17 @@ def determine_level_and_send_request(manager, confirmed_request: Optional[Dict[s
         optionList=option_models,
     )
 
-    push_message_0902(replan_body, manager.node_messenger)
+    replan_detail_payload = detail_payload if isinstance(detail_payload, dict) else None
+    push_payload: Any = replan_body
+    if replan_detail_payload:
+        push_payload_dict = asdict(replan_body)
+        push_payload_dict["replanDetail"] = replan_detail_payload
+        push_payload = push_payload_dict
+
+    push_message_0902(push_payload, manager.node_messenger)
     manager.push_store.add_data("0902", replan_body)
     udp_reporter.notify_tx("0902")
+    _mark_targets_from_replan_detail(manager, detail_payload)
 
 
     manager._log

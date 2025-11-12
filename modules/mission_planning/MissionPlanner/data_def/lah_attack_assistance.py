@@ -5,7 +5,7 @@ import json
 import math
 import os
 from dataclasses import dataclass
-from typing import Iterable, List, Optional, Sequence, Tuple
+from typing import Iterable, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
 
@@ -36,6 +36,7 @@ ENEMY_HEIGHT_OFFSET = 10.0
 POLYGON_SIMPLIFY_TOLERANCE_M = 50.0
 DANGER_MIN_CELLS = 40
 ATTACK_CANDIDATE_COUNT = 3
+ANALYSIS_MARGIN_METERS = 1000.0
 
 
 @dataclass
@@ -49,45 +50,191 @@ class ArcResult:
     enemy_world: Tuple[float, float]
 
 
-def detect_raster_path(resources_dir: str = "resource") -> str:
+@dataclass
+class RasterInfo:
+    path: str
+    bounds: Tuple[float, float, float, float]
+    projection: Optional[str]
+    nodata: Optional[float]
+    pixel_size_x: Optional[float]
+    pixel_size_y: Optional[float]
+
+
+def _list_tif_files(directory: str) -> List[str]:
     tif_candidates: List[str] = []
-    if os.path.isdir(resources_dir):
-        for entry in os.listdir(resources_dir):
-            if entry.lower().endswith(".tif"):
-                tif_candidates.append(os.path.join(resources_dir, entry))
-    tif_candidates.sort()
-    if not tif_candidates:
-        fallback_dir = "resources" if resources_dir != "resources" else "resource"
-        if fallback_dir != resources_dir and os.path.isdir(fallback_dir):
-            for entry in os.listdir(fallback_dir):
-                if entry.lower().endswith(".tif"):
-                    tif_candidates.append(os.path.join(fallback_dir, entry))
-        if not tif_candidates:
+    if not os.path.isdir(directory):
+        return tif_candidates
+    for entry in os.listdir(directory):
+        if entry.lower().endswith(".tif"):
+            tif_candidates.append(os.path.join(directory, entry))
+    return tif_candidates
+
+
+def detect_raster_paths(preferred_path: Optional[str] = None) -> List[str]:
+    """
+    Returns every available GeoTIFF path. If preferred_path points to a file it is used directly,
+    if it points to a directory the *.tif files inside are returned. With no preferred_path the
+    default resource/ (then resources/) directories are scanned.
+    """
+    candidates: List[str] = []
+    if preferred_path:
+        if os.path.isfile(preferred_path):
+            candidates = [preferred_path]
+        elif os.path.isdir(preferred_path):
+            candidates = _list_tif_files(preferred_path)
+        else:
             raise FileNotFoundError(
-                "No GeoTIFF (*.tif) files found under 'resource/' or 'resources/'. "
-                "Provide --raster-path explicitly."
+                f"--raster-path '{preferred_path}' is neither a file nor a directory."
             )
-    return tif_candidates[0]
-
-
-def load_elevation(raster_path: str):
-    dataset = gdal.Open(raster_path, gdal.GA_ReadOnly)
-    if dataset is None:
-        raise RuntimeError(f"GDAL could not open the elevation file: {raster_path}")
-
-    band = dataset.GetRasterBand(1)
-    elevation = band.ReadAsArray()
-    nodata = band.GetNoDataValue()
-    if nodata is not None:
-        elevation = np.ma.masked_equal(elevation, nodata)
     else:
-        elevation = np.ma.masked_equal(elevation, -32767)
-    elevation = elevation.astype(float)
-    if np.ma.is_masked(elevation):
-        elevation = np.ma.filled(elevation, np.nan)
+        candidates = _list_tif_files("resource")
+        candidates.extend(_list_tif_files("resources"))
+    candidates = sorted(set(os.path.abspath(path) for path in candidates))
+    if not candidates:
+        raise FileNotFoundError(
+            "No GeoTIFF (*.tif) files found. Place them under 'resource/' (or provide --raster-path)."
+        )
+    return candidates
 
-    geotransform = dataset.GetGeoTransform(can_return_null=True)
-    return elevation, geotransform
+
+def detect_raster_path(resources_dir: str = "resource") -> str:
+    """
+    Backwards-compatible helper that returns the first available raster.
+    """
+    return detect_raster_paths(resources_dir)[0]
+
+
+def _dataset_bounds_from_transform(
+    geotransform: Sequence[float], width: int, height: int
+) -> Tuple[float, float, float, float]:
+    corners = [
+        (geotransform[0], geotransform[3]),
+        (geotransform[0] + width * geotransform[1], geotransform[3] + width * geotransform[4]),
+        (geotransform[0] + height * geotransform[2], geotransform[3] + height * geotransform[5]),
+        (
+            geotransform[0] + width * geotransform[1] + height * geotransform[2],
+            geotransform[3] + width * geotransform[4] + height * geotransform[5],
+        ),
+    ]
+    xs = [pt[0] for pt in corners]
+    ys = [pt[1] for pt in corners]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def _gather_raster_infos(raster_paths: Sequence[str]) -> List[RasterInfo]:
+    infos: List[RasterInfo] = []
+    for path in raster_paths:
+        dataset = gdal.Open(path, gdal.GA_ReadOnly)
+        if dataset is None:
+            continue
+        geotransform = dataset.GetGeoTransform(can_return_null=True)
+        if not geotransform:
+            dataset = None
+            continue
+        bounds = _dataset_bounds_from_transform(geotransform, dataset.RasterXSize, dataset.RasterYSize)
+        band = dataset.GetRasterBand(1)
+        nodata = band.GetNoDataValue()
+        info = RasterInfo(
+            path=path,
+            bounds=bounds,
+            projection=dataset.GetProjection(),
+            nodata=nodata,
+            pixel_size_x=abs(geotransform[1]) if geotransform[1] else None,
+            pixel_size_y=abs(geotransform[5]) if geotransform[5] else None,
+        )
+        infos.append(info)
+        dataset = None
+    if not infos:
+        raise RuntimeError("Failed to read metadata from any GeoTIFF resources.")
+    return infos
+
+
+def _bounds_intersect(a: Tuple[float, float, float, float], b: Tuple[float, float, float, float]) -> bool:
+    return not (a[2] < b[0] or a[0] > b[2] or a[3] < b[1] or a[1] > b[3])
+
+
+def _point_in_bounds(point: Tuple[float, float], bounds: Tuple[float, float, float, float]) -> bool:
+    x, y = point
+    return bounds[0] <= x <= bounds[2] and bounds[1] <= y <= bounds[3]
+
+
+def _analysis_bounds(center_world: Tuple[float, float], radius_m: float, margin_m: float) -> Tuple[float, float, float, float]:
+    lon, lat = center_world
+    lat_scale = meters_per_degree_lat(lat)
+    lon_scale = meters_per_degree_lon(lat)
+    lat_delta = (radius_m + margin_m) / max(lat_scale, 1e-6)
+    lon_delta = (radius_m + margin_m) / max(lon_scale, 1e-6)
+    min_lon = max(-180.0, lon - lon_delta)
+    max_lon = min(180.0, lon + lon_delta)
+    min_lat = max(-90.0, lat - lat_delta)
+    max_lat = min(90.0, lat + lat_delta)
+    return (min_lon, min_lat, max_lon, max_lat)
+
+
+def load_elevation(
+    raster_paths: Sequence[str],
+    center_world: Tuple[float, float],
+    radius_m: float,
+    margin_m: float = ANALYSIS_MARGIN_METERS,
+) -> Tuple[np.ndarray, Optional[Sequence[float]], List[str]]:
+    if not raster_paths:
+        raise FileNotFoundError("No GeoTIFF resources were provided.")
+
+    infos = _gather_raster_infos(raster_paths)
+    bounds = _analysis_bounds(center_world, radius_m, margin_m)
+    intersecting_infos = [info for info in infos if _bounds_intersect(info.bounds, bounds)]
+    if not intersecting_infos:
+        raise RuntimeError(
+            "Analysis bounds extend outside the available GeoTIFF coverage. "
+            "Add more tiles or adjust --radius-m."
+        )
+
+    covering_info = next((info for info in intersecting_infos if _point_in_bounds(center_world, info.bounds)), None)
+    if covering_info is None:
+        covering_info = next((info for info in infos if _point_in_bounds(center_world, info.bounds)), None)
+    if covering_info is None:
+        raise RuntimeError(
+            "The enemy coordinate is outside every provided GeoTIFF tile. "
+            "Verify the --enemy-lat/--enemy-lon inputs."
+        )
+
+    nodata_values: Set[float] = {
+        info.nodata
+        for info in intersecting_infos
+        if info.nodata is not None and not math.isnan(info.nodata)
+    }
+    dst_nodata = next(iter(nodata_values)) if nodata_values else -32767.0
+    dst_srs = covering_info.projection or intersecting_infos[0].projection or None
+
+    warp_options = gdal.WarpOptions(
+        format="MEM",
+        outputBounds=bounds,
+        dstSRS=dst_srs if dst_srs else None,
+        errorThreshold=0.0,
+        multithread=True,
+        resampleAlg=gdal.GRA_Bilinear,
+        dstNodata=dst_nodata,
+    )
+    mosaic = gdal.Warp("", [info.path for info in intersecting_infos], options=warp_options)
+    if mosaic is None:
+        raise RuntimeError("GDAL failed to build an in-memory mosaic for the requested area.")
+
+    band = mosaic.GetRasterBand(1)
+    elevation = band.ReadAsArray().astype(float)
+    band_nodata = band.GetNoDataValue()
+    nodata_values = set(nodata_values)
+    if band_nodata is not None and not math.isnan(band_nodata):
+        nodata_values.add(band_nodata)
+    for nodata in nodata_values:
+        elevation[elevation == nodata] = np.nan
+
+    geotransform = mosaic.GetGeoTransform(can_return_null=True)
+    if not geotransform:
+        raise RuntimeError("Mosaic GeoTIFF is missing georeferencing information.")
+    band = None
+    mosaic = None
+    used_paths = [info.path for info in intersecting_infos]
+    return elevation, geotransform, used_paths
 
 
 def world_to_pixel(x: float, y: float, geotransform: Optional[Sequence[float]]):
@@ -585,7 +732,7 @@ def parse_args():
         "--raster-path",
         type=str,
         default=None,
-        help="Path to GeoTIFF elevation. Defaults to the first file under resource/ (or resources/ as fallback).",
+        help="GeoTIFF file or directory containing GeoTIFF tiles. Defaults to every *.tif under resource/ (then resources/).",
     )
     parser.add_argument("--candidate-count", type=int, default=ATTACK_CANDIDATE_COUNT, help="How many friendly-nearest polygons to evaluate before choosing the farthest-from-enemy point.")
     parser.add_argument("--radius-m", type=float, default=ANALYSIS_RADIUS_METERS, help="LOS analysis radius in meters.")
@@ -602,13 +749,19 @@ def main():
     global ATTACK_CANDIDATE_COUNT
     ATTACK_CANDIDATE_COUNT = args.candidate_count
 
-    raster_path = args.raster_path or detect_raster_path()
-    elevation, geotransform = load_elevation(raster_path)
-    if geotransform is None:
-        raise SystemExit("GeoTIFF is missing georeferencing (GeoTransform).")
-
     friendly_world = (args.friendly_lon, args.friendly_lat)
     enemy_world = (args.enemy_lon, args.enemy_lat)
+
+    raster_paths = detect_raster_paths(args.raster_path)
+    elevation, geotransform, used_rasters = load_elevation(
+        raster_paths,
+        enemy_world,
+        radius_m=args.radius_m,
+    )
+    if not used_rasters:
+        raise SystemExit("No GeoTIFF tiles overlapped the requested analysis bounds.")
+    if geotransform is None:
+        raise SystemExit("GeoTIFF mosaic is missing georeferencing (GeoTransform).")
 
     enemy_px = ensure_point_inside(enemy_world, geotransform, elevation)
     # Friendly point may lie outside the raster; only ensure the enemy (analysis center) is within bounds.
@@ -642,6 +795,7 @@ def main():
 
     best_point = best["centroid"]
     altitude = sample_elevation_at_world(elevation, best_point, geotransform)
+    raster_sources_abs = [os.path.abspath(path) for path in used_rasters]
     result = {
         "attack_point": {
             "lon": best_point[0],
@@ -652,14 +806,16 @@ def main():
         "enemy_point": {"lon": enemy_world[0], "lat": enemy_world[1]},
         "distance_friendly_m": best["friendly_distance"],
         "distance_enemy_m": best["enemy_distance"],
-        "raster_path": os.path.abspath(raster_path),
+        "raster_path": raster_sources_abs[0],
+        "raster_sources": raster_sources_abs,
     }
 
     if args.output_json:
         print(json.dumps(result, indent=2, ensure_ascii=False))
     else:
         alt_text = f"{altitude:.1f} m" if math.isfinite(altitude) else "unknown"
-        print(f"Raster           : {result['raster_path']}")
+        raster_label = ", ".join(os.path.basename(path) for path in raster_sources_abs)
+        print(f"Raster(s)        : {raster_label}")
         print(f"Friendly (lat,lon): ({friendly_world[1]:.6f}, {friendly_world[0]:.6f})")
         print(f"Enemy    (lat,lon): ({enemy_world[1]:.6f}, {enemy_world[0]:.6f})")
         print(

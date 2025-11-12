@@ -30,10 +30,10 @@ Point = Tuple[float, float]
 Line  = Tuple[Point, Point]
 
 # ── 고정 상수 ───────────────────────────────────────────
-FOV_DEG         = 15
+FOV_DEG         = 2.5
 SWEEP_ENTRY_OFFSET_M = 500.0
 SWEEP_MERGE_HEADING_DEG = 3
-Altitude = 800
+Altitude = 700
 
 SENSOR_NONE     = 0
 SENSOR_EO_IR    = 1        # 예) EO/IR 센서
@@ -219,6 +219,30 @@ def _angle_between(v1: tuple[float, float], v2: tuple[float, float]) -> float:
     cos_th = max(-1.0, min(1.0, (x1 * x2 + y1 * y2) / (n1 * n2)))
     return math.degrees(math.acos(cos_th))
 
+
+def _avg_sweep_width_m(coords: list[dict]) -> float | None:
+    """Pair coordinates (0-1, 2-3, ...) to estimate the average sweep span in meters."""
+    if not coords or len(coords) < 2:
+        return None
+
+    spans: list[float] = []
+    for idx in range(0, len(coords) - 1, 2):
+        start = coords[idx]
+        end = coords[idx + 1]
+        lat0 = float(start.get("latitude", 0.0))
+        lon0 = float(start.get("longitude", 0.0))
+        lat1 = float(end.get("latitude", lat0))
+        lon1 = float(end.get("longitude", lon0))
+        dx, dy = llh_to_xy(lat1, lon1, lat0, lon0)
+        dist = math.hypot(dx, dy)
+        if dist > 0.0:
+            spans.append(dist)
+
+    if not spans:
+        return None
+    return round(sum(spans) / len(spans), 2)
+
+
 class _WPAllocator:
     def __init__(self, start: int | None = None) -> None:
         self._local_next = start
@@ -316,7 +340,7 @@ def build_flight_plans(
 
     # ── 상수 ───────────────────────────────────────────────
     SENSOR, OPMODE = 1, 2
-    SEARCH_SPEED = round(cruise_speed * 5, 2)
+    DEFAULT_SEARCH_SPEED = round(cruise_speed * 5, 2)
     ALT_M = 850.0
     DEG_M = 111_132
     # ── 마지막점용 POINT 촬영 블록 생성기 ─────────────────
@@ -414,6 +438,7 @@ def build_flight_plans(
                     off_lat, off_lon = xy_to_llh(*off_xy, lat0, lon0)
 
                     sweep = [e, s] if idx % 2 else [s, e]
+                    sweep_speed = (_avg_sweep_width_m(sweep) or DEFAULT_SEARCH_SPEED)*2
 
                     wplist.append(OrderedDict([
                         ("waypointID", 0),
@@ -428,7 +453,7 @@ def build_flight_plans(
                             sensor=SENSOR_EO_IR,
                             line_search=OrderedDict([
                                 ("coordinateList", sweep),
-                                ("searchSpeed", SEARCH_SPEED),
+                                ("searchSpeed", sweep_speed),
                             ]),
                         )),
                     ]))
@@ -495,6 +520,8 @@ def build_flight_plans(
                         {"latitude": e_lat, "longitude": e_lon, "altitude": _dem_alt(e_lat, e_lon)},
                     ]
 
+                    coord_speed = _avg_sweep_width_m(coord_list) or DEFAULT_SEARCH_SPEED
+
                     wplist.append(OrderedDict([
                         ("waypointID", 0),
                         ("coordinate", {"latitude": w_lat, "longitude": w_lon, "altitude": Altitude}),
@@ -508,7 +535,7 @@ def build_flight_plans(
                             sensor=SENSOR_EO_IR,
                             line_search=OrderedDict([
                                 ("coordinateList", coord_list),
-                                ("searchSpeed", SEARCH_SPEED),
+                                ("searchSpeed", coord_speed),
                             ]),
                         )),
                     ]))
@@ -640,6 +667,11 @@ def build_flight_plans(
             first_fp = first_wp.get("filmingProperty") or OrderedDict()
             first_line_search = deepcopy(first_fp.get("lineSearch") or {})
             first_coords = deepcopy(first_line_search.get("coordinateList") or [])
+            first_search_speed = first_line_search.get("searchSpeed")
+            if first_search_speed is None:
+                first_search_speed = _avg_sweep_width_m(first_coords)
+            if first_search_speed is None:
+                first_search_speed = DEFAULT_SEARCH_SPEED
             records: list[dict] = []
             for idx in sweep_indices[1:]:
                 wp = wps[idx]
@@ -648,13 +680,16 @@ def build_flight_plans(
                 coords = deepcopy(ls.get("coordinateList") or [])
                 if not coords:
                     continue
+                search_speed = ls.get("searchSpeed")
+                if search_speed is None:
+                    search_speed = _avg_sweep_width_m(coords)
                 records.append({
                     "idx": idx,
                     "wp": wp,
                     "fp": fp,
                     "coord": wp.get("coordinate") or {},
                     "coords": coords,
-                    "search_speed": ls.get("searchSpeed"),
+                    "search_speed": search_speed,
                     "fov": fp.get("fieldOfView", FOV_DEG),
                 })
 
@@ -695,7 +730,6 @@ def build_flight_plans(
                 groups.append(current_group)
 
                 to_remove: list[int] = []
-                first_search_speed = first_line_search.get("searchSpeed")
                 for g_idx, group in enumerate(groups):
                     rep_pos = group[-1]
                     rep = records[rep_pos]
@@ -705,7 +739,9 @@ def build_flight_plans(
                         merged_coords.extend(deepcopy(first_coords))
                     for pos in group:
                         merged_coords.extend(deepcopy(records[pos]["coords"]))
-                    rep_speed = rep["search_speed"]
+                    rep_speed = _avg_sweep_width_m(merged_coords)
+                    if rep_speed is None:
+                        rep_speed = rep["search_speed"]
                     if rep_speed is None:
                         rep_speed = first_search_speed
                     rep_fp["fieldOfView"] = rep["fov"]
@@ -740,7 +776,7 @@ def build_flight_plans(
                     ("radius", 800),
                     ("direction", 1),
                     ("time", 30),
-                    ("speed", 40),
+                    ("speed", 30),
                 ])
 
         _annotate_eta_ms_inplace(wps, default_speed_mps=cruise_speed)
