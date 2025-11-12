@@ -2453,10 +2453,15 @@ class MainWindow(QMainWindow):
         except Exception:
             replan_level = 0
         detail = ctx.get("replan_detail")
-        if replan_level != 4 or not isinstance(detail, dict):
+        if replan_level != 4:
             return False
 
-        self.log_sig.emit("[PRIOR] Level-4 prior mission request detected. Using dedicated pipeline.")
+        if isinstance(detail, dict):
+            self.log_sig.emit("[PRIOR] Level-4 prior mission request detected. Using dedicated pipeline.")
+        else:
+            self.log_sig.emit("[PRIOR] Level-4 prior mission request but replanDetail missing/invalid → running prior pipeline with empty detail.")
+            detail = {} if detail is None else {"_raw": detail}
+
         result = run_prior_mission_pipeline(
             ctx,
             detail,

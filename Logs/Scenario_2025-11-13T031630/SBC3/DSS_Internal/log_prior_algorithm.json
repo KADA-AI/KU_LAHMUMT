@@ -1,0 +1,38 @@
+[
+  {
+    "timestamp": 816286603054,
+    "status": "error",
+    "reason": "선행임무 : 좌표지향",
+    "priorMissionID": null,
+    "missionType": null,
+    "aircraftID": null,
+    "sourceMissionPlanID": null,
+    "planIDs": [
+      700000001
+    ],
+    "newMissionPlanID": null,
+    "newIndividualMissionPackageID": null,
+    "newIndividualMissionID": null,
+    "newPathID": null,
+    "removedWaypointID": null,
+    "insertedWaypointID": null,
+    "targetCoordinate": {},
+    "logMessages": [
+      "[PRIOR] detail keys: ∅",
+      "[PRIOR] Missing required detail fields: aircraftID, pathID, sourceMissionPlanID, individualMissionPackageID, individualMissionID, currentWaypointID"
+    ],
+    "detailSummary": {},
+    "detailProvided": true,
+    "detailKeys": [],
+    "detailRawPreview": "{}",
+    "missingDetailFields": [
+      "aircraftID",
+      "pathID",
+      "sourceMissionPlanID",
+      "individualMissionPackageID",
+      "individualMissionID",
+      "currentWaypointID"
+    ],
+    "error": null
+  }
+]
