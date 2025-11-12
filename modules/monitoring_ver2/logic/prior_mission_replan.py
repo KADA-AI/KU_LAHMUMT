@@ -231,12 +231,17 @@ class PriorMissionReplanCoordinator:
             "timestamp": timestamp,
         }
         try:
-            prior_replan_store.save_detail(mission_plan_id, detail_payload)
-        except Exception:
+            detail_path = prior_replan_store.save_detail(mission_plan_id, detail_payload)
+            self.manager._log(
+                "PRIOR_MISSION",
+                "INFO",
+                f"prior detail 저장 완료 (missionPlanID={mission_plan_id}, path={detail_path})",
+            )
+        except Exception as exc:
             self.manager._log(
                 "PRIOR_MISSION",
                 "WARN",
-                f"prior detail 저장 실패 (missionPlanID={mission_plan_id})",
+                f"prior detail 저장 실패 (missionPlanID={mission_plan_id}): {exc}",
             )
 
     # ------------------------------------------------------------------ #

@@ -18,18 +18,16 @@ def _detail_path(mission_plan_id: int) -> Path:
     return _detail_dir() / f"prior_detail_{int(mission_plan_id)}.json"
 
 
-def save_detail(mission_plan_id: int, payload: Dict[str, Any]) -> None:
+def save_detail(mission_plan_id: int, payload: Dict[str, Any]) -> Path:
     data = dict(payload or {})
     data.setdefault("missionPlanID", mission_plan_id)
     data.setdefault("savedAt", datetime.now(timezone.utc).isoformat())
     path = _detail_path(mission_plan_id)
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-        tmp.replace(path)
-    except Exception:
-        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(path)
+    return path
 
 
 def load_detail(mission_plan_id: int) -> Optional[Dict[str, Any]]:

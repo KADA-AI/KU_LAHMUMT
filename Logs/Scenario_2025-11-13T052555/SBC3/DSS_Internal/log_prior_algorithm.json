@@ -1,0 +1,50 @@
+[
+  {
+    "timestamp": 816294444310,
+    "status": "success",
+    "reason": "선행임무 : 좌표지향",
+    "priorMissionID": 1,
+    "missionType": 1,
+    "aircraftID": 4,
+    "sourceMissionPlanID": 700000001,
+    "planIDs": [
+      700000012
+    ],
+    "newMissionPlanID": 700000012,
+    "newIndividualMissionPackageID": 800010097,
+    "newIndividualMissionID": 900121393,
+    "newPathID": 400000033,
+    "removedWaypointID": null,
+    "insertedWaypointID": 557,
+    "targetCoordinate": {
+      "latitude": 38.400001525878906,
+      "longitude": 127.44999694824219,
+      "altitude": 0
+    },
+    "logMessages": [
+      "[PRIOR] detail keys: ∅",
+      "[PRIOR] sourceMissionPlanID resolved from mission_progress (planID=700000001).",
+      "[PRIOR][STEP1] Loaded 0401 snapshot with 3 unmanned entries (saved_at=2025-11-12T20:27:24.247031+00:00).",
+      "[PRIOR][STEP1] UAV 4: currentWP=420, coord=(38.156376, 127.331741, alt=449.0)",
+      "[PRIOR][STEP1] UAV 5: currentWP=452, coord=(38.154682, 127.334770, alt=449.0)",
+      "[PRIOR][STEP1] UAV 6: currentWP=485, coord=(38.153263, 127.337593, alt=449.0)",
+      "[PRIOR][STEP2] Target coordinate 보강: PriorMissionInfo 최신 기록에서 좌표 복구.",
+      "[PRIOR][STEP2] Target coordinate (0202) → (38.400002, 127.449997, alt=0.0)",
+      "[PRIOR][STEP3] Nearest UAV 4 selected based on 0401 snapshot (currentWP=420, distance≈28990.0 m).",
+      "[PRIOR] Falling back to first mission for aircraft 4 (current waypoint not found in plan).",
+      "[PRIOR][STEP4] Reserved new waypoint ID 557 for UAV 4 (currentWP=420, distance≈28990.0 m).",
+      "[PRIOR] Allocated IDs -> plan:700000012 imp:800010097 path:400000033 indiv:900121393 wp:557",
+      "[PRIOR] Stored new artifacts -> plan:700000012.json, imp:800010097.json, fp:400000033.json",
+      "[PRIOR] Log captured -> C:\\Users\\LAHMUMT_2\\Desktop\\KU_LAHMUMT\\Logs\\Scenario_2025-11-13T052555\\SBC3\\DSS_Internal\\PriorMission_1_816294444308.json"
+    ],
+    "detailSummary": {},
+    "detailProvided": false,
+    "detailKeys": [],
+    "detailRawPreview": "{}",
+    "missingDetailFields": [],
+    "snapshotAgentCount": 3,
+    "selectedAgentID": 4,
+    "selectedAgentDistanceMeters": 28989.95142215034,
+    "error": null
+  }
+]

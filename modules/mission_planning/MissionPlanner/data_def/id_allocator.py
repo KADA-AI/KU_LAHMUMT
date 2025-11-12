@@ -4,6 +4,8 @@ ID allocator – 0301/0302/0303 공통
 """
 from pathlib import Path
 import json, threading, time
+from datetime import datetime, timezone
+from modules.common import db_paths
 
 _LOCK = threading.Lock()
 _STORE = Path(__file__).resolve().parent / "id_tracker.json"
@@ -86,6 +88,53 @@ for _volatile_key in list(VOLATILE_KEYS):
 
 _volatile_counters = {key: BASE[key] - 1 for key in VOLATILE_KEYS}
 
+def _seed_waypoint_counter() -> None:
+    if "waypoint" not in _volatile_counters:
+        return
+    try:
+        log_dir = db_paths.get_db_subpath("DSS_Internal")
+        usage_file = log_dir / "waypoint_usage.json"
+        if not usage_file.exists():
+            return
+        data = json.loads(usage_file.read_text(encoding="utf-8"))
+        last_value = int(data.get("last_waypoint_id"))
+        _volatile_counters["waypoint"] = last_value
+    except Exception:
+        return
+
+def _seed_path_counters() -> None:
+    try:
+        log_dir = db_paths.get_db_subpath("DSS_Internal")
+        usage_file = log_dir / "path_usage.json"
+        if not usage_file.exists():
+            return
+        data = json.loads(usage_file.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    aircraft_map = data.get("aircraft")
+    if not isinstance(aircraft_map, dict):
+        return
+    path_map = _state.setdefault("pathID", {})
+    changed = False
+    for key, value in aircraft_map.items():
+        try:
+            aid = int(key)
+            last_value = int(value)
+        except (TypeError, ValueError):
+            continue
+        base_value = BASE["pathID"].get(aid, 0) - 1
+        current = path_map.get(aid, base_value)
+        if last_value > current:
+            path_map[aid] = last_value
+            changed = True
+    if changed:
+        try:
+            _save(_state)
+        except Exception:
+            pass
+
+_seed_waypoint_counter()
+_seed_path_counters()
 def _next(key: str, inc: int = 1, subkey=None) -> int:
     with _LOCK:
         if key in VOLATILE_KEYS:
@@ -94,6 +143,8 @@ def _next(key: str, inc: int = 1, subkey=None) -> int:
             cur = _volatile_counters.get(key, BASE[key] - 1)
             cur += inc
             _volatile_counters[key] = cur
+            if key == "waypoint":
+                _record_waypoint_usage(cur)
             return cur
 
         if subkey is None:
@@ -106,6 +157,8 @@ def _next(key: str, inc: int = 1, subkey=None) -> int:
             cur += inc
             path_map[subkey] = cur
         _save(_state)
+        if key == "pathID" and subkey is not None:
+            _record_path_usage(subkey, cur)
         return cur
 
 # ── public helpers ──────────────────────────────────────────
@@ -114,3 +167,46 @@ def next_imp_id():                     return _next("individualMissionPackage")
 def next_individual_mission_id():      return _next("individualMission")
 def next_path_id(aircraft_id: int):    return _next("pathID", subkey=aircraft_id)
 def next_waypoint_id():                return _next("waypoint")
+
+
+def _record_waypoint_usage(value: int) -> None:
+    try:
+        log_dir = db_paths.get_db_subpath("DSS_Internal")
+    except Exception:
+        return
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        target = log_dir / "waypoint_usage.json"
+        payload = {
+            "last_waypoint_id": int(value),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        tmp = target.with_suffix(".tmp")
+        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(target)
+    except Exception:
+        return
+
+def _record_path_usage(aircraft_id: int, value: int) -> None:
+    try:
+        log_dir = db_paths.get_db_subpath("DSS_Internal")
+    except Exception:
+        return
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        target = log_dir / "path_usage.json"
+        if target.exists():
+            try:
+                data = json.loads(target.read_text(encoding="utf-8"))
+            except Exception:
+                data = {}
+        else:
+            data = {}
+        aircraft_map = data.setdefault("aircraft", {})
+        aircraft_map[str(int(aircraft_id))] = int(value)
+        data["updated_at"] = datetime.now(timezone.utc).isoformat()
+        tmp = target.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(target)
+    except Exception:
+        return

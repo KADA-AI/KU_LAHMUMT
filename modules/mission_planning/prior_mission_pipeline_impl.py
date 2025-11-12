@@ -21,7 +21,7 @@ def _load_id_allocator() -> ModuleType:
     if _ID_ALLOCATOR_MOD is not None:
         return _ID_ALLOCATOR_MOD
     allocator_path = (
-        Path(__file__).resolve().parents[1] / "MissionPlanner" / "data_def" / "id_allocator.py"
+        Path(__file__).resolve().parent / "MissionPlanner" / "data_def" / "id_allocator.py"
     )
     spec = importlib.util.spec_from_file_location(
         "mission_planner_id_allocator", allocator_path
@@ -193,6 +193,10 @@ def run_prior_mission_pipeline(
 
         source_plan_id = _to_int(detail.get("sourceMissionPlanID"))
         if source_plan_id is None:
+            source_plan_id = _load_latest_mission_progress_plan_id()
+            if source_plan_id is not None:
+                emit(f"[PRIOR] sourceMissionPlanID resolved from mission_progress (planID={source_plan_id}).")
+        if source_plan_id is None:
             source_plan_id = _scan_latest_source_plan_id()
             if source_plan_id is None:
                 emit("[PRIOR] sourceMissionPlanID unavailable and no fallback plan found.")
@@ -215,6 +219,31 @@ def run_prior_mission_pipeline(
             return None
         option_names = _ensure_option_names(plan_ids, ctx.get("option_names") or [])
 
+        if prior_mission_id is None or mission_type is None:
+            prior_record = _load_prior_record_from_db(prior_mission_id)
+            if prior_record:
+                if prior_mission_id is None:
+                    prior_mission_id = prior_record.get("priorMissionID")
+                if mission_type is None:
+                    mission_type = prior_record.get("missionType")
+                if target_coord.get("latitude") is None or target_coord.get("longitude") is None:
+                    coord_block = prior_record.get("coordinate")
+                    if coord_block:
+                        target_coord["latitude"] = coord_block.get("latitude")
+                        target_coord["longitude"] = coord_block.get("longitude")
+                        target_coord["altitude"] = coord_block.get("altitude")
+                        emit(
+                            "[PRIOR][STEP2] Target coordinate 보강: PriorMissionInfo 최신 기록에서 좌표 복구."
+                        )
+        elif target_coord.get("latitude") is None or target_coord.get("longitude") is None:
+            fallback_coord = _load_prior_coordinate_from_db(prior_mission_id)
+            if fallback_coord:
+                target_coord["latitude"] = fallback_coord.get("latitude")
+                target_coord["longitude"] = fallback_coord.get("longitude")
+                target_coord["altitude"] = fallback_coord.get("altitude")
+                emit(
+                    f"[PRIOR][STEP2] Target coordinate 보강: PriorMissionInfo/{prior_mission_id}.json에서 좌표 복구."
+                )
         lat = _to_float(target_coord.get("latitude"))
         lon = _to_float(target_coord.get("longitude"))
         _log_step2_target_coordinate(emit, lat, lon, target_coord.get("altitude"))
@@ -236,6 +265,7 @@ def run_prior_mission_pipeline(
             source_plan_id=source_plan_id,
             aircraft_id=aircraft_id,
             current_waypoint_id=current_waypoint_id,
+            emit=emit,
         )
         if artifacts is None:
             emit("[PRIOR] Failed to resolve mission artifacts from MissionPlan/IMP data.")
@@ -716,6 +746,90 @@ def _preview_value(value: Any, limit: int = 256) -> str:
     if len(text) > limit:
         return text[: limit - 3] + "..."
     return text
+def _load_prior_coordinate_from_db(prior_mission_id: Optional[int]) -> Optional[Dict[str, float]]:
+    if prior_mission_id is None:
+        return None
+    try:
+        info_dir = db_paths.get_db_subpath("PriorMissionInfo")
+    except Exception:
+        return None
+    path = info_dir / f"{int(prior_mission_id)}.json"
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    coordinate_orientation = payload.get("coordinateOrientation") or {}
+    coordinate = coordinate_orientation.get("coordinate") or {}
+    lat = _to_float(coordinate.get("latitude"))
+    lon = _to_float(coordinate.get("longitude"))
+    alt = _to_float(coordinate.get("altitude"))
+    if lat is None or lon is None:
+        return None
+    result = {"latitude": lat, "longitude": lon}
+    if alt is not None:
+        result["altitude"] = alt
+    return result
+
+
+def _load_prior_record_from_db(prior_mission_id: Optional[int]) -> Optional[Dict[str, Any]]:
+    try:
+        info_dir = db_paths.get_db_subpath("PriorMissionInfo")
+    except Exception:
+        return None
+
+    candidates = []
+    if prior_mission_id is not None:
+        path = info_dir / f"{int(prior_mission_id)}.json"
+        if path.exists():
+            candidates.append(path)
+    if not candidates:
+        try:
+            candidates = sorted(
+                info_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True
+            )
+        except Exception:
+            return None
+    for path in candidates:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        coord_block = (
+            ((payload.get("coordinateOrientation") or {}).get("coordinate"))
+            if isinstance(payload.get("coordinateOrientation"), dict)
+            else None
+        )
+        record = {
+            "priorMissionID": payload.get("priorMissionID"),
+            "missionType": payload.get("missionType"),
+            "coordinate": coord_block,
+        }
+        return record
+    return None
+
+
+def _load_latest_mission_progress_plan_id() -> Optional[int]:
+    try:
+        progress_dir = db_paths.get_db_subpath("DSS_Internal", "mission_progress")
+    except Exception:
+        return None
+    try:
+        candidates = list(progress_dir.glob("*.json"))
+    except Exception:
+        return None
+    if not candidates:
+        return None
+    try:
+        latest = max(candidates, key=lambda p: p.stat().st_mtime)
+        data = json.loads(latest.read_text(encoding="utf-8"))
+        plan_id = data.get("missionPlanID")
+        return int(plan_id) if plan_id is not None else None
+    except Exception:
+        return None
+
+
 def _load_detail_from_store(plan_ids: List[int]) -> Optional[Dict[str, Any]]:
     for value in plan_ids:
         try:
