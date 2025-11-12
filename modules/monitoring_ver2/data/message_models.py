@@ -452,7 +452,6 @@ class SensorInfoModel:
     sensorType: int
     fov: float
     centerCoordinate: CenterCoordinateModel
-    footprintCornerList: List[CoordinateModel] = field(default_factory=list)
 
 
 @dataclass

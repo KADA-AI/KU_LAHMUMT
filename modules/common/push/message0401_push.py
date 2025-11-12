@@ -232,32 +232,131 @@ def _dict_to_FootprintCorner(data: dict):
     if alt is not None: _try_set(obj, "altitude", int(alt))
     return obj
 
+def _first_key_ci(d: dict, *candidates: str):
+    """dict에서 대/소문자 구분 없이 첫 번째로 매칭되는 키의 값을 돌려준다."""
+    if not isinstance(d, dict):
+        return None
+    low = {k.lower(): k for k in d.keys()}
+    for c in candidates:
+        if c is None: 
+            continue
+        # exact / PascalCase 변형 모두 시도
+        for probe in (c, c[:1].upper()+c[1:] if c else c):
+            if probe is None: 
+                continue
+            k = low.get(probe.lower())
+            if k is not None:
+                return d[k]
+    return None
+
+def _make_cs_list_or_array(elem_type, items_py):
+    """elem_type(T)에 대해 List[T] -> Array[T] -> fallback(python list) 순으로 컬렉션을 만든다."""
+    if elem_type is None:
+        return items_py  # T를 못 찾으면 최후수단
+    # 1) C# List[T]
+    try:
+        lst = List[elem_type]()
+        for it in items_py:
+            lst.Add(it)
+        return lst
+    except Exception:
+        pass
+    # 2) .NET Array[T]
+    try:
+        return Array[elem_type](items_py)
+    except Exception:
+        pass
+    # 3) 파이썬 리스트
+    return items_py
+
+def _materialize_corners_as(elem_type_name: str, raw_list):
+    """elem_type_name: 'FootprintCorner' 또는 'Coordinate'로 요소를 생성해 컬렉션으로 만든다."""
+    T = _cs(elem_type_name)
+    items = []
+    for item in (raw_list or []):
+        if isinstance(item, dict):
+            if elem_type_name == 'FootprintCorner':
+                items.append(_dict_to_FootprintCorner(item))
+            else:  # 'Coordinate'
+                items.append(_dict_to_Coordinate(item))
+        else:
+            # 이미 .NET 객체일 수 있으니 그대로
+            items.append(item)
+    return _make_cs_list_or_array(T, items)
+
+def _try_set_any(obj, names, value):
+    """여러 프로퍼티 이름 후보에 대해 순차 시도."""
+    for name in names:
+        if _try_set(obj, name, value):
+            return True
+    return False
+
+
+def _set_footprint_list(obj, items: list[dict]) -> bool:
+    # 후보 속성명(소문자/파스칼 전부 시도)
+    props = ('footprintCornerList','FootprintCornerList',
+             'footprintCorners','FootprintCorners',
+             'footprintCorner','FootprintCorner')
+
+    # (요소 타입명, 변환함수) 후보
+    candidates = (
+        ('FootprintCorner', _dict_to_FootprintCorner),
+        ('Coordinate',      _dict_to_Coordinate),
+    )
+
+    # 1) C# List<T> 우선
+    for tname, conv in candidates:
+        T = _cs(tname)
+        if not T:
+            continue
+        try:
+            lst = List[T]()
+            for it in items:
+                lst.Add(conv(it if isinstance(it, dict) else {}))
+            for p in props:
+                if _try_set(obj, p, lst):
+                    return True
+        except Exception:
+            pass
+
+    # 2) Array<T>도 시도
+    for tname, conv in candidates:
+        T = _cs(tname)
+        if not T:
+            continue
+        try:
+            arr = Array[T]([conv(it if isinstance(it, dict) else {}) for it in items])
+            for p in props:
+                if _try_set(obj, p, arr):
+                    return True
+        except Exception:
+            pass
+
+    # 3) 최후의 수단: 파이썬 리스트 그대로
+    py_items = [ _dict_to_FootprintCorner(it if isinstance(it, dict) else {}) for it in items ]
+    for p in props:
+        if _try_set(obj, p, py_items):
+            return True
+    return False
+
 def _dict_to_SensorInfo(data: dict):
     obj = _new('SensorInfo')
     if not isinstance(data, dict):
         return obj
+
     operational_mode = data.get("operationalMode")
     if operational_mode is not None: _try_set(obj, "operationalMode", int(operational_mode))
     sensor_type = data.get("sensorType")
     if sensor_type is not None: _try_set(obj, "sensorType", int(sensor_type))
     fov = data.get("fov")
     if fov is not None: _try_set(obj, "fov", float(fov))
+
     if "centerCoordinate" in data and isinstance(data["centerCoordinate"], dict):
         _try_set(obj, "centerCoordinate", _dict_to_CenterCoordinate(data["centerCoordinate"]))
+
     if "footprintCornerList" in data and isinstance(data["footprintCornerList"], list):
-        T = _cs('FootprintCorner')
-        items = []
-        for item in data["footprintCornerList"]:
-            items.append(_dict_to_FootprintCorner(item if isinstance(item, dict) else {}))
-        corners = None
-        if T is not None:
-            try:
-                corners = Array[T](items)
-            except Exception:
-                pass
-        if corners is None:
-            corners = items
-        _try_set(obj, "footprintCornerList", corners)
+        _set_footprint_list(obj, data["footprintCornerList"])
+
     return obj
 
 def _dict_to_UnmannedInfo(data: dict):

@@ -145,6 +145,16 @@ def _to_dict_CenterCoordinate(obj):
     if _v is not None: d['altitude'] = int(_v)
     return d
 
+def _to_dict_FootprintCorner(obj):
+    d = {}
+    _v = _get(obj, 'latitude', 'Latitude')
+    if _v is not None: d['latitude'] = float(_v)
+    _v = _get(obj, 'longitude', 'Longitude')
+    if _v is not None: d['longitude'] = float(_v)
+    _v = _get(obj, 'altitude', 'Altitude')
+    if _v is not None: d['altitude'] = int(_v)
+    return d
+
 def _to_dict_SensorInfo(obj):
     d = {}
     _v = _get(obj, 'operationalMode', 'OperationalMode')
@@ -155,6 +165,21 @@ def _to_dict_SensorInfo(obj):
     if _v is not None: d['fov'] = float(_v)
     _sub = _get(obj, 'centerCoordinate', 'CenterCoordinate')
     if _sub is not None: d['centerCoordinate'] = _to_dict_CenterCoordinate(_sub)
+
+    _corners = _get(
+        obj,
+        'footprintCornerList', 'FootprintCornerList',
+        'footprintCorner', 'FootprintCorner',
+        'footprintCorners', 'FootprintCorners',
+    )
+
+    if _corners is not None:
+        try:
+            iterable = list(_corners)
+        except TypeError:
+            iterable = [_corners]
+        d['footprintCornerList'] = [_to_dict_FootprintCorner(it) for it in iterable]
+
     return d
 
 def _to_dict_UnmannedInfo(obj):

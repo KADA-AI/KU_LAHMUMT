@@ -126,6 +126,7 @@ class MonitoringLogic:
         ] = {}
         self._completed_input_ids: Set[int] = set()
         self._collab_completion_sent: bool = False
+        self._pending_input_completion_queue: List[int] = []
         self._monitoring_suspended: bool = False
         self._active_aircraft_ids: Set[int] = set()
         self._mission_progress_max: Dict[Tuple[int, int, Optional[int], int], int] = {}
@@ -1299,7 +1300,9 @@ class MonitoringLogic:
         if mandatory_type == 3 and hold_info:
             deadline_value = hold_info.get("deadline")
             if isinstance(deadline_value, (int, float)) and time.monotonic() < deadline_value:
-                hold_state.pop(aircraft_id, None)
+                enriched_info = dict(hold_info)
+                enriched_info.setdefault("resume_requested_timestamp", getattr(data, "timestamp", None))
+                hold_state[aircraft_id] = enriched_info
                 self.manager.logic_store.set_data(FORCED_HOLD_STATE_KEY, hold_state)
                 self.manager._log(
                     "MON_LOGIC",
@@ -1671,6 +1674,13 @@ class MonitoringLogic:
             self._deactivate_collab_pause(reason=f"execute={execute_val} command received")
             self._cancel_pending_replan(reason=f"execute={execute_val}")
             if execute_val == 1:
+                committed_id = self._commit_next_input_completion()
+                if committed_id is None:
+                    self.manager._log(
+                        "MON_LOGIC",
+                        "INFO",
+                        "[COLLAB] execute=1 received but no pending input mission completions were queued.",
+                    )
                 self._advance_to_next_input_mission(force=True)
 
     def _handle_new_input_plan(self, data: Any) -> None:
@@ -2220,7 +2230,6 @@ class MonitoringLogic:
                 tracker["completed"].add(key)
                 changed = True
                 self._mark_individual_mission_done(key)
-                self._notify_input_mission_completed(input_id)
         if not changed:
             return
         if active_ids:
@@ -2276,7 +2285,7 @@ class MonitoringLogic:
                 pass
 
     def _notify_input_mission_completed(self, input_id: int) -> None:
-        self._mark_input_mission_done(input_id)
+        self._queue_input_completion_write(input_id)
         if input_id in self._input_completion_notified:
             return
         self._input_completion_notified.add(input_id)
@@ -2326,6 +2335,45 @@ class MonitoringLogic:
                 self.manager.gui_update_callback("logic", "0503", body_0503)
             except Exception:
                 pass
+
+    def _queue_input_completion_write(self, input_id: Optional[int]) -> None:
+        queued_id = self._to_int(input_id)
+        if queued_id is None:
+            return
+        if queued_id in self._pending_input_completion_queue:
+            return
+        self._pending_input_completion_queue.append(queued_id)
+        try:
+            self.manager.logic_store.set_data(
+                "pending_input_completion_ids",
+                list(self._pending_input_completion_queue),
+            )
+        except Exception:
+            pass
+        self.manager._log(
+            "MON_LOGIC",
+            "INFO",
+            f"[COLLAB] queued input mission {queued_id} for deferred isDone update.",
+        )
+
+    def _commit_next_input_completion(self) -> Optional[int]:
+        if not self._pending_input_completion_queue:
+            return None
+        committed_id = self._pending_input_completion_queue.pop(0)
+        self._mark_input_mission_done(committed_id)
+        try:
+            self.manager.logic_store.set_data(
+                "pending_input_completion_ids",
+                list(self._pending_input_completion_queue),
+            )
+        except Exception:
+            pass
+        self.manager._log(
+            "MON_LOGIC",
+            "INFO",
+            f"[COLLAB] applied deferred completion write for input mission {committed_id}.",
+        )
+        return committed_id
 
     def _enter_collab_reexecute_mode(self, timestamp: Optional[int]) -> None:
         if self._collab_reexecute_mode:

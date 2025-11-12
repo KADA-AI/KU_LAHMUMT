@@ -198,6 +198,14 @@ def _dict_to_ReplanRequest(data: dict):
         lst = List[T]()
         for item in data["pendingOptionList"]: lst.Add(_dict_to_PendingOption(item if isinstance(item, dict) else {}))
         _try_set(obj, "pendingOptionList", lst)
+    if "replanDetail" in data:
+        detail_payload = data["replanDetail"]
+        if not isinstance(detail_payload, str):
+            try:
+                detail_payload = json.dumps(detail_payload, ensure_ascii=False)
+            except Exception:
+                detail_payload = str(detail_payload)
+        _try_set(obj, "replanDetail", detail_payload)
     return obj
 
 

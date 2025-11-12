@@ -51,6 +51,7 @@ from latest_input_cache import (
     describe_latest_ids,
     resolve_path_from_cache,
 )
+from prior_mission_pipeline import run_prior_mission_pipeline
 
 _EPOCH2000_MS = 946_684_800_000
 def _now_ms_since_2000() -> int:
@@ -1621,6 +1622,9 @@ class MainWindow(QMainWindow):
 
             self.log_sig.emit(f"[STEP 0] Replan pipeline start (reason={reason})")
 
+            if self._try_run_prior_mission_pipeline(ctx, reason):
+                return
+
             generated_imp_ids: Set[int] = set()
             generated_path_ids: Set[int] = set()
 
@@ -2442,6 +2446,77 @@ class MainWindow(QMainWindow):
             self.log_sig.emit(f"[ERR] Replan pipeline failed: {exc}")
         finally:
             self._initplan_running = False
+
+    def _try_run_prior_mission_pipeline(self, ctx: Dict[str, Any], reason: str) -> bool:
+        try:
+            replan_level = int(ctx.get("replan_level", ctx.get("replanLevel", 0)))
+        except Exception:
+            replan_level = 0
+        detail = ctx.get("replan_detail")
+        if replan_level != 4 or not isinstance(detail, dict):
+            return False
+
+        self.log_sig.emit("[PRIOR] Level-4 prior mission request detected. Using dedicated pipeline.")
+        result = run_prior_mission_pipeline(
+            ctx,
+            detail,
+            reason,
+            log=lambda msg: self.log_sig.emit(msg),
+        )
+        if not result:
+            self.log_sig.emit("[PRIOR] Prior mission pipeline unavailable. Falling back to legacy replan flow.")
+            return False
+
+        generated_plan_ids = result.plan_ids
+        option_names = result.option_names
+        plan_meta_map = result.plan_meta_map
+
+        ctx["plan_ids"] = generated_plan_ids
+        ctx["option_names"] = option_names
+        ctx["_option_meta"] = dict(plan_meta_map)
+
+        self._active_plan_context = ctx
+        self._last_mission_plan_ids = generated_plan_ids
+        self._last_mission_plan_id = generated_plan_ids[0] if generated_plan_ids else None
+
+        try:
+            input_pkg_id_int = int(ctx.get("inputMissionPackageID"))
+        except Exception:
+            input_pkg_id_int = None
+        try:
+            ref_pkg_id_int = int(ctx.get("missionReferencePackageID"))
+        except Exception:
+            ref_pkg_id_int = None
+
+        plan_id_set = {int(pid) for pid in generated_plan_ids if pid is not None}
+        imp_id_set = {int(val) for val in result.generated_imp_ids if val is not None}
+        path_id_set = {int(val) for val in result.generated_path_ids if val is not None}
+
+        if input_pkg_id_int is not None:
+            self._session_scope["packages"].add(input_pkg_id_int)
+        self._session_scope["plans"].update(plan_id_set)
+        self._session_scope["individual_packages"].update(imp_id_set)
+        self._session_scope["paths"].update(path_id_set)
+
+        self._plan_status = "임무계획 완료"
+        self._submit_id_tab_update(
+            scope=self._session_scope,
+            cmpk_id=input_pkg_id_int,
+            mrpk_id=ref_pkg_id_int,
+            plan_state=self._plan_status,
+        )
+
+        self._schedule_plan_delivery(
+            generated_plan_ids,
+            option_names,
+            reason,
+            plan_meta_map,
+            force_direct_update=True,
+        )
+        self.log_sig.emit(
+            f"[PRIOR] Prior mission pipeline complete (planIds={generated_plan_ids}, log={result.log_path})"
+        )
+        return True
 
     def closeEvent(self, event):
         try:

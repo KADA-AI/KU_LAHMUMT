@@ -234,6 +234,21 @@ def _to_dict_ReplanRequest(obj: Any) -> dict:
     if pending:
         d["pendingOptionList"] = [_to_dict_PendingOption(it) for it in pending]
 
+    detail = _get(obj, "replanDetail", "ReplanDetail")
+    if detail:
+        if isinstance(detail, (bytes, bytearray)):
+            try:
+                detail = detail.decode("utf-8", "ignore")
+            except Exception:
+                detail = detail.decode(errors="ignore")
+        if isinstance(detail, str):
+            try:
+                d["replanDetail"] = json.loads(detail)
+            except Exception:
+                d["replanDetail"] = detail
+        else:
+            d["replanDetail"] = detail
+
     return d
 
 

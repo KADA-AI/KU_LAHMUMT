@@ -1,987 +1,592 @@
 # -*- coding: utf-8 -*-
-
-"""Stack 기반 모니터링 탭 – 시스템 모드 컨트롤 + 듀얼 미션 뷰어."""
-
-
-
 from __future__ import annotations
 
+import json
+from pathlib import Path
+from typing import Any, Dict, Iterable, Optional
 
-
-import math
-
-from typing import Iterable, Optional, Sequence, Tuple
-
-
-
-from PyQt5.QtCore import Qt, QPoint, QPointF, QRectF
-
-from PyQt5.QtGui import QColor, QPen, QBrush, QPainterPath, QFont, QPainter
-
+from PyQt5.QtCore import Qt, QPointF, QRectF
+from PyQt5.QtGui import (
+    QPixmap,
+    QPainter,
+    QImage,
+    QColor,
+    QPen,
+    QBrush,
+    QPolygonF,
+    QPainterPath,
+)
 from PyQt5.QtWidgets import (
-
     QWidget,
     QVBoxLayout,
+    QLabel,
     QGroupBox,
     QFormLayout,
-    QLabel,
-    QCheckBox,
-    QHBoxLayout,
     QSplitter,
+    QHBoxLayout,
     QFrame,
     QSizePolicy,
     QGraphicsView,
     QGraphicsScene,
-
-    QGraphicsSimpleTextItem,
-
-    QGraphicsItem,
-
+    QGraphicsPixmapItem,
 )
 
+from modules.common import db_paths
 
+PROJECT_ROOT = Path(__file__).resolve().parents[4]
 
-from modules.monitoring_ver2.config import SYSTEM_MODE_OPTIONS
-
-from modules.monitoring_ver2.gui.mission_area_presenter import MissionAreaPresenter
-
-
-
+MISSION_TYPE_STYLES = {
+    3: {"stroke": "#ff7043", "fill": "#ffd8c2", "width": 2.2, "label": "협업기저임무"},
+    6: {"stroke": "#1565c0", "fill": None, "width": 2.0, "label": "Sweep Line"},
+    7: {"stroke": "#2e7d32", "fill": "#b9e4c9", "width": 1.6, "label": "Sweep Area"},
+    9: {"stroke": "#c2185b", "fill": "#f8bbd0", "width": 1.4, "label": "WP"},
+}
+DEFAULT_MISSION_STYLE = {"stroke": "#5e35b1", "fill": "#d1c4e9", "width": 1.2, "label": "Mission"}
 
 
 class MissionAreaMonitoringTab(QWidget):
-
-    """Provides the redesigned Stack 기반 모니터링 layout with dual map canvases."""
-
-
-
-    LAT_RANGE = (36.5, 39.0)
-
-    LON_RANGE = (127.0, 128.0)
-
-
+    """Mission-area monitor that shows system context plus a zoomable map preview."""
 
     def __init__(self, manager, parent: QWidget | None = None) -> None:
-
         super().__init__(parent)
-
         self.manager = manager
 
-        self.current_mode_label = QLabel("-")
-        self.display_options = {
-            "collab": True,
-            "individual": True,
-            "routes": True,
-            "filming": True,
-        }
-        self._option_checkboxes: dict[str, QCheckBox] = {}
-        toggle_bar = self._build_display_controls()
+        self._plan_label = QLabel("-")
+        self._mode_label = QLabel("-")
+        self._active_input_label = QLabel("-")
+        self._aircraft_label = QLabel("-")
+        self._missions_label = QLabel("-")
+        self._waypoints_label = QLabel("-")
+        self._updated_label = QLabel("-")
+        self._image_status_label = QLabel("-")
 
-        self.left_panel = _MapSection("임무 누적상태", self.LAT_RANGE, self.LON_RANGE, controls=toggle_bar)
-        self.right_panel = _MapSection("현재 임무 상태", self.LAT_RANGE, self.LON_RANGE)
+        self._image_view = _ZoomableImageView()
+        self._image_loaded = False
+        self._pixmap_cache: Optional[QPixmap] = None
+        self._image_bytes: Optional[bytes] = None
+        self._dem_bounds: Optional[tuple[float, float, float, float]] = None
+        self._dem_size: Optional[tuple[int, int]] = None
+        self._dem_transform = None
+        self._dem_inv_transform = None
+        self._dem_crs = None
+        self._mission_file_cache: Dict[int, list] = {}
+        self._mission_output_index: Optional[Dict[int, Path]] = None
+        self._last_plan_id: Optional[int] = None
 
         self._init_ui()
-        self.presenter = MissionAreaPresenter(
-            manager=self.manager,
-            cumulative_view=self.left_panel.map_view,
-            current_view=None,
-            display_options=self.display_options,
-        )
-        self._apply_placeholder_paths()
-        self.refresh_display(("logic", "SystemMode"))
-
-
+        self._load_resource_image()
+        self.refresh_display()
 
     # ------------------------------------------------------------------ UI
-
     def _init_ui(self) -> None:
 
+        def _value_label() -> QLabel:
+            lbl = QLabel("-")
+            lbl.setAlignment(Qt.AlignLeft)
+            lbl.setStyleSheet("font-weight:600;")
+            return lbl
+
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(18)
 
-        layout.setContentsMargins(16, 16, 16, 16)
+        title = QLabel("Stack 기반 모니터링")
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet("font-size:17px; font-weight:600;")
 
-        layout.setSpacing(12)
+        subtitle = QLabel("상단에서는 운용 모드 및 계획 정보를, 하단에서는 지형 이미지를 확인할 수 있습니다.")
+        subtitle.setAlignment(Qt.AlignCenter)
+        subtitle.setWordWrap(True)
+        subtitle.setStyleSheet("color:#666;")
 
-
-
-        layout.addWidget(self._build_system_mode_box())
-        layout.addWidget(self._build_map_panel())
-
-    def _build_display_controls(self) -> QWidget:
-        container = QWidget()
-        layout = QHBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(12)
-
-        options = [
-            ("collab", "협업기저임무"),
-            ("individual", "개별임무"),
-            ("routes", "경로"),
-            ("filming", "촬영계획"),
-        ]
-        for key, label in options:
-            checkbox = QCheckBox(label)
-            checkbox.blockSignals(True)
-            checkbox.setChecked(True)
-            checkbox.blockSignals(False)
-            checkbox.stateChanged.connect(lambda _, opt=key: self._on_display_option_changed(opt))
-            layout.addWidget(checkbox)
-            self._option_checkboxes[key] = checkbox
-        layout.addStretch(1)
-        return container
-
-
-    def _build_system_mode_box(self) -> QGroupBox:
-
-        group = QGroupBox("시스템 운용 모드")
-
+        info_box = QGroupBox("시스템 · 임무 요약")
         form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignRight)
+        form.setFormAlignment(Qt.AlignTop)
+        form.addRow("시스템 운용 모드:", self._mode_label)
+        form.addRow("MissionPlan ID:", self._plan_label)
+        form.addRow("활성 Input ID:", self._active_input_label)
+        form.addRow("기체 수:", self._aircraft_label)
+        form.addRow("개별 임무 수:", self._missions_label)
+        form.addRow("웨이포인트 수:", self._waypoints_label)
+        form.addRow("최근 갱신:", self._updated_label)
+        info_box.setLayout(form)
 
-        form.setLabelAlignment(Qt.AlignLeft)
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.setChildrenCollapsible(False)
 
-        form.setFormAlignment(Qt.AlignLeft)
+        left_panel = QWidget()
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(6)
 
+        map_header = QHBoxLayout()
+        map_title = QLabel("지형 미리보기 (비활성화)")
+        map_title.setStyleSheet("font-weight:600;")
+        map_header.addWidget(map_title)
+        map_header.addStretch(1)
+        self._image_status_label.setStyleSheet("color:#666;")
+        map_header.addWidget(self._image_status_label)
 
+        view_hint = QLabel("휠 : 확대/축소 · 드래그 : 이동")
+        view_hint.setStyleSheet("color:#777; font-size:12px;")
 
-        self.current_mode_label.setStyleSheet("font-weight:600;")
+        left_layout.addLayout(map_header)
+        left_layout.addWidget(self._image_view, stretch=1)
+        left_layout.addWidget(view_hint)
 
-        form.addRow("현재 모드:", self.current_mode_label)
+        right_placeholder = QFrame()
+        right_layout = QVBoxLayout(right_placeholder)
+        right_layout.setContentsMargins(12, 12, 12, 12)
+        right_layout.addStretch(1)
+        empty_label = QLabel("향후 임무 영역 분석 패널이 추가될 예정입니다.")
+        empty_label.setWordWrap(True)
+        empty_label.setAlignment(Qt.AlignCenter)
+        empty_label.setStyleSheet("color:#888;")
+        right_layout.addWidget(empty_label)
+        right_layout.addStretch(2)
 
+        splitter.addWidget(left_panel)
+        splitter.addWidget(right_placeholder)
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 2)
 
+        layout.addWidget(title)
+        layout.addWidget(subtitle)
+        layout.addWidget(info_box)
+        layout.addWidget(splitter, stretch=1)
 
-        group.setLayout(form)
+    # ------------------------------------------------------------------ Data refresh
+    def refresh_display(self, update_info: Iterable[Any] | None = None, payload: object | None = None) -> None:
+        context = self._current_plan_context()
 
-        return group
+        plan_id = self._to_int(context.get("missionPlanID"))
+        active_input = context.get("activeInputMissionID")
+        if active_input is None:
+            active_input = self.manager.logic_store.get_data("active_input_mission_id")
+        active_input = self._to_int(active_input)
 
+        aircraft_data = context.get("aircraft") or {}
+        aircraft_count = len(aircraft_data)
+        mission_count = 0
+        waypoint_count = 0
+        for aircraft_payload in aircraft_data.values():
+            missions = aircraft_payload.get("missions") or []
+            mission_count += len(missions)
+            for mission in missions:
+                waypoint_count += len(mission.get("waypoints") or [])
 
-
-    def _build_map_panel(self) -> QFrame:
-        frame = QFrame()
-        frame.setObjectName("missionAreaBody")
-        frame.setStyleSheet(
-            "#missionAreaBody {"
-            "background-color: transparent;"
-            "border:1px solid #c8c8c8;"
-            "border-radius:4px;"
-            "}"
-        )
-        frame_layout = QHBoxLayout(frame)
-        frame_layout.setContentsMargins(12, 12, 12, 12)
-        frame_layout.setSpacing(12)
-        frame_layout.addWidget(self.left_panel, stretch=1)
-        frame_layout.addWidget(self.right_panel, stretch=1)
-        return frame
-
-
-    # ------------------------------------------------------------------ Refresh
-
-    def refresh_display(
-
-        self,
-
-        update_info: Iterable[object] | None = None,
-
-        data_object: object | None = None,
-
-    ) -> None:
-
-        update_type, key = self._unpack_update(update_info)
-
-        if (update_type, key) in {("logic", "SystemMode"), ("receive", "0101"), (None, None)}:
-            candidate = None
-            if data_object is not None and hasattr(data_object, "systemMode"):
-                candidate = getattr(data_object, "systemMode", None)
-            if candidate is None:
-                candidate = self._safe_get_logic("SystemMode")
-            self._sync_system_mode(candidate)
-
-        if hasattr(self, "presenter"):
-            self.presenter.handle_update(update_type, key, data_object)
-
+        self._plan_label.setText(self._fmt(plan_id))
+        self._active_input_label.setText(self._fmt(active_input))
+        self._aircraft_label.setText(self._fmt(aircraft_count))
+        self._missions_label.setText(self._fmt(mission_count))
+        self._waypoints_label.setText(self._fmt(waypoint_count))
+        self._updated_label.setText(self._format_update_source(update_info))
+        self._mode_label.setText(self._current_mode_text())
+        self._update_mission_layers(plan_id, aircraft_data)
 
     # ------------------------------------------------------------------ Helpers
+    def _current_plan_context(self) -> Dict[str, Any]:
+        context = self.manager.logic_store.get_data("current_mission_plan") or {}
+        return context if isinstance(context, dict) else {}
 
-    def _sync_system_mode(self, mode_value: object | None) -> None:
-
-        if mode_value is None:
-
-            self.current_mode_label.setText("-")
-
-            return
-
+    def _current_mode_text(self) -> str:
+        mode_value = self.manager.logic_store.get_data("SystemMode")
         try:
-
             mode_int = int(mode_value)
-
         except (TypeError, ValueError):
+            return "-"
+        mode_map = {
+            0: "OFF/초기화",
+            1: "대기",
+            2: "초기 임무 계획",
+            3: "임무 수행",
+            4: "특수 모드",
+            5: "전원 OFF",
+        }
+        return f"{mode_int} ({mode_map.get(mode_int, '미정')})"
 
+    def _update_mission_layers(self, plan_id: Optional[int], aircraft_data: Dict[str, Any]) -> None:
+        if not self._pixmap_cache or not self._dem_bounds:
+            self._image_view.clear_overlays()
+            return
+        if plan_id is not None and plan_id != self._last_plan_id:
+            self._mission_file_cache.clear()
+        self._last_plan_id = plan_id
+
+        geometries = self._collect_mission_geometries(aircraft_data)
+        self._image_view.clear_overlays()
+        if not geometries:
             return
 
+        for geom in geometries:
+            points = geom.get("points") or []
+            if not points:
+                continue
+            style = geom.get("style") or DEFAULT_MISSION_STYLE
+            stroke = style.get("stroke", DEFAULT_MISSION_STYLE["stroke"])
+            width = style.get("width", DEFAULT_MISSION_STYLE["width"])
+            fill_color = style.get("fill")
+            opacity = geom.get("fill_opacity", 0.35)
+            pen = self._make_pen(stroke, width, geom.get("dashed", False))
+            brush = self._make_brush(fill_color if geom.get("fill", True) else None, opacity)
+            if geom.get("type") == "point":
+                radius = style.get("radius", 4.5)
+                self._image_view.add_point_item(
+                    points[0],
+                    radius,
+                    pen.color(),
+                    brush.color() if brush.style() != Qt.NoBrush else pen.color(),
+                )
+                continue
 
+            path = QPainterPath()
+            path.moveTo(points[0])
+            for pt in points[1:]:
+                path.lineTo(pt)
+            if geom.get("close"):
+                path.closeSubpath()
+            self._image_view.add_path_item(path, pen, brush)
 
-        label = next((text for value, text in SYSTEM_MODE_OPTIONS if value == mode_int), f"모드 {mode_int}")
-        self.current_mode_label.setText(label)
-        if hasattr(self, "presenter"):
-            self.presenter.on_system_mode(mode_int)
+    def _collect_mission_geometries(self, aircraft_data: Dict[str, Any]) -> list[Dict[str, Any]]:
+        geometries: list[Dict[str, Any]] = []
+        for aircraft_id, payload in (aircraft_data or {}).items():
+            package_id = payload.get("individualMissionPackageID")
+            missions = payload.get("missions") or []
+            plan_entries = self._load_individual_plan_entries(package_id)
+            if not plan_entries:
+                continue
 
+            for idx, mission in enumerate(missions):
+                entry = plan_entries[idx] if idx < len(plan_entries) else None
+                if not entry:
+                    continue
+                info = entry.get("individualMissionInfo") or {}
+                mission_type = self._to_int(info.get("individualMissionType"))
+                style = dict(DEFAULT_MISSION_STYLE)
+                if mission_type in MISSION_TYPE_STYLES:
+                    style.update(MISSION_TYPE_STYLES[mission_type])
+                geometries.extend(
+                    self._build_shapes_from_info(
+                        info=info,
+                        mission_type=mission_type,
+                        style=style,
+                    )
+                )
+        return geometries
 
-    def _safe_get_logic(self, key: str) -> object | None:
-        getter = getattr(self.manager, "get_logic_result", None)
-        if callable(getter):
+    def _build_shapes_from_info(
+        self,
+        *,
+        info: Dict[str, Any],
+        mission_type: Optional[int],
+        style: Dict[str, Any],
+    ) -> list[Dict[str, Any]]:
+        shapes: list[Dict[str, Any]] = []
+        prefer_closed = mission_type in (3, 7)
+
+        coordinate_list = info.get("coordinateList") or []
+        shapes.extend(
+            self._shape_from_coords(
+                coordinate_list,
+                style,
+                close=prefer_closed,
+                allow_fill=prefer_closed,
+            )
+        )
+
+        for line in info.get("lineList") or []:
+            coords = line.get("coordinateList") or []
+            shapes.extend(
+                self._shape_from_coords(
+                    coords,
+                    style,
+                    close=False,
+                    allow_fill=False,
+                )
+            )
+
+        for area in info.get("areaList") or []:
+            coords = area.get("coordinateList") or []
+            shapes.extend(
+                self._shape_from_coords(
+                    coords,
+                    style,
+                    close=True,
+                    allow_fill=True,
+                )
+            )
+
+        return shapes
+
+    def _shape_from_coords(
+        self,
+        coords: Iterable[Any],
+        style: Dict[str, Any],
+        *,
+        close: bool,
+        allow_fill: bool,
+    ) -> list[Dict[str, Any]]:
+        points = self._project_coordinates(coords)
+        if not points:
+            return []
+        if len(points) == 1:
+            return [
+                {
+                    "type": "point",
+                    "points": points,
+                    "style": {**style, "fill": style.get("fill")},
+                    "fill": True,
+                }
+            ]
+        return [
+            {
+                "type": "polygon" if close and allow_fill else "polyline",
+                "points": points,
+                "close": close and allow_fill,
+                "fill": allow_fill,
+                "style": style,
+            }
+        ]
+
+    def _project_coordinates(self, coords: Iterable[Any]) -> list[QPointF]:
+        if not self._pixmap_cache:
+            return []
+
+        width = max(1, self._pixmap_cache.width())
+        height = max(1, self._pixmap_cache.height())
+        scale_x = scale_y = 1.0
+        if self._dem_size:
+            scale_x = width / max(1, self._dem_size[0])
+            scale_y = height / max(1, self._dem_size[1])
+
+        points: list[QPointF] = []
+        for coord in coords:
+            if isinstance(coord, dict):
+                lon = coord.get("longitude")
+                lat = coord.get("latitude")
+            elif isinstance(coord, (list, tuple)) and len(coord) >= 2:
+                lon, lat = coord[0], coord[1]
+            else:
+                continue
+            if lon is None or lat is None:
+                continue
             try:
-                return getter(key)
-            except Exception:
-                return None
+                lon_f = float(lon)
+                lat_f = float(lat)
+            except (TypeError, ValueError):
+                continue
+
+            if self._dem_inv_transform is not None:
+                col, row = self._dem_inv_transform * (lon_f, lat_f)
+                x = col * scale_x
+                y = row * scale_y
+            elif self._dem_bounds:
+                left, bottom, right, top = self._dem_bounds
+                lon_span = right - left or 1e-9
+                lat_span = top - bottom or 1e-9
+                x = (lon_f - left) / lon_span * width
+                y = (top - lat_f) / lat_span * height
+            else:
+                continue
+            points.append(QPointF(x, y))
+        return points
+
+    def _make_pen(self, color_hex: Optional[str], width: float, dashed: bool = False) -> QPen:
+        color = QColor(color_hex or DEFAULT_MISSION_STYLE["stroke"])
+        pen = QPen(color)
+        pen.setWidthF(max(width, 0.8))
+        pen.setCosmetic(True)
+        pen.setCapStyle(Qt.RoundCap)
+        pen.setJoinStyle(Qt.RoundJoin)
+        if dashed:
+            pen.setStyle(Qt.DashLine)
+        return pen
+
+    def _make_brush(self, color_hex: Optional[str], opacity: float) -> QBrush:
+        if not color_hex:
+            return QBrush(Qt.NoBrush)
+        color = QColor(color_hex)
+        color.setAlphaF(max(0.0, min(1.0, opacity)))
+        brush = QBrush(color)
+        brush.setStyle(Qt.SolidPattern)
+        return brush
+
+    def _load_individual_plan_entries(self, package_id: Any) -> Optional[list]:
+        if package_id is None:
+            return None
+        try:
+            package_id = int(package_id)
+        except (TypeError, ValueError):
+            return None
+        cached = self._mission_file_cache.get(package_id)
+        if cached is not None:
+            return cached
+        path = self._locate_individual_plan_file(package_id)
+        if path is None or not path.exists():
+            return None
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        missions = data.get("individualMissionList")
+        if not isinstance(missions, list):
+            return None
+        self._mission_file_cache[package_id] = missions
+        return missions
+
+    def _locate_individual_plan_file(self, package_id: int) -> Optional[Path]:
+        try:
+            primary = db_paths.get_db_subpath(
+                "IndividualMissionPlan", f"{package_id}.json"
+            )
+        except Exception:
+            primary = PROJECT_ROOT / "database" / "IndividualMissionPlan" / f"{package_id}.json"
+        if primary.exists():
+            return primary
+        self._ensure_mission_output_index()
+        if self._mission_output_index:
+            return self._mission_output_index.get(package_id)
         return None
 
-    def _on_display_option_changed(self, option: str) -> None:
-        checkbox = self._option_checkboxes.get(option)
-        if checkbox is None:
+    def _ensure_mission_output_index(self) -> None:
+        if self._mission_output_index is not None:
             return
-        self.display_options[option] = checkbox.isChecked()
-        if hasattr(self, "presenter"):
-            self.presenter.update_display_options(self.display_options)
+        index: Dict[int, Path] = {}
+        base = PROJECT_ROOT / "database" / "mission_output"
+        if not base.exists():
+            self._mission_output_index = index
+            return
+        for path in base.glob("IndividualMissionPlan_*.json"):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                pkg = data.get("individualMissionPackageID")
+                if pkg is not None:
+                    index[int(pkg)] = path
+            except Exception:
+                continue
+        self._mission_output_index = index
+
+    def _load_resource_image(self) -> None:
+        if self._image_loaded:
+            return
+        width, height = 640, 360
+        placeholder = QPixmap(width, height)
+        placeholder.fill(QColor(32, 32, 48))
+
+        painter = QPainter(placeholder)
+        painter.setPen(QPen(QColor('#bbbbbb')))
+        painter.drawText(
+            placeholder.rect(),
+            Qt.AlignCenter,
+            '지형 미리보기 비활성화',
+        )
+        painter.end()
+
+        self._image_view.set_pixmap(placeholder)
+        self._pixmap_cache = placeholder
+        self._dem_bounds = None
+        self._dem_size = (width, height)
+        self._image_loaded = True
+        self._image_status_label.setText('지도 미표시')
 
 
     @staticmethod
+    def _to_int(value: Any) -> Optional[int]:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
 
-    def _unpack_update(update_info: Iterable[object] | None) -> Tuple[Optional[str], Optional[str]]:
+    @staticmethod
+    def _fmt(value: Any) -> str:
+        return "-" if value is None else str(value)
 
-        if isinstance(update_info, (list, tuple)):
-
-            first = str(update_info[0]) if len(update_info) > 0 and update_info[0] is not None else None
-
-            second = str(update_info[1]) if len(update_info) > 1 and update_info[1] is not None else None
-
-            return first, second
-
-        return None, None
-
-
-
-    def _apply_placeholder_paths(self) -> None:
-
-        """Seed simple overlay lines so the empty canvases still show context."""
-
-        left_paths = [
-
-            [
-
-                (37.05, 127.08),
-
-                (37.25, 127.25),
-
-                (37.42, 127.4),
-
-                (37.65, 127.6),
-
-            ],
-
-            [
-
-                (37.15, 127.7),
-
-                (37.5, 127.55),
-
-                (37.82, 127.85),
-
-            ],
-
-        ]
-
-        right_paths = [
-
-            [
-
-                (37.1, 127.15),
-
-                (37.3, 127.45),
-
-                (37.6, 127.35),
-
-            ],
-
-        ]
+    @staticmethod
+    def _format_update_source(update_info: Iterable[Any] | None) -> str:
+        if isinstance(update_info, tuple) and len(update_info) == 2:
+            update_type, key = update_info
+            if update_type or key:
+                return f"{update_type or '-'} / {key or '-'}"
+        return "-"
 
 
+class _ZoomableImageView(QGraphicsView):
+    """QGraphicsView helper that supports wheel zoom and drag panning."""
 
-        palette = ["#1f78ff", "#ff6f00", "#19a974"]
-
-        self.left_panel.map_view.clear_overlays()
-
-        for idx, coords in enumerate(left_paths):
-
-            self.left_panel.map_view.add_polyline(coords, color=palette[idx % len(palette)], width=3.0)
-
-
-
-        self.right_panel.map_view.clear_overlays()
-
-        for idx, coords in enumerate(right_paths):
-
-            self.right_panel.map_view.add_polyline(coords, color=palette[idx % len(palette)], width=3.0)
-
-
-
-
-
-class _MapSection(QFrame):
-    """Wraps a map view with a title to mimic the provided mock-up."""
-
-    def __init__(
-        self,
-        title: str,
-        lat_range: Tuple[float, float],
-        lon_range: Tuple[float, float],
-        parent: QWidget | None = None,
-        controls: QWidget | None = None,
-    ) -> None:
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setFrameShape(QFrame.NoFrame)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(6)
-
-        title_label = QLabel(title)
-        title_label.setAlignment(Qt.AlignCenter)
-        title_label.setStyleSheet("color:#111111; font-size:15px; font-weight:600;")
-        layout.addWidget(title_label)
-
-        if controls is not None:
-            layout.addWidget(controls)
-
-        canvas_frame = QFrame()
-        canvas_frame.setObjectName("mapCanvas")
-        canvas_frame.setStyleSheet(
-            "#mapCanvas { background-color:#ffffff; border:2px solid #c8c8c8; border-radius:3px; }"
-        )
-        canvas_layout = QVBoxLayout(canvas_frame)
-        canvas_layout.setContentsMargins(0, 0, 0, 0)
-        canvas_layout.setSpacing(0)
-
-        self.map_view = MissionMapView(lat_range, lon_range)
-        canvas_layout.addWidget(self.map_view)
-
-        layout.addWidget(canvas_frame)
-
-
-
-
-class MissionMapView(QGraphicsView):
-
-    """Custom QGraphicsView supporting wheel zoom + right-click drag pan in lat/lon space."""
-
-
-
-    SCALE_PER_DEGREE = 900.0
-
-    def __init__(self, lat_range: Tuple[float, float], lon_range: Tuple[float, float], parent: QWidget | None = None) -> None:
-
-        super().__init__(parent)
-
-        self.lat_range = lat_range
-
-        self.lon_range = lon_range
-
         self._scene = QGraphicsScene(self)
-
-        self._scene.setItemIndexMethod(QGraphicsScene.NoIndex)
-
+        self._pixmap_item: Optional[QGraphicsPixmapItem] = None
+        self._overlay_items: list = []
         self.setScene(self._scene)
 
+        self.setFrameShape(QFrame.StyledPanel)
+        self.setBackgroundBrush(Qt.black)
+        self.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
+        self.setResizeAnchor(QGraphicsView.AnchorUnderMouse)
+        self.setDragMode(QGraphicsView.ScrollHandDrag)
+        self.viewport().setCursor(Qt.OpenHandCursor)
 
-
-        self._overlay_items: list = []
-
-        self._grid_items: list = []
-
-        self._panning = False
-
-        self._pan_start = QPoint(0, 0)
-
-
-
-        self._setup_view()
-
-        self._refresh_grid()
-
-
-
-    # ------------------------------------------------------------------ Public API
+    def set_pixmap(self, pixmap: QPixmap) -> None:
+        self._scene.clear()
+        self._overlay_items.clear()
+        self._pixmap_item = self._scene.addPixmap(pixmap)
+        self._scene.setSceneRect(self._pixmap_item.boundingRect())
+        self.setScene(self._scene)
+        self.resetTransform()
 
     def clear_overlays(self) -> None:
-
         for item in list(self._overlay_items):
-
             try:
-
                 self._scene.removeItem(item)
-
             except Exception:
-
                 pass
-
         self._overlay_items.clear()
 
-
-
-    def add_polyline(
-
-        self,
-
-        latlon_points: Sequence[Tuple[float, float]],
-
-        color: str = "#1f78ff",
-
-        width: float = 2.0,
-
-        z_value: float = 5,
-
-        dash_pattern: Optional[Sequence[int]] = None,
-
-    ):
-
-        if len(latlon_points) < 2:
-
-            return None
-
-
-
-        pen = QPen(QColor(color))
-
-        pen.setWidthF(width)
-
-        pen.setCosmetic(True)
-
-        pen.setJoinStyle(Qt.RoundJoin)
-
-        pen.setCapStyle(Qt.RoundCap)
-
-        if dash_pattern:
-
-            pen.setDashPattern(list(dash_pattern))
-
-
-
-        start_point = self._latlon_to_point(*latlon_points[0])
-
-        path = QPainterPath(start_point)
-
-        for lat, lon in latlon_points[1:]:
-
-            path.lineTo(self._latlon_to_point(lat, lon))
-
-
-
-        item = self._scene.addPath(path, pen)
-
-        item.setZValue(z_value)
-
-        return self._register_overlay(item)
-
-
-
-    def add_polygon(
-
-        self,
-
-        latlon_points: Sequence[Tuple[float, float]],
-
-        stroke: str = "#f97316",
-
-        fill: str = "#fed7aa",
-
-        width: float = 2.0,
-
-        opacity: float = 0.4,
-
-        z_value: float = 4,
-
-    ):
-
-        if len(latlon_points) < 3:
-
-            return None
-
-
-
-        start_point = self._latlon_to_point(*latlon_points[0])
-
-        path = QPainterPath(start_point)
-
-        for lat, lon in latlon_points[1:]:
-
-            path.lineTo(self._latlon_to_point(lat, lon))
-
-        path.closeSubpath()
-
-
-
-        pen = QPen(QColor(stroke))
-
-        pen.setWidthF(width)
-
-        pen.setCosmetic(True)
-
-
-
-        brush_color = QColor(fill)
-
-        brush_color.setAlphaF(max(0.0, min(1.0, opacity)))
-
-        brush = QBrush(brush_color)
-
-
-
+    def add_path_item(self, path: QPainterPath, pen: QPen, brush: QBrush):
         item = self._scene.addPath(path, pen, brush)
-
-        item.setZValue(z_value)
-
-        return self._register_overlay(item)
-
-
-
-    def add_point(
-        self,
-        lat: float,
-        lon: float,
-        radius: float = 4.0,
-        stroke: str = "#111111",
-        fill: str = "#ffffff",
-        z_value: float = 6,
-        stroke_width: float | None = None,
-    ):
-        center = self._latlon_to_point(lat, lon)
-        rect = QRectF(center.x() - radius, center.y() - radius, radius * 2, radius * 2)
-        pen = QPen(QColor(stroke))
-        pen.setWidthF(stroke_width if stroke_width is not None else 0)
-        pen.setCosmetic(True)
-        brush = QBrush(QColor(fill))
-        item = self._scene.addEllipse(rect, pen, brush)
-        item.setZValue(z_value)
-        return self._register_overlay(item)
-
-
-
-    def add_label(
-        self,
-        lat: float,
-        lon: float,
-        text: str,
-        *,
-        color: str = "#111111",
-        font_size: int = 10,
-        z_value: float = 7,
-        offset_x: float = 0.0,
-        offset_y: float = 0.0,
-    ):
-        item = QGraphicsSimpleTextItem(text)
-        font = QFont()
-        font.setPointSize(font_size)
-        font.setBold(True)
-        item.setFont(font)
-        item.setBrush(QColor(color))
-        item.setFlag(QGraphicsItem.ItemIgnoresTransformations, True)
-        scene_pos = self._latlon_to_point(lat, lon)
-        rect = item.boundingRect()
-        item.setPos(
-            scene_pos.x() - rect.width() / 2 + offset_x,
-            scene_pos.y() - rect.height() / 2 + offset_y,
-        )
-        item.setZValue(z_value)
-        self._scene.addItem(item)
-        return self._register_overlay(item)
-
-
-
-    def _register_overlay(self, item):
-
-        if item is not None:
-
-            self._overlay_items.append(item)
-
+        item.setZValue(5)
+        self._overlay_items.append(item)
         return item
 
-
-
-    # ------------------------------------------------------------------ Internal drawing
-
-    def _setup_view(self) -> None:
-
-        self.setRenderHints(self.renderHints() | QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
-
-        self.setBackgroundBrush(QColor("#ffffff"))
-
-        self.setFrameShape(QFrame.NoFrame)
-
-        self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
-
-        self.setResizeAnchor(QGraphicsView.AnchorUnderMouse)
-
-        self.setDragMode(QGraphicsView.NoDrag)
-
-        self.setContextMenuPolicy(Qt.NoContextMenu)
-
-
-
-        lon_span = self.lon_range[1] - self.lon_range[0]
-
-        lat_span = self.lat_range[1] - self.lat_range[0]
-
-        self._map_rect = QRectF(
-
-            0.0,
-
-            0.0,
-
-            max(1.0, lon_span * self.SCALE_PER_DEGREE),
-
-            max(1.0, lat_span * self.SCALE_PER_DEGREE),
-
+    def add_point_item(
+        self,
+        point: QPointF,
+        radius: float,
+        stroke: QColor,
+        fill: QColor,
+    ):
+        rect = QRectF(
+            point.x() - radius,
+            point.y() - radius,
+            radius * 2,
+            radius * 2,
         )
-
-        base_rect = self._scene.addRect(self._map_rect, QPen(QColor("#d0d0d0")), QBrush(QColor("#ffffff")))
-
-        base_rect.setZValue(0)
-
-
-
-        pad_x = self._map_rect.width() * 8
-
-        pad_y = self._map_rect.height() * 8
-
-        self._scene.setSceneRect(
-
-            self._map_rect.left() - pad_x,
-
-            self._map_rect.top() - pad_y,
-
-            self._map_rect.width() + pad_x * 2,
-
-            self._map_rect.height() + pad_y * 2,
-
-        )
-
-        self.fitInView(self._map_rect, Qt.KeepAspectRatio)
-
-
-
-    def _refresh_grid(self) -> None:
-
-        if self._scene is None:
-
-            return
-
-
-
-        for item in list(self._grid_items):
-
-            try:
-
-                self._scene.removeItem(item)
-
-            except Exception:
-
-                pass
-
-        self._grid_items.clear()
-
-
-
-        view_rect = self.mapToScene(self.viewport().rect()).boundingRect()
-
-        if view_rect.isNull():
-
-            view_rect = self._scene.sceneRect()
-
-
-
-        lat_top = self._scene_to_lat(view_rect.top())
-
-        lat_bottom = self._scene_to_lat(view_rect.bottom())
-
-        lat_min, lat_max = sorted((lat_top, lat_bottom))
-
-        lon_left = self._scene_to_lon(view_rect.left())
-
-        lon_right = self._scene_to_lon(view_rect.right())
-
-        lon_min, lon_max = sorted((lon_left, lon_right))
-
-
-
-        lat_step = max(self._pick_step(lat_max - lat_min), 0.01)
-
-        lon_step = max(self._pick_step(lon_max - lon_min), 0.01)
-
-
-
-        grid_pen = QPen(QColor("#d4d4d4"))
-
-        grid_pen.setCosmetic(True)
-
-
-
-        lat_value = math.floor(lat_min / lat_step) * lat_step
-
-        while lat_value <= lat_max + 1e-6:
-
-            y = self._lat_to_scene(lat_value)
-
-            line = self._scene.addLine(
-
-                view_rect.left(),
-
-                y,
-
-                view_rect.right(),
-
-                y,
-
-                grid_pen,
-
-            )
-
-            line.setZValue(1)
-
-            self._grid_items.append(line)
-
-            label = self._add_grid_label(f"{lat_value:.2f}°N", QPointF(view_rect.left() + 6, y - 12))
-
-            self._grid_items.append(label)
-
-            lat_value += lat_step
-
-
-
-        lon_value = math.floor(lon_min / lon_step) * lon_step
-
-        while lon_value <= lon_max + 1e-6:
-
-            x = self._lon_to_scene(lon_value)
-
-            line = self._scene.addLine(
-
-                x,
-
-                view_rect.top(),
-
-                x,
-
-                view_rect.bottom(),
-
-                grid_pen,
-
-            )
-
-            line.setZValue(1)
-
-            self._grid_items.append(line)
-
-            label = self._add_grid_label(f"{lon_value:.2f}°E", QPointF(x - 22, view_rect.top() + 8))
-
-            self._grid_items.append(label)
-
-            lon_value += lon_step
-
-
-
-    def _add_grid_label(self, text: str, pos: QPointF) -> QGraphicsSimpleTextItem:
-
-        label = QGraphicsSimpleTextItem(text)
-
-        font = QFont()
-
-        font.setPointSize(8)
-
-        label.setFont(font)
-
-        label.setBrush(QColor("#595959"))
-
-        label.setPos(pos)
-
-        label.setZValue(2)
-
-        label.setFlag(QGraphicsItem.ItemIgnoresTransformations, True)
-
-        self._scene.addItem(label)
-
-        return label
-
-
-
-    # ------------------------------------------------------------------ Interaction overrides
+        pen = QPen(stroke)
+        pen.setWidthF(max(1.0, radius / 2.0))
+        brush = QBrush(fill)
+        item = self._scene.addEllipse(rect, pen, brush)
+        item.setZValue(6)
+        self._overlay_items.append(item)
+        return item
 
     def wheelEvent(self, event) -> None:  # type: ignore[override]
-
-        zoom_factor = 1.2 if event.angleDelta().y() > 0 else 0.8
-
-        self.scale(zoom_factor, zoom_factor)
-
-        self._refresh_grid()
-
-        event.accept()
-
-
+        if self._pixmap_item is None:
+            return
+        zoom_in_factor = 1.25
+        zoom_out_factor = 0.8
+        factor = zoom_in_factor if event.angleDelta().y() > 0 else zoom_out_factor
+        self.scale(factor, factor)
 
     def mousePressEvent(self, event) -> None:  # type: ignore[override]
-
-        if event.button() == Qt.RightButton:
-
-            self._panning = True
-
-            self._pan_start = event.pos()
-
-            self.setCursor(Qt.ClosedHandCursor)
-
-            event.accept()
-
-            return
-
+        if event.button() == Qt.LeftButton:
+            self.viewport().setCursor(Qt.ClosedHandCursor)
         super().mousePressEvent(event)
 
-
-
-    def mouseMoveEvent(self, event) -> None:  # type: ignore[override]
-
-        if self._panning:
-
-            delta = event.pos() - self._pan_start
-
-            self._pan_start = event.pos()
-
-            self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - delta.x())
-
-            self.verticalScrollBar().setValue(self.verticalScrollBar().value() - delta.y())
-
-            self._refresh_grid()
-
-            event.accept()
-
-            return
-
-        super().mouseMoveEvent(event)
-
-
-
     def mouseReleaseEvent(self, event) -> None:  # type: ignore[override]
-
-        if event.button() == Qt.RightButton and self._panning:
-
-            self._panning = False
-
-            self.setCursor(Qt.ArrowCursor)
-
-            self._refresh_grid()
-
-            event.accept()
-
-            return
-
+        if event.button() == Qt.LeftButton:
+            self.viewport().setCursor(Qt.OpenHandCursor)
         super().mouseReleaseEvent(event)
 
-
-
-    def resizeEvent(self, event) -> None:  # type: ignore[override]
-
-        super().resizeEvent(event)
-
-        self._refresh_grid()
-
-
-
-    def scrollContentsBy(self, dx: int, dy: int) -> None:  # type: ignore[override]
-
-        super().scrollContentsBy(dx, dy)
-
-        if self._panning:
-
-            return
-
-        self._refresh_grid()
-
-
-
-    # ------------------------------------------------------------------ Converters
-
-    def _latlon_to_point(self, lat: float, lon: float) -> QPointF:
-
-        return QPointF(self._lon_to_scene(lon), self._lat_to_scene(lat))
-
-
-
-    def _lat_to_scene(self, lat: float) -> float:
-
-        lat_span = self.lat_range[1] - self.lat_range[0]
-
-        if lat_span == 0:
-
-            return self._map_rect.top()
-
-        normalized = (self.lat_range[1] - lat) / lat_span
-
-        return self._map_rect.top() + normalized * self._map_rect.height()
-
-
-
-    def _lon_to_scene(self, lon: float) -> float:
-
-        lon_span = self.lon_range[1] - self.lon_range[0]
-
-        if lon_span == 0:
-
-            return self._map_rect.left()
-
-        normalized = (lon - self.lon_range[0]) / lon_span
-
-        return self._map_rect.left() + normalized * self._map_rect.width()
-
-
-
-    def _scene_to_lat(self, y: float) -> float:
-
-        lat_span = self.lat_range[1] - self.lat_range[0]
-
-        if lat_span == 0 or self._map_rect.height() == 0:
-
-            return self.lat_range[0]
-
-        normalized = (y - self._map_rect.top()) / self._map_rect.height()
-
-        return self.lat_range[1] - normalized * lat_span
-
-
-
-    def _scene_to_lon(self, x: float) -> float:
-
-        lon_span = self.lon_range[1] - self.lon_range[0]
-
-        if lon_span == 0 or self._map_rect.width() == 0:
-
-            return self.lon_range[0]
-
-        normalized = (x - self._map_rect.left()) / self._map_rect.width()
-
-        return self.lon_range[0] + normalized * lon_span
-
-
-
-    @staticmethod
-
-    def _pick_step(span: float) -> float:
-
-        if span <= 0:
-
-            return 0.1
-
-        steps = [0.01, 0.02, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0]
-
-        for step in steps:
-
-            if span / step <= 12:
-
-                return step
-
-        return 200.0

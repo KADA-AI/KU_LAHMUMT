@@ -229,16 +229,20 @@ def judge_replan_situation(manager) -> List[Dict[str, Any]]:
             if mandatory_type == 3 and aircraft_int is not None:
                 hold_info = forced_hold_state.get(aircraft_int)
                 if hold_info:
+                    resume_ts = hold_info.get("resume_requested_timestamp")
                     deadline_value = hold_info.get("deadline")
                     updated_state = dict(forced_hold_state)
                     updated_state.pop(aircraft_int, None)
                     manager.logic_store.set_data(FORCED_HOLD_STATE_KEY, updated_state)
                     forced_hold_state = updated_state
-                    if isinstance(deadline_value, (int, float)) and time.monotonic() < deadline_value:
+
+                    skip_due_to_resume = resume_ts is not None
+                    skip_due_to_deadline = isinstance(deadline_value, (int, float)) and time.monotonic() < deadline_value
+                    if skip_due_to_resume or skip_due_to_deadline:
                         manager._log(
                             "REPLAN_JUDGE",
                             "INFO",
-                            f"0802 강제임무복귀 명령이 강제대기 유예({FORCED_HOLD_DELAY_SECONDS:.0f}s) 내에 수신되어 재계획 후보에서 제외합니다. 대상 기체={aircraft_id}",
+                            f"0802 강제임무복귀 명령이 강제대기 유예({FORCED_HOLD_DELAY_SECONDS:.0f}s) 내에 수신되어 재계획 후보에서 제외합니다. 대상 기체={aircraft_value}",
                         )
                         manager.logic_store.set_data(last_ts_key, current_ts)
                         continue

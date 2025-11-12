@@ -61,22 +61,6 @@ def _to_coordinate_model(cs_obj: Coordinate) -> CoordinateModel:
         altitude=_get(cs_obj, "altitude", "Altitude"),
     )
 
-def _to_coordinate_model_list(cs_list) -> List[CoordinateModel]:
-    if cs_list is None:
-        return []
-
-    try:
-        iterable = list(cs_list)
-    except TypeError:
-        iterable = [cs_list]
-
-    models: List[CoordinateModel] = []
-    for item in iterable:
-        coord = _to_coordinate_model(item)
-        if coord is not None:
-            models.append(coord)
-    return models
-
 
 def _to_velocity_model(cs_obj: Velocity) -> VelocityModel:
     if not cs_obj:
@@ -165,17 +149,6 @@ def _to_sensor_info_model(cs_obj: SensorInfo) -> SensorInfoModel:
         fov=_get(cs_obj, "fov", "Fov"),
         centerCoordinate=_to_center_coordinate_model(
             _get(cs_obj, "centerCoordinate", "CenterCoordinate")
-        ),
-        footprintCornerList=_to_coordinate_model_list(
-            _get(
-                cs_obj,
-                "footprintCornerList",
-                "FootprintCornerList",
-                "footprintCorner",
-                "FootprintCorner",
-                "footprintCorners",
-                "FootprintCorners",
-            )
         ),
     )
 
