@@ -36,4 +36,26 @@ from .message0806_receiver import BootCommandReceiver_0806
 from .message0903_receiver import RequestRenewMissionReceiver_0903
 
 
-FusionNodeIoc.AddConsumerFromAssemblyContainsType(SystemOperationModeReceiver_0101)
+_RECEIVE_CONSUMERS = [
+    SystemOperationModeReceiver_0101,
+    InputMissionPlanReceiver_0201,
+    PriorMissionInfoReceiver_0202,
+    FlightReferenceInfoReceiver_0203,
+    MissionPlanReceiver_0301,
+    IndividualMissionPlanReceiver_0302,
+    UAVFlightPlanReceiver_0303,
+    LAHFlightPlanReceiver_0304,
+    AgentStatusReceiver_0401,
+    SituationAwarenessInfoReceiver_0402,
+    BasicActionReceiver_0601,
+    PilotDecisionReceiver_0702,
+    InitialPlanCommandReceiver_0801,
+    MandatoryCommandReceiver_0802,
+    ExecutionCommandReceiver_0803,
+    SystemEventReceiver_0805,
+    BootCommandReceiver_0806,
+    RequestRenewMissionReceiver_0903,
+]
+
+for consumer in _RECEIVE_CONSUMERS:
+    FusionNodeIoc.AddConsumerFromAssemblyContainsType(consumer)

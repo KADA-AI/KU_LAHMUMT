@@ -24,6 +24,14 @@ from __future__ import annotations
 import math, json
 from typing import List, Tuple
 
+try:
+    from .config import DEFAULT_SWEEP_SEPARATION_M
+except ImportError:
+    try:
+        from config import DEFAULT_SWEEP_SEPARATION_M  # type: ignore
+    except ImportError:
+        from modules.mission_planning.MissionPlanner.config import DEFAULT_SWEEP_SEPARATION_M  # type: ignore
+
 import numpy as np
 import matplotlib.pyplot as plt
 from dividing_Aisle_class import PolygonProcessor
@@ -39,7 +47,7 @@ class UAVMissionPlanner:
     def __init__(self,
                  waypoints: List[Point],
                  corridor_width: float = 1000.0,
-                 separation: float = 850.0,
+                 separation: float = DEFAULT_SWEEP_SEPARATION_M,
                  fov_deg: float = 10.0,
                  cruise_speed: float = 40.0,
                  arrival_tol: float = 100.0,

@@ -7,8 +7,8 @@ import json
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
-SOURCE = BASE_DIR.parent / "0401_종합과제_1107" / "0401_1.json"
-TARGET = BASE_DIR / "0401_1.ndjson"
+SOURCE = BASE_DIR / "0401_ori.json"
+TARGET = BASE_DIR / "0401_ori.ndjson"
 
 
 def convert_to_ndjson(source: Path, target: Path) -> int:

@@ -6,6 +6,14 @@ from copy import deepcopy
 from typing import List, Tuple                       # ★ 추가
 from .mission_helpers import now_ms_since_2000, terrain_elev
 from .id_allocator import next_waypoint_id as _next_waypoint_id
+
+try:
+    from ..config import DEFAULT_SWEEP_SEPARATION_M
+except ImportError:
+    try:
+        from config import DEFAULT_SWEEP_SEPARATION_M  # type: ignore
+    except ImportError:
+        from modules.mission_planning.MissionPlanner.config import DEFAULT_SWEEP_SEPARATION_M  # type: ignore
 from UAV_missionPlanning import UAVMissionPlanner
 from Aisle_Sweep_CPP_shoot_plan import RectanglePath
 from .coord_transform import llh_to_xy, xy_to_llh
@@ -30,9 +38,9 @@ Point = Tuple[float, float]
 Line  = Tuple[Point, Point]
 
 # ── 고정 상수 ───────────────────────────────────────────
-FOV_DEG         = 2.5
-SWEEP_ENTRY_OFFSET_M = 500.0
-SWEEP_MERGE_HEADING_DEG = 3
+FOV_DEG         = 15
+SWEEP_ENTRY_OFFSET_M = 1500.0
+SWEEP_MERGE_HEADING_DEG = 5
 Altitude = 700
 
 SENSOR_NONE     = 0
@@ -41,7 +49,7 @@ SENSOR_EO_IR    = 1        # 예) EO/IR 센서
 # WaypointPassType
 PASS_NONE = 0
 PASS_FLYBY = 1
-PASS_FLYOVER = 2
+PASS_LOITER = 2
 
 # OperationMode
 OPMODE_NONE   = 0
@@ -341,7 +349,7 @@ def build_flight_plans(
     # ── 상수 ───────────────────────────────────────────────
     SENSOR, OPMODE = 1, 2
     DEFAULT_SEARCH_SPEED = round(cruise_speed * 5, 2)
-    ALT_M = 850.0
+    ALT_M = DEFAULT_SWEEP_SEPARATION_M
     DEG_M = 111_132
     # ── 마지막점용 POINT 촬영 블록 생성기 ─────────────────
     def _mk_point_filming_for_coord(coord: dict) -> OrderedDict:
@@ -478,7 +486,7 @@ def build_flight_plans(
                         ("eta", 0),
                         ("ecf", 0.0),
                         ("nextWaypointID", 0),
-                        ("waypointPassType", PASS_FLYOVER),
+                        ("waypointPassType", PASS_LOITER),
                         ("filmingProperty", _mk_point_filming_for_coord(end_coord)),
                     ]))
                 elif len(wplist) == 1 and last_off_xy is not None:
@@ -493,7 +501,7 @@ def build_flight_plans(
                         ("eta", 0),
                         ("ecf", 0.0),
                         ("nextWaypointID", 0),
-                        ("waypointPassType", PASS_FLYOVER),
+                        ("waypointPassType", PASS_LOITER),
                         ("filmingProperty", _mk_point_filming_for_coord(end_coord)),
                     ]))
 
@@ -558,7 +566,7 @@ def build_flight_plans(
                         ("eta", 0),
                         ("ecf", 0.0),
                         ("nextWaypointID", 0),
-                        ("waypointPassType", PASS_FLYOVER),
+                        ("waypointPassType", PASS_LOITER),
                         ("filmingProperty", _mk_point_filming_for_coord(end_coord)),
                     ]))
 
@@ -769,7 +777,7 @@ def build_flight_plans(
         wps[-1]["nextWaypointID"] = 0
 
         for wp in wps:
-            if wp.get("waypointPassType") == PASS_FLYOVER:
+            if wp.get("waypointPassType") == PASS_LOITER:
                 if not wp.get("filmingProperty"):
                     wp["filmingProperty"] = _mk_point_filming_for_coord(wp.get("coordinate") or {})
                 wp["loiterProperty"] = OrderedDict([

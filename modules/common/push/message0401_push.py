@@ -5,6 +5,7 @@
 import json, importlib
 from datetime import datetime, timezone
 from System.Collections.Generic import List
+from System import Array
 from nFusion.Model.msg_0401 import *    # C# 모델(우선)
 from nFusion.Model.CommonType import *     # 공통 타입(항상)
 from System import Boolean, Int32, Single, String, UInt32, UInt64
@@ -119,29 +120,48 @@ def _list_numeric_ids(dirname: str, prefix_first_char: str | None = None) -> lis
 
 def _dict_to_Coordinate(data: dict):
     obj = _new('Coordinate')
-    if "latitude" in data: _try_set(obj, "latitude", float(data["latitude"]))
-    if "longitude" in data: _try_set(obj, "longitude", float(data["longitude"]))
-    if "altitude" in data: _try_set(obj, "altitude", int(data["altitude"]))
+    if not isinstance(data, dict):
+        return obj
+    lat = data.get("latitude")
+    if lat is not None: _try_set(obj, "latitude", float(lat))
+    lon = data.get("longitude")
+    if lon is not None: _try_set(obj, "longitude", float(lon))
+    alt = data.get("altitude")
+    if alt is not None: _try_set(obj, "altitude", int(alt))
     return obj
 
 def _dict_to_Velocity(data: dict):
     obj = _new('Velocity')
-    if "speed" in data: _try_set(obj, "speed", float(data["speed"]))
-    if "heading" in data: _try_set(obj, "heading", float(data["heading"]))
+    if not isinstance(data, dict):
+        return obj
+    speed = data.get("speed")
+    if speed is not None: _try_set(obj, "speed", float(speed))
+    heading = data.get("heading")
+    if heading is not None: _try_set(obj, "heading", float(heading))
     return obj
 
 def _dict_to_Weapons(data: dict):
     obj = _new('Weapons')
-    if "type1" in data: _try_set(obj, "type1", int(data["type1"]))
-    if "type2" in data: _try_set(obj, "type2", int(data["type2"]))
-    if "type3" in data: _try_set(obj, "type3", int(data["type3"]))
+    if not isinstance(data, dict):
+        return obj
+    type1 = data.get("type1")
+    if type1 is not None: _try_set(obj, "type1", int(type1))
+    type2 = data.get("type2")
+    if type2 is not None: _try_set(obj, "type2", int(type2))
+    type3 = data.get("type3")
+    if type3 is not None: _try_set(obj, "type3", int(type3))
     return obj
 
 def _dict_to_DatalinkStatus(data: dict):
     obj = _new('DatalinkStatus')
-    if "isConnectedToUAV1" in data: _try_set(obj, "isConnectedToUAV1", bool(data["isConnectedToUAV1"]))
-    if "isConnectedToUAV2" in data: _try_set(obj, "isConnectedToUAV2", bool(data["isConnectedToUAV2"]))
-    if "isConnectedToUAV3" in data: _try_set(obj, "isConnectedToUAV3", bool(data["isConnectedToUAV3"]))
+    if not isinstance(data, dict):
+        return obj
+    c1 = data.get("isConnectedToUAV1")
+    if c1 is not None: _try_set(obj, "isConnectedToUAV1", bool(c1))
+    c2 = data.get("isConnectedToUAV2")
+    if c2 is not None: _try_set(obj, "isConnectedToUAV2", bool(c2))
+    c3 = data.get("isConnectedToUAV3")
+    if c3 is not None: _try_set(obj, "isConnectedToUAV3", bool(c3))
     return obj
 
 def _dict_to_MannedInfo(data: dict):
@@ -154,47 +174,100 @@ def _dict_to_MannedInfo(data: dict):
 
 def _dict_to_CurrentWaypointID(data: dict):
     obj = _new('CurrentWaypointID')
-    if "waypointID" in data: _try_set(obj, "waypointID", int(data["waypointID"]))
+    if not isinstance(data, dict):
+        return obj
+    waypoint = data.get("waypointID")
+    if waypoint is not None: _try_set(obj, "waypointID", int(waypoint))
     return obj
 
 def _dict_to_LoiterCoordinate(data: dict):
     obj = _new('LoiterCoordinate')
-    if "latitude" in data: _try_set(obj, "latitude", float(data["latitude"]))
-    if "longitude" in data: _try_set(obj, "longitude", float(data["longitude"]))
-    if "altitude" in data: _try_set(obj, "altitude", int(data["altitude"]))
+    if not isinstance(data, dict):
+        return obj
+    lat = data.get("latitude")
+    if lat is not None: _try_set(obj, "latitude", float(lat))
+    lon = data.get("longitude")
+    if lon is not None: _try_set(obj, "longitude", float(lon))
+    alt = data.get("altitude")
+    if alt is not None: _try_set(obj, "altitude", int(alt))
     return obj
 
 def _dict_to_TargetFollowing(data: dict):
     obj = _new('TargetFollowing')
-    if "targetID" in data: _try_set(obj, "targetID", int(data["targetID"]))
+    if not isinstance(data, dict):
+        return obj
+    target_id = data.get("targetID")
+    if target_id is not None: _try_set(obj, "targetID", int(target_id))
     return obj
 
 def _dict_to_LeaderAircraftID(data: dict):
     obj = _new('LeaderAircraftID')
-    if "aircraftID" in data: _try_set(obj, "aircraftID", int(data["aircraftID"]))
+    if not isinstance(data, dict):
+        return obj
+    aircraft = data.get("aircraftID")
+    if aircraft is not None: _try_set(obj, "aircraftID", int(aircraft))
     return obj
 
 def _dict_to_CenterCoordinate(data: dict):
     obj = _new('CenterCoordinate')
-    if "latitude" in data: _try_set(obj, "latitude", float(data["latitude"]))
-    if "longitude" in data: _try_set(obj, "longitude", float(data["longitude"]))
-    if "altitude" in data: _try_set(obj, "altitude", int(data["altitude"]))
+    if not isinstance(data, dict):
+        return obj
+    lat = data.get("latitude")
+    if lat is not None: _try_set(obj, "latitude", float(lat))
+    lon = data.get("longitude")
+    if lon is not None: _try_set(obj, "longitude", float(lon))
+    alt = data.get("altitude")
+    if alt is not None: _try_set(obj, "altitude", int(alt))
+    return obj
+
+def _dict_to_FootprintCorner(data: dict):
+    obj = _new('FootprintCorner')
+    if not isinstance(data, dict):
+        return obj
+    lat = data.get("latitude")
+    if lat is not None: _try_set(obj, "latitude", float(lat))
+    lon = data.get("longitude")
+    if lon is not None: _try_set(obj, "longitude", float(lon))
+    alt = data.get("altitude")
+    if alt is not None: _try_set(obj, "altitude", int(alt))
     return obj
 
 def _dict_to_SensorInfo(data: dict):
     obj = _new('SensorInfo')
-    if "operationalMode" in data: _try_set(obj, "operationalMode", int(data["operationalMode"]))
-    if "sensorType" in data: _try_set(obj, "sensorType", int(data["sensorType"]))
-    if "fov" in data: _try_set(obj, "fov", float(data["fov"]))
+    if not isinstance(data, dict):
+        return obj
+    operational_mode = data.get("operationalMode")
+    if operational_mode is not None: _try_set(obj, "operationalMode", int(operational_mode))
+    sensor_type = data.get("sensorType")
+    if sensor_type is not None: _try_set(obj, "sensorType", int(sensor_type))
+    fov = data.get("fov")
+    if fov is not None: _try_set(obj, "fov", float(fov))
     if "centerCoordinate" in data and isinstance(data["centerCoordinate"], dict):
         _try_set(obj, "centerCoordinate", _dict_to_CenterCoordinate(data["centerCoordinate"]))
+    if "footprintCornerList" in data and isinstance(data["footprintCornerList"], list):
+        T = _cs('FootprintCorner')
+        items = []
+        for item in data["footprintCornerList"]:
+            items.append(_dict_to_FootprintCorner(item if isinstance(item, dict) else {}))
+        corners = None
+        if T is not None:
+            try:
+                corners = Array[T](items)
+            except Exception:
+                pass
+        if corners is None:
+            corners = items
+        _try_set(obj, "footprintCornerList", corners)
     return obj
 
 def _dict_to_UnmannedInfo(data: dict):
     obj = _new('UnmannedInfo')
+    if not isinstance(data, dict):
+        return obj
     if "currentWaypointID" in data and isinstance(data["currentWaypointID"], dict):
         _try_set(obj, "currentWaypointID", _dict_to_CurrentWaypointID(data["currentWaypointID"]))
-    if "flightMode" in data: _try_set(obj, "flightMode", int(data["flightMode"]))
+    flight_mode = data.get("flightMode")
+    if flight_mode is not None: _try_set(obj, "flightMode", int(flight_mode))
     if "loiterCoordinate" in data and isinstance(data["loiterCoordinate"], dict):
         _try_set(obj, "loiterCoordinate", _dict_to_LoiterCoordinate(data["loiterCoordinate"]))
     if "targetFollowing" in data and isinstance(data["targetFollowing"], dict):
@@ -203,20 +276,28 @@ def _dict_to_UnmannedInfo(data: dict):
         _try_set(obj, "leaderAircraftID", _dict_to_LeaderAircraftID(data["leaderAircraftID"]))
     if "sensorInfo" in data and isinstance(data["sensorInfo"], dict):
         _try_set(obj, "sensorInfo", _dict_to_SensorInfo(data["sensorInfo"]))
-    if "payloadHealth" in data: _try_set(obj, "payloadHealth", int(data["payloadHealth"]))
-    if "fuelWarning" in data: _try_set(obj, "fuelWarning", int(data["fuelWarning"]))
+    payload_health = data.get("payloadHealth")
+    if payload_health is not None: _try_set(obj, "payloadHealth", int(payload_health))
+    fuel_warning = data.get("fuelWarning")
+    if fuel_warning is not None: _try_set(obj, "fuelWarning", int(fuel_warning))
     return obj
 
 def _dict_to_AgentState(data: dict):
     obj = _new('AgentState')
-    if "aircraftID" in data: _try_set(obj, "aircraftID", int(data["aircraftID"]))
-    if "isUnmanned" in data: _try_set(obj, "isUnmanned", bool(data["isUnmanned"]))
+    if not isinstance(data, dict):
+        return obj
+    aircraft = data.get("aircraftID")
+    if aircraft is not None: _try_set(obj, "aircraftID", int(aircraft))
+    is_unmanned = data.get("isUnmanned")
+    if is_unmanned is not None: _try_set(obj, "isUnmanned", bool(is_unmanned))
     if "coordinate" in data and isinstance(data["coordinate"], dict):
         _try_set(obj, "coordinate", _dict_to_Coordinate(data["coordinate"]))
     if "velocity" in data and isinstance(data["velocity"], dict):
         _try_set(obj, "velocity", _dict_to_Velocity(data["velocity"]))
-    if "fuel" in data: _try_set(obj, "fuel", float(data["fuel"]))
-    if "health" in data: _try_set(obj, "health", int(data["health"]))
+    fuel = data.get("fuel")
+    if fuel is not None: _try_set(obj, "fuel", float(fuel))
+    health = data.get("health")
+    if health is not None: _try_set(obj, "health", int(health))
     if "mannedInfo" in data and isinstance(data["mannedInfo"], dict):
         _try_set(obj, "mannedInfo", _dict_to_MannedInfo(data["mannedInfo"]))
     if "unmannedInfo" in data and isinstance(data["unmannedInfo"], dict):
@@ -225,7 +306,10 @@ def _dict_to_AgentState(data: dict):
 
 def _dict_to_AgentStatus(data: dict):
     obj = _new('AgentStatus')
-    if "timestamp" in data: _try_set(obj, "timestamp", int(data["timestamp"]))
+    if not isinstance(data, dict):
+        return obj
+    timestamp = data.get("timestamp")
+    if timestamp is not None: _try_set(obj, "timestamp", int(timestamp))
     val_src = data.get("source", data.get("source", data.get("Source", data.get("requestModuleName", ""))))
     if val_src != "":
         if not _try_set(obj, "source", str(val_src)):
