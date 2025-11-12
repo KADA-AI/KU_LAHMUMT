@@ -13,6 +13,7 @@ from modules.monitoring_ver2.data.message_models import (
 )
 from modules.monitoring_ver2.logic.replan_utils import ensure_replan_level_details_file
 from modules.monitoring_ver2.push.message0902_push import make_and_push as push_message_0902
+from modules.common import prior_replan_store
 
 if TYPE_CHECKING:
     from modules.monitoring_ver2.logic.monitoring_logic_part import MonitoringLogic
@@ -125,7 +126,7 @@ class PriorMissionReplanCoordinator:
         orientation_note = self._summarize_orientation(entry)
         if orientation_note:
             context["orientation"] = orientation_note
-
+        self._persist_detail_bundle(mission_plan_id, entry, timestamp)
         return body, context
 
     def _build_input_mission_models(
@@ -220,6 +221,23 @@ class PriorMissionReplanCoordinator:
             f"선행임무 재계획 요청 발신 (priorMissionID={context.get('priorMissionID')}, missionPlanID={context.get('missionPlanID')})",
         )
         return True
+    def _persist_detail_bundle(self, mission_plan_id: int, entry: Dict[str, Any], timestamp: int) -> None:
+        detail_payload = {
+            "sourceMissionPlanID": getattr(self.logic, "_current_mission_plan_id", None),
+            "priorMissionID": entry.get("priorMissionID"),
+            "missionType": entry.get("missionType"),
+            "targetCoordinate": self._extract_coordinate(entry),
+            "rawEntry": entry,
+            "timestamp": timestamp,
+        }
+        try:
+            prior_replan_store.save_detail(mission_plan_id, detail_payload)
+        except Exception:
+            self.manager._log(
+                "PRIOR_MISSION",
+                "WARN",
+                f"prior detail 저장 실패 (missionPlanID={mission_plan_id})",
+            )
 
     # ------------------------------------------------------------------ #
     # Extraction helpers
@@ -282,3 +300,16 @@ class PriorMissionReplanCoordinator:
             return float(value)
         except (TypeError, ValueError):
             return None
+
+    def _extract_coordinate(self, entry: Dict[str, Any]) -> Optional[Dict[str, float]]:
+        coord_block = self._safe_get(entry, "coordinateOrientation", "CoordinateOrientation")
+        coordinate = self._safe_get(coord_block, "coordinate", "Coordinate") or {}
+        lat = self._to_float(self._safe_get(coordinate, "latitude", "Latitude"))
+        lon = self._to_float(self._safe_get(coordinate, "longitude", "Longitude"))
+        alt = self._to_float(self._safe_get(coordinate, "altitude", "Altitude"))
+        if lat is None or lon is None:
+            return None
+        payload = {"latitude": lat, "longitude": lon}
+        if alt is not None:
+            payload["altitude"] = alt
+        return payload

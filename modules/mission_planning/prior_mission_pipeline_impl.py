@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
+import math
 import time
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
-from modules.common import db_paths
+from modules.common import db_paths, agent_status_snapshot, prior_replan_store
 import importlib.util
 from types import ModuleType
 
@@ -62,6 +63,26 @@ class PriorMissionPipelineResult:
     log_path: Path
     removed_waypoint_id: Optional[int]
     inserted_waypoint_id: int
+
+
+@dataclass
+class AgentSnapshotSummary:
+    aircraft_id: int
+    latitude: Optional[float]
+    longitude: Optional[float]
+    altitude: Optional[float]
+    current_waypoint_id: Optional[int]
+
+
+@dataclass
+class PlanMissionArtifacts:
+    source_plan_id: int
+    aircraft_id: int
+    individual_mission_package_id: int
+    individual_mission_id: int
+    path_id: int
+    current_waypoint_id: Optional[int]
+    previous_waypoint_id: Optional[int]
 
 
 def _now_ms_since_2000() -> int:
@@ -134,16 +155,27 @@ def run_prior_mission_pipeline(
     detail_keys: List[str] = []
     missing_required_fields: List[str] = []
     detail_summary: Dict[str, Any] = {}
-    detail_raw = detail
-    detail_provided = isinstance(detail_raw, dict)
+    agent_snapshot_payload: Optional[Dict[str, Any]] = None
+    agent_summaries: List[AgentSnapshotSummary] = []
+    selected_agent_summary: Optional[AgentSnapshotSummary] = None
+    selected_agent_distance_m: Optional[float] = None
+    stored_detail = _load_detail_from_store(plan_ids_raw)
+    if not isinstance(detail, dict) or not detail:
+        detail = stored_detail or {}
+        detail_provided = bool(detail)
+        detail_raw = detail
+    else:
+        detail_provided = True
+        detail_raw = dict(detail)
+        if stored_detail:
+            detail_raw.setdefault("sourceMissionPlanID", stored_detail.get("sourceMissionPlanID"))
+            detail_raw.setdefault("targetCoordinate", stored_detail.get("targetCoordinate"))
+            detail_raw.setdefault("priorMissionID", stored_detail.get("priorMissionID"))
+            detail_raw.setdefault("missionType", stored_detail.get("missionType"))
     detail_raw_preview = _preview_value(detail_raw)
 
     try:
-        if not detail_provided:
-            emit("[PRIOR] detail payload missing or not dict → using empty stub.")
-            detail = {}
-        else:
-            detail = dict(detail_raw)  # make shallow copy
+        detail = dict(detail_raw) if isinstance(detail_raw, dict) else {}
         detail_keys = sorted(detail.keys())
         emit(f"[PRIOR] detail keys: {detail_keys or '∅'}")
 
@@ -159,6 +191,17 @@ def run_prior_mission_pipeline(
         target_coord = dict(detail.get("targetCoordinate") or {})
         detail_summary = _build_detail_summary(detail)
 
+        source_plan_id = _to_int(detail.get("sourceMissionPlanID"))
+        if source_plan_id is None:
+            source_plan_id = _scan_latest_source_plan_id()
+            if source_plan_id is None:
+                emit("[PRIOR] sourceMissionPlanID unavailable and no fallback plan found.")
+                return None
+
+        agent_snapshot_payload = agent_status_snapshot.load_agent_status_snapshot()
+        agent_summaries = _summarize_agent_states(agent_snapshot_payload)
+        _log_step1_agent_snapshot(emit, agent_snapshot_payload, agent_summaries)
+
         if not plan_ids_raw:
             emit("[PRIOR] plan_ids missing in context.")
             return None
@@ -172,27 +215,36 @@ def run_prior_mission_pipeline(
             return None
         option_names = _ensure_option_names(plan_ids, ctx.get("option_names") or [])
 
-        required = {
-            "aircraftID": aircraft_id,
-            "pathID": path_id,
-            "sourceMissionPlanID": source_plan_id,
-            "individualMissionPackageID": imp_package_id,
-            "individualMissionID": individual_mission_id,
-            "currentWaypointID": current_waypoint_id,
-        }
-        missing = [name for name, value in required.items() if value is None]
-        missing_required_fields = list(missing)
-        if missing:
-            emit(f"[PRIOR] Missing required detail fields: {', '.join(missing)}")
-            return None
-
         lat = _to_float(target_coord.get("latitude"))
         lon = _to_float(target_coord.get("longitude"))
+        _log_step2_target_coordinate(emit, lat, lon, target_coord.get("altitude"))
         if lat is None or lon is None:
             emit("[PRIOR] Target coordinate missing latitude/longitude.")
             return None
         if "altitude" not in target_coord:
             target_coord["altitude"] = None
+
+        selected_agent_summary, selected_agent_distance_m = _select_nearest_agent(lat, lon, agent_summaries)
+        _log_step3_nearest_agent(emit, selected_agent_summary, selected_agent_distance_m)
+
+        if selected_agent_summary is None:
+            return None
+
+        aircraft_id = selected_agent_summary.aircraft_id
+        current_waypoint_id = selected_agent_summary.current_waypoint_id
+        artifacts = _resolve_plan_artifacts(
+            source_plan_id=source_plan_id,
+            aircraft_id=aircraft_id,
+            current_waypoint_id=current_waypoint_id,
+        )
+        if artifacts is None:
+            emit("[PRIOR] Failed to resolve mission artifacts from MissionPlan/IMP data.")
+            return None
+        imp_package_id = artifacts.individual_mission_package_id
+        individual_mission_id = artifacts.individual_mission_id
+        path_id = artifacts.path_id
+        current_waypoint_id = artifacts.current_waypoint_id
+        previous_waypoint_id = artifacts.previous_waypoint_id
 
         plan_src = db_paths.get_db_subpath("MissionPlan", f"{source_plan_id}.json")
         imp_src = db_paths.get_db_subpath("IndividualMissionPlan", f"{imp_package_id}.json")
@@ -216,6 +268,12 @@ def run_prior_mission_pipeline(
         new_path_id = _next_path_id(aircraft_id)
         new_individual_id = _next_individual_mission_id()
         new_waypoint_id = _next_waypoint_id()
+        _log_step4_waypoint_allocation(
+            emit,
+            new_waypoint_id,
+            selected_agent_summary,
+            selected_agent_distance_m,
+        )
         emit(
             f"[PRIOR] Allocated IDs -> plan:{new_plan_id} imp:{new_imp_id} path:{new_path_id} indiv:{new_individual_id} wp:{new_waypoint_id}"
         )
@@ -367,9 +425,163 @@ def run_prior_mission_pipeline(
             "detailKeys": detail_keys if detail_provided else [],
             "detailRawPreview": detail_raw_preview,
             "missingDetailFields": missing_required_fields,
+            "snapshotAgentCount": len(agent_summaries),
+            "selectedAgentID": selected_agent_summary.aircraft_id if selected_agent_summary else None,
+            "selectedAgentDistanceMeters": selected_agent_distance_m,
             "error": error_text,
         }
         _persist_prior_algorithm_log(entry)
+
+
+def _log_step1_agent_snapshot(
+    emit: Callable[[str], None],
+    snapshot_payload: Optional[Dict[str, Any]],
+    summaries: List[AgentSnapshotSummary],
+) -> None:
+    if not summaries:
+        emit(
+            f"[PRIOR][STEP1] 0401 snapshot unavailable or empty — expected file '{agent_status_snapshot.SNAPSHOT_FILENAME}'."
+        )
+        return
+    saved_at = (snapshot_payload or {}).get("saved_at")
+    emit(
+        f"[PRIOR][STEP1] Loaded 0401 snapshot with {len(summaries)} unmanned entries (saved_at={saved_at})."
+    )
+    for summary in summaries:
+        emit(
+            "[PRIOR][STEP1] UAV "
+            f"{summary.aircraft_id}: currentWP={summary.current_waypoint_id}, "
+            f"coord={_format_coord(summary.latitude, summary.longitude, summary.altitude)}"
+        )
+
+
+def _log_step2_target_coordinate(
+    emit: Callable[[str], None],
+    lat: Optional[float],
+    lon: Optional[float],
+    alt: Optional[float],
+) -> None:
+    if lat is None or lon is None:
+        emit("[PRIOR][STEP2] Target coordinate (0202) missing latitude/longitude.")
+        return
+    emit(
+        f"[PRIOR][STEP2] Target coordinate (0202) → {_format_coord(lat, lon, alt)}"
+    )
+
+
+def _log_step3_nearest_agent(
+    emit: Callable[[str], None],
+    agent: Optional[AgentSnapshotSummary],
+    distance_m: Optional[float],
+) -> None:
+    if agent is None:
+        emit("[PRIOR][STEP3] Unable to determine nearest UAV (no valid agent coordinates).")
+        return
+    distance_text = f"{distance_m:.1f} m" if isinstance(distance_m, (int, float)) else "n/a"
+    emit(
+        "[PRIOR][STEP3] Nearest UAV "
+        f"{agent.aircraft_id} selected based on 0401 snapshot "
+        f"(currentWP={agent.current_waypoint_id}, distance≈{distance_text})."
+    )
+
+
+def _log_step4_waypoint_allocation(
+    emit: Callable[[str], None],
+    waypoint_id: int,
+    agent: Optional[AgentSnapshotSummary],
+    distance_m: Optional[float],
+) -> None:
+    if agent is None:
+        emit(f"[PRIOR][STEP4] Reserved new waypoint ID {waypoint_id} (no UAV context available).")
+        return
+    distance_text = f"{distance_m:.1f} m" if isinstance(distance_m, (int, float)) else "n/a"
+    emit(
+        "[PRIOR][STEP4] Reserved new waypoint ID "
+        f"{waypoint_id} for UAV {agent.aircraft_id} "
+        f"(currentWP={agent.current_waypoint_id}, distance≈{distance_text})."
+    )
+
+
+def _summarize_agent_states(
+    snapshot_payload: Optional[Dict[str, Any]]
+) -> List[AgentSnapshotSummary]:
+    if not snapshot_payload:
+        return []
+    states = snapshot_payload.get("agent_states") or snapshot_payload.get("raw", {}).get("agentStateList") or []
+    summaries: List[AgentSnapshotSummary] = []
+    for entry in states:
+        if not isinstance(entry, dict):
+            continue
+        if not bool(entry.get("isUnmanned")):
+            continue
+        aircraft_id = _to_int(entry.get("aircraftID"))
+        if aircraft_id is None:
+            continue
+        coord = entry.get("coordinate") or {}
+        if not coord:
+            unmanned_info = entry.get("unmannedInfo") or {}
+            coord = unmanned_info.get("coordinate") or coord
+        lat = _to_float(coord.get("latitude"))
+        lon = _to_float(coord.get("longitude"))
+        alt = _to_float(coord.get("altitude"))
+        wp_block = entry.get("currentWaypointID") or {}
+        if not wp_block:
+            unmanned_info = entry.get("unmannedInfo") or {}
+            wp_block = unmanned_info.get("currentWaypointID") or {}
+        current_wp = _to_int(wp_block.get("waypointID"))
+        summaries.append(
+            AgentSnapshotSummary(
+                aircraft_id=aircraft_id,
+                latitude=lat,
+                longitude=lon,
+                altitude=alt,
+                current_waypoint_id=current_wp,
+            )
+        )
+    return summaries
+
+
+def _select_nearest_agent(
+    target_lat: Optional[float],
+    target_lon: Optional[float],
+    summaries: List[AgentSnapshotSummary],
+) -> Tuple[Optional[AgentSnapshotSummary], Optional[float]]:
+    if target_lat is None or target_lon is None:
+        return None, None
+    best_agent: Optional[AgentSnapshotSummary] = None
+    best_distance: Optional[float] = None
+    for summary in summaries:
+        if summary.latitude is None or summary.longitude is None:
+            continue
+        distance = _haversine_distance(
+            target_lat, target_lon, summary.latitude, summary.longitude
+        )
+        if best_distance is None or distance < best_distance:
+            best_distance = distance
+            best_agent = summary
+    return best_agent, best_distance
+
+
+def _format_coord(
+    lat: Optional[float],
+    lon: Optional[float],
+    alt: Optional[float],
+) -> str:
+    if lat is None or lon is None:
+        return "lat/lon unavailable"
+    if alt is None:
+        return f"({lat:.6f}, {lon:.6f})"
+    return f"({lat:.6f}, {lon:.6f}, alt={alt:.1f})"
+
+
+def _haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    r = 6_371_000  # Earth radius in meters
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return r * c
 
 
 def _inject_prior_waypoint(
@@ -504,3 +716,152 @@ def _preview_value(value: Any, limit: int = 256) -> str:
     if len(text) > limit:
         return text[: limit - 3] + "..."
     return text
+def _load_detail_from_store(plan_ids: List[int]) -> Optional[Dict[str, Any]]:
+    for value in plan_ids:
+        try:
+            plan_id = int(value)
+        except Exception:
+            continue
+        payload = prior_replan_store.load_detail(plan_id)
+        if payload:
+            return payload
+    return None
+
+
+def _scan_latest_source_plan_id() -> Optional[int]:
+    try:
+        plan_dir = db_paths.get_db_subpath("MissionPlan")
+    except Exception:
+        return None
+    try:
+        candidates = list(plan_dir.glob("*.json"))
+    except Exception:
+        return None
+    if not candidates:
+        return None
+    try:
+        latest = max(candidates, key=lambda path: path.stat().st_mtime)
+        return int(latest.stem)
+    except Exception:
+        return None
+
+
+def _resolve_plan_artifacts(
+    *,
+    source_plan_id: Optional[int],
+    aircraft_id: Optional[int],
+    current_waypoint_id: Optional[int],
+    emit: Callable[[str], None],
+) -> Optional[PlanMissionArtifacts]:
+    if source_plan_id is None or aircraft_id is None:
+        return None
+    try:
+        plan_path = db_paths.get_db_subpath("MissionPlan", f"{int(source_plan_id)}.json")
+        plan_data = json.loads(plan_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        emit(f"[PRIOR] MissionPlan {source_plan_id} not found.")
+        return None
+    except Exception as exc:
+        emit(f"[PRIOR] MissionPlan {source_plan_id} load failed: {exc}")
+        return None
+
+    aircraft_entry = None
+    for entry in plan_data.get("aircraftList", []):
+        try:
+            entry_aircraft_id = int(entry.get("aircraftID"))
+        except (TypeError, ValueError):
+            continue
+        if entry_aircraft_id == aircraft_id:
+            aircraft_entry = entry
+            break
+    if aircraft_entry is None:
+        emit(f"[PRIOR] Aircraft {aircraft_id} not present in MissionPlan {source_plan_id}.")
+        return None
+
+    try:
+        package_id = int(aircraft_entry.get("individualMissionPackageID"))
+    except (TypeError, ValueError, AttributeError):
+        emit(f"[PRIOR] Aircraft {aircraft_id} missing IndividualMissionPackageID.")
+        return None
+
+    try:
+        imp_path = db_paths.get_db_subpath("IndividualMissionPlan", f"{package_id}.json")
+        imp_data = json.loads(imp_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        emit(f"[PRIOR] IndividualMissionPlan {package_id} not found.")
+        return None
+    except Exception as exc:
+        emit(f"[PRIOR] IndividualMissionPlan {package_id} load failed: {exc}")
+        return None
+
+    missions = imp_data.get("individualMissionList") or []
+    target_mission = None
+    previous_wp = None
+    resolved_current_wp = current_waypoint_id
+
+    for mission in missions:
+        path_id = mission.get("pathID")
+        individual_mission_id = mission.get("individualMissionID")
+        if path_id is None or individual_mission_id is None:
+            continue
+        waypoints = _load_waypoint_ids(path_id)
+        if not waypoints:
+            continue
+        if current_waypoint_id in waypoints:
+            idx = waypoints.index(current_waypoint_id)
+            previous_wp = waypoints[idx - 1] if idx > 0 else None
+            target_mission = (
+                int(individual_mission_id),
+                int(path_id),
+            )
+            break
+
+    if target_mission is None and missions:
+        fallback = missions[0]
+        try:
+            mission_id = int(fallback.get("individualMissionID"))
+        except (TypeError, ValueError):
+            mission_id = 0
+        try:
+            path_id = int(fallback.get("pathID"))
+        except (TypeError, ValueError):
+            path_id = 0
+        waypoints = _load_waypoint_ids(path_id)
+        if waypoints:
+            resolved_current_wp = waypoints[0]
+            previous_wp = None
+        target_mission = (mission_id, path_id)
+        emit(
+            "[PRIOR] Falling back to first mission for aircraft "
+            f"{aircraft_id} (current waypoint not found in plan)."
+        )
+
+    if target_mission is None:
+        return None
+
+    mission_id, path_id = target_mission
+    return PlanMissionArtifacts(
+        source_plan_id=source_plan_id,
+        aircraft_id=aircraft_id,
+        individual_mission_package_id=package_id,
+        individual_mission_id=mission_id,
+        path_id=path_id,
+        current_waypoint_id=resolved_current_wp,
+        previous_waypoint_id=previous_wp,
+    )
+
+
+def _load_waypoint_ids(path_id: int) -> List[int]:
+    try:
+        path = db_paths.get_db_subpath("FlightPath", f"{int(path_id)}.json")
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    waypoints: List[int] = []
+    for wp in data.get("waypointList", []):
+        value = wp.get("waypointID")
+        try:
+            waypoints.append(int(value))
+        except (TypeError, ValueError):
+            continue
+    return waypoints

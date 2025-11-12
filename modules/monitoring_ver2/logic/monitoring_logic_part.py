@@ -89,6 +89,16 @@ WATCHER_CALLSIGN_MAP = {
 }
 
 
+def _ms_since_2000() -> int:
+    """Return current UTC timestamp in milliseconds since 2000-01-01."""
+    return int(
+        (
+            datetime.now(timezone.utc) - datetime(2000, 1, 1, tzinfo=timezone.utc)
+        ).total_seconds()
+        * 1000
+    )
+
+
 def _inform_info_module(msg_id: str, body: dict):
     try:
         port = int(os.getenv("KU_INFO_CTRL_PORT", "45984"))
@@ -175,6 +185,8 @@ class MonitoringLogic:
         self._roi_caution_timer: Optional[threading.Timer] = None
         self._roi_caution_snapshot: List[Dict[str, Any]] = []
         self._roi_caution_triggered: bool = False
+        self._pending_plan_update_meta: Optional[Dict[str, Any]] = None
+        self._last_processed_0903_signature: Optional[Tuple[Optional[int], Optional[int]]] = None
 
     def trigger_prior_mission_replan(self) -> None:
         """Expose prior mission replan processing for immediate 0202 handling."""
@@ -297,6 +309,8 @@ class MonitoringLogic:
             self._handle_replan_status(data)
         elif msg_id == "0702":
             self._handle_decision_result(data)
+        elif msg_id == "0903":
+            self._handle_mission_update_request(data)
 
     def _handle_decision_result(self, data: Any) -> None:
         ignore_val = getattr(data, "ignore", None)
@@ -336,18 +350,102 @@ class MonitoringLogic:
 
         self._process_mission_plan_update()
 
+    def _handle_mission_update_request(self, data: Any) -> None:
+        """React immediately when a performance mission update (0903) arrives."""
+        self.manager._log(
+            "MON_LOGIC",
+            "INFO",
+            "[0903] Performance mission update request received. Refreshing mission plan.",
+        )
+        self._process_mission_plan_update()
+
+    def _track_plan_update_request(
+        self,
+        plan_id: Optional[int],
+        request_timestamp: Optional[int],
+        raw_value: Any = None,
+    ) -> None:
+        """Store metadata about the latest 0903 request for GUI purposes."""
+        if (
+            self._pending_plan_update_meta
+            and self._pending_plan_update_meta.get("source") == "0903"
+            and self._pending_plan_update_meta.get("requestedPlanID") == plan_id
+            and self._pending_plan_update_meta.get("requestTimestamp") == request_timestamp
+        ):
+            return
+        self._pending_plan_update_meta = {
+            "source": "0903",
+            "requestedPlanID": plan_id,
+            "requestTimestamp": request_timestamp,
+            "rawMissionPlanID": raw_value,
+            "receivedAt": _ms_since_2000(),
+        }
+
+    def _emit_plan_update_status(
+        self,
+        status: str,
+        *,
+        plan_id: Optional[int] = None,
+        extra: Optional[Dict[str, Any]] = None,
+        finalize: bool = False,
+    ) -> None:
+        meta = self._pending_plan_update_meta
+        if not meta or meta.get("source") != "0903":
+            return
+        payload = {
+            "status": status,
+            "planID": plan_id if plan_id is not None else meta.get("requestedPlanID"),
+            "requestedPlanID": meta.get("requestedPlanID"),
+            "source": "0903",
+            "stateTimestamp": _ms_since_2000(),
+        }
+        if meta.get("requestTimestamp") is not None:
+            payload["requestTimestamp"] = meta["requestTimestamp"]
+        if meta.get("receivedAt") is not None:
+            payload["receivedAt"] = meta["receivedAt"]
+        if meta.get("rawMissionPlanID") is not None:
+            payload["rawMissionPlanID"] = meta["rawMissionPlanID"]
+        if extra:
+            payload.update(extra)
+        try:
+            self.manager.logic_store.set_data("mission_update_status", payload)
+        except Exception:
+            pass
+        if self.manager.gui_update_callback:
+            try:
+                self.manager.gui_update_callback("logic", "mission_update_status", payload)
+            except Exception:
+                pass
+        if finalize:
+            self._last_processed_0903_signature = (
+                meta.get("requestedPlanID"),
+                meta.get("requestTimestamp"),
+            )
+            self._pending_plan_update_meta = None
+
     def on_system_mode_changed(self, mode: int) -> None:
         if mode not in (3, 4) and self._collab_pause_active:
             self._deactivate_collab_pause(reason=f"system mode changed to {mode}")
 
     def _process_mission_plan_update(self) -> None:
-        candidate_plan_id = None
+        candidate_plan_id: Optional[int] = None
+        candidate_source: Optional[str] = None
+        candidate_request_ts: Optional[int] = None
+        raw_candidate_value: Any = None
+
         try:
             data_0903 = self.manager.receive_store.get_data("0903")
         except Exception:
             data_0903 = None
         if data_0903:
-            candidate_plan_id = getattr(data_0903, "missionPlanID", None)
+            candidate_source = "0903"
+            raw_candidate_value = getattr(data_0903, "missionPlanID", None)
+            candidate_plan_id = raw_candidate_value
+            if candidate_plan_id is None and isinstance(data_0903, dict):
+                candidate_plan_id = data_0903.get("missionPlanID")
+            candidate_request_ts = getattr(data_0903, "timestamp", None)
+            if candidate_request_ts is None and isinstance(data_0903, dict):
+                candidate_request_ts = data_0903.get("timestamp")
 
         if candidate_plan_id is None:
             try:
@@ -359,11 +457,53 @@ class MonitoringLogic:
                 if candidate_plan_id is None and isinstance(data_0902, dict):
                     candidate_plan_id = data_0902.get("missionPlanID")
 
+        invalid_request = False
         if candidate_plan_id is not None:
             try:
                 candidate_plan_id = int(candidate_plan_id)
             except (TypeError, ValueError):
+                invalid_request = candidate_source == "0903"
                 candidate_plan_id = None
+        elif candidate_source == "0903":
+            invalid_request = True
+
+        if invalid_request:
+            already_handled_invalid = (
+                self._pending_plan_update_meta is None
+                and self._last_processed_0903_signature == (None, candidate_request_ts)
+            )
+            if not already_handled_invalid:
+                self._track_plan_update_request(None, candidate_request_ts, raw_candidate_value)
+                self._emit_plan_update_status(
+                    "failed",
+                    plan_id=None,
+                    extra={"reason": "유효한 missionPlanID가 포함되지 않았습니다."},
+                    finalize=True,
+                )
+            candidate_source = None
+
+        candidate_signature = None
+        if candidate_source == "0903" and candidate_plan_id is not None:
+            candidate_signature = (candidate_plan_id, candidate_request_ts)
+            already_processed = (
+                self._pending_plan_update_meta is None
+                and self._last_processed_0903_signature == candidate_signature
+            )
+            if not already_processed:
+                meta = self._pending_plan_update_meta
+                is_new_request = not (
+                    meta
+                    and meta.get("source") == "0903"
+                    and meta.get("requestedPlanID") == candidate_plan_id
+                    and meta.get("requestTimestamp") == candidate_request_ts
+                )
+                self._track_plan_update_request(
+                    candidate_plan_id, candidate_request_ts, raw_candidate_value
+                )
+                if is_new_request:
+                    self._emit_plan_update_status("requested", plan_id=candidate_plan_id)
+            else:
+                candidate_source = None
 
         if (
             candidate_plan_id is None
@@ -392,19 +532,27 @@ class MonitoringLogic:
         if decision_ignore == 2 and decision_plan is not None:
             mission_plan_id = decision_plan
             command_consumed = True
+            self._pending_mission_plan_id = None
+            self._pending_plan_update_meta = None
         elif decision_ignore == 1:
             mission_plan_id = self._current_mission_plan_id
             command_consumed = True
             self._pending_mission_plan_id = None
+        elif self._pending_mission_plan_id is not None:
+            mission_plan_id = self._pending_mission_plan_id
         else:
-            if self._current_mission_plan_id is not None:
-                mission_plan_id = self._current_mission_plan_id
-            else:
-                mission_plan_id = self._pending_mission_plan_id
+            mission_plan_id = self._current_mission_plan_id
 
         if mission_plan_id is None:
             if command_consumed:
                 self._pending_decision_command = None
+            if self._pending_plan_update_meta and self._pending_plan_update_meta.get("source") == "0903":
+                self._emit_plan_update_status(
+                    "failed",
+                    plan_id=None,
+                    extra={"reason": "적용할 MissionPlanID를 결정하지 못했습니다."},
+                    finalize=True,
+                )
             return
 
         try:
@@ -412,14 +560,37 @@ class MonitoringLogic:
         except (TypeError, ValueError):
             if command_consumed:
                 self._pending_decision_command = None
+            if self._pending_plan_update_meta and self._pending_plan_update_meta.get("source") == "0903":
+                self._emit_plan_update_status(
+                    "failed",
+                    plan_id=None,
+                    extra={"reason": "MissionPlanID 형식이 올바르지 않습니다."},
+                    finalize=True,
+                )
             return
 
-        if mission_plan_id == self._current_mission_plan_id:
+        active_0903_request = bool(
+            self._pending_plan_update_meta
+            and self._pending_plan_update_meta.get("source") == "0903"
+        )
+
+        if mission_plan_id == self._current_mission_plan_id and not active_0903_request:
+            if (
+                self._pending_plan_update_meta
+                and self._pending_plan_update_meta.get("source") == "0903"
+            ):
+                self._emit_plan_update_status(
+                    "applied",
+                    plan_id=mission_plan_id,
+                    extra={"detail": "이미 적용 중인 계획입니다."},
+                    finalize=True,
+                )
             if command_consumed:
                 self._pending_decision_command = None
             return
 
         mission_plan_path = db_paths.get_db_subpath("MissionPlan", f"{mission_plan_id}.json")
+        fallback_applied: Optional[int] = None
         if not mission_plan_path.exists():
             fallback_id = self._scan_latest_mission_plan_id()
             if fallback_id and fallback_id != mission_plan_id:
@@ -430,13 +601,28 @@ class MonitoringLogic:
                         "WARN",
                         f"MissionPlan {mission_plan_id} not found, fallback to {fallback_id}.",
                     )
+                    fallback_applied = fallback_id
                     mission_plan_id = fallback_id
                     mission_plan_path = alt_path
                 else:
+                    if self._pending_plan_update_meta and self._pending_plan_update_meta.get("source") == "0903":
+                        self._emit_plan_update_status(
+                            "failed",
+                            plan_id=fallback_id,
+                            extra={"reason": "미션 계획 파일을 찾을 수 없습니다."},
+                            finalize=True,
+                        )
                     if command_consumed:
                         self._pending_decision_command = None
                     return
             else:
+                if self._pending_plan_update_meta and self._pending_plan_update_meta.get("source") == "0903":
+                    self._emit_plan_update_status(
+                        "failed",
+                        plan_id=mission_plan_id,
+                        extra={"reason": "미션 계획 파일을 찾을 수 없습니다."},
+                        finalize=True,
+                    )
                 if command_consumed:
                     self._pending_decision_command = None
                 return
@@ -448,6 +634,13 @@ class MonitoringLogic:
                 "WARN",
                 f"MissionPlan {mission_plan_id} file missing: {exc}",
             )
+            if self._pending_plan_update_meta and self._pending_plan_update_meta.get("source") == "0903":
+                self._emit_plan_update_status(
+                    "failed",
+                    plan_id=mission_plan_id,
+                    extra={"reason": "MissionPlan 파일이 존재하지 않습니다."},
+                    finalize=True,
+                )
             if command_consumed:
                 self._pending_decision_command = None
             return
@@ -457,6 +650,13 @@ class MonitoringLogic:
                 "WARN",
                 f"MissionPlan {mission_plan_id} load failed: {exc}",
             )
+            if self._pending_plan_update_meta and self._pending_plan_update_meta.get("source") == "0903":
+                self._emit_plan_update_status(
+                    "failed",
+                    plan_id=mission_plan_id,
+                    extra={"reason": f"MissionPlan 로드 실패: {exc}"},
+                    finalize=True,
+                )
             if command_consumed:
                 self._pending_decision_command = None
             return
@@ -466,7 +666,9 @@ class MonitoringLogic:
         self._mission_progress_exporter.reset()
         self._current_mission_plan_id = mission_plan_id
         reinitialized = (
-            previous_plan_id != mission_plan_id or not tracker_initialized
+            active_0903_request
+            or previous_plan_id != mission_plan_id
+            or not tracker_initialized
         )
         if reinitialized:
             self._initialize_input_tracker(context)
@@ -483,6 +685,25 @@ class MonitoringLogic:
             "INFO",
             f"MissionPlan {mission_plan_id} loaded for monitoring",
         )
+        extra_status: Dict[str, Any] = {
+            "appliedPlanID": mission_plan_id,
+            "previousPlanID": previous_plan_id,
+        }
+        same_plan_reload = active_0903_request and previous_plan_id == mission_plan_id
+        if fallback_applied is not None:
+            extra_status["fallbackPlanID"] = fallback_applied
+        if same_plan_reload:
+            extra_status["detail"] = "동일 ID 재적용 요청으로 갱신했습니다."
+        if (
+            self._pending_plan_update_meta
+            and self._pending_plan_update_meta.get("source") == "0903"
+        ):
+            self._emit_plan_update_status(
+                "applied",
+                plan_id=mission_plan_id,
+                extra=extra_status,
+                finalize=True,
+            )
         self._pending_decision_command = None
         if self._pending_mission_plan_id == mission_plan_id:
             self._pending_mission_plan_id = None

@@ -17,6 +17,7 @@ from receive.receive_center import register_listener
 from push import message0102_push
 from udp_reporter import notify_mode
 from config import SYSTEM_MODE_LABELS, INITIAL_MODE
+from modules.common import agent_status_snapshot
 
 class MonitoringManager:
     """
@@ -73,6 +74,11 @@ class MonitoringManager:
         """수신된 데이터 클래스 객체를 저장소에 저장하고, GUI에 변경 사실을 알립니다."""
         self._log("MON_MGR", "RECV", f"Parsed object received: {msg_id}")
         self.receive_store.set_data(msg_id, data_object)
+        if msg_id == "0401":
+            try:
+                agent_status_snapshot.save_agent_status_snapshot(data_object)
+            except Exception as exc:
+                self._log("MON_MGR", "WARN", f"Failed to persist 0401 snapshot: {exc}")
         try:
             self.logic_handler.monitoring_logic.handle_message(msg_id, data_object)
         except AttributeError:

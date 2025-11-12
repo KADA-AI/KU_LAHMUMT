@@ -1,0 +1,39 @@
+[
+  {
+    "timestamp": 816289932750,
+    "status": "error",
+    "reason": "선행임무 : 좌표지향",
+    "priorMissionID": null,
+    "missionType": null,
+    "aircraftID": null,
+    "sourceMissionPlanID": 700000001,
+    "planIDs": [
+      700000002
+    ],
+    "newMissionPlanID": null,
+    "newIndividualMissionPackageID": null,
+    "newIndividualMissionID": null,
+    "newPathID": null,
+    "removedWaypointID": null,
+    "insertedWaypointID": null,
+    "targetCoordinate": {},
+    "logMessages": [
+      "[PRIOR] detail keys: ∅",
+      "[PRIOR][STEP1] Loaded 0401 snapshot with 3 unmanned entries (saved_at=2025-11-12T19:12:12.615649+00:00).",
+      "[PRIOR][STEP1] UAV 4: currentWP=4, coord=(38.155876, 127.331253, alt=449.0)",
+      "[PRIOR][STEP1] UAV 5: currentWP=36, coord=(38.154179, 127.334290, alt=449.0)",
+      "[PRIOR][STEP1] UAV 6: currentWP=69, coord=(38.152763, 127.337105, alt=449.0)",
+      "[PRIOR][STEP2] Target coordinate (0202) missing latitude/longitude.",
+      "[PRIOR] Target coordinate missing latitude/longitude."
+    ],
+    "detailSummary": {},
+    "detailProvided": false,
+    "detailKeys": [],
+    "detailRawPreview": "{}",
+    "missingDetailFields": [],
+    "snapshotAgentCount": 3,
+    "selectedAgentID": null,
+    "selectedAgentDistanceMeters": null,
+    "error": null
+  }
+]

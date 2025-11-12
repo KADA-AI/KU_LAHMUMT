@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from PyQt5.QtCore import Qt
@@ -41,6 +42,8 @@ class MonitoringTab(QWidget):
         self.plan_inputs_value: QLabel | None = None
         self.plan_active_value: QLabel | None = None
         self.plan_completion_value: QLabel | None = None
+        self.plan_update_status_value: QLabel | None = None
+        self.plan_update_detail_value: QLabel | None = None
         self.input_table: QTableWidget | None = None
         self.mission_table: QTableWidget | None = None
         self.aircraft_availability_labels: Dict[int, QLabel] = {}
@@ -49,6 +52,7 @@ class MonitoringTab(QWidget):
         self._init_ui()
         self.refresh_display(("logic", "SystemMode"))
         self._refresh_mission_overview()
+        self._update_plan_update_panel()
 
     # ------------------------------------------------------------------ UI 구성
     def _init_ui(self) -> None:
@@ -64,6 +68,7 @@ class MonitoringTab(QWidget):
         mode_layout.addRow(QLabel("현재 모드:"), self.system_mode_combo)
         mode_groupbox.setLayout(mode_layout)
         layout.addWidget(mode_groupbox)
+        self._build_plan_update_section(layout)
 
         # UAV 진행률
         progress_groupbox = QGroupBox("임무 진행률")
@@ -151,6 +156,17 @@ class MonitoringTab(QWidget):
 
         availability_group.setLayout(form_layout)
         parent_layout.addWidget(availability_group)
+
+    def _build_plan_update_section(self, parent_layout: QVBoxLayout) -> None:
+        update_group = QGroupBox("임무 갱신 요청 상태 (0903)")
+        form_layout = QFormLayout()
+        self.plan_update_status_value = QLabel("요청 없음")
+        self.plan_update_detail_value = QLabel("최근 0903 요청이 없습니다.")
+        self.plan_update_detail_value.setWordWrap(True)
+        form_layout.addRow("상태", self.plan_update_status_value)
+        form_layout.addRow("상세", self.plan_update_detail_value)
+        update_group.setLayout(form_layout)
+        parent_layout.addWidget(update_group)
 
     def _create_availability_label(self, base_text: str, aircraft_id: int) -> QLabel:
         label = QLabel(f"{base_text} (미확인)")
@@ -264,6 +280,71 @@ class MonitoringTab(QWidget):
             mode = QHeaderView.Stretch if (stretch_last and idx == table.columnCount() - 1) else QHeaderView.ResizeToContents
             header.setSectionResizeMode(idx, mode)
 
+    def _update_plan_update_panel(self, payload: Optional[Dict[str, Any]] = None) -> None:
+        if self.plan_update_status_value is None or self.plan_update_detail_value is None:
+            return
+        if payload is None or not isinstance(payload, dict):
+            payload = self.manager.logic_store.get_data("mission_update_status") or {}
+        if not payload:
+            self.plan_update_status_value.setText("요청 없음")
+            self.plan_update_detail_value.setText("최근 0903 요청이 없습니다.")
+            return
+        status_map = {
+            "requested": "요청 수신",
+            "applied": "적용 완료",
+            "failed": "적용 실패",
+        }
+        status_label = status_map.get(payload.get("status"), str(payload.get("status")))
+        plan_id = payload.get("planID") or payload.get("requestedPlanID")
+        if plan_id is not None:
+            status_text = f"{status_label} (Plan {plan_id})"
+        else:
+            status_text = status_label
+        self.plan_update_status_value.setText(status_text)
+
+        detail_lines: List[str] = []
+        requested_plan = payload.get("requestedPlanID")
+        if requested_plan and plan_id != requested_plan:
+            detail_lines.append(f"요청 Plan ID: {requested_plan}")
+        request_ts = payload.get("requestTimestamp")
+        if request_ts is not None:
+            detail_lines.append(f"요청 시각: {self._format_epoch2000_ms(request_ts)}")
+        received_ts = payload.get("receivedAt")
+        if received_ts is not None and received_ts != request_ts:
+            detail_lines.append(f"수신 시각: {self._format_epoch2000_ms(received_ts)}")
+        state_ts = payload.get("stateTimestamp") or payload.get("updatedAt")
+        if state_ts is not None:
+            detail_lines.append(f"최종 업데이트: {self._format_epoch2000_ms(state_ts)}")
+        applied_plan = payload.get("appliedPlanID")
+        if applied_plan is not None:
+            detail_lines.append(f"적용 Plan ID: {applied_plan}")
+        fallback_plan = payload.get("fallbackPlanID")
+        if fallback_plan is not None:
+            detail_lines.append(f"대체 Plan ID: {fallback_plan}")
+        reason = payload.get("reason") or payload.get("detail")
+        if reason:
+            detail_lines.append(f"비고: {reason}")
+        raw_info = payload.get("rawMissionPlanID")
+        if raw_info is not None and plan_id is None:
+            detail_lines.append(f"원본 식별자: {raw_info}")
+
+        detail_text = "\n".join(detail_lines) if detail_lines else "세부 정보 없음"
+        self.plan_update_detail_value.setText(detail_text)
+
+    @staticmethod
+    def _format_epoch2000_ms(value: Any) -> str:
+        try:
+            timestamp_ms = int(value)
+        except (TypeError, ValueError):
+            return "-"
+        base = datetime(2000, 1, 1, tzinfo=timezone.utc)
+        dt = base + timedelta(milliseconds=timestamp_ms)
+        try:
+            localized = dt.astimezone()
+        except Exception:
+            localized = dt
+        return localized.strftime("%Y-%m-%d %H:%M:%S")
+
     # ------------------------------------------------------------------ 이벤트 핸들러
     def on_system_mode_changed(self, index: int) -> None:
         if self.system_mode_combo is None:
@@ -277,6 +358,10 @@ class MonitoringTab(QWidget):
         source, key = update_info
         if source == "send":
             return
+
+        if source == "logic" and key == "mission_update_status":
+            payload = data_object if isinstance(data_object, dict) else None
+            self._update_plan_update_panel(payload)
 
         # 시스템 모드 반영
         if (source == "logic" and key == "SystemMode") or (
