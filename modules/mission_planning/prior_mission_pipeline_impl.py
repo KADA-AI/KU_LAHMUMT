@@ -672,21 +672,22 @@ def _inject_prior_waypoint(
         raise ValueError(f"Current waypoint {current_waypoint_id} not found in flight path.")
 
     removed_waypoint_id = None
-    removal_index = current_index - 1
-    if removal_index >= 0:
-        removed_wp = waypoint_list.pop(removal_index)
-        removed_waypoint_id = _to_int(removed_wp.get("waypointID"))
-        current_index -= 1
+    inherited_altitude: Optional[float] = None
+    if current_index > 0:
+        completed_segment = waypoint_list[:current_index]
+        waypoint_list = waypoint_list[current_index:]
+        current_index = 0
+        last_completed = completed_segment[-1]
+        removed_waypoint_id = _to_int(last_completed.get("waypointID"))
+        inherited_altitude = _to_float((last_completed.get("coordinate") or {}).get("altitude"))
     elif previous_waypoint_id:
         # ensure previous pointer is cleared when explicit ID provided
         removed_waypoint_id = previous_waypoint_id
 
     preceding_index = current_index - 1
     altitude = target_coord.get("altitude")
-    if altitude is None and removal_index >= 0 and removed_waypoint_id is not None:
-        altitude = _to_float(
-            (waypoint_list[removal_index].get("coordinate") or {}).get("altitude")
-        )
+    if altitude is None and inherited_altitude is not None:
+        altitude = inherited_altitude
     if altitude is None:
         altitude = 700.0
 

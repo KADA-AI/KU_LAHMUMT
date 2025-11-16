@@ -1,8 +1,9 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 import os
 import math
 from collections import OrderedDict
 from copy import deepcopy
+from dataclasses import dataclass
 from typing import List, Tuple                       # ★ 추가
 from .mission_helpers import now_ms_since_2000, terrain_elev
 from .id_allocator import next_waypoint_id as _next_waypoint_id
@@ -15,7 +16,6 @@ except ImportError:
     except ImportError:
         from modules.mission_planning.MissionPlanner.config import DEFAULT_SWEEP_SEPARATION_M  # type: ignore
 from UAV_missionPlanning import UAVMissionPlanner
-from Aisle_Sweep_CPP_shoot_plan import RectanglePath
 from .coord_transform import llh_to_xy, xy_to_llh
 try:
     from ....common.eta import _order_by_next_chain, _time_from_prev_to_curr_s
@@ -38,10 +38,43 @@ Point = Tuple[float, float]
 Line  = Tuple[Point, Point]
 
 # ── 고정 상수 ───────────────────────────────────────────
-FOV_DEG         = 15
+FOV_DEG         = 10
 SWEEP_ENTRY_OFFSET_M = 1500.0
 SWEEP_MERGE_HEADING_DEG = 5
 Altitude = 700
+
+@dataclass(frozen=True)
+class SweepConfig:
+    separation_m: float
+    fov_deg: float
+
+
+SWEEP_GEOMETRY = SweepConfig(
+    separation_m=DEFAULT_SWEEP_SEPARATION_M,
+    fov_deg=FOV_DEG,
+)
+
+
+def _active_sweep_geometry() -> SweepConfig:
+    return SWEEP_GEOMETRY
+
+
+def _sweep_spacing_m(*, separation_m: float, fov_deg: float) -> float:
+    """Return physical spacing between sweep strips in meters."""
+    base = 2.0 * max(separation_m, 1.0) * math.tan(max(math.radians(fov_deg) / 2.0, 1e-6))
+    return max(base, 1.0)
+
+
+def _debug_sweep(label: str, *, separation: float, fov: float, spacing: float) -> None:
+    """Lightweight debug printer for sweep spacing."""
+    try:
+        approx = max(int(round(1000.0 / max(spacing, 1e-6))), 1)
+        print(
+            f"[SWEEP][{label}] separation={separation:.2f}m, fov={fov:.2f}°, "
+            f"spacing={spacing:.2f}m (~{approx} strips/1km)"
+        )
+    except Exception:
+        pass
 
 SENSOR_NONE     = 0
 SENSOR_EO_IR    = 1        # 예) EO/IR 센서
@@ -112,15 +145,27 @@ def _poly_sweeps_general(
     proj = [nx*x + ny*y for x, y in poly_xy]
     d_min, d_max = min(proj), max(proj)
 
-    spacing_m = 2*separation_m*math.tan(math.radians(fov_deg)/2)
-    n_strip   = max(int(math.ceil((d_max-d_min)/spacing_m))+1, 3)
+    spacing_m = _sweep_spacing_m(separation_m=separation_m, fov_deg=fov_deg)
+    d_values: list[float] = []
+    current = d_min
+    # ensure we always include the last strip by overshooting slightly
+    while current <= d_max + spacing_m * 0.25:
+        d_values.append(current)
+        current += spacing_m
+    if not d_values:
+        d_values = [d_min, d_max]
+    elif len(d_values) == 1 and d_max > d_min:
+        d_values.append(d_max)
+    else:
+        last = d_values[-1]
+        if d_max - last > spacing_m * 0.25:
+            d_values.append(d_max)
 
     # 다각형 edge 리스트
     edges = [(poly_xy[i], poly_xy[(i+1)%len(poly_xy)]) for i in range(len(poly_xy))]
     coord_list: list[dict] = []
 
-    for k in range(n_strip):
-        d = d_min + (d_max-d_min)*k/(n_strip-1)
+    for d in d_values:
         # 직선: n·x = d  ↔  (−ny, nx) 방향 unit 벡터
         hits = []
         for a,b in edges:
@@ -139,38 +184,6 @@ def _poly_sweeps_general(
                     "longitude": lon,
                     "altitude": _dem_alt(lat, lon),
                 })
-    return coord_list
-
-def _cpp_line_search(
-        rect_llh: list[tuple[float,float]],
-        anchor_llh: tuple[float,float],
-        separation_m: float,
-        uav_height_m: float = 610.0,
-        fov_deg: float = FOV_DEG,
-) -> list[dict]:
-    """
-    ▸ 4-점 직사각형 LLH → RectanglePath CPP 스윕 → lineSearch.coordinateList 생성
-    ▸ return: [{"latitude":…, "longitude":…, "altitude":5}, …]  (짝수·홀수=한 라인)
-    """
-    lat0, lon0 = rect_llh[0]               # XY 변환 기준
-    rect_xy = [llh_to_xy(lat, lon, lat0, lon0) for lat, lon in rect_llh]
-    anchor_xy = llh_to_xy(anchor_llh[0], anchor_llh[1], lat0, lon0)
-
-    rp = RectanglePath(point=anchor_xy,
-                       rectangle_vertices=rect_xy,
-                       separation_dist=separation_m,
-                       UAV_height=uav_height_m)
-
-    coord_list: list[dict] = []
-    # rp.path 는 [p0, p1, p2, p3, ...] — 2점씩 한 스윕
-    for i in range(0, len(rp.path) - 1, 2):
-        s_xy, e_xy = rp.path[i], rp.path[i + 1]
-        s_lat, s_lon = xy_to_llh(*s_xy, lat0, lon0)
-        e_lat, e_lon = xy_to_llh(*e_xy, lat0, lon0)
-        coord_list.extend([
-            {"latitude": s_lat, "longitude": s_lon, "altitude": _dem_alt(s_lat, s_lon)},
-            {"latitude": e_lat, "longitude": e_lon, "altitude": _dem_alt(e_lat, e_lon)},
-        ])
     return coord_list
 
 def _mk_filming(operation_mode: int = OPMODE_NONE,
@@ -349,7 +362,9 @@ def build_flight_plans(
     # ── 상수 ───────────────────────────────────────────────
     SENSOR, OPMODE = 1, 2
     DEFAULT_SEARCH_SPEED = round(cruise_speed * 5, 2)
-    ALT_M = DEFAULT_SWEEP_SEPARATION_M
+    geom = _active_sweep_geometry()
+    ALT_M = geom.separation_m
+    geom_fov_deg = geom.fov_deg
     DEG_M = 111_132
     # ── 마지막점용 POINT 촬영 블록 생성기 ─────────────────
     def _mk_point_filming_for_coord(coord: dict) -> OrderedDict:
@@ -389,6 +404,8 @@ def build_flight_plans(
                 line = info["lineList"][0]
                 width = line["width"]
                 base = [(c["latitude"], c["longitude"]) for c in line["coordinateList"]]
+                spacing_line = _sweep_spacing_m(separation_m=ALT_M, fov_deg=geom_fov_deg)
+                _debug_sweep("LINE", separation=ALT_M, fov=geom_fov_deg, spacing=spacing_line)
 
             # (ii) areaList
             elif info.get("areaList"):
@@ -400,16 +417,15 @@ def build_flight_plans(
 
                 prev_pt = miss.get("prevPoint", pts[0])
 
-                if len(pts) == 4:
-                    coord_list = _cpp_line_search(
-                        rect_llh=pts, anchor_llh=prev_pt, separation_m=ALT_M,
-                        uav_height_m=610.0, fov_deg=FOV_DEG,
-                    )
-                else:
-                    coord_list = _poly_sweeps_general(
-                        poly_llh=pts, anchor_llh=prev_pt, bearing_deg=bearing,
-                        fov_deg=FOV_DEG, separation_m=ALT_M,
-                    )
+                strip_spacing = _sweep_spacing_m(separation_m=ALT_M, fov_deg=geom_fov_deg)
+                _debug_sweep("AREA", separation=ALT_M, fov=geom_fov_deg, spacing=strip_spacing)
+                coord_list = _poly_sweeps_general(
+                    poly_llh=pts,
+                    anchor_llh=prev_pt,
+                    bearing_deg=bearing,
+                    fov_deg=geom_fov_deg,
+                    separation_m=ALT_M,
+                )
                 if not coord_list:
                     continue
 
@@ -441,7 +457,7 @@ def build_flight_plans(
                     e_xy = llh_to_xy(e['latitude'], e['longitude'], lat0, lon0)
 
                     mid_xy = ((s_xy[0] + e_xy[0]) / 2, (s_xy[1] + e_xy[1]) / 2)
-                    off_xy = (mid_xy[0] - ux_b * ALT_M, mid_xy[1] + uy_b * ALT_M)
+                    off_xy = (mid_xy[0] - ux_b * strip_spacing, mid_xy[1] + uy_b * strip_spacing)
                     last_off_xy = off_xy
                     off_lat, off_lon = xy_to_llh(*off_xy, lat0, lon0)
 
@@ -490,7 +506,7 @@ def build_flight_plans(
                         ("filmingProperty", _mk_point_filming_for_coord(end_coord)),
                     ]))
                 elif len(wplist) == 1 and last_off_xy is not None:
-                    end_xy = (last_off_xy[0] + ux_b * 200.0, last_off_xy[1] + uy_b * 200.0)
+                    end_xy = (last_off_xy[0] + ux_b * strip_spacing, last_off_xy[1] + uy_b * strip_spacing)
                     end_lat, end_lon = xy_to_llh(*end_xy, lat0, lon0)
                     end_coord = {"latitude": end_lat, "longitude": end_lon, "altitude": Altitude}
 
@@ -509,7 +525,7 @@ def build_flight_plans(
             if base and len(base) >= 2:
                 planner = UAVMissionPlanner(
                     base, corridor_width=width, separation=ALT_M,
-                    fov_deg=FOV_DEG, cruise_speed=cruise_speed, crs="lla",
+                    fov_deg=geom_fov_deg, cruise_speed=cruise_speed, crs="lla",
                 )
 
                 last_anchor_xy: tuple[float, float] | None = None
