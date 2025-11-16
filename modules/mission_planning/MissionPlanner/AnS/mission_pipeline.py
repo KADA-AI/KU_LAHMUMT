@@ -46,6 +46,7 @@ _ID_COUNTER_FILE = os.path.join(os.path.dirname(__file__), "_id_counters.json")
 UAV_VELOCITY = 40.0     # UAV 순항속도: 패턴결정 후 스케줄링 시 필요한 임무예상시간 예측 시 필요
 
 _R = 6_378_137.0  # WGS-84 평균반경
+_DEFAULT_AREA_BEARING_DEG = 90.0
 
 def _llh2xy(lat, lon, lat0, lon0):
     lat0_r = math.radians(lat0)
@@ -597,6 +598,10 @@ def divide_search_area_clip(
 ) -> List[Dict]:
     lat0, lon0 = area_poly[0]["latitude"], area_poly[0]["longitude"]
     alt0 = area_poly[0].get("altitude", 0)
+    try:
+        print(f"[AREA_SPLIT] bearing_deg={bearing_deg:.2f}°")
+    except Exception:
+        pass
 
     # 1) LLH → ENU
     poly_xy = [_llh2xy(p["latitude"], p["longitude"], lat0, lon0)
@@ -834,6 +839,35 @@ def _centroid_llh(ll: list[dict]) -> dict:
     lon = sum(p["longitude"] for p in ll) / len(ll)
     return {"latitude": lat, "longitude": lon}
 
+def _resolve_area_bearing(prev_pt: dict | None, poly_llh: list[dict]) -> tuple[dict, float]:
+    """
+    Always prefer prev_pt→centroid bearing when prev_pt exists; otherwise use default.
+    """
+    center = _centroid_llh(poly_llh)
+    source = "default"
+    dist_m: float | None = None
+    if prev_pt is not None:
+        dx, dy = _llh2xy(center["latitude"], center["longitude"],
+                         prev_pt["latitude"], prev_pt["longitude"])
+        dist_m = math.hypot(dx, dy)
+        bearing = _bearing_deg(prev_pt, center)
+        source = "prev"
+    else:
+        bearing = _DEFAULT_AREA_BEARING_DEG
+    debug_parts = [
+        f"center=({center['latitude']:.6f},{center['longitude']:.6f})",
+        f"bearing={bearing:.2f}°",
+        f"source={source}",
+    ]
+    if dist_m is not None and prev_pt is not None:
+        debug_parts.append(f"prev=({prev_pt['latitude']:.6f},{prev_pt['longitude']:.6f})")
+        debug_parts.append(f"dist={dist_m:.1f}m")
+    try:
+        print("[AREA_BEARING] " + " ".join(debug_parts))
+    except Exception:
+        pass
+    return center, bearing
+
 def _bearing_deg(p0: dict, p1: dict) -> float:
     """LLH 두 점 → 방위각(0°=북, 시계방향)"""
     import math
@@ -918,11 +952,7 @@ def split_mission_into_subareas(
     # ── area형 (2·3·6) ───────────────────────────────────
     elif mtype in (2, 3, 6):
         poly = md["areaList"][0]["coordinateList"]
-        center = _centroid_llh(poly)
-        if prev_pt is not None:
-            bearing = _bearing_deg(prev_pt, center)
-        else:                              # first mission fallback
-            bearing = 90.0
+        center, bearing = _resolve_area_bearing(prev_pt, poly)
         for r in divide_search_area_clip(poly, uav_cnt, bearing):
             r.update({"inputMissionType": mtype, "MissionID": mission_id})
             r["bearing_deg"] = bearing     # (옵션) 기록
