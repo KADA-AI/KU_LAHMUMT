@@ -599,7 +599,7 @@ def divide_search_area_clip(
     lat0, lon0 = area_poly[0]["latitude"], area_poly[0]["longitude"]
     alt0 = area_poly[0].get("altitude", 0)
     try:
-        print(f"[AREA_SPLIT] bearing_deg={bearing_deg:.2f}°")
+        print(f"[AREA_SPLIT] split_bearing_deg={bearing_deg:.2f}°")
     except Exception:
         pass
 
@@ -856,7 +856,7 @@ def _resolve_area_bearing(prev_pt: dict | None, poly_llh: list[dict]) -> tuple[d
         bearing = _DEFAULT_AREA_BEARING_DEG
     debug_parts = [
         f"center=({center['latitude']:.6f},{center['longitude']:.6f})",
-        f"bearing={bearing:.2f}°",
+        f"moveBearing={bearing:.2f}°",
         f"source={source}",
     ]
     if dist_m is not None and prev_pt is not None:
@@ -952,10 +952,12 @@ def split_mission_into_subareas(
     # ── area형 (2·3·6) ───────────────────────────────────
     elif mtype in (2, 3, 6):
         poly = md["areaList"][0]["coordinateList"]
-        center, bearing = _resolve_area_bearing(prev_pt, poly)
-        for r in divide_search_area_clip(poly, uav_cnt, bearing):
+        center, bearing_move = _resolve_area_bearing(prev_pt, poly)
+        bearing_split = (bearing_move + 90.0) % 360.0  # split lines parallel to move axis
+        for r in divide_search_area_clip(poly, uav_cnt, bearing_split):
             r.update({"inputMissionType": mtype, "MissionID": mission_id})
-            r["bearing_deg"] = bearing     # (옵션) 기록
+            r["bearing_deg"] = bearing_move     # 기록: 실제 스윕 방향
+            r["splitBearing_deg"] = bearing_split
             subs.append(r)
     else:
         raise ValueError(f"Unknown inputMissionType {mtype}")

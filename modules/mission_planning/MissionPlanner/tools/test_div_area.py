@@ -164,12 +164,13 @@ class AreaSplitTester:
             if self.prev_point
             else None
         )
-        center, bearing = _resolve_area_bearing(prev, poly_llh)  # type: ignore[arg-type]
+        center, bearing_move = _resolve_area_bearing(prev, poly_llh)  # type: ignore[arg-type]
+        bearing_split = (bearing_move + 90.0) % 360.0
         print(
             f"[TEST_DIV] center=({center['latitude']:.6f},{center['longitude']:.6f}) "
-            f"bearing={bearing:.2f}°"
+            f"moveBearing={bearing_move:.2f}° splitBearing={bearing_split:.2f}°"
         )
-        subs = divide_search_area_clip(poly_llh, aircraft_cnt, bearing)
+        subs = divide_search_area_clip(poly_llh, aircraft_cnt, bearing_split)
         colors = plt.cm.get_cmap("tab20", aircraft_cnt)
         for idx, sub in enumerate(subs):
             coords = sub["coordinateList"]
@@ -185,7 +186,7 @@ class AreaSplitTester:
             )
             self.split_polys.extend(coll)
         self.update_status(
-            f"Split into {aircraft_cnt} sub-areas using bearing {bearing:.2f}°. Close window to exit."
+            f"Split into {aircraft_cnt} sub-areas (move {bearing_move:.2f}°, split {bearing_split:.2f}°). Close window to exit."
         )
         self.fig.canvas.draw_idle()
 
