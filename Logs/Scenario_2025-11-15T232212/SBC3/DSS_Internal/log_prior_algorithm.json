@@ -1,0 +1,49 @@
+[
+  {
+    "timestamp": 816531821528,
+    "status": "success",
+    "reason": "선행임무 : 좌표지향",
+    "priorMissionID": 1,
+    "missionType": 1,
+    "aircraftID": 4,
+    "sourceMissionPlanID": 700000010,
+    "planIDs": [
+      700000011
+    ],
+    "newMissionPlanID": 700000011,
+    "newIndividualMissionPackageID": 800011247,
+    "newIndividualMissionID": 900131729,
+    "newPathID": 400000033,
+    "removedWaypointID": null,
+    "insertedWaypointID": 557,
+    "targetCoordinate": {
+      "latitude": 0.0,
+      "longitude": 0.0,
+      "altitude": 0
+    },
+    "logMessages": [
+      "[PRIOR] detail keys: ∅",
+      "[PRIOR][STEP1] Loaded 0401 snapshot with 3 unmanned entries (saved_at=2025-11-15T14:23:02.068497+00:00).",
+      "[PRIOR][STEP1] UAV 4: currentWP=4, coord=(38.155613, 127.331009, alt=449.0)",
+      "[PRIOR][STEP1] UAV 5: currentWP=36, coord=(38.153919, 127.334045, alt=449.0)",
+      "[PRIOR][STEP1] UAV 6: currentWP=69, coord=(38.152504, 127.336861, alt=449.0)",
+      "[PRIOR][STEP2] Target coordinate 보강: PriorMissionInfo 최신 기록에서 좌표 복구.",
+      "[PRIOR][STEP2] Target coordinate (0202) → (0.000000, 0.000000, alt=0.0)",
+      "[PRIOR][STEP3] Nearest UAV 4 selected based on 0401 snapshot (currentWP=4, distance≈13174351.9 m).",
+      "[PRIOR] Falling back to first mission for aircraft 4 (current waypoint not found in plan).",
+      "[PRIOR][STEP4] Reserved new waypoint ID 557 for UAV 4 (currentWP=4, distance≈13174351.9 m).",
+      "[PRIOR] Allocated IDs -> plan:700000011 imp:800011247 path:400000033 indiv:900131729 wp:557",
+      "[PRIOR] Stored new artifacts -> plan:700000011.json, imp:800011247.json, fp:400000033.json",
+      "[PRIOR] Log captured -> C:\\Users\\LAHMUMT_2\\Desktop\\KU_LAHMUMT\\Logs\\Scenario_2025-11-15T232212\\SBC3\\DSS_Internal\\PriorMission_1_816531821526.json"
+    ],
+    "detailSummary": {},
+    "detailProvided": false,
+    "detailKeys": [],
+    "detailRawPreview": "{}",
+    "missingDetailFields": [],
+    "snapshotAgentCount": 3,
+    "selectedAgentID": 4,
+    "selectedAgentDistanceMeters": 13174351.93660571,
+    "error": null
+  }
+]

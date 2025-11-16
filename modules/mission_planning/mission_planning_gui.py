@@ -36,6 +36,7 @@ qInstallMessageHandler(_qt_silent_handler)
 from modules.common.status_reporter import send_status_ok
 from modules.common.ctrl_listener import start_ctrl_listener, env_ctrl_port
 from modules.common import db_paths
+from modules.common.fusion_files import copy_file_with_retry
 from modules.common.option_codes import (
     DEFAULT_OPTION_CODE_SEQUENCE,
     ensure_option_code_sequence,
@@ -52,6 +53,8 @@ from latest_input_cache import (
     resolve_path_from_cache,
 )
 from prior_mission_pipeline import run_prior_mission_pipeline
+from attack_plan_pipeline import run_attack_plan_pipeline
+from mission_planning_log_tab import MissionPlanningLogTab
 
 _EPOCH2000_MS = 946_684_800_000
 def _now_ms_since_2000() -> int:
@@ -85,7 +88,7 @@ def _ensure_fusion_configs():
         raise FileNotFoundError("nFusionSettings.json/FusionSettings.json 이 없습니다.")
     dst = PROJECT_ROOT / "nFusionSettings.json"
     if src != dst:
-        dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+        copy_file_with_retry(src, dst)
 
     lcands = [
         PROJECT_ROOT / "nFusionLicense.lic",
@@ -96,7 +99,7 @@ def _ensure_fusion_configs():
     if lsrc:
         ldst = PROJECT_ROOT / "nFusionLicense.lic"
         if lsrc != ldst:
-            ldst.write_text(lsrc.read_text(encoding="utf-8"), encoding="utf-8")
+            copy_file_with_retry(lsrc, ldst)
     return str(dst)
 
 from dll_files.nFusionImports import *  # FusionNodeIoc, NodeMessenger, clr 등
@@ -142,11 +145,27 @@ def _z4(s: str) -> str:
     return s.zfill(4) if s.isdigit() and len(s) < 4 else s
 
 
+def _sanitize_reason(value: Any, fallback: str = "init-plan") -> str:
+    """
+    Remove embedded null characters and enforce a fallback string for ReplanReason.
+    """
+    if isinstance(value, bytes):
+        try:
+            text_val = value.decode('utf-8', 'ignore')
+        except Exception:
+            text_val = ''
+    else:
+        text_val = '' if value is None else str(value)
+    text_val = text_val.replace("\x00", "").strip()
+    return text_val or fallback
+
+
 # ───────── 메인 윈도우 ─────────
 class MainWindow(QMainWindow):
     # 백그라운드 → UI 스레드용 신호
     ctrl_payload   = pyqtSignal(dict)   # UDP 제어
     log_sig        = pyqtSignal(str)    # 로그
+    pipeline_log_sig = pyqtSignal(dict) # pipeline log fan-out
     start_push_seq = pyqtSignal()       # 0301/0305/0901 순차 푸시 트리거
 
     def __init__(self, *args, **kwargs):
@@ -172,6 +191,8 @@ class MainWindow(QMainWindow):
         self._session_scope = self._create_empty_scope()
         self._plan_status = "임무계획 전"
         self._option_id_counter = 0
+        self._bus_ready = False
+        self._pipeline_log_counter = 0
 
         reset_latest_inputs()
         self._last_logged_input_ids = {"0201": None, "0203": None}
@@ -192,6 +213,8 @@ class MainWindow(QMainWindow):
         self._install_mon_wires()              # ★ 모니터링 전송 훅
         self._install_0301_override()          # 0301 전송 커스텀
         tabs.addTab(self._tab, "임무 할당·계획수립 CSC")
+        self._log_tab = MissionPlanningLogTab()
+        tabs.addTab(self._log_tab, "임무계획 Log")
 
         # ── 상단 모드 슬라이더
         top = QWidget(); top_layout = QHBoxLayout(top)
@@ -218,6 +241,7 @@ class MainWindow(QMainWindow):
         # 신호 연결
         self.ctrl_payload.connect(self._handle_ctrl_payload)
         self.log_sig.connect(self._append_log_line)
+        self.pipeline_log_sig.connect(self._handle_pipeline_log_event)
         self.start_push_seq.connect(self._start_push_sequence)
 
         # nFusion RX 초기화 + UDP 컨트롤 리스너
@@ -327,7 +351,7 @@ class MainWindow(QMainWindow):
         """
         code_to_slider = {0: 1, 1: 2, 2: 3, 3: 4}
         if code not in code_to_slider:
-            return False
+            return None
         val = code_to_slider[code]
         try:
             self.mode_slider.blockSignals(True)
@@ -336,7 +360,7 @@ class MainWindow(QMainWindow):
             # 기존 부수효과(전원/주기TX/모니터링 통지) 실행
             self._on_mode_slider_changed(val)
         except Exception:
-            return False
+            return None
         return True
 
     # ───────── RX 테이블 폴링 기반 0101 모드 반영(리시버 경로 폴백) ─────────
@@ -549,9 +573,17 @@ class MainWindow(QMainWindow):
         except Exception:
             pass  # 모니터링용이므로 실패해도 동작에는 영향 없음
 
-    def _start_0102_stream(self):
+    def _start_0102_stream(self, _retry: int = 0):
         """초기화 모드 직후 0.5s 뒤 0102를 5Hz로 자동 시작."""
         if not self._power_on:
+            return
+        if not getattr(self, "_bus_ready", False):
+            if _retry == 0:
+                self._append_log_line("[0102] NodeMessenger 초기화 대기 중 ? 자동 송신 보류")
+            if _retry < 30:
+                QTimer.singleShot(300, lambda r=_retry + 1: self._start_0102_stream(r))
+            else:
+                self._append_log_line("[WARN] NodeMessenger가 준비되지 않아 0102 자동 송신을 건너뜁니다.")
             return
         try:
             self._tab.periodic_config['0102'] = 5
@@ -929,11 +961,17 @@ class MainWindow(QMainWindow):
             # TX만 차단
             if tbl is not None:
                 class _PG(QObject):
-                    def __init__(self, host): super().__init__(host); self.host = host
+                    def __init__(self, host):
+                        super().__init__(host)
+                        self.host = host
+
                     def eventFilter(self, obj, ev):
                         if not self.host._power_on and ev.type() in (
-                            QEvent.MouseButtonPress, QEvent.MouseButtonRelease,
-                            QEvent.MouseButtonDblClick, QEvent.KeyPress, QEvent.KeyRelease
+                            QEvent.MouseButtonPress,
+                            QEvent.MouseButtonRelease,
+                            QEvent.MouseButtonDblClick,
+                            QEvent.KeyPress,
+                            QEvent.KeyRelease,
                         ):
                             return True
                         return False
@@ -961,7 +999,7 @@ class MainWindow(QMainWindow):
         on = bool(self._power_on)
         try:
             self._update_tx_table_enabled(on)
-            self._update_rx_table_enabled(True)  # ✅ RX는 항상 보이게
+            self._update_rx_table_enabled(True)  # ? RX는 항상 보이게
             if not on:
                 self._stop_all_periodic()
         except Exception:
@@ -1022,7 +1060,7 @@ class MainWindow(QMainWindow):
         force_direct = bool(payload.get("force_direct_update"))
         plan_ids = list(payload.get("plan_ids") or [])
         option_names = list(payload.get("option_names") or [])
-        reason = payload.get("reason") or "init-plan"
+        reason = _sanitize_reason(payload.get("reason"), "init-plan")
 
         is_execution_mode = False
         if not force_direct:
@@ -1043,7 +1081,6 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, lambda: self._click_tx_button_for("0301"))
         # send 0305 completion
         QTimer.singleShot(600, lambda: self._push_0305(status=2, reason=reason))
-
         plan_meta = payload.get("option_meta") or {}
 
         if is_execution_mode and not force_direct:
@@ -1126,6 +1163,80 @@ class MainWindow(QMainWindow):
         try: print(text)
         except Exception: pass
 
+    # Pipeline log wiring -----------------------------------------------
+    def _handle_pipeline_log_event(self, payload: dict):
+        tab = getattr(self, "_log_tab", None)
+        if not tab or not isinstance(payload, dict):
+            return
+        action = payload.get("action")
+        session_id = payload.get("session_id")
+        if not session_id:
+            return
+        if action == "start":
+            tab.start_session(session_id, payload.get("meta") or {})
+        elif action == "append":
+            tab.append_event(
+                session_id,
+                payload.get("level") or "info",
+                payload.get("message") or "",
+                detail=payload.get("detail"),
+                timestamp=payload.get("timestamp"),
+            )
+        elif action == "finish":
+            tab.finish_session(
+                session_id,
+                payload.get("status") or "done",
+                summary=payload.get("summary"),
+            )
+
+    def _open_pipeline_log_session(self, ctx: Dict[str, Any], reason: str) -> Optional[str]:
+        if not getattr(self, "_log_tab", None):
+            return None
+        self._pipeline_log_counter += 1
+        session_id = f"run-{self._pipeline_log_counter:04d}"
+        meta = {
+            "timestamp": time.time(),
+            "reason": _sanitize_reason(reason, "init-plan"),
+            "plan_ids": list(ctx.get("plan_ids") or []),
+            "mission_ids": list(ctx.get("mission_ids") or []),
+            "replan_level": ctx.get("replan_level") or ctx.get("replanLevel"),
+        }
+        self.pipeline_log_sig.emit({"action": "start", "session_id": session_id, "meta": meta})
+        return session_id
+
+    def _log_pipeline_event(
+        self,
+        session_id: Optional[str],
+        level: str,
+        message: str,
+        *,
+        detail: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        if not session_id:
+            return
+        payload = {
+            "action": "append",
+            "session_id": session_id,
+            "level": level,
+            "message": message,
+            "timestamp": time.time(),
+        }
+        if detail is not None:
+            payload["detail"] = detail
+        self.pipeline_log_sig.emit(payload)
+
+    def _close_pipeline_log_session(
+        self,
+        session_id: Optional[str],
+        status: str,
+        *,
+        summary: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        if not session_id:
+            return
+        payload = {"action": "finish", "session_id": session_id, "status": status, "summary": summary}
+        self.pipeline_log_sig.emit(payload)
+
     # ───────── 모드/슬라이더 ─────────
     def _on_mode_slider_changed(self, val: int):
         labels = ["전원 OFF", "초기화 모드", "대기모드", "초기 임무 계획", "임무 수행"]
@@ -1171,21 +1282,34 @@ class MainWindow(QMainWindow):
 
     # ───────── nFusion RX 초기화 ─────────
     def _rx_setup(self):
-        FusionNodeIoc.Configure()
-        NodeMessenger.Initialize("MMR_ReceiveNode")
-        NodeMessenger.RegistAllConsumerFromFusionNodeIoc()
-        NodeMessenger.InitAllSubscriberFromAssembly()
-        NodeMessenger.RegistAllProviderFromFusionNodeIoc()
+        try:
+            FusionNodeIoc.Configure()
+            NodeMessenger.Initialize("MMR_ReceiveNode")
+            NodeMessenger.RegistAllConsumerFromFusionNodeIoc()
+            NodeMessenger.InitAllSubscriberFromAssembly()
+            NodeMessenger.RegistAllProviderFromFusionNodeIoc()
+            self._bus_ready = True
+            try:
+                self.log_sig.emit("[BUS] NodeMessenger 초기화 완료")
+            except Exception:
+                pass
+        except Exception as exc:
+            self._bus_ready = False
+            try:
+                self.log_sig.emit(f"[BUS ERR] NodeMessenger 초기화 실패: {exc}")
+            except Exception:
+                pass
 
     # ───────── 0305 / 0903 요청 ─────────
     def _push_0305(self, status: int, reason: str = "초기임무재계획"):
         try:
             from push_center import push_message
+            clean_reason = _sanitize_reason(reason, "??????????")
             body = {
                 "timestamp": _now_ms_since_2000(),
                 "source": "MMR",
                 "missionPlanningStatus": int(status),  # 1: 재계획 수행 중, 2: 재계획 완료
-                "replanReason": reason,
+                "replanReason": clean_reason,
             }
             orig_mark_fn = getattr(self, "_orig_mark_sent", None)
             mon_sent_via_wrapper = {"done": False}
@@ -1214,7 +1338,7 @@ class MainWindow(QMainWindow):
                 on_done=_after_push,
                 body_dict=body,
             )
-            self.log_sig.emit(f"[0305] status={status}, reason={reason} 전송")
+            self.log_sig.emit(f"[0305] status={status}, reason={clean_reason} 전송")
             try:
                 if not mon_sent_via_wrapper["done"]:
                     self._send_mon("tx", msg_id=_z4("0305"), missionPlanningStatus=int(status))
@@ -1336,6 +1460,13 @@ class MainWindow(QMainWindow):
         if not self._power_on:
             self._append_log_line("[BLOCK] Power OFF → 0102 폴백 차단")
             return
+        if not getattr(self, "_bus_ready", False):
+            if _retry == 0:
+                self._append_log_line("[0102] NodeMessenger 초기화 대기 중 ? 송신을 재시도합니다.")
+            if _retry < 10:
+                QTimer.singleShot(500, lambda r=_retry + 1: self._send_self_check_0102(status=status, _retry=r))
+                return
+            self._append_log_line("[WARN] NodeMessenger가 준비되지 않아 0102 강제 송신을 시도합니다.")
         try:
             from push_center import push_message
         except Exception as e:
@@ -1394,6 +1525,10 @@ class MainWindow(QMainWindow):
     def _ensure_0102(self, on: bool) -> bool:
         if not self._power_on:
             self._append_log_line("[BLOCK] Power OFF → 0102 차단")
+            return False
+        if on and not getattr(self, "_bus_ready", False):
+            self._append_log_line("[WAIT] NodeMessenger 초기화 전 ? 0102 ON 요청을 지연합니다.")
+            QTimer.singleShot(300, self._start_0102_stream)
             return False
         try:
             tab = self._tab; tbl = tab.tbl_tx
@@ -1504,7 +1639,7 @@ class MainWindow(QMainWindow):
             if isinstance(value, str) and value.strip():
                 ctx[key] = value.strip()
 
-        ctx["reason"] = str(raw_context.get("reason") or "init-plan")
+        ctx["reason"] = _sanitize_reason(raw_context.get("reason"), "init-plan")
         try: ctx["replan_level"] = int(raw_context.get("replan_level", 1))
         except Exception: ctx["replan_level"] = 1
 
@@ -1550,7 +1685,8 @@ class MainWindow(QMainWindow):
             except Exception:
                 continue
 
-        reason = str(payload.get("replanReason") or staged.get("reason") or "init-plan")
+        staged_reason = _sanitize_reason(staged.get("reason"), "init-plan")
+        reason = _sanitize_reason(payload.get("replanReason"), staged_reason)
 
         ctx = dict(staged)
         if plan_ids:     ctx["plan_ids"] = plan_ids
@@ -1572,6 +1708,63 @@ class MainWindow(QMainWindow):
         summary = ", ".join(str(pid) for pid in ctx.get("plan_ids", [])) or "-"
         self._append_log_line(f"[AUTO] 0902 received (planIds={summary})")
         self._schedule_replan_pipeline(delay_ms=100)
+
+    def _should_use_attack_pipeline(self, ctx: Dict[str, Any]) -> bool:
+        reason_text = str(ctx.get("reason") or "").strip()
+        if "공격 특화" in reason_text or "공격특화" in reason_text:
+            return True
+
+        detail = ctx.get("replan_detail")
+        if isinstance(detail, dict):
+            trigger = detail.get("trigger")
+            if isinstance(trigger, str) and trigger.strip() == "0402":
+                return True
+            for key in ("ReplanReason", "reason", "label", "mode"):
+                value = detail.get(key)
+                if value and ("공격 특화" in str(value) or "공격특화" in str(value)):
+                    return True
+
+        option_names = ctx.get("option_names") or []
+        for name in option_names:
+            text = str(name)
+            if "공격 특화" in text or "공격특화" in text:
+                return True
+
+        return False
+
+    def _ensure_ctx_package_ids(self, ctx: Dict[str, Any], staged: Dict[str, Any]) -> None:
+        """replan 파이프라인 진입 전에 필수 패키지 ID를 미리 채워둔다."""
+
+        def _coerce_positive_int(value: Any) -> Optional[int]:
+            if value is None:
+                return None
+            try:
+                ivalue = int(value)
+            except Exception:
+                return None
+            return ivalue if ivalue > 0 else None
+
+        def _ensure_id(key: str, snapshot_id: str) -> None:
+            existing = _coerce_positive_int(ctx.get(key))
+            if existing is None:
+                existing = _coerce_positive_int(staged.get(key))
+                if existing is not None:
+                    ctx[key] = existing
+                    return
+            if existing is not None:
+                ctx[key] = existing
+                return
+            try:
+                latest = get_latest_package_id(snapshot_id)
+            except Exception as exc:
+                self.log_sig.emit(f"[WARN] Failed to query latest {snapshot_id} ID for {key}: {exc}")
+                return
+            if latest is not None:
+                ctx[key] = latest
+                self.log_sig.emit(f"[INFO] Using latest {snapshot_id} ID {latest} for {key} (fallback)")
+
+        _ensure_id("inputMissionPackageID", "0201")
+        _ensure_id("missionReferencePackageID", "0203")
 
     # ───────── 재계획 파이프라인(파일 생성/저장 후 0301만 송신) ─────────
     def _schedule_replan_pipeline(self, delay_ms: int = 1000) -> None:
@@ -1607,26 +1800,69 @@ class MainWindow(QMainWindow):
         self._initplan_running = True
         self._pending_plan_push = None
         ctx = getattr(self, "_active_plan_context", {}) or {}
-        reason = str(ctx.get("reason") or "초기임무재계획")
+        reason = _sanitize_reason(ctx.get("reason"), "초기임무재계획")
         self._push_0305(status=1, reason=reason)
-        threading.Thread(target=self._run_replan_pipeline_do, name="Replan-GUI", daemon=True).start()
+        session_id = self._open_pipeline_log_session(ctx, reason)
+        threading.Thread(
+            target=self._run_replan_pipeline_do,
+            args=(session_id,),
+            name="Replan-GUI",
+            daemon=True,
+        ).start()
 
-    def _run_replan_pipeline_do(self):
+    def _run_replan_pipeline_do(self, session_id: Optional[str]):
+        success = False
+        summary_info: Optional[Dict[str, Any]] = None
         try:
             import os, json
             from pathlib import Path
 
             ctx = getattr(self, '_active_plan_context', {}) or {}
             staged = self._staged_plan_context if isinstance(getattr(self, '_staged_plan_context', {}), dict) else {}
-            reason = str(ctx.get('reason') or staged.get('reason') or 'init-plan')
+            self._ensure_ctx_package_ids(ctx, staged)
+            staged_reason = _sanitize_reason(staged.get('reason'), 'init-plan')
+            reason = _sanitize_reason(ctx.get('reason'), staged_reason)
 
             self.log_sig.emit(f"[STEP 0] Replan pipeline start (reason={reason})")
+            self._log_pipeline_event(
+                session_id,
+                "info",
+                "Replan pipeline start",
+                detail={
+                    "reason": reason,
+                    "plan_ids": list(ctx.get("plan_ids") or []),
+                    "replan_level": ctx.get("replan_level"),
+                },
+            )
 
-            if self._try_run_prior_mission_pipeline(ctx, reason):
+
+            if self._should_use_attack_pipeline(ctx):
+                self.log_sig.emit("[ATTACK] 공격 특화 재계획 요청 감지 → 전용 파이프라인 실행")
+                try:
+                    attack_result = run_attack_plan_pipeline(ctx, log_callback=self._append_log_line)
+                    ctx["_attack_pipeline"] = attack_result
+                    log_path = (attack_result or {}).get("log_path")
+                    if log_path:
+                        self.log_sig.emit(f"[ATTACK] 분석 로그 저장: {log_path}")
+                    self._log_pipeline_event(
+                        session_id,
+                        "info",
+                        "Attack pipeline evaluated",
+                        detail={"log_path": log_path},
+                    )
+                except Exception as exc:
+                    self._append_log_line(f"[ATTACK][ERR] pipeline failed: {exc}")
+                    self._log_pipeline_event(session_id, "error", f"Attack pipeline failed: {exc}")
+
+            prior_summary = self._try_run_prior_mission_pipeline(ctx, reason, session_id=session_id)
+            if prior_summary:
+                summary_info = {"mode": "prior", **prior_summary}
+                success = True
                 return
 
             generated_imp_ids: Set[int] = set()
             generated_path_ids: Set[int] = set()
+            stored_path_ids: Set[int] = set()
 
             mp_pkg_dir = Path(PROJECT_ROOT) / 'modules' / 'mission_planning' / 'MissionPlanner'
             for p in (mp_pkg_dir, mp_pkg_dir.parent, Path(PROJECT_ROOT) / 'modules'):
@@ -2311,6 +2547,37 @@ class MainWindow(QMainWindow):
                     return
                 self.log_sig.emit(f"[OK] FlightPath counts (variant={variant_no}): 0303={len(flight_plans_0303)} / 0304={len(flight_plans_0304)}")
 
+                expected_path_ids = {int(pid) for pid in pid_map.values() if pid is not None}
+
+                def _collect_valid_path_ids(fps):
+                    collected: Set[int] = set()
+                    for fp in fps or []:
+                        path_id = fp.get("pathID")
+                        if path_id is None:
+                            continue
+                        waypoints = fp.get("waypointList")
+                        if not waypoints:
+                            waypoints = fp.get("lahWaypointList")
+                        if not waypoints:
+                            continue
+                        try:
+                            collected.add(int(path_id))
+                        except Exception:
+                            continue
+                    return collected
+
+                available_path_ids = _collect_valid_path_ids(flight_plans_0303)
+                available_path_ids.update(_collect_valid_path_ids(flight_plans_0304))
+                missing_path_ids = sorted(pid for pid in expected_path_ids if pid not in available_path_ids)
+                if missing_path_ids:
+                    missing_summary = ", ".join(str(pid) for pid in missing_path_ids)
+                    self.log_sig.emit(
+                        f"[ERR] FlightPath generation incomplete (variant={variant_no}): missing pathID(s) {missing_summary}"
+                    )
+                    self._plan_status = "임무계획 실패"
+                    self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
+                    return
+
                 plan_id_value = requested_plan_id if requested_plan_id is not None else mp_json.get('missionPlanID')
                 try:
                     preferred_plan_id = int(plan_id_value)
@@ -2366,6 +2633,10 @@ class MainWindow(QMainWindow):
                         if pid is None:
                             continue
                         (target_dir / f"{int(pid)}.json").write_text(json.dumps(fp, indent=2, ensure_ascii=False), encoding='utf-8')
+                        try:
+                            stored_path_ids.add(int(pid))
+                        except Exception:
+                            pass
                         count += 1
                     return count
 
@@ -2413,7 +2684,7 @@ class MainWindow(QMainWindow):
 
             plan_id_set = {int(pid) for pid in generated_plan_ids if pid is not None}
             imp_id_set = {int(val) for val in generated_imp_ids if val is not None}
-            path_id_set = {int(val) for val in generated_path_ids if val is not None}
+            path_id_set = {int(val) for val in stored_path_ids if val is not None}
 
             if input_pkg_id_int is not None:
                 self._session_scope['packages'].add(input_pkg_id_int)
@@ -2441,20 +2712,35 @@ class MainWindow(QMainWindow):
                 plan_meta_map,
                 force_direct_update=force_direct_update,
             )
+            summary_info = {
+                "mode": "legacy",
+                "plan_ids": list(generated_plan_ids),
+                "option_codes": list(option_codes_out),
+            }
+            success = True
 
         except Exception as exc:
             self.log_sig.emit(f"[ERR] Replan pipeline failed: {exc}")
+            self._log_pipeline_event(session_id, "error", f"Replan pipeline failed: {exc}")
         finally:
             self._initplan_running = False
+            status_text = "success" if success else "error"
+            self._close_pipeline_log_session(session_id, status_text, summary=summary_info)
 
-    def _try_run_prior_mission_pipeline(self, ctx: Dict[str, Any], reason: str) -> bool:
+    def _try_run_prior_mission_pipeline(
+        self,
+        ctx: Dict[str, Any],
+        reason: str,
+        *,
+        session_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
         try:
             replan_level = int(ctx.get("replan_level", ctx.get("replanLevel", 0)))
         except Exception:
             replan_level = 0
         detail = ctx.get("replan_detail")
         if replan_level != 4:
-            return False
+            return None
 
         if isinstance(detail, dict):
             self.log_sig.emit("[PRIOR] Level-4 prior mission request detected. Using dedicated pipeline.")
@@ -2470,7 +2756,9 @@ class MainWindow(QMainWindow):
         )
         if not result:
             self.log_sig.emit("[PRIOR] Prior mission pipeline unavailable. Falling back to legacy replan flow.")
-            return False
+            if session_id:
+                self._log_pipeline_event(session_id, "warn", "Prior mission pipeline unavailable")
+            return None
 
         generated_plan_ids = result.plan_ids
         option_names = result.option_names
@@ -2521,7 +2809,14 @@ class MainWindow(QMainWindow):
         self.log_sig.emit(
             f"[PRIOR] Prior mission pipeline complete (planIds={generated_plan_ids}, log={result.log_path})"
         )
-        return True
+        summary = {
+            "plan_ids": list(generated_plan_ids),
+            "option_names": list(option_names),
+            "log_path": str(result.log_path),
+        }
+        if session_id:
+            self._log_pipeline_event(session_id, "info", "Prior mission pipeline complete", detail=summary)
+        return summary
 
     def closeEvent(self, event):
         try:
@@ -2540,10 +2835,11 @@ class MainWindow(QMainWindow):
         *,
         force_direct_update: bool = False,
     ):
+        safe_reason = _sanitize_reason(reason, "init-plan")
         self._pending_plan_push = {
             "plan_ids":     list(plan_ids or []),
             "option_names": list(option_names or []),
-            "reason":       reason,
+            "reason":       safe_reason,
             "option_meta":  dict(option_meta or {}),
             "force_direct_update": bool(force_direct_update),
         }

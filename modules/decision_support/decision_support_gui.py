@@ -50,6 +50,7 @@ PROJECT_ROOT, COMMON_DIR = _bootstrap_paths()
 from modules.common.status_reporter import send_status_ok
 from modules.common.ctrl_listener import start_ctrl_listener, env_ctrl_port
 from modules.common import db_paths
+from modules.common.fusion_files import copy_file_with_retry
 from modules.common.option_codes import (
     DEFAULT_OPTION_CODE_SEQUENCE,
     normalize_option_code,
@@ -79,7 +80,7 @@ def _ensure_fusion_configs():
         raise FileNotFoundError("nFusionSettings.json/FusionSettings.json 이 없습니다.")
     dst = PROJECT_ROOT / "nFusionSettings.json"
     if src != dst:
-        dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+        copy_file_with_retry(src, dst)
 
     lcands = [
         PROJECT_ROOT / "nFusionLicense.lic",
@@ -90,7 +91,7 @@ def _ensure_fusion_configs():
     if lsrc:
         ldst = PROJECT_ROOT / "nFusionLicense.lic"
         if lsrc != ldst:
-            ldst.write_text(lsrc.read_text(encoding="utf-8"), encoding="utf-8")
+            copy_file_with_retry(lsrc, ldst)
     return str(dst)
 
 from dll_files.nFusionImports import *  # FusionNodeIoc, NodeMessenger, clr
@@ -464,8 +465,16 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
-    def _start_0102_stream(self):
+    def _start_0102_stream(self, _retry: int = 0):
         if not self._power_on:
+            return
+        if not getattr(self, "_bus_ready", False):
+            if _retry == 0:
+                self._append_log_line("[0102] NodeMessenger 초기화 대기 중 – 자동 송신 보류")
+            if _retry < 30:
+                QTimer.singleShot(300, lambda r=_retry + 1: self._start_0102_stream(r))
+            else:
+                self._append_log_line("[WARN] NodeMessenger가 준비되지 않아 0102 자동 송신을 건너뜁니다.")
             return
         try:
             tab = getattr(self, "_tab", None)
@@ -478,6 +487,10 @@ class MainWindow(QMainWindow):
     def _ensure_selfcheck_0102(self, on: bool) -> bool:
         if on and not self._power_on:
             self._append_log_line("[BLOCK] Power OFF → 0102 제어 차단")
+            return False
+        if on and not getattr(self, "_bus_ready", False):
+            self._append_log_line("[WAIT] NodeMessenger 초기화 전 – 0102 ON 요청을 지연합니다.")
+            QTimer.singleShot(300, self._start_0102_stream)
             return False
         try:
             tab = getattr(self, "_tab", None)

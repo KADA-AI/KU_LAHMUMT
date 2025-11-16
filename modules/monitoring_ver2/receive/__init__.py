@@ -30,7 +30,7 @@ from .message0802_receiver import MandatoryCommandReceiver_0802
 from .message0803_receiver import ExecutionCommandReceiver_0803
 
 # from .message0804_receiver import MissionRestartCommandReceiver_0804  # 필요 시 주석 해제
-from .message0805_receiver import SystemEventReceiver_0805
+# from .message0805_receiver import SystemEventReceiver_0805
 from .message0806_receiver import BootCommandReceiver_0806
 
 from .message0903_receiver import RequestRenewMissionReceiver_0903

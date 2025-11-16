@@ -602,7 +602,7 @@ class OperationEventModel:
 
     timestamp: int
     source: str
-    # TODO: Add specific fields for OperationEvent
+    eventType: int
 
 
 # ----------------- Message 0806 (SystemBootCommand) ----------------- #

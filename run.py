@@ -1400,6 +1400,24 @@ def _position_window_at_cursor(app: QApplication, win):
     win.move(target_x, target_y)
 
 
+def _arm_auto_boot(win, delay_ms: int = 1000) -> None:
+    """Trigger the auto boot button (or handler) after the given delay."""
+    btn = getattr(win, "btn_auto_boot", None)
+    if btn is not None and hasattr(btn, "click"):
+        try:
+            QTimer.singleShot(delay_ms, btn.click)
+            return
+        except Exception:
+            pass
+
+    handler = getattr(win, "_handle_auto_boot", None)
+    if callable(handler):
+        try:
+            QTimer.singleShot(delay_ms, handler)
+        except Exception:
+            pass
+
+
 # ─────────────────────────────────────────────────────────────
 def main():
     app = QApplication(sys.argv)
@@ -1408,6 +1426,7 @@ def main():
     win.show()
     _position_window_at_cursor(app, win)
     orch = DashboardOrchestrator(win)
+    _arm_auto_boot(win, 1000)
     sys.exit(app.exec_())
 
 if __name__ == "__main__":

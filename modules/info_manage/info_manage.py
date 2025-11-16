@@ -33,6 +33,7 @@ qInstallMessageHandler(_qt_silent_handler)
 # ───────── 경로 부트스트랩 ─────────
 from modules.common.status_reporter import send_status_ok
 from modules.common.ctrl_listener import start_ctrl_listener, env_ctrl_port
+from modules.common.fusion_files import copy_file_with_retry
 
 _EPOCH2000_MS = 946_684_800_000
 def _now_ms_since_2000() -> int:
@@ -67,7 +68,7 @@ def _ensure_fusion_configs():
         raise FileNotFoundError("nFusionSettings.json/FusionSettings.json 이 없습니다.")
     dst = PROJECT_ROOT / "nFusionSettings.json"
     if src != dst:
-        dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+        copy_file_with_retry(src, dst)
 
     lcands = [
         PROJECT_ROOT / "nFusionLicense.lic",
@@ -78,7 +79,7 @@ def _ensure_fusion_configs():
     if lsrc:
         ldst = PROJECT_ROOT / "nFusionLicense.lic"
         if lsrc != ldst:
-            ldst.write_text(lsrc.read_text(encoding="utf-8"), encoding="utf-8")
+            copy_file_with_retry(lsrc, ldst)
     return str(dst)
 
 # ───────── nFusion DLL/어셈블리 로드 ─────────

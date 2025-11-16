@@ -62,7 +62,7 @@ def _ensure_fusion_configs():
         raise FileNotFoundError("nFusionSettings.json/FusionSettings.json 이 없습니다.")
     dst = PROJECT_ROOT / "nFusionSettings.json"
     if src != dst:
-        dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+        copy_file_with_retry(src, dst)
 
     lcands = [
         PROJECT_ROOT / "nFusionLicense.lic",
@@ -73,7 +73,7 @@ def _ensure_fusion_configs():
     if lsrc:
         ldst = PROJECT_ROOT / "nFusionLicense.lic"
         if lsrc != ldst:
-            ldst.write_text(lsrc.read_text(encoding="utf-8"), encoding="utf-8")
+            copy_file_with_retry(lsrc, ldst)
     return str(dst)
 
 # ───────── nFusion DLL/어셈블리 로드 ─────────
@@ -109,6 +109,7 @@ from Tabs.integration_tab import IntegrationTab
 # 상태 OK(=0102) 헬퍼
 from modules.common.status_reporter import send_status_ok
 from modules.common.ctrl_listener import start_ctrl_listener, env_ctrl_port
+from modules.common.fusion_files import copy_file_with_retry
 
 from push_center import push_message
 from modules.common import db_paths

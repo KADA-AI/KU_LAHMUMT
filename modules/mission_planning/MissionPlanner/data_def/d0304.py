@@ -1,7 +1,3 @@
-# ──────────────────────────────────────────────────────────────────
-# d0304.py  ― LAH FlightPlan (aircraft 1·2·3) 고정 100 m 버전
-#           · 2번: +100 m north, 3번: –100 m north offset
-# ──────────────────────────────────────────────────────────────────
 from __future__ import annotations
 import os
 import math
@@ -21,11 +17,10 @@ def _sw_code(default: str = "MMR") -> str:
         "decision": "MOB",
     }.get(role, default)
 
-WP_INTERVAL_M = 500.0        # Waypoint 간격(m) ─ 기본값
-Altitude_LAH = 1000
-HOVER_HOLD_SEC = 300         # 첫 WP hovering 시간(초) – 약 5분
-
-# ── 고정 WP 확장 블록 ─────────────────────────────────────────────
+WP_INTERVAL_M = 500.0        
+HOVER_HOLD_SEC = 10
+Altitude_LAH = 1000  
+         
 _DEFAULT_WP_EXT = OrderedDict([
     ("hovering", OrderedDict([("time", 0)])),
     ("loiter",   OrderedDict([
@@ -35,12 +30,11 @@ _DEFAULT_WP_EXT = OrderedDict([
         ("speed",     0),
     ])),
     ("attack",   OrderedDict([
-        ("targetID",   0),      # ← 반드시 0
+        ("targetID",   0),     
         ("weaponType", 0),
     ])),
 ])
 
-# ── ID 할당기 ────────────────────────────────────────────────────
 class _WPAllocator:
     def __init__(self, start: int | None = None):
         self._local_next = start
@@ -56,20 +50,15 @@ class _WPAllocator:
         self._local_next += 1
         return wid
 
-# ── 좌표 오프셋(N/E[m]) → lat/lon 변환 ───────────────────────────
 def _offset_coord(lat: float, lon: float,
                   north_m: float = 0.0,
                   east_m: float  = 0.0) -> Tuple[float, float]:
-    """
-    위도·경도 점을 북쪽/동쪽 거리(m)만큼 평면 이동시킨 좌표 반환
-    (+north = 북, +east = 동). 100 m 급 이동에 충분한 근사치.
-    """
-    k = 111_132.92                         # m/deg (위도)
+
+    k = 111_132.92                         # m/deg (?�도)
     dlat = north_m / k
     dlon = east_m  / (k * math.cos(math.radians(lat)))
     return lat + dlat, lon + dlon
 
-# ── 두 점 사이 고정 간격 분할 ────────────────────────────────────
 def _split_line(p0: Tuple[float, float],
                 p1: Tuple[float, float],
                 step_m: float = WP_INTERVAL_M) -> List[Tuple[float, float]]:
@@ -89,13 +78,12 @@ def _split_line(p0: Tuple[float, float],
         for i in range(1, n_seg + 1)
     ] + [p1]
 
-# ── 패킷 검증 ────────────────────────────────────────────────────
 def _validate_lah_flight_plans(pkts: List[dict]) -> None:
     seen_path = set()
     for pidx, pkt in enumerate(pkts, 1):
         aid = pkt["aircraftID"]
         if aid not in (1, 2, 3):
-            raise ValueError(f"[0304] pkt#{pidx}: aircraftID must be 1–3")
+            raise ValueError(f"[0304] pkt#{pidx}: aircraftID must be 1??")
         path_id = pkt["pathID"]
         if path_id in seen_path:
             raise ValueError(f"[0304] duplicate pathID {path_id}")
@@ -107,7 +95,7 @@ def _validate_lah_flight_plans(pkts: List[dict]) -> None:
         for widx, wp in enumerate(pkt["lahWaypointList"], 1):
             atk = wp.get("attack")
             if atk is None:
-                raise ValueError(f"[0304] pkt#{pidx}/wp#{widx}: 'attack' 필드 없음")
+                raise ValueError(f"[0304] pkt#{pidx}/wp#{widx}: 'attack' ?�드 ?�음")
             tid = atk.get("targetID")
             if not isinstance(tid, int):
                 raise ValueError(f"[0304] pkt#{pidx}/wp#{widx}: targetID must be int")
@@ -123,12 +111,6 @@ def build_lah_flight_plans_from_mrpk(
     wp_interval_m: float = WP_INTERVAL_M,
     wp_alloc: _WPAllocator | None = None,
 ) -> List[dict]:
-    """
-    0302 → 0304(유인기) + 0203 고려
-    • takeOverInfoList: LAH 시작 배치(최남/최서단 앵커 → S(-150m), E(+150m) 간격)
-    • rtbCoordinateList: 각 LAH 의 RTB 최종 WP
-    • 기존 0304 경로 앞뒤에 start/RTB를 붙인 뒤 WaypointID·ECF·next 링크 재계산
-    """
     def _offset(lat: float, lon: float, north_m: float = 0.0, east_m: float = 0.0) -> tuple[float, float]:
         k = 111_132.92
         dlat = north_m / k
@@ -158,19 +140,16 @@ def build_lah_flight_plans_from_mrpk(
     wp_alloc = wp_alloc or _WPAllocator()
     now_ms   = now_ms_since_2000()
 
-    # 0) 기본 0304 (경로 본체) 먼저 생성
     base_packets = build_lah_flight_plans_fixed(
         missions,
         cruise_speed = cruise_speed,
         wp_interval_m = wp_interval_m,
-        wp_alloc = _WPAllocator(1),    # 임시 할당 → 아래에서 다시 붙임
+        wp_alloc = _WPAllocator(1),   
     )
 
-    # 1) 0203: 앵커/RTB 계산
     tk_list = (mrpk or {}).get("takeOverInfoList") or []
     rtb_list= (mrpk or {}).get("rtbCoordinateList") or []
 
-    # 앵커: 최남/최서단 (lat 최소, tie시 lon 최소)
     if tk_list:
         anchor = min(
             [it.get("coordinate", {}) for it in tk_list if it.get("coordinate")],
@@ -178,12 +157,11 @@ def build_lah_flight_plans_from_mrpk(
         )
         a_lat, a_lon = float(anchor["latitude"]), float(anchor["longitude"])
     else:
-        # fallback: 첫 패킷 첫 WP 기준
         if base_packets and base_packets[0]["lahWaypointList"]:
             c0 = base_packets[0]["lahWaypointList"][0]["coordinate"]
             a_lat, a_lon = float(c0["latitude"]), float(c0["longitude"])
         else:
-            return base_packets  # 아무것도 할 수 없음
+            return base_packets 
 
     start_map = {
         1: _offset(a_lat, a_lon, north_m=-150.0, east_m=  0.0),
@@ -191,14 +169,12 @@ def build_lah_flight_plans_from_mrpk(
         3: _offset(a_lat, a_lon, north_m=-150.0, east_m=300.0),
     }
 
-    # RTB: 경도(서→동) 정렬 기준 LAH1/2/3 매핑 (부족하면 끝점 유지)
     rtb_sorted = sorted(
         [p for p in rtb_list if "latitude" in p and "longitude" in p],
         key=lambda p: p["longitude"]
     )
     rtb_map = {i+1: rtb_sorted[i] for i in range(min(3, len(rtb_sorted)))}
 
-    # 2) 패킷별로 start/RTB 삽입 후 재계산
     out_packets: List[dict] = []
     for pkt in base_packets:
         aid = pkt["aircraftID"]
@@ -225,7 +201,7 @@ def build_lah_flight_plans_from_mrpk(
 
         new_list = [wp_start] + [dict(w) for w in wplist] + [wp_rtb]
 
-        # WaypointID 재할당 + next + ECF
+        # WaypointID ?�할??+ next + ECF
         for w in new_list:
             w["waypointID"] = wp_alloc.alloc()
         for i in range(len(new_list) - 1):
@@ -247,7 +223,6 @@ def build_lah_flight_plans_from_mrpk(
     _validate_lah_flight_plans(out_packets)
     return out_packets
     
-# ── 메인 빌더 ────────────────────────────────────────────────────
 def build_lah_flight_plans_fixed(
     missions: List[dict],
     *,
@@ -255,12 +230,7 @@ def build_lah_flight_plans_fixed(
     wp_interval_m: float = WP_INTERVAL_M,
     wp_alloc: _WPAllocator | None = None,
 ) -> List[dict]:
-    """
-    0302 -> 0304 FlightPlan 변환
-    · LAH-1 은 기본 좌표 그대로 사용
-    · LAH-2 는 경로 전체에 +100 m 북쪽(offset = +100 m north)
-    · LAH-3 는 경로 전체에 -100 m 북쪽(offset = -100 m north)
-    """
+
     wp_alloc = wp_alloc or _WPAllocator()
     now_ms   = now_ms_since_2000()
     packets: List[dict] = []
@@ -268,7 +238,7 @@ def build_lah_flight_plans_fixed(
     for miss in missions:
         aid = miss["aircraftID"]
         if aid not in (1, 2, 3):
-            continue  # LAH 기체가 아니면 skip
+            continue  
 
         path_id = miss.get("pathID")
         if path_id is None:
@@ -280,7 +250,6 @@ def build_lah_flight_plans_fixed(
         if not coords:
             continue
 
-        # --- 100 m offset 적용 (LAH-2/3) ---
         offset_north = 0.0
         if aid == 2:
             offset_north = 100.0      # +100 m north
@@ -292,7 +261,6 @@ def build_lah_flight_plans_fixed(
 
         wplist: List[OrderedDict] = []
 
-        # --- 동역학 기반 궤적 샘플링 ---
         if len(coords) >= 2:
             try:
                 samples = UAVMissionPlanner.plan_route_only(
@@ -360,7 +328,7 @@ def build_lah_flight_plans_fixed(
             wplist[i]["nextWaypointID"] = wplist[i + 1]["waypointID"]
         if wplist:
             first_wp = wplist[0]
-            first_wp["speed"] = 0
+            first_wp["speed"] = 10
             hover = first_wp.get("hovering")
             if isinstance(hover, dict):
                 hover["time"] = HOVER_HOLD_SEC
@@ -369,7 +337,7 @@ def build_lah_flight_plans_fixed(
 
             last_wp = wplist[-1]
             if last_wp is not first_wp:
-                last_wp["speed"] = 0
+                last_wp["speed"] = 10
                 hover_last = last_wp.get("hovering")
                 if isinstance(hover_last, dict):
                     hover_last["time"] = HOVER_HOLD_SEC
@@ -388,4 +356,5 @@ def build_lah_flight_plans_fixed(
 
     _validate_lah_flight_plans(packets)
     return packets
+
 

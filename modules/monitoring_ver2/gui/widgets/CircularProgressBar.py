@@ -8,6 +8,7 @@ class CircularProgressBar(QWidget):
         self.value = 0
         self.text = ""
         self.progress_color = QColor(75, 175, 255) # Default blue color
+        self.highlighted = False
         self.setMinimumSize(100, 100) # Default size
 
     def setValue(self, value):
@@ -23,6 +24,11 @@ class CircularProgressBar(QWidget):
         self.progress_color = color
         self.repaint()
 
+    def setHighlighted(self, highlighted: bool):
+        if self.highlighted != highlighted:
+            self.highlighted = highlighted
+            self.repaint()
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing) # For smooth edges
@@ -32,15 +38,26 @@ class CircularProgressBar(QWidget):
         painter.setViewport((rect.width() - side) // 2, (rect.height() - side) // 2, side, side)
         painter.setWindow(0, 0, 100, 100)
 
+        # Determine circle geometry (slightly larger when highlighted).
+        inset = 5
+        pen_width = 8
+        track_color = QColor(200, 200, 200)
+        if self.highlighted:
+            inset = 4
+            pen_width = 10
+            track_color = QColor(255, 170, 0)
+        diameter = 100 - inset * 2
+        circle_rect = QRectF(inset, inset, diameter, diameter)
+
         # Draw background circle
-        painter.setPen(QPen(QColor(200, 200, 200), 8)) # Light gray pen, 8px width
-        painter.drawEllipse(5, 5, 90, 90) # Draw a circle
+        painter.setPen(QPen(track_color, pen_width)) # Track pen
+        painter.drawEllipse(circle_rect) # Draw a circle
 
         # Draw progress arc
-        painter.setPen(QPen(self.progress_color, 8)) # Use dynamic color
+        painter.setPen(QPen(self.progress_color, pen_width)) # Use dynamic color
         start_angle = 90 * 16 # Start from top (90 degrees clockwise from 3 o'clock)
         span_angle = int(-self.value * 360 * 16 / 100) # Fill clockwise
-        painter.drawArc(5, 5, 90, 90, start_angle, span_angle)
+        painter.drawArc(circle_rect, start_angle, span_angle)
 
         # Draw text (percentage or custom text)
         painter.setPen(QPen(QColor(0, 0, 0))) # Black text

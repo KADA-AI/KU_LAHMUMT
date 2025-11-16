@@ -71,7 +71,7 @@ FORCED_HOLD_REASON_ATTR = "_hold_defer_reason"
 FORCED_HOLD_STATE_KEY = "forced_hold_state_map"
 TARGET_REPLAN_SITUATION_LABEL = "0402 표적 탐지 재계획"
 ROI_REPLAN_SITUATION_LABEL = "0402 ROI 지속 재계획"
-ROI_CAUTION_TIMEOUT_SECONDS = 10.0
+ROI_CAUTION_TIMEOUT_SECONDS = 1000.0
 TARGET_TYPE_LABELS = {
     None: "표적",
     0: "표적",
@@ -163,6 +163,7 @@ class MonitoringLogic:
         self._existing_mission_plan_ids: Set[int] = set()
         self._pending_mission_plan_id: Optional[int] = None
         self._pending_decision_command: Optional[Tuple[Optional[int], Optional[int]]] = None
+        self._latest_plan_command: Optional[Dict[str, Any]] = None
         self._current_input_mission_id: Optional[int] = None
         self._input_mission_package_id: Optional[int] = None
         self._input_mission_plan_path: Optional[Path] = None
@@ -315,12 +316,17 @@ class MonitoringLogic:
     def _handle_decision_result(self, data: Any) -> None:
         ignore_val = getattr(data, "ignore", None)
         plan_val = getattr(data, "missionPlanID", None)
+        timestamp_val = getattr(data, "timestamp", None)
         if isinstance(data, DecisionResultModel):
             ignore_val = data.ignore
             plan_val = data.missionPlanID
+            timestamp_val = data.timestamp
         if isinstance(data, dict):
             ignore_val = data.get("ignore", ignore_val)
             plan_val = data.get("missionPlanID", plan_val)
+            timestamp_val = data.get("timestamp", timestamp_val)
+            if timestamp_val is None:
+                timestamp_val = data.get("Timestamp")
         try:
             ignore_int = int(ignore_val) if ignore_val is not None else None
         except (TypeError, ValueError):
@@ -330,17 +336,56 @@ class MonitoringLogic:
         except (TypeError, ValueError):
             plan_int = None
 
-        self._pending_decision_command = (ignore_int, plan_int)
+        effective_plan_int = plan_int
+        fallback_used = False
+        if (
+            ignore_int == 2
+            and effective_plan_int is None
+            and self._pending_mission_plan_id is not None
+        ):
+            effective_plan_int = self._pending_mission_plan_id
+            fallback_used = True
 
-        if ignore_int == 2 and plan_int is not None:
+        self._pending_decision_command = (ignore_int, effective_plan_int)
+
+        if ignore_int == 2 and effective_plan_int is not None:
+            self._record_plan_command(
+                effective_plan_int,
+                source="0702",
+                payload_timestamp=timestamp_val,
+                raw_value=plan_val if plan_val is not None else effective_plan_int,
+            )
+            if fallback_used:
+                self.manager._log(
+                    "MON_LOGIC",
+                    "INFO",
+                    f"0702 decision received: apply pending missionPlanID={effective_plan_int}",
+                )
+            else:
+                self.manager._log(
+                    "MON_LOGIC",
+                    "INFO",
+                    f"0702 decision received: apply missionPlanID={effective_plan_int}",
+                )
+        elif ignore_int == 2 and effective_plan_int is None:
             self.manager._log(
-                "MON_LOGIC", "INFO", f"0702 decision received: apply missionPlanID={plan_int}"
+                "MON_LOGIC",
+                "WARN",
+                "0702 decision requested apply but no missionPlanID available.",
             )
         elif ignore_int == 1:
             self.manager._log(
                 "MON_LOGIC", "INFO", "0702 decision received: keep existing mission plan"
             )
             self._pending_mission_plan_id = None
+            meta = self._pending_plan_update_meta
+            if meta and meta.get("source") == "0903":
+                self._last_processed_0903_signature = (
+                    meta.get("requestedPlanID"),
+                    meta.get("requestTimestamp"),
+                )
+            self._pending_plan_update_meta = None
+            self._latest_plan_command = None
         else:
             self.manager._log(
                 "MON_LOGIC",
@@ -357,7 +402,54 @@ class MonitoringLogic:
             "INFO",
             "[0903] Performance mission update request received. Refreshing mission plan.",
         )
+        raw_plan_id = getattr(data, "missionPlanID", None)
+        request_ts = getattr(data, "timestamp", None)
+        if isinstance(data, dict):
+            raw_plan_id = data.get("missionPlanID", raw_plan_id)
+            request_ts = data.get("timestamp", request_ts)
+        self._record_plan_command(
+            raw_plan_id,
+            source="0903",
+            payload_timestamp=request_ts,
+            raw_value=raw_plan_id,
+        )
         self._process_mission_plan_update()
+
+    def _record_plan_command(
+        self,
+        plan_id: Any,
+        *,
+        source: str,
+        payload_timestamp: Optional[int] = None,
+        raw_value: Any = None,
+    ) -> None:
+        try:
+            normalized = int(plan_id)
+        except (TypeError, ValueError):
+            self.manager._log(
+                "MON_LOGIC",
+                "WARN",
+                f"[{source}] missionPlanID invalid: {plan_id}",
+            )
+            return
+        self._latest_plan_command = {
+            "plan_id": normalized,
+            "source": source,
+            "payload_timestamp": payload_timestamp,
+            "raw_value": raw_value if raw_value is not None else plan_id,
+        }
+        if source == "0903":
+            self._track_plan_update_request(
+                normalized, payload_timestamp, raw_value if raw_value is not None else plan_id
+            )
+        else:
+            meta = self._pending_plan_update_meta
+            if meta and meta.get("source") == "0903":
+                self._last_processed_0903_signature = (
+                    meta.get("requestedPlanID"),
+                    meta.get("requestTimestamp"),
+                )
+                self._pending_plan_update_meta = None
 
     def _track_plan_update_request(
         self,
@@ -433,19 +525,35 @@ class MonitoringLogic:
         candidate_request_ts: Optional[int] = None
         raw_candidate_value: Any = None
 
-        try:
-            data_0903 = self.manager.receive_store.get_data("0903")
-        except Exception:
-            data_0903 = None
-        if data_0903:
-            candidate_source = "0903"
-            raw_candidate_value = getattr(data_0903, "missionPlanID", None)
-            candidate_plan_id = raw_candidate_value
-            if candidate_plan_id is None and isinstance(data_0903, dict):
-                candidate_plan_id = data_0903.get("missionPlanID")
-            candidate_request_ts = getattr(data_0903, "timestamp", None)
-            if candidate_request_ts is None and isinstance(data_0903, dict):
-                candidate_request_ts = data_0903.get("timestamp")
+        latest_command = self._latest_plan_command
+        latest_command_used = False
+        if latest_command:
+            candidate_plan_id = latest_command.get("plan_id")
+            candidate_source = latest_command.get("source")
+            candidate_request_ts = latest_command.get("payload_timestamp")
+            raw_candidate_value = latest_command.get("raw_value")
+            latest_command_used = True
+
+        def _clear_latest_command():
+            nonlocal latest_command_used
+            if latest_command_used:
+                self._latest_plan_command = None
+                latest_command_used = False
+
+        if candidate_plan_id is None:
+            try:
+                data_0903 = self.manager.receive_store.get_data("0903")
+            except Exception:
+                data_0903 = None
+            if data_0903:
+                candidate_source = "0903"
+                raw_candidate_value = getattr(data_0903, "missionPlanID", None)
+                candidate_plan_id = raw_candidate_value
+                if candidate_plan_id is None and isinstance(data_0903, dict):
+                    candidate_plan_id = data_0903.get("missionPlanID")
+                candidate_request_ts = getattr(data_0903, "timestamp", None)
+                if candidate_request_ts is None and isinstance(data_0903, dict):
+                    candidate_request_ts = data_0903.get("timestamp")
 
         if candidate_plan_id is None:
             try:
@@ -485,8 +593,10 @@ class MonitoringLogic:
         candidate_signature = None
         if candidate_source == "0903" and candidate_plan_id is not None:
             candidate_signature = (candidate_plan_id, candidate_request_ts)
+            # Avoid skipping fresh events; only bypass if this came from stored data
             already_processed = (
-                self._pending_plan_update_meta is None
+                not latest_command_used
+                and self._pending_plan_update_meta is None
                 and self._last_processed_0903_signature == candidate_signature
             )
             if not already_processed:
@@ -504,6 +614,7 @@ class MonitoringLogic:
                     self._emit_plan_update_status("requested", plan_id=candidate_plan_id)
             else:
                 candidate_source = None
+                candidate_plan_id = None
 
         if (
             candidate_plan_id is None
@@ -553,6 +664,7 @@ class MonitoringLogic:
                     extra={"reason": "적용할 MissionPlanID를 결정하지 못했습니다."},
                     finalize=True,
                 )
+            _clear_latest_command()
             return
 
         try:
@@ -567,6 +679,7 @@ class MonitoringLogic:
                     extra={"reason": "MissionPlanID 형식이 올바르지 않습니다."},
                     finalize=True,
                 )
+            _clear_latest_command()
             return
 
         active_0903_request = bool(
@@ -587,6 +700,7 @@ class MonitoringLogic:
                 )
             if command_consumed:
                 self._pending_decision_command = None
+            _clear_latest_command()
             return
 
         mission_plan_path = db_paths.get_db_subpath("MissionPlan", f"{mission_plan_id}.json")
@@ -614,6 +728,7 @@ class MonitoringLogic:
                         )
                     if command_consumed:
                         self._pending_decision_command = None
+                    _clear_latest_command()
                     return
             else:
                 if self._pending_plan_update_meta and self._pending_plan_update_meta.get("source") == "0903":
@@ -625,6 +740,7 @@ class MonitoringLogic:
                     )
                 if command_consumed:
                     self._pending_decision_command = None
+                _clear_latest_command()
                 return
         try:
             context = self._load_mission_plan_context(mission_plan_id)
@@ -643,6 +759,7 @@ class MonitoringLogic:
                 )
             if command_consumed:
                 self._pending_decision_command = None
+            _clear_latest_command()
             return
         except Exception as exc:
             self.manager._log(
@@ -659,6 +776,7 @@ class MonitoringLogic:
                 )
             if command_consumed:
                 self._pending_decision_command = None
+            _clear_latest_command()
             return
         previous_plan_id = self._current_mission_plan_id
         tracker_initialized = bool(self._input_mission_tracker)
@@ -707,6 +825,7 @@ class MonitoringLogic:
         self._pending_decision_command = None
         if self._pending_mission_plan_id == mission_plan_id:
             self._pending_mission_plan_id = None
+        _clear_latest_command()
 
     def _scan_latest_mission_plan_id(self) -> Optional[int]:
         """MissionPlan ?붾젆?곕━?먯꽌 媛??理쒖떊??plan ID瑜?異붾줎?쒕떎."""
@@ -2392,16 +2511,38 @@ class MonitoringLogic:
             except Exception:
                 pass
     def _update_input_mission_progress(self, mission_status: List[Dict[str, Any]]) -> None:
-        if not mission_status or not self._input_mission_tracker:
+        if not mission_status:
+            try:
+                self.manager.logic_store.set_data("transit_aircraft_ids", [])
+            except Exception:
+                pass
             return
-        changed = False
-        active_ids: Set[int] = set()
+
+        normalized_entries: List[Tuple[Dict[str, Any], int, int]] = []
+        transit_aircraft_ids: Set[int] = set()
         for entry in mission_status:
             try:
                 aircraft_id = int(entry.get("aircraftID", 0))
                 mission_id = int(entry.get("individualMissionID", 0))
             except (TypeError, ValueError):
                 continue
+            normalized_entries.append((entry, aircraft_id, mission_id))
+            if entry.get("isTransitStage"):
+                transit_aircraft_ids.add(aircraft_id)
+
+        try:
+            self.manager.logic_store.set_data(
+                "transit_aircraft_ids", sorted(transit_aircraft_ids)
+            )
+        except Exception:
+            pass
+
+        if not self._input_mission_tracker:
+            return
+
+        changed = False
+        active_ids: Set[int] = set()
+        for entry, aircraft_id, mission_id in normalized_entries:
             active_ids.add(aircraft_id)
             path_id = entry.get("pathID")
             if path_id is not None:
@@ -2767,7 +2908,11 @@ class MonitoringLogic:
         self._monitoring_suspended = True
         self._current_input_mission_id = None
         self._update_plan_context_active_input()
-        self._send_0503_notification("All input missions completed")
+        self.manager._log(
+            "MON_LOGIC",
+            "INFO",
+            "All input missions completed (0503 already sent by last input mission).",
+        )
 
     def _mark_input_mission_done(self, input_id: Optional[int]) -> None:
         if input_id is None:

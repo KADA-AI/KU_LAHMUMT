@@ -13,6 +13,26 @@ from datetime import datetime, timezone
 from dataclasses import asdict
 
 
+def _calculate_offset_progress(
+    current_position: Optional[int],
+    total_waypoints: int,
+) -> int:
+    """Calculate mission progress while skipping the very first waypoint."""
+    if current_position is None:
+        return 0
+    try:
+        pos_value = int(current_position)
+    except (TypeError, ValueError):
+        return 0
+    if total_waypoints <= 1:
+        return 100 if pos_value > 0 else 0
+    effective_segments = max(total_waypoints - 1, 1)
+    if pos_value <= 0:
+        return 0
+    capped_position = min(pos_value, effective_segments)
+    return int(round((capped_position * 100) / effective_segments))
+
+
 def run_monitoring_procedure(
     data_401: AgentStatusModel,
     plan_context: Optional[Dict[str, Any]] = None,
@@ -232,7 +252,9 @@ def run_monitoring_procedure(
         progress_list: List[tuple[int, int, Optional[int]]] = []
         for idx, mission in enumerate(missions):
             mission_id = int(mission.get("individualMissionID") or 0)
-            total_waypoints = len(mission.get("waypoints") or []) or 1
+            waypoints = mission.get("waypoints") or []
+            waypoint_count = len(waypoints)
+            safe_waypoint_total = waypoint_count if waypoint_count > 0 else 1
             mission_input_id = mission.get("inputMissionID")
             try:
                 mission_input_id = (
@@ -240,6 +262,8 @@ def run_monitoring_procedure(
                 )
             except (TypeError, ValueError):
                 mission_input_id = None
+
+            is_transit_stage = False
 
             if current_idx is None:
                 progress = 0
@@ -251,12 +275,21 @@ def run_monitoring_procedure(
                 if current_pos is None:
                     progress = 0
                 else:
-                    progress = int(round((current_pos + 1) * 100 / total_waypoints))
+                    progress = _calculate_offset_progress(
+                        current_pos, safe_waypoint_total
+                    )
+                    if (
+                        not force_zero_progress
+                        and waypoint_count > 1
+                        and current_pos <= 0
+                    ):
+                        is_transit_stage = True
             else:
                 progress = 0
 
             if force_zero_progress:
                 progress = 0
+                is_transit_stage = False
 
             if (
                 current_wp == 0
@@ -276,6 +309,7 @@ def run_monitoring_procedure(
                     "inputMissionID": mission.get("inputMissionID"),
                     "missionIndex": idx,
                     "progress": progress,
+                    "isTransitStage": is_transit_stage,
                 }
             )
 

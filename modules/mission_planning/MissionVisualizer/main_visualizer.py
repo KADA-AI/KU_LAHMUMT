@@ -19,7 +19,9 @@ from typing import Any, Iterable, Optional
 
 import folium
 from branca.element import MacroElement, Template
-from PyQt5.QtCore import Qt, QUrl
+from folium import Tooltip
+from folium.features import DivIcon
+from PyQt5.QtCore import Qt, QUrl, QTimer
 from PyQt5.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -129,6 +131,7 @@ class MissionPlanVisualizer(QWidget):
         self.package_data: Optional[dict[str, Any]] = None
         self.package_id: Optional[int] = None
         self.db_root: Optional[Path] = None
+        self.mission_plan_data: Optional[dict[str, Any]] = None
 
         self.connected_entries: list[ConnectedEntry] = []
         self.entries_by_input: dict[int, list[ConnectedEntry]] = defaultdict(list)
@@ -166,7 +169,7 @@ class MissionPlanVisualizer(QWidget):
         file_row = QHBoxLayout()
         self.file_edit = QLineEdit()
         self.file_edit.setReadOnly(True)
-        self.file_edit.setPlaceholderText("InputMissionPlan *.json 파일을 선택하세요.")
+        self.file_edit.setPlaceholderText("InputMissionPlan 또는 MissionPlan *.json 파일을 선택하세요.")
         file_row.addWidget(self.file_edit, 1)
         file_btn = QPushButton("파일 열기")
         file_btn.clicked.connect(self._choose_file)
@@ -259,9 +262,8 @@ class MissionPlanVisualizer(QWidget):
             QMessageBox.warning(self, "형식 오류", "JSON 루트가 객체가 아닙니다.")
             return
 
-        self.package_data = data
-        self.package_id = data.get("inputMissionPackageID")
-        self.db_root = self._detect_db_root(file_path)
+        if not self._ingest_payload(file_path, data):
+            return
 
         self.file_edit.setText(str(file_path))
         self._mission_color_cycle = cycle(self.MISSION_COLORS)
@@ -276,8 +278,84 @@ class MissionPlanVisualizer(QWidget):
         self._update_connection_summary()
         self._populate_mission_list()
         self._populate_individual_list()
+        self._reset_layer_toggles()
         self.detail_box.setPlainText("임무를 선택하면 상세 정보가 표시됩니다.")
-        self._render_map()
+        self._schedule_map_refresh(delay_ms=60)
+
+    def _ingest_payload(self, file_path: Path, data: dict[str, Any]) -> bool:
+        self.db_root = self._detect_db_root(file_path)
+        self.mission_plan_data = None
+
+        if self._is_mission_plan_payload(data):
+            self.mission_plan_data = data
+            pkg_id = self._coerce_int(data.get("inputMissionPackageID"))
+            if pkg_id is None:
+                QMessageBox.warning(self, "MissionPlan 오류", "MissionPlan 파일에서 inputMissionPackageID를 찾을 수 없습니다.")
+                return False
+            self.package_id = pkg_id
+            if not self._load_input_package_by_id(pkg_id):
+                QMessageBox.warning(
+                    self,
+                    "InputMissionPlan 누락",
+                    f"MissionPlan에서 참조한 InputMissionPackageID {pkg_id} 파일을 찾을 수 없습니다.",
+                )
+                return False
+            return True
+
+        pkg_id = self._coerce_int(data.get("inputMissionPackageID"))
+        if pkg_id is None:
+            QMessageBox.warning(self, "InputMissionPlan 오류", "inputMissionPackageID가 없습니다.")
+            return False
+        self.package_data = data
+        self.package_id = pkg_id
+        return True
+
+    def _is_mission_plan_payload(self, data: dict[str, Any]) -> bool:
+        return "missionPlanID" in data and "aircraftList" in data
+
+    def _load_input_package_by_id(self, pkg_id: int) -> bool:
+        if not self.db_root:
+            return False
+
+        def _candidate_dirs(base: Path) -> list[Path]:
+            dirs = []
+            if base:
+                dirs.append(base / "InputMissionPlan")
+            fallback = (PROJECT_ROOT / "database" / "InputMissionPlan")
+            dirs.append(fallback)
+            return dirs
+
+        pkg_str = str(pkg_id)
+        candidates: list[Path] = []
+        for directory in _candidate_dirs(self.db_root):
+            if not directory or not directory.exists():
+                continue
+            candidates.extend(
+                [
+                    directory / f"{pkg_str}.json",
+                    directory / f"{pkg_str}.JSON",
+                    directory / f"{pkg_str}_001.json",
+                ]
+            )
+            candidates.append(directory / f"{pkg_id:03d}.json")
+            for path in directory.glob(f"*{pkg_str}*.json"):
+                candidates.append(path)
+
+        seen = set()
+        for path in candidates:
+            if not path or path in seen:
+                continue
+            seen.add(path)
+            if path.exists():
+                try:
+                    with path.open("r", encoding="utf-8") as fp:
+                        data = json.load(fp)
+                    if isinstance(data, dict):
+                        self.package_data = data
+                        return True
+                except Exception:
+                    continue
+        return False
 
     # ------------------------------------------------------ Connected data
     def _load_connected_scope(self) -> None:
@@ -303,6 +381,9 @@ class MissionPlanVisualizer(QWidget):
         for pid in plan_ids:
             if pid in cache.mission_plans:
                 self.connected_plans[pid] = cache.mission_plans[pid]
+        manual_plan_id = self._coerce_int((self.mission_plan_data or {}).get("missionPlanID"))
+        if manual_plan_id is not None and manual_plan_id not in self.connected_plans:
+            self.connected_plans[manual_plan_id] = {"data": self.mission_plan_data}
 
         entries: list[ConnectedEntry] = []
         for imp_id, imp in cache.individual_packages.items():
@@ -402,6 +483,14 @@ class MissionPlanVisualizer(QWidget):
             f"좌표 수: 점 {point_count} / 선 노드 {line_count} / 면 노드 {area_count}\n"
             f"{root_text}"
         )
+        if self.mission_plan_data:
+            mp = self.mission_plan_data
+            aircraft_list = mp.get("aircraftList") or []
+            summary += (
+                f"\nMissionPlan ID: {mp.get('missionPlanID', '-')}"
+                f" | Aircraft: {len(aircraft_list)}"
+                f"\nPlanning Time: {mp.get('planningTime', '-')}"
+            )
         self.summary_label.setText(summary)
 
     def _update_connection_summary(self) -> None:
@@ -634,7 +723,16 @@ class MissionPlanVisualizer(QWidget):
         show_individual = getattr(self, "chk_individual", None).isChecked() if hasattr(self, "chk_individual") else True
         show_paths = getattr(self, "chk_paths", None).isChecked() if hasattr(self, "chk_paths") else True
         show_waypoints = getattr(self, "chk_waypoints", None).isChecked() if hasattr(self, "chk_waypoints") else True
-        focus_only = getattr(self, "chk_focus_only", None).isChecked() if hasattr(self, "chk_focus_only") else False
+        focus_requested = False
+        has_focus = focus_entry is not None or focus_input_id is not None
+        if hasattr(self, "chk_focus_only"):
+            focus_requested = self.chk_focus_only.isChecked()
+            with block_signals(self.chk_focus_only):
+                self.chk_focus_only.setEnabled(has_focus)
+                if not has_focus and focus_requested:
+                    self.chk_focus_only.setChecked(False)
+                    focus_requested = False
+        focus_only = focus_requested and has_focus
 
         self._draw_input_missions(fmap, missions, focus_input_id, focus_only, show_input)
         self._draw_individual_missions(fmap, focus_entry, focus_input_id, focus_only, show_individual)
@@ -785,19 +883,29 @@ class MissionPlanVisualizer(QWidget):
                     continue
 
                 wp_id = waypoint.get("waypointID") or idx + 1
-                tooltip = f"WP {wp_id} | Path {path_id} | AC {fp_entry.aircraft_id or '-'}"
                 popup_html = self._waypoint_popup_html(path_id, waypoint, fp_entry)
+                tooltip_html = self._waypoint_tooltip_html(path_id, waypoint, fp_entry)
+                radius = 8 if not selected_paths or path_id in selected_paths else 5
                 marker = folium.CircleMarker(
                     location=(lat, lon),
-                    radius=4 if selected_paths and path_id not in selected_paths else 6,
+                    radius=radius,
                     color=tone,
                     fill=True,
                     fill_color=tone,
                     fill_opacity=0.95,
-                    tooltip=tooltip,
                 )
+                marker.add_child(Tooltip(tooltip_html, sticky=True, direction="top"))
                 marker.add_child(folium.Popup(popup_html, max_width=420))
                 marker.add_to(fmap)
+                label = folium.Marker(
+                    location=(lat, lon),
+                    icon=DivIcon(
+                        icon_size=(24, 24),
+                        icon_anchor=(12, 12),
+                        html=f"<div style='font-size:11px;font-weight:bold;color:#000;text-shadow:1px 1px 1px #fff;'>{wp_id}</div>",
+                    ),
+                )
+                label.add_to(fmap)
 
     def _draw_geometry(
         self,
@@ -1005,6 +1113,21 @@ class MissionPlanVisualizer(QWidget):
                 return mission
         return None
 
+    def _coerce_int(self, value: Any) -> Optional[int]:
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, int):
+            return value
+        if value is None:
+            return None
+        try:
+            text = str(value).strip()
+            if not text:
+                return None
+            return int(text, 10)
+        except Exception:
+            return None
+
     def _current_individual_entry(self) -> Optional[ConnectedEntry]:
         if self._current_individual_index is None:
             return None
@@ -1021,6 +1144,26 @@ class MissionPlanVisualizer(QWidget):
             alt = coord.get("altitude", "N/A")
             lines.append(f"  - ({lat:.6f}, {lon:.6f}, alt={alt})")
         return "\n".join(lines) or "  - 없음"
+
+    def _reset_layer_toggles(self) -> None:
+        for attr in ("chk_input", "chk_individual", "chk_paths", "chk_waypoints"):
+            widget = getattr(self, attr, None)
+            if widget is None:
+                continue
+            with block_signals(widget):
+                widget.setChecked(True)
+        focus_widget = getattr(self, "chk_focus_only", None)
+        if focus_widget:
+            with block_signals(focus_widget):
+                focus_widget.setChecked(False)
+
+    def _schedule_map_refresh(self, delay_ms: int = 50) -> None:
+        delay_ms = max(0, delay_ms)
+        try:
+            QTimer.singleShot(delay_ms, self._render_map)
+        except Exception:
+            # Fallback if timer cannot schedule (e.g., no event loop yet)
+            self._render_map()
 
     def _collect_target_paths(
         self,
@@ -1078,6 +1221,27 @@ class MissionPlanVisualizer(QWidget):
             mission_lines = "없음"
         lines.append(f"<b>Linked Missions</b><br>{mission_lines}")
         return "<br>".join(lines)
+
+    def _waypoint_tooltip_html(
+        self,
+        path_id: int,
+        waypoint: dict[str, Any],
+        fp_entry: FlightPathEntry,
+    ) -> str:
+        coord = waypoint.get("coordinate") or {}
+        linked = self.path_to_entries.get(path_id, [])
+        linked_text = ", ".join(
+            f"Input {entry.input_mission_id or '-'} / IM {entry.individual_mission_id or '-'}"
+            for entry in linked
+        ) or "없음"
+        parts = [
+            f"<b>WP {escape(str(waypoint.get('waypointID', '-')))}</b>",
+            f"Path {path_id} · AC {escape(str(fp_entry.aircraft_id or '-'))}",
+            f"Lat {coord.get('latitude', '-')}, Lon {coord.get('longitude', '-')}, Alt {coord.get('altitude', '-')}",
+            f"Speed {waypoint.get('speed', '-')}, ETA {waypoint.get('eta', '-')}",
+            f"Linked: {escape(linked_text)}",
+        ]
+        return "<br>".join(parts)
 
     def _detect_db_root(self, file_path: Path) -> Path:
         """Try to locate the scenario root that contains mission artifacts."""

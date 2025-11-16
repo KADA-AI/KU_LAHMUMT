@@ -396,6 +396,16 @@ class MonitoringTab(QWidget):
                     if isinstance(entry, dict):
                         progress_by_aircraft[entry.get("aircraftID")] = entry
 
+                highlight_ids: Set[int] = set()
+                highlight_raw = (
+                    self.manager.logic_store.get_data("transit_aircraft_ids") or []
+                )
+                for raw_id in highlight_raw:
+                    try:
+                        highlight_ids.add(int(raw_id))
+                    except (TypeError, ValueError):
+                        continue
+
                 for idx, aircraft_id in enumerate(self.uav_aircraft_ids):
                     if idx >= len(self.progress_bars):
                         break
@@ -406,7 +416,11 @@ class MonitoringTab(QWidget):
                         bar.setValue(int(progress_value))
                     except Exception:
                         bar.setValue(0)
+                    bar.setHighlighted(aircraft_id in highlight_ids)
                     bar.setText(f"UAV {idx + 1} (ID {aircraft_id}): {progress_value}%")
+            else:
+                for bar in self.progress_bars:
+                    bar.setHighlighted(False)
 
         # 연료 경고 상태 반영
         if source == "logic" and key == "fuel_data":

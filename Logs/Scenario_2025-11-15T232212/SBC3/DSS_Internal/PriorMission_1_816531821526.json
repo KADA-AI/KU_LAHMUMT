@@ -1,0 +1,67 @@
+{
+  "timestamp": 816531821526,
+  "reason": "선행임무 : 좌표지향",
+  "priorMissionID": 1,
+  "missionType": 1,
+  "targetCoordinate": {
+    "latitude": 0.0,
+    "longitude": 0.0,
+    "altitude": 0
+  },
+  "selectedAircraftID": 4,
+  "sourceMissionPlanID": 700000010,
+  "sourceIndividualMissionPackageID": 800011244,
+  "sourcePathID": 400000025,
+  "currentWaypointID": 418,
+  "removedWaypointID": null,
+  "insertedWaypoint": {
+    "waypointID": 557,
+    "coordinate": {
+      "latitude": 0.0,
+      "longitude": 0.0,
+      "altitude": 0
+    },
+    "speed": 30.0,
+    "eta": 30,
+    "ecf": 0.0,
+    "nextWaypointID": 418,
+    "waypointPassType": 2,
+    "filmingProperty": {
+      "fieldOfView": 5.0,
+      "sensorType": 1,
+      "operationMode": 1,
+      "coordinateOrientation": {
+        "coordinate": {
+          "latitude": 0.0,
+          "longitude": 0.0,
+          "altitude": 0
+        }
+      }
+    },
+    "loiterProperty": {
+      "radius": 400,
+      "direction": 1,
+      "time": 30,
+      "speed": 30
+    }
+  },
+  "telemetrySnapshot": null,
+  "generatedMissionPlanID": 700000011,
+  "generatedIndividualMissionPackageID": 800011247,
+  "generatedIndividualMissionID": 900131729,
+  "generatedPathID": 400000033,
+  "logMessages": [
+    "[PRIOR] detail keys: ∅",
+    "[PRIOR][STEP1] Loaded 0401 snapshot with 3 unmanned entries (saved_at=2025-11-15T14:23:02.068497+00:00).",
+    "[PRIOR][STEP1] UAV 4: currentWP=4, coord=(38.155613, 127.331009, alt=449.0)",
+    "[PRIOR][STEP1] UAV 5: currentWP=36, coord=(38.153919, 127.334045, alt=449.0)",
+    "[PRIOR][STEP1] UAV 6: currentWP=69, coord=(38.152504, 127.336861, alt=449.0)",
+    "[PRIOR][STEP2] Target coordinate 보강: PriorMissionInfo 최신 기록에서 좌표 복구.",
+    "[PRIOR][STEP2] Target coordinate (0202) → (0.000000, 0.000000, alt=0.0)",
+    "[PRIOR][STEP3] Nearest UAV 4 selected based on 0401 snapshot (currentWP=4, distance≈13174351.9 m).",
+    "[PRIOR] Falling back to first mission for aircraft 4 (current waypoint not found in plan).",
+    "[PRIOR][STEP4] Reserved new waypoint ID 557 for UAV 4 (currentWP=4, distance≈13174351.9 m).",
+    "[PRIOR] Allocated IDs -> plan:700000011 imp:800011247 path:400000033 indiv:900131729 wp:557",
+    "[PRIOR] Stored new artifacts -> plan:700000011.json, imp:800011247.json, fp:400000033.json"
+  ]
+}
