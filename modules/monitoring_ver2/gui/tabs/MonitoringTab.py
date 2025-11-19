@@ -37,6 +37,7 @@ class MonitoringTab(QWidget):
         # UI 구성 요소
         self.system_mode_combo: QComboBox | None = None
         self.progress_bars: List[CircularProgressBar] = []
+        self.progress_detail_labels: List[QLabel] = []
         self.plan_id_value: QLabel | None = None
         self.plan_package_value: QLabel | None = None
         self.plan_inputs_value: QLabel | None = None
@@ -71,15 +72,32 @@ class MonitoringTab(QWidget):
         self._build_plan_update_section(layout)
 
         # UAV 진행률
+
         progress_groupbox = QGroupBox("임무 진행률")
         progress_layout = QHBoxLayout()
         progress_groupbox.setLayout(progress_layout)
         for idx, aircraft_id in enumerate(self.uav_aircraft_ids):
+            wrapper = QWidget()
+            wrapper_layout = QVBoxLayout(wrapper)
+            wrapper_layout.setSpacing(6)
+            wrapper_layout.setContentsMargins(0, 0, 0, 0)
+            wrapper_layout.setAlignment(Qt.AlignTop)
+
             progress_bar = CircularProgressBar()
             progress_bar.setText(f"UAV {idx + 1} (ID {aircraft_id})")
             self.progress_bars.append(progress_bar)
-            progress_layout.addWidget(progress_bar)
+
+            detail_label = QLabel("")
+            detail_label.setAlignment(Qt.AlignCenter)
+            detail_label.setStyleSheet("color: #666666; font-size: 11px;")
+            detail_label.setWordWrap(True)
+            self.progress_detail_labels.append(detail_label)
+
+            wrapper_layout.addWidget(progress_bar)
+            wrapper_layout.addWidget(detail_label)
+            progress_layout.addWidget(wrapper)
         layout.addWidget(progress_groupbox)
+
 
         # 항공기 가용 상태
         self._build_availability_section(layout)
@@ -509,17 +527,17 @@ class MonitoringTab(QWidget):
             )
 
         input_summary: Dict[int, Dict[str, Any]] = {}
-        mission_rows: List[Tuple[Any, Dict[str, Any], int]] = []
+        mission_rows: List[Tuple[int, Any, Dict[str, Any], int]] = []
 
         aircraft_data = context.get("aircraft") or {}
-        for aircraft_id, payload in aircraft_data.items():
+        for aircraft_order, (aircraft_id, payload) in enumerate(aircraft_data.items()):
             missions = payload.get("missions") or []
             try:
                 aircraft_int = int(aircraft_id)
             except (TypeError, ValueError):
                 aircraft_int = aircraft_id
             for idx, mission in enumerate(missions):
-                mission_rows.append((aircraft_int, mission, idx))
+                mission_rows.append((aircraft_order, aircraft_int, mission, idx))
                 input_id = _to_int(mission.get("inputMissionID"))
                 if input_id is None:
                     continue
@@ -590,13 +608,8 @@ class MonitoringTab(QWidget):
         # 개별 임무 테이블 업데이트
         if self.mission_table is not None:
             self.mission_table.setRowCount(0)
-            mission_rows.sort(
-                key=lambda item: (
-                    item[0],
-                    _to_int(item[1].get("individualMissionID")) or 0,
-                )
-            )
-            for row, (aircraft_id, mission, mission_index) in enumerate(mission_rows):
+            mission_rows.sort(key=lambda item: (item[0], item[3]))
+            for row, (_, aircraft_id, mission, mission_index) in enumerate(mission_rows):
                 self.mission_table.insertRow(row)
                 individual_id = _to_int(mission.get("individualMissionID"))
                 input_id = _to_int(mission.get("inputMissionID"))
@@ -631,3 +644,46 @@ class MonitoringTab(QWidget):
                         self.mission_table.item(row, col).setBackground(background)
 
         self._update_aircraft_availability()
+        self._update_multi_mission_labels()
+
+    def _get_multi_mission_summary(self) -> Dict[int, Tuple[int, int]]:
+        try:
+            summary_data = self.manager.logic_store.get_data("aircraft_multi_mission_summary")
+        except Exception:
+            return {}
+        if not isinstance(summary_data, dict):
+            return {}
+        items = summary_data.get("items")
+        if not isinstance(items, dict):
+            return {}
+
+        def _to_int(value: Any) -> Optional[int]:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return None
+
+        result: Dict[int, Tuple[int, int]] = {}
+        for key, payload in items.items():
+            if isinstance(key, str):
+                aircraft_id = _to_int(key)
+            else:
+                aircraft_id = _to_int(key)
+            if aircraft_id is None or not isinstance(payload, dict):
+                continue
+            completed = _to_int(payload.get("completed")) or 0
+            total = _to_int(payload.get("total")) or 0
+            result[aircraft_id] = (completed, total)
+        return result
+
+    def _update_multi_mission_labels(self) -> None:
+        summary = self._get_multi_mission_summary()
+        for idx, aircraft_id in enumerate(self.uav_aircraft_ids):
+            if idx >= len(self.progress_detail_labels):
+                break
+            label = self.progress_detail_labels[idx]
+            counts = summary.get(aircraft_id)
+            if not counts or counts[1] <= 1:
+                label.setText("")
+                continue
+            label.setText(f"{counts[0]} / {counts[1]} 개별임무")

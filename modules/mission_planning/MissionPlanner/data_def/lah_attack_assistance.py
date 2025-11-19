@@ -795,12 +795,18 @@ def main():
 
     best_point = best["centroid"]
     altitude = sample_elevation_at_world(elevation, best_point, geotransform)
+    altitude_int = None
+    if math.isfinite(altitude):
+        try:
+            altitude_int = int(round(altitude))
+        except (ValueError, OverflowError):
+            altitude_int = None
     raster_sources_abs = [os.path.abspath(path) for path in used_rasters]
     result = {
         "attack_point": {
             "lon": best_point[0],
             "lat": best_point[1],
-            "alt_m": altitude,
+            "alt_m": altitude_int,
         },
         "friendly_point": {"lon": friendly_world[0], "lat": friendly_world[1]},
         "enemy_point": {"lon": enemy_world[0], "lat": enemy_world[1]},
@@ -813,7 +819,7 @@ def main():
     if args.output_json:
         print(json.dumps(result, indent=2, ensure_ascii=False))
     else:
-        alt_text = f"{altitude:.1f} m" if math.isfinite(altitude) else "unknown"
+        alt_text = f"{altitude_int} m" if altitude_int is not None else "unknown"
         raster_label = ", ".join(os.path.basename(path) for path in raster_sources_abs)
         print(f"Raster(s)        : {raster_label}")
         print(f"Friendly (lat,lon): ({friendly_world[1]:.6f}, {friendly_world[0]:.6f})")

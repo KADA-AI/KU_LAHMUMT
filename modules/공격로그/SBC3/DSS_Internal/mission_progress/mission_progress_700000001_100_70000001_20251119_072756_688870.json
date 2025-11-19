@@ -1,0 +1,239 @@
+{
+  "timestamp": 816852607348,
+  "capturedAt": "2025-11-19T07:30:07.348602+00:00",
+  "missionPlanID": 700000001,
+  "activeInputMissionID": 70000001,
+  "inputMissionPackageID": 100,
+  "aircraft": [
+    {
+      "aircraftID": 1,
+      "individualMissionPackageID": 800012392,
+      "missions": [
+        {
+          "missionIndex": 0,
+          "individualMissionID": 900139650,
+          "inputMissionID": 70000001,
+          "pathID": 100000003,
+          "isDone": false,
+          "progress": 0,
+          "waypoints": []
+        },
+        {
+          "missionIndex": 1,
+          "individualMissionID": 900139651,
+          "inputMissionID": 70000002,
+          "pathID": 100000004,
+          "isDone": false,
+          "progress": 0,
+          "waypoints": []
+        },
+        {
+          "missionIndex": 2,
+          "individualMissionID": 900139652,
+          "inputMissionID": 70000003,
+          "pathID": 100000005,
+          "isDone": false,
+          "progress": 0,
+          "waypoints": []
+        }
+      ]
+    },
+    {
+      "aircraftID": 2,
+      "individualMissionPackageID": 800012393,
+      "missions": [
+        {
+          "missionIndex": 0,
+          "individualMissionID": 900139653,
+          "inputMissionID": 70000001,
+          "pathID": 200000003,
+          "isDone": false,
+          "progress": 0,
+          "waypoints": []
+        },
+        {
+          "missionIndex": 1,
+          "individualMissionID": 900139654,
+          "inputMissionID": 70000002,
+          "pathID": 200000004,
+          "isDone": false,
+          "progress": 0,
+          "waypoints": []
+        },
+        {
+          "missionIndex": 2,
+          "individualMissionID": 900139655,
+          "inputMissionID": 70000003,
+          "pathID": 200000005,
+          "isDone": false,
+          "progress": 0,
+          "waypoints": []
+        }
+      ]
+    },
+    {
+      "aircraftID": 3,
+      "individualMissionPackageID": 800012394,
+      "missions": [
+        {
+          "missionIndex": 0,
+          "individualMissionID": 900139656,
+          "inputMissionID": 70000001,
+          "pathID": 300000003,
+          "isDone": false,
+          "progress": 0,
+          "waypoints": []
+        },
+        {
+          "missionIndex": 1,
+          "individualMissionID": 900139657,
+          "inputMissionID": 70000002,
+          "pathID": 300000004,
+          "isDone": false,
+          "progress": 0,
+          "waypoints": []
+        },
+        {
+          "missionIndex": 2,
+          "individualMissionID": 900139658,
+          "inputMissionID": 70000003,
+          "pathID": 300000005,
+          "isDone": false,
+          "progress": 0,
+          "waypoints": []
+        }
+      ]
+    },
+    {
+      "aircraftID": 4,
+      "individualMissionPackageID": 800012395,
+      "missions": [
+        {
+          "missionIndex": 0,
+          "individualMissionID": 900139659,
+          "inputMissionID": 70000001,
+          "pathID": 400000001,
+          "isDone": false,
+          "progress": 40,
+          "waypoints": [
+            {
+              "order": 0,
+              "waypointID": 1,
+              "visited": true
+            },
+            {
+              "order": 1,
+              "waypointID": 2,
+              "visited": true
+            },
+            {
+              "order": 2,
+              "waypointID": 3,
+              "visited": false
+            },
+            {
+              "order": 3,
+              "waypointID": 4,
+              "visited": false
+            },
+            {
+              "order": 4,
+              "waypointID": 5,
+              "visited": false
+            },
+            {
+              "order": 5,
+              "waypointID": 6,
+              "visited": false
+            }
+          ]
+        },
+        {
+          "missionIndex": 1,
+          "individualMissionID": 900139660,
+          "inputMissionID": 70000002,
+          "pathID": 400000002,
+          "isDone": false,
+          "progress": 0,
+          "waypoints": [
+            {
+              "order": 0,
+              "waypointID": 7,
+              "visited": false
+            },
+            {
+              "order": 1,
+              "waypointID": 8,
+              "visited": false
+            },
+            {
+              "order": 2,
+              "waypointID": 9,
+              "visited": false
+            },
+            {
+              "order": 3,
+              "waypointID": 10,
+              "visited": false
+            },
+            {
+              "order": 4,
+              "waypointID": 11,
+              "visited": false
+            },
+            {
+              "order": 5,
+              "waypointID": 12,
+              "visited": false
+            },
+            {
+              "order": 6,
+              "waypointID": 13,
+              "visited": false
+            }
+          ]
+        },
+        {
+          "missionIndex": 2,
+          "individualMissionID": 900139661,
+          "inputMissionID": 70000003,
+          "pathID": 400000003,
+          "isDone": false,
+          "progress": 0,
+          "waypoints": [
+            {
+              "order": 0,
+              "waypointID": 14,
+              "visited": false
+            },
+            {
+              "order": 1,
+              "waypointID": 15,
+              "visited": false
+            },
+            {
+              "order": 2,
+              "waypointID": 16,
+              "visited": false
+            },
+            {
+              "order": 3,
+              "waypointID": 17,
+              "visited": false
+            },
+            {
+              "order": 4,
+              "waypointID": 18,
+              "visited": false
+            },
+            {
+              "order": 5,
+              "waypointID": 19,
+              "visited": false
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

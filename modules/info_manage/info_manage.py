@@ -428,7 +428,8 @@ class MainWindow(QMainWindow):
             self._append_log_line(f"0102 push import 실패: {e}")
             return
         # 오버라이드가 실패한 경우 대비 폴백(대소문자 고정)
-        body = {"Timestamp": _now_ms_since_2000(), "Status": int(status), "Source": "INF"}
+        status = 1  # 0102 Status는 항상 1
+        body = {"Timestamp": _now_ms_since_2000(), "Status": status, "Source": "INF"}
         try:
             push_message("0102", NodeMessenger, body_dict=body)
             self._append_log_line("자체점검(0102) 발신")
@@ -502,7 +503,7 @@ class MainWindow(QMainWindow):
                         tab._on_tx_button_clicked(target_row); self._append_log_line(f"[CTRL] 0102 토글 메서드 호출 → {'ON' if on else 'OFF'} 요청"); return True
                 except Exception: pass
                 # (C) 폴백 1회 push
-                self._send_self_check_0102(status=1 if on else 0); return True
+                self._send_self_check_0102(); return True
             self._append_log_line(f"[CTRL] 0102 상태 유지: {'ON' if running else 'OFF'}"); return True
         except Exception as e:
             self._append_log_line(f"[CTRL] 0102 토글 처리 실패: {e}"); return False
@@ -526,7 +527,7 @@ class MainWindow(QMainWindow):
             except Exception: status = 1
             ok = self._ensure_0102(on=(status == 1))
             if not ok:
-                self._send_self_check_0102(status=status)
+                self._send_self_check_0102()
 
         elif cmd == "system_mode":
             try:

@@ -2,16 +2,29 @@
 # mission_planning_gui.py – 임무 할당·계획수립 전용 GUI (S110 플로우 대응)
 from __future__ import annotations
 
-import sys, os, threading, json, re, time, shutil, socket, subprocess, math, copy
+import sys, os, threading, json, re, time, shutil, socket, copy
 os.environ["KU_ROLE"] = "mission"  # MMR
 from pathlib import Path
 from typing import Any, Dict, Optional, Set, List
 
-_ROOT = Path(__file__).resolve().parents[2]  # .../KU_LAHMUMT
-for _p in (_ROOT, _ROOT / "modules", _ROOT / "modules" / "common"):
-    _ps = str(_p)
-    if _p.exists() and _ps not in sys.path:
-        sys.path.insert(0, _ps)
+from mission_planning_attack_helpers import (
+    apply_attack_customizations,
+    build_attack_context_from_replan_detail,
+    compute_attack_waypoint,
+    load_attack_context,
+)
+from mission_planning_gui_env import (
+    _bootstrap_paths,
+    _ensure_fusion_configs,
+    _load_msglib_and_deps,
+    _mon_port,
+    _now_ms_since_2000,
+    _sanitize_reason,
+    _z4,
+)
+from mission_planning_pipeline_logging import PipelineLogManager
+
+PROJECT_ROOT, COMMON_DIR = _bootstrap_paths(Path(__file__))
 
 from modules.common.qt_env import ensure_qt_platform
 ensure_qt_platform()
@@ -36,7 +49,6 @@ qInstallMessageHandler(_qt_silent_handler)
 from modules.common.status_reporter import send_status_ok
 from modules.common.ctrl_listener import start_ctrl_listener, env_ctrl_port
 from modules.common import db_paths
-from modules.common.fusion_files import copy_file_with_retry
 from modules.common.option_codes import (
     DEFAULT_OPTION_CODE_SEQUENCE,
     ensure_option_code_sequence,
@@ -56,108 +68,18 @@ from prior_mission_pipeline import run_prior_mission_pipeline
 from attack_plan_pipeline import run_attack_plan_pipeline
 from mission_planning_log_tab import MissionPlanningLogTab
 
-_EPOCH2000_MS = 946_684_800_000
-def _now_ms_since_2000() -> int:
-    return int(time.time() * 1000) - _EPOCH2000_MS
-
 # ───────── nFusion 설정/라이선스 정규화 + MessageLibrary 로드 ─────────
-def _bootstrap_paths():
-    here = Path(__file__).resolve()
-    modules_dir = here.parents[1]
-    root = modules_dir.parent
-    common_dir = modules_dir / "common"
-    for p in (modules_dir / "mission_planning", common_dir, root):
-        p_str = str(p)
-        if p.exists() and p_str not in sys.path:
-            sys.path.insert(0, p_str)
-    try: os.chdir(root)
-    except Exception: pass
-    return root, common_dir
-PROJECT_ROOT, COMMON_DIR = _bootstrap_paths()
-
-def _ensure_fusion_configs():
-    cands = [
-        PROJECT_ROOT / "nFusionSettings.json",
-        COMMON_DIR   / "nFusionSettings.json",
-        PROJECT_ROOT / "FusionSettings.json",
-        COMMON_DIR   / "FusionSettings.json",
-        PROJECT_ROOT / "nFusion" / "FusionSettings.json",
-    ]
-    src = next((p for p in cands if p.exists()), None)
-    if src is None:
-        raise FileNotFoundError("nFusionSettings.json/FusionSettings.json 이 없습니다.")
-    dst = PROJECT_ROOT / "nFusionSettings.json"
-    if src != dst:
-        copy_file_with_retry(src, dst)
-
-    lcands = [
-        PROJECT_ROOT / "nFusionLicense.lic",
-        COMMON_DIR   / "nFusionLicense.lic",
-        PROJECT_ROOT / "nFusion" / "nFusionLicense.lic",
-    ]
-    lsrc = next((p for p in lcands if p.exists()), None)
-    if lsrc:
-        ldst = PROJECT_ROOT / "nFusionLicense.lic"
-        if lsrc != ldst:
-            copy_file_with_retry(lsrc, ldst)
-    return str(dst)
-
 from dll_files.nFusionImports import *  # FusionNodeIoc, NodeMessenger, clr 등
 
-def _load_msglib_and_deps():
-    _clr = globals().get("clr", None)
-    if _clr is None:
-        try:
-            from dll_files.nFusionImports import clr as _clr  # type: ignore
-        except Exception:
-            import clr as _clr  # type: ignore
-    msg_dir = COMMON_DIR / "msg_files"
-    stem = msg_dir / "MessageLibrary"
-    try: _clr.AddReference(str(stem))
-    except Exception: _clr.AddReference(str(stem.with_suffix(".dll")))
-    for s in ("K4586Model", "K4586Model.Assist", "MiscUtil"):
-        dll = msg_dir / (s + ".dll")
-        if dll.exists():
-            try: _clr.AddReference(str(dll.with_suffix("")))
-            except Exception:
-                try: _clr.AddReference(str(dll))
-                except Exception: pass
-
-_settings_path = _ensure_fusion_configs()
-_ = _load_msglib_and_deps()
+_settings_path = _ensure_fusion_configs(PROJECT_ROOT, COMMON_DIR)
+_ = _load_msglib_and_deps(COMMON_DIR)
 
 # 수신 등록 모듈(내부에서 각 탭의 RECEIVE 등록을 수행)
 from receive import *  # noqa
 
 # 탭
 from Tabs.assignment_planning_tab import AssignmentPlanningTab
-
-# ───────── 모듈별 모니터링 포트(임무계획/MMR) ─────────
-def _mon_port() -> int:
-    """임무계획 GUI → 대시보드(run.py) 모니터링 전송 포트"""
-    try:
-        return int(os.getenv("KU_MON_ASSIGNMENT_PORT", "46981"))
-    except Exception:
-        return 46981
-
-def _z4(s: str) -> str:
-    s = str(s).strip()
-    return s.zfill(4) if s.isdigit() and len(s) < 4 else s
-
-
-def _sanitize_reason(value: Any, fallback: str = "init-plan") -> str:
-    """
-    Remove embedded null characters and enforce a fallback string for ReplanReason.
-    """
-    if isinstance(value, bytes):
-        try:
-            text_val = value.decode('utf-8', 'ignore')
-        except Exception:
-            text_val = ''
-    else:
-        text_val = '' if value is None else str(value)
-    text_val = text_val.replace("\x00", "").strip()
-    return text_val or fallback
+from datetime import datetime, timezone
 
 
 # ───────── 메인 윈도우 ─────────
@@ -192,7 +114,6 @@ class MainWindow(QMainWindow):
         self._plan_status = "임무계획 전"
         self._option_id_counter = 0
         self._bus_ready = False
-        self._pipeline_log_counter = 0
 
         reset_latest_inputs()
         self._last_logged_input_ids = {"0201": None, "0203": None}
@@ -215,6 +136,13 @@ class MainWindow(QMainWindow):
         tabs.addTab(self._tab, "임무 할당·계획수립 CSC")
         self._log_tab = MissionPlanningLogTab()
         tabs.addTab(self._log_tab, "임무계획 Log")
+        self._pipeline_logger = PipelineLogManager(
+            emit_callback=self.pipeline_log_sig.emit,
+            log_tab_provider=lambda: getattr(self, "_log_tab", None),
+            sanitize_reason=_sanitize_reason,
+        )
+        self._log_file_path: Optional[Path] = None
+        self._init_gui_log_file_sink()
 
         # ── 상단 모드 슬라이더
         top = QWidget(); top_layout = QHBoxLayout(top)
@@ -241,8 +169,10 @@ class MainWindow(QMainWindow):
         # 신호 연결
         self.ctrl_payload.connect(self._handle_ctrl_payload)
         self.log_sig.connect(self._append_log_line)
-        self.pipeline_log_sig.connect(self._handle_pipeline_log_event)
+        self.pipeline_log_sig.connect(self._pipeline_logger.handle_event)
         self.start_push_seq.connect(self._start_push_sequence)
+        if self._log_file_path:
+            self._append_log_line(f"[LOG] Mission planning log started: {self._log_file_path}")
 
         # nFusion RX 초기화 + UDP 컨트롤 리스너
         threading.Thread(target=self._rx_setup, daemon=True).start()
@@ -609,98 +539,17 @@ class MainWindow(QMainWindow):
                 self._append_log_line(f"[WARN] Listener registration failed for {msg_id}")
 
     def _load_attack_context(self, cmpk_path: Path) -> Optional[Dict[str, Any]]:
-        try:
-            with cmpk_path.open("r", encoding="utf-8") as fh:
-                data = json.load(fh)
-        except Exception as exc:
-            try:
-                self.log_sig.emit(f"[WARN] 공격용 0201 메타데이터 읽기 실패({cmpk_path.name}): {exc}")
-            except Exception:
-                pass
-            return None
-        context = data.get("_attackContext") or data.get("attackContext")
-        if isinstance(context, dict):
-            return context
-        return None
+        return load_attack_context(cmpk_path, getattr(self.log_sig, "emit", None))
 
     def _build_attack_context_from_replan_detail(self, detail: Any) -> Optional[Dict[str, Any]]:
-        if not isinstance(detail, dict):
-            return None
-        coordinate = detail.get("coordinate") or detail.get("targetCoordinate") or {}
-        lat = coordinate.get("latitude")
-        lon = coordinate.get("longitude")
-        if lat is None or lon is None:
-            return None
-        altitude = coordinate.get("altitude") or 0.0
-        try:
-            lat = float(lat)
-            lon = float(lon)
-            altitude = float(altitude)
-        except Exception:
-            return None
-        target_context = {
-            "target": {
-                "latitude": lat,
-                "longitude": lon,
-                "altitude": altitude,
-            },
-            "targetID": detail.get("targetID"),
-            "detail": detail,
-        }
-        watcher_id = detail.get("watcherID")
-        if watcher_id is not None:
-            target_context["watcherID"] = watcher_id
-        return target_context
+        return build_attack_context_from_replan_detail(detail)
 
-    def _compute_attack_waypoint(self, friendly: Dict[str, Any], target: Dict[str, Any], variant_no: int) -> Dict[str, float]:
-        fallback = {
-            "latitude": float(target.get("latitude") or friendly.get("latitude") or 0.0),
-            "longitude": float(target.get("longitude") or friendly.get("longitude") or 0.0),
-            "altitude": float(target.get("altitude") or friendly.get("altitude") or 0.0),
-        }
-        script_path = PROJECT_ROOT / "modules" / "mission_planning" / "MissionPlanner" / "data_def" / "lah_attack_assistance.py"
-        friendly_lat = friendly.get("latitude")
-        friendly_lon = friendly.get("longitude")
-        target_lat = target.get("latitude")
-        target_lon = target.get("longitude")
-        if script_path.exists() and friendly_lat is not None and friendly_lon is not None and target_lat is not None and target_lon is not None:
-            cmd = [
-                sys.executable or "python",
-                str(script_path),
-                "--friendly-lat",
-                str(friendly_lat),
-                "--friendly-lon",
-                str(friendly_lon),
-                "--enemy-lat",
-                str(target_lat),
-                "--enemy-lon",
-                str(target_lon),
-                "--output-json",
-            ]
-            try:
-                result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-                if result.returncode == 0:
-                    data = json.loads(result.stdout or "{}")
-                    attack_point = data.get("attack_point") or {}
-                    lat_val = attack_point.get("lat") or attack_point.get("latitude") or target_lat
-                    lon_val = attack_point.get("lon") or attack_point.get("longitude") or target_lon
-                    alt_val = attack_point.get("alt_m") or attack_point.get("altitude") or target.get("altitude") or friendly.get("altitude") or 0.0
-                    return {
-                        "latitude": float(lat_val),
-                        "longitude": float(lon_val),
-                        "altitude": float(alt_val),
-                    }
-                else:
-                    stderr_msg = (result.stderr or "").strip()
-                    self.log_sig.emit(
-                        f"[WARN] 공격 추천 좌표 계산 실패(variant={variant_no}, code={result.returncode}): {stderr_msg}"
-                    )
-            except Exception as exc:
-                try:
-                    self.log_sig.emit(f"[WARN] 공격 추천 좌표 계산 중 예외 발생(variant={variant_no}): {exc}")
-                except Exception:
-                    pass
-        return fallback
+    def _compute_attack_waypoint(
+        self, friendly: Dict[str, Any], target: Dict[str, Any], variant_no: int
+    ) -> Dict[str, float]:
+        return compute_attack_waypoint(
+            PROJECT_ROOT, friendly, target, variant_no, getattr(self.log_sig, "emit", None)
+        )
 
     def _apply_attack_customizations(
         self,
@@ -711,161 +560,15 @@ class MainWindow(QMainWindow):
         *,
         replan_detail: Optional[Dict[str, Any]] = None,
     ) -> None:
-        def _normalize_coord(raw: Optional[Dict[str, Any]]) -> Optional[Dict[str, float]]:
-            if not isinstance(raw, dict):
-                return None
-            lat = raw.get("latitude")
-            lon = raw.get("longitude")
-            if lat is None or lon is None:
-                return None
-            alt = raw.get("altitude", 0.0)
-            try:
-                return {
-                    "latitude": float(lat),
-                    "longitude": float(lon),
-                    "altitude": float(alt),
-                }
-            except Exception:
-                return None
-
-        def _estimate_eta_ms(p0: Dict[str, float], p1: Dict[str, float], speed_mps: float = 40.0) -> int:
-            lat1, lon1 = p0["latitude"], p0["longitude"]
-            lat2, lon2 = p1["latitude"], p1["longitude"]
-            k = 111_132.92
-            cos = math.cos(math.radians((lat1 + lat2) / 2))
-            dx = (lon2 - lon1) * k * cos
-            dy = (lat2 - lat1) * k
-            dist_m = math.hypot(dx, dy)
-            if dist_m <= 0 or speed_mps <= 0:
-                return 0
-            return int(round(1000 * dist_m / speed_mps))
-
-        def _build_wp_entry(
-            coord: Dict[str, float],
-            waypoint_id: int,
-            next_waypoint_id: int,
-            eta_ms: int,
-            *,
-            target_id_value: int,
-            weapon_type_value: int,
-            ecf_value: float,
-            speed_value: float = 40.0,
-        ) -> Dict[str, Any]:
-            return {
-                "waypointID": waypoint_id,
-                "coordinate": {
-                    "latitude": round(coord["latitude"], 6),
-                    "longitude": round(coord["longitude"], 6),
-                    "altitude": int(round(coord.get("altitude", 0.0))),
-                },
-                "speed": speed_value,
-                "eta": int(eta_ms),
-                "ecf": float(ecf_value),
-                "nextWaypointID": next_waypoint_id,
-                "hovering": {"time": 0},
-                "loiter": {"radius": 0, "direction": 0, "time": 0, "speed": 0},
-                "attack": {
-                    "targetID": max(0, int(target_id_value)),
-                    "weaponType": max(0, int(weapon_type_value)),
-                },
-            }
-
-        target = attack_context.get("target") or {}
-        target_coord = _normalize_coord(target)
-        if target_coord is None:
-            self.log_sig.emit(f"[WARN] 공격 옵션(variant={variant_no})에 target 좌표 정보가 없어 기본 임무를 유지합니다.")
-            return
-        manned_missions = [im for im in missions if int(im.get("aircraftID", 0)) in (1, 2)]
-        if not manned_missions:
-            self.log_sig.emit(f"[WARN] 공격 옵션(variant={variant_no}) 대상 유인기 임무를 찾지 못했습니다.")
-            return
-        manned_missions.sort(key=lambda im: int(im.get("individualMissionID") or 0))
-        primary_mission = manned_missions[0]
-        mission_info = primary_mission.get("individualMissionInfo") or {}
-        coord_list = mission_info.get("coordinateList") or []
-        friendly_coord = None
-        if coord_list and isinstance(coord_list[0], dict):
-            friendly_coord = _normalize_coord(coord_list[0])
-        if friendly_coord is None:
-            friendly_coord = dict(target_coord)
-        attack_waypoint = self._compute_attack_waypoint(friendly_coord, target_coord, variant_no)
-        target_id = attack_context.get("targetID")
-        try:
-            target_id_int = int(target_id) if target_id is not None else 0
-        except Exception:
-            target_id_int = 0
-
-        coordinate_entries: List[Dict[str, float]] = []
-        if friendly_coord:
-            coordinate_entries.append(
-                {
-                    "latitude": friendly_coord["latitude"],
-                    "longitude": friendly_coord["longitude"],
-                    "altitude": friendly_coord.get("altitude", 0.0),
-                }
-            )
-        coordinate_entries.append(
-            {
-                "latitude": target_coord["latitude"],
-                "longitude": target_coord["longitude"],
-                "altitude": target_coord.get("altitude", 0.0),
-            }
+        apply_attack_customizations(
+            missions,
+            flight_plans_0304,
+            attack_context,
+            variant_no,
+            replan_detail=replan_detail,
+            project_root=PROJECT_ROOT,
+            log_cb=getattr(self.log_sig, "emit", None),
         )
-
-        mission_info_override = {
-            "individualMissionType": 2,
-            "patternType": 2,
-            "autoZoomIn": 0,
-            "coordinateList": coordinate_entries,
-        }
-        if target_id_int:
-            mission_info_override["targetID"] = target_id_int
-        if replan_detail:
-            mission_info_override["_attackDetail"] = replan_detail
-        primary_mission["individualMissionInfo"] = mission_info_override
-        primary_mission["isDone"] = False
-
-        attack_path_id = int(primary_mission.get("pathID") or 0)
-        attack_aircraft_id = int(primary_mission.get("aircraftID") or 0)
-        base_wp_id = 10_000 + variant_no * 10
-        approach_coord = friendly_coord or dict(attack_waypoint)
-        travel_eta_ms = _estimate_eta_ms(approach_coord, attack_waypoint)
-
-        start_wp = _build_wp_entry(
-            approach_coord,
-            waypoint_id=base_wp_id,
-            next_waypoint_id=base_wp_id + 1,
-            eta_ms=0,
-            target_id_value=0,
-            weapon_type_value=0,
-            ecf_value=0.0,
-        )
-        attack_wp = _build_wp_entry(
-            attack_waypoint,
-            waypoint_id=base_wp_id + 1,
-            next_waypoint_id=0,
-            eta_ms=travel_eta_ms,
-            target_id_value=target_id_int,
-            weapon_type_value=1,
-            ecf_value=1.0,
-        )
-
-        replaced_fp = False
-        for fp in flight_plans_0304 or []:
-            try:
-                fp_path_id = int(fp.get("pathID"))
-            except Exception:
-                fp_path_id = None
-            if fp_path_id == attack_path_id and int(fp.get("aircraftID", 0)) == attack_aircraft_id:
-                fp["lahWaypointList"] = [start_wp, attack_wp]
-                replaced_fp = True
-                break
-        if not replaced_fp:
-            self.log_sig.emit(f"[WARN] 공격 비행경로를 덮어쓸 pathID {attack_path_id}를 찾지 못했습니다.")
-        else:
-            self.log_sig.emit(
-                f"[variant {variant_no}] 공격 임무 설정 완료 (aircraft={attack_aircraft_id}, targetID={target_id_int})"
-            )
 
     def _on_input_payload_0201(self, msg_id, payload):
         self._handle_latest_input_payload(msg_id, payload)
@@ -1061,45 +764,38 @@ class MainWindow(QMainWindow):
         plan_ids = list(payload.get("plan_ids") or [])
         option_names = list(payload.get("option_names") or [])
         reason = _sanitize_reason(payload.get("reason"), "init-plan")
-
-        is_execution_mode = False
-        if not force_direct:
-            try:
-                mode_slider = getattr(self, "mode_slider", None)
-                if mode_slider is not None:
-                    is_execution_mode = int(mode_slider.value()) == 4
-            except Exception:
-                is_execution_mode = False
-        else:
-            self._append_log_line("[INFO] replanLevel=4 → skip 0901/0701, direct 0903 delivery")
+        plan_meta = payload.get("option_meta") or {}
 
         if not plan_ids:
             self._append_log_line("[WARN] No missionPlanID to push (0301)")
             return
 
-        # send 0301
+        if not force_direct:
+            self._append_log_line("[INFO] Option mode → sending 0901 only (wait for 0702 decision before 0301/0903)")
+            QTimer.singleShot(900, lambda meta=plan_meta: self._push_0901_options(plan_ids, option_names, meta))
+            self._pending_plan_push = None
+            return
+
+        self._append_log_line("[INFO] replanLevel=4 → skip 0901/0701, direct 0903 delivery")
+
+        # send 0301 immediately for direct update
         QTimer.singleShot(0, lambda: self._click_tx_button_for("0301"))
         # send 0305 completion
         QTimer.singleShot(600, lambda: self._push_0305(status=2, reason=reason))
-        plan_meta = payload.get("option_meta") or {}
 
-        if is_execution_mode and not force_direct:
-            self._append_log_line("[INFO] Execution mode -> sending 0901 instead of 0903")
-            QTimer.singleShot(900, lambda meta=plan_meta: self._push_0901_options(plan_ids, option_names, meta))
-        else:
-            base_delay = 900
-            scheduled = False
-            for idx, plan_id in enumerate(plan_ids):
-                try:
-                    mpid = int(plan_id)
-                except Exception:
-                    self._append_log_line(f"[WARN] 0903 skip: invalid missionPlanID={plan_id}")
-                    continue
-                delay = base_delay + idx * 200
-                QTimer.singleShot(delay, lambda pid=mpid: self._push_0903(pid))
-                scheduled = True
-            if not scheduled:
-                self._append_log_line("[WARN] No valid missionPlanID for 0903 push")
+        base_delay = 900
+        scheduled = False
+        for idx, plan_id in enumerate(plan_ids):
+            try:
+                mpid = int(plan_id)
+            except Exception:
+                self._append_log_line(f"[WARN] 0903 skip: invalid missionPlanID={plan_id}")
+                continue
+            delay = base_delay + idx * 200
+            QTimer.singleShot(delay, lambda pid=mpid: self._push_0903(pid))
+            scheduled = True
+        if not scheduled:
+            self._append_log_line("[WARN] No valid missionPlanID for 0903 push")
 
         self._pending_plan_push = None
 
@@ -1154,7 +850,30 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self._append_log_line(f"[ERR] {code} push failed: {e}")
 
+    def _init_gui_log_file_sink(self) -> None:
+        try:
+            log_dir = db_paths.get_db_subpath("DSS_Internal")
+            log_dir.mkdir(parents=True, exist_ok=True)
+            token = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S_%fZ")
+            path = log_dir / f"mission_planning_gui_{token}.log"
+            path.write_text("", encoding="utf-8")
+            self._log_file_path = path
+        except Exception:
+            self._log_file_path = None
+
+    def _persist_gui_log(self, text: str) -> None:
+        path = getattr(self, "_log_file_path", None)
+        if not path:
+            return
+        try:
+            stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(f"{stamp} {text}\n")
+        except Exception:
+            pass
+
     def _append_log_line(self, text: str):
+        self._persist_gui_log(text)
         try:
             if getattr(self, "_tab", None) and hasattr(self._tab, "append_log"):
                 self._tab.append_log(text); return
@@ -1162,80 +881,6 @@ class MainWindow(QMainWindow):
             pass
         try: print(text)
         except Exception: pass
-
-    # Pipeline log wiring -----------------------------------------------
-    def _handle_pipeline_log_event(self, payload: dict):
-        tab = getattr(self, "_log_tab", None)
-        if not tab or not isinstance(payload, dict):
-            return
-        action = payload.get("action")
-        session_id = payload.get("session_id")
-        if not session_id:
-            return
-        if action == "start":
-            tab.start_session(session_id, payload.get("meta") or {})
-        elif action == "append":
-            tab.append_event(
-                session_id,
-                payload.get("level") or "info",
-                payload.get("message") or "",
-                detail=payload.get("detail"),
-                timestamp=payload.get("timestamp"),
-            )
-        elif action == "finish":
-            tab.finish_session(
-                session_id,
-                payload.get("status") or "done",
-                summary=payload.get("summary"),
-            )
-
-    def _open_pipeline_log_session(self, ctx: Dict[str, Any], reason: str) -> Optional[str]:
-        if not getattr(self, "_log_tab", None):
-            return None
-        self._pipeline_log_counter += 1
-        session_id = f"run-{self._pipeline_log_counter:04d}"
-        meta = {
-            "timestamp": time.time(),
-            "reason": _sanitize_reason(reason, "init-plan"),
-            "plan_ids": list(ctx.get("plan_ids") or []),
-            "mission_ids": list(ctx.get("mission_ids") or []),
-            "replan_level": ctx.get("replan_level") or ctx.get("replanLevel"),
-        }
-        self.pipeline_log_sig.emit({"action": "start", "session_id": session_id, "meta": meta})
-        return session_id
-
-    def _log_pipeline_event(
-        self,
-        session_id: Optional[str],
-        level: str,
-        message: str,
-        *,
-        detail: Optional[Dict[str, Any]] = None,
-    ) -> None:
-        if not session_id:
-            return
-        payload = {
-            "action": "append",
-            "session_id": session_id,
-            "level": level,
-            "message": message,
-            "timestamp": time.time(),
-        }
-        if detail is not None:
-            payload["detail"] = detail
-        self.pipeline_log_sig.emit(payload)
-
-    def _close_pipeline_log_session(
-        self,
-        session_id: Optional[str],
-        status: str,
-        *,
-        summary: Optional[Dict[str, Any]] = None,
-    ) -> None:
-        if not session_id:
-            return
-        payload = {"action": "finish", "session_id": session_id, "status": status, "summary": summary}
-        self.pipeline_log_sig.emit(payload)
 
     # ───────── 모드/슬라이더 ─────────
     def _on_mode_slider_changed(self, val: int):
@@ -1802,7 +1447,7 @@ class MainWindow(QMainWindow):
         ctx = getattr(self, "_active_plan_context", {}) or {}
         reason = _sanitize_reason(ctx.get("reason"), "초기임무재계획")
         self._push_0305(status=1, reason=reason)
-        session_id = self._open_pipeline_log_session(ctx, reason)
+        session_id = self._pipeline_logger.open_session(ctx, reason)
         threading.Thread(
             target=self._run_replan_pipeline_do,
             args=(session_id,),
@@ -1824,7 +1469,7 @@ class MainWindow(QMainWindow):
             reason = _sanitize_reason(ctx.get('reason'), staged_reason)
 
             self.log_sig.emit(f"[STEP 0] Replan pipeline start (reason={reason})")
-            self._log_pipeline_event(
+            self._pipeline_logger.log_event(
                 session_id,
                 "info",
                 "Replan pipeline start",
@@ -1844,15 +1489,34 @@ class MainWindow(QMainWindow):
                     log_path = (attack_result or {}).get("log_path")
                     if log_path:
                         self.log_sig.emit(f"[ATTACK] 분석 로그 저장: {log_path}")
-                    self._log_pipeline_event(
+                    self._pipeline_logger.log_event(
                         session_id,
                         "info",
                         "Attack pipeline evaluated",
                         detail={"log_path": log_path},
                     )
+                    attack_updates = ((attack_result or {}).get("result") or {}).get("missionUpdates")
+                    if attack_updates:
+                        try:
+                            self._finalize_attack_pipeline(ctx, attack_result, attack_updates, reason, session_id)
+                        except Exception as exc:
+                            self._append_log_line(f"[ATTACK][ERR] finalize failed: {exc}")
+                            self._pipeline_logger.log_event(
+                                session_id, "error", f"Attack finalize failed: {exc}"
+                            )
+                        else:
+                            summary_info = {
+                                "mode": "attack",
+                                "plan_ids": list(ctx.get("plan_ids") or []),
+                                "attack_log": log_path,
+                            }
+                            success = True
+                            return
                 except Exception as exc:
                     self._append_log_line(f"[ATTACK][ERR] pipeline failed: {exc}")
-                    self._log_pipeline_event(session_id, "error", f"Attack pipeline failed: {exc}")
+                    self._pipeline_logger.log_event(
+                        session_id, "error", f"Attack pipeline failed: {exc}"
+                    )
 
             prior_summary = self._try_run_prior_mission_pipeline(ctx, reason, session_id=session_id)
             if prior_summary:
@@ -2721,11 +2385,170 @@ class MainWindow(QMainWindow):
 
         except Exception as exc:
             self.log_sig.emit(f"[ERR] Replan pipeline failed: {exc}")
-            self._log_pipeline_event(session_id, "error", f"Replan pipeline failed: {exc}")
+            self._pipeline_logger.log_event(session_id, "error", f"Replan pipeline failed: {exc}")
         finally:
             self._initplan_running = False
             status_text = "success" if success else "error"
-            self._close_pipeline_log_session(session_id, status_text, summary=summary_info)
+            self._pipeline_logger.close_session(session_id, status_text, summary=summary_info)
+
+    def _finalize_attack_pipeline(
+        self,
+        ctx: Dict[str, Any],
+        attack_result: Dict[str, Any],
+        attack_updates: Dict[str, Any],
+        reason: str,
+        session_id: Optional[str],
+    ) -> None:
+        try:
+            attack_plan_id = int(attack_updates.get("mission_plan_id"))
+        except Exception:
+            attack_plan_id = None
+
+        plan_ids = list(ctx.get("plan_ids") or [])
+        if attack_plan_id and attack_plan_id not in plan_ids:
+            plan_ids.insert(0, attack_plan_id)
+        if not plan_ids and attack_plan_id:
+            plan_ids = [attack_plan_id]
+        if not plan_ids:
+            raise RuntimeError("Attack pipeline produced no mission plan IDs.")
+
+        option_names = list(ctx.get("option_names") or [])
+        while len(option_names) < len(plan_ids):
+            option_names.append(option_names[-1] if option_names else f"option{len(option_names) + 1}")
+
+        plan_meta_map = dict(ctx.get("_option_meta") or {})
+        if attack_plan_id:
+            attack_meta = plan_meta_map.setdefault(attack_plan_id, {})
+            attack_meta.update(
+                {
+                    "attack": True,
+                    "attackContext": {
+                        "logPath": attack_result.get("log_path"),
+                        "missionUpdates": attack_updates,
+                    },
+                }
+            )
+
+        ctx["plan_ids"] = plan_ids
+        ctx["option_names"] = option_names
+        ctx["_option_meta"] = plan_meta_map
+        self._active_plan_context = ctx
+        self._last_mission_plan_ids = plan_ids
+        self._last_mission_plan_id = plan_ids[0] if plan_ids else None
+
+        try:
+            input_pkg_id_int = int(ctx.get("inputMissionPackageID"))
+        except Exception:
+            input_pkg_id_int = None
+        try:
+            ref_pkg_id_int = int(ctx.get("missionReferencePackageID"))
+        except Exception:
+            ref_pkg_id_int = None
+
+        plan_id_set = {int(pid) for pid in plan_ids if pid is not None}
+        generated_imp_ids, generated_path_ids = self._collect_attack_generated_ids(attack_updates)
+        self._session_scope["plans"].update(plan_id_set)
+        self._session_scope["individual_packages"].update(generated_imp_ids)
+        self._session_scope["paths"].update(generated_path_ids)
+        self._plan_status = "임무재계획 완료"
+        self._submit_id_tab_update(
+            scope=self._session_scope,
+            cmpk_id=input_pkg_id_int,
+            mrpk_id=ref_pkg_id_int,
+            plan_state=self._plan_status,
+        )
+
+        summary = ", ".join(str(pid) for pid in plan_ids)
+        self.log_sig.emit(f"[ATTACK] 공격 임무 계획 완료 (planIds={summary})")
+        self._pipeline_logger.log_event(
+            session_id,
+            "info",
+            "Attack pipeline complete",
+            detail={
+                "plan_ids": plan_ids,
+                "log_path": attack_result.get("log_path"),
+            },
+        )
+
+        self._schedule_plan_delivery(
+            plan_ids,
+            option_names,
+            reason,
+            plan_meta_map,
+            force_direct_update=False,
+        )
+
+    def _collect_attack_generated_ids(self, attack_updates: Dict[str, Any]) -> tuple[Set[int], Set[int]]:
+        imp_ids: Set[int] = set()
+        path_ids: Set[int] = set()
+        aircraft_entries = attack_updates.get("aircraft") if isinstance(attack_updates, dict) else None
+        if not isinstance(aircraft_entries, list):
+            return imp_ids, path_ids
+        for entry in aircraft_entries:
+            if not isinstance(entry, dict):
+                continue
+            pkg = entry.get("individualMissionPackageID")
+            if pkg is not None:
+                try:
+                    imp_ids.add(int(pkg))
+                except Exception:
+                    pass
+            for mission in entry.get("missions") or []:
+                if not isinstance(mission, dict):
+                    continue
+                pid = mission.get("pathID")
+                if pid is not None:
+                    try:
+                        path_ids.add(int(pid))
+                    except Exception:
+                        pass
+            for block in (entry.get("tracking") or {}, entry.get("resume") or {}):
+                if not isinstance(block, dict):
+                    continue
+                pid = block.get("pathID")
+                if pid is not None:
+                    try:
+                        path_ids.add(int(pid))
+                    except Exception:
+                        pass
+            flight_paths = entry.get("flightPaths")
+            if isinstance(flight_paths, dict):
+                for pid in flight_paths.values():
+                    self._try_add_path_from_value(path_ids, pid)
+            extra_path = entry.get("pathID")
+            if extra_path is not None:
+                try:
+                    path_ids.add(int(extra_path))
+                except Exception:
+                    pass
+        return imp_ids, path_ids
+
+    @staticmethod
+    def _try_add_path_from_value(target_set: Set[int], value: Any) -> None:
+        if value is None:
+            return
+        str_value = str(value).strip()
+        if not str_value:
+            return
+        if str_value.isdigit():
+            try:
+                target_set.add(int(str_value))
+                return
+            except Exception:
+                pass
+        candidate = Path(str_value)
+        if candidate.stem and candidate.stem.isdigit():
+            try:
+                target_set.add(int(candidate.stem))
+                return
+            except Exception:
+                pass
+        try:
+            cleaned = "".join(ch for ch in str_value if ch.isdigit())
+            if cleaned:
+                target_set.add(int(cleaned))
+        except Exception:
+            pass
 
     def _try_run_prior_mission_pipeline(
         self,
@@ -2757,7 +2580,7 @@ class MainWindow(QMainWindow):
         if not result:
             self.log_sig.emit("[PRIOR] Prior mission pipeline unavailable. Falling back to legacy replan flow.")
             if session_id:
-                self._log_pipeline_event(session_id, "warn", "Prior mission pipeline unavailable")
+                self._pipeline_logger.log_event(session_id, "warn", "Prior mission pipeline unavailable")
             return None
 
         generated_plan_ids = result.plan_ids
@@ -2815,7 +2638,9 @@ class MainWindow(QMainWindow):
             "log_path": str(result.log_path),
         }
         if session_id:
-            self._log_pipeline_event(session_id, "info", "Prior mission pipeline complete", detail=summary)
+            self._pipeline_logger.log_event(
+                session_id, "info", "Prior mission pipeline complete", detail=summary
+            )
         return summary
 
     def closeEvent(self, event):

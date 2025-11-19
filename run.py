@@ -109,7 +109,8 @@ def _ensure_fusion_configs():
     if lic_src is not None:
         lic_dst = PROJECT_ROOT / "nFusionLicense.lic"
         if lic_src != lic_dst:
-            lic_dst.write_text(lic_src.read_text(encoding="utf-8"), encoding="utf-8")
+            # License files can contain non-text bytes; copy as binary to avoid decode errors.
+            lic_dst.write_bytes(lic_src.read_bytes())
     return str(dst)
 
 def _load_msglib_and_deps():

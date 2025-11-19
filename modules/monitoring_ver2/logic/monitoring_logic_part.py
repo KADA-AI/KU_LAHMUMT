@@ -46,6 +46,7 @@ from modules.monitoring_ver2.utils.vehicle_status import (
 )
 from modules.monitoring_ver2.logic.prior_mission_replan import PriorMissionReplanCoordinator
 from modules.monitoring_ver2.utils.mission_progress_logger import MissionProgressExporter
+from modules.monitoring_ver2.utils.monitoring_operation_logger import MonitoringOperationLogger
 
 
 def _resolve_fuel_capacity() -> float:
@@ -188,6 +189,10 @@ class MonitoringLogic:
         self._roi_caution_triggered: bool = False
         self._pending_plan_update_meta: Optional[Dict[str, Any]] = None
         self._last_processed_0903_signature: Optional[Tuple[Optional[int], Optional[int]]] = None
+        self._tracker_reset_pending: bool = False
+        self._operation_logger = MonitoringOperationLogger(component="MON")
+        self._last_monitoring_cycle_signature: Optional[str] = None
+        self._mission_plan_file_state: Optional[Dict[str, Any]] = None
 
     def trigger_prior_mission_replan(self) -> None:
         """Expose prior mission replan processing for immediate 0202 handling."""
@@ -687,7 +692,18 @@ class MonitoringLogic:
             and self._pending_plan_update_meta.get("source") == "0903"
         )
 
-        if mission_plan_id == self._current_mission_plan_id and not active_0903_request:
+        if (
+            mission_plan_id == self._current_mission_plan_id
+            and not self._tracker_reset_pending
+            and self._mission_plan_needs_refresh(mission_plan_id)
+        ):
+            self._tracker_reset_pending = True
+
+        if (
+            mission_plan_id == self._current_mission_plan_id
+            and not active_0903_request
+            and not self._tracker_reset_pending
+        ):
             if (
                 self._pending_plan_update_meta
                 and self._pending_plan_update_meta.get("source") == "0903"
@@ -787,6 +803,7 @@ class MonitoringLogic:
             active_0903_request
             or previous_plan_id != mission_plan_id
             or not tracker_initialized
+            or self._tracker_reset_pending
         )
         if reinitialized:
             self._initialize_input_tracker(context)
@@ -794,6 +811,7 @@ class MonitoringLogic:
                 initial=True
             )
             self._update_plan_context_active_input()
+            self._tracker_reset_pending = False
         try:
             self.manager.logic_store.set_data("current_mission_plan", context)
         except Exception:
@@ -822,10 +840,54 @@ class MonitoringLogic:
                 extra=extra_status,
                 finalize=True,
             )
+        self._log_plan_loaded(mission_plan_id, extra_status)
         self._pending_decision_command = None
         if self._pending_mission_plan_id == mission_plan_id:
             self._pending_mission_plan_id = None
         _clear_latest_command()
+
+    def _mission_plan_needs_refresh(self, mission_plan_id: Optional[int]) -> bool:
+        """Detect MissionPlan changes on disk even if the ID is unchanged."""
+        if mission_plan_id is None:
+            return False
+        state = self._mission_plan_file_state
+        if not state or state.get("missionPlanID") != mission_plan_id:
+            return False
+        previous_mtime = state.get("file_mtime_ns")
+        if previous_mtime is None:
+            return False
+        try:
+            mission_plan_path = db_paths.get_db_subpath(
+                "MissionPlan", f"{int(mission_plan_id)}.json"
+            )
+        except Exception:
+            return False
+        try:
+            current_mtime = mission_plan_path.stat().st_mtime_ns
+        except OSError:
+            return False
+        if current_mtime != previous_mtime:
+            self.manager._log(
+                "MON_LOGIC",
+                "INFO",
+                f"MissionPlan {mission_plan_id} file changed (mtime diff). Forcing reload.",
+            )
+            return True
+        return False
+
+    def _update_mission_plan_file_state(
+        self, mission_plan_id: int, mission_plan_path: Path, plan_data: Dict[str, Any]
+    ) -> None:
+        try:
+            mtime_ns = mission_plan_path.stat().st_mtime_ns
+        except OSError:
+            mtime_ns = None
+        self._mission_plan_file_state = {
+            "missionPlanID": mission_plan_id,
+            "missionPlanTimestamp": plan_data.get("missionPlanTimestamp"),
+            "inputMissionPackageID": plan_data.get("inputMissionPackageID"),
+            "file_mtime_ns": mtime_ns,
+        }
 
     def _scan_latest_mission_plan_id(self) -> Optional[int]:
         """MissionPlan ?붾젆?곕━?먯꽌 媛??理쒖떊??plan ID瑜?異붾줎?쒕떎."""
@@ -852,6 +914,8 @@ class MonitoringLogic:
         mission_plan_path = db_paths.get_db_subpath("MissionPlan", f"{mission_plan_id}.json")
         with mission_plan_path.open("r", encoding="utf-8") as fh:
             plan_data = json.load(fh)
+
+        self._update_mission_plan_file_state(mission_plan_id, mission_plan_path, plan_data)
 
         aircraft_map: Dict[int, Dict[str, Any]] = {}
         input_ids: List[int] = []
@@ -965,6 +1029,7 @@ class MonitoringLogic:
         tracker: Dict[int, Dict[str, Set[Tuple[int, int, Optional[int], int]]]] = {}
         reverse_map: Dict[Tuple[int, int, Optional[int], int], int] = {}
         file_map: Dict[Tuple[int, int, Optional[int], int], Tuple[int, int, int]] = {}
+        initial_completed_inputs: Set[int] = set()
         self._input_mission_package_id = None
         self._input_mission_plan_path = None
         self._input_mission_index_map = {}
@@ -998,6 +1063,8 @@ class MonitoringLogic:
                     input_id_int = int(input_id)
                 except (TypeError, ValueError):
                     continue
+                if mission.get("isDone"):
+                    initial_completed_inputs.add(input_id_int)
                 try:
                     mission_id = int(mission.get("individualMissionID") or 0)
                 except (TypeError, ValueError):
@@ -1022,7 +1089,9 @@ class MonitoringLogic:
                 file_map[key] = (package_id_int, idx, aircraft_id_int)
         self._input_mission_tracker = tracker
         self._mission_to_input = reverse_map
-        self._completed_input_ids = set()
+        self._completed_input_ids = set(
+            initial_completed_inputs
+        )
         self._collab_completion_sent = False
         self._monitoring_suspended = False
         self._active_aircraft_ids = set()
@@ -1030,6 +1099,21 @@ class MonitoringLogic:
         self._mission_file_map = file_map
         self._current_input_mission_id = None
         self._input_completion_notified = set()
+        plan_order_raw = context.get("inputMissionIDs") or []
+        normalized_plan_order: List[int] = []
+        seen_plan_ids: Set[int] = set()
+        for value in plan_order_raw:
+            try:
+                candidate = int(value)
+            except (TypeError, ValueError):
+                continue
+            if candidate in seen_plan_ids:
+                continue
+            seen_plan_ids.add(candidate)
+            normalized_plan_order.append(candidate)
+        if normalized_plan_order:
+            self._input_mission_order = normalized_plan_order
+        self._publish_aircraft_mission_summary()
 
     def _extract_available_ids_from_payload(self, payload: Any) -> List[int]:
         raw_list = self._safe_get(payload, "availableAircraftList", "AvailableAircraftList")
@@ -1105,7 +1189,15 @@ class MonitoringLogic:
                 except (TypeError, ValueError):
                     continue
                 mapping[mission_id_int] = idx
-                if mission_id_int not in order_seen:
+                raw_is_done = mission.get("isDone")
+                try:
+                    if isinstance(raw_is_done, str):
+                        is_done_flag = raw_is_done.strip().lower() in ("1", "true", "yes")
+                    else:
+                        is_done_flag = bool(raw_is_done)
+                except Exception:
+                    is_done_flag = False
+                if mission_id_int not in order_seen and not is_done_flag:
                     order_seen.add(mission_id_int)
                     order.append(mission_id_int)
         self._input_mission_order = order
@@ -1152,6 +1244,177 @@ class MonitoringLogic:
             )
         except Exception:
             pass
+        self._publish_aircraft_mission_summary()
+
+    def _publish_aircraft_mission_summary(self) -> None:
+        context = self._plan_context or {}
+        aircraft_map = context.get("aircraft") or {}
+        active_input_id = context.get("activeInputMissionID")
+        if active_input_id is None:
+            try:
+                active_input_id = self.manager.logic_store.get_data("active_input_mission_id")
+            except Exception:
+                active_input_id = None
+        active_input_id = self._to_int(active_input_id)
+        summary: Dict[int, Dict[str, int]] = {}
+        for aircraft_key, payload in aircraft_map.items():
+            missions = payload.get("missions") or []
+            relevant: List[Dict[str, Any]] = []
+            for mission in missions:
+                mission_input_id = self._to_int(mission.get("inputMissionID"))
+                if (
+                    active_input_id is None
+                    or mission_input_id is None
+                    or mission_input_id == active_input_id
+                ):
+                    relevant.append(mission)
+            if active_input_id is not None and not relevant:
+                relevant = missions
+            total = len(relevant)
+            completed = 0
+            for mission in relevant:
+                flag = mission.get("isDone")
+                try:
+                    if isinstance(flag, str):
+                        is_done = flag.strip().lower() in ("1", "true", "yes")
+                    else:
+                        is_done = bool(flag)
+                except Exception:
+                    is_done = False
+                if is_done:
+                    completed += 1
+            try:
+                aircraft_id = int(aircraft_key)
+            except (TypeError, ValueError):
+                aircraft_id = aircraft_key
+            summary[aircraft_id] = {"completed": completed, "total": total}
+        payload = {"activeInputID": active_input_id, "items": summary}
+        try:
+            self.manager.logic_store.set_data("aircraft_multi_mission_summary", payload)
+        except Exception:
+            pass
+
+    def _log_operation(self, title: str, lines: List[str]) -> None:
+        if not getattr(self, "_operation_logger", None):
+            return
+        cleaned = [line for line in lines if line]
+        if not cleaned:
+            return
+        self._operation_logger.log_section(title, cleaned)
+
+    def _log_plan_loaded(self, mission_plan_id: int, extra_status: Dict[str, Any]) -> None:
+        context = self._plan_context or {}
+        lines: List[str] = [
+            f"MissionPlan {mission_plan_id} 활성화 (inputPkg={context.get('inputMissionPackageID')}, activeInput={self._current_input_mission_id})"
+        ]
+        raw_inputs = context.get("inputMissionIDs") or []
+        if raw_inputs:
+            lines.append(f"InputMissionIDs={raw_inputs}")
+        if extra_status:
+            detail = ", ".join(f"{k}={v}" for k, v in extra_status.items())
+            lines.append(f"적용상태: {detail}")
+        aircraft_map = context.get("aircraft") or {}
+        for aircraft_id, payload in sorted(aircraft_map.items(), key=lambda item: str(item[0])):
+            missions = payload.get("missions") or []
+            lines.append(
+                f"UAV{aircraft_id}: missions={len(missions)} pkg={payload.get('individualMissionPackageID')}"
+            )
+        self._log_operation("PlanLoad", lines)
+
+    def _log_monitoring_cycle(
+        self,
+        data_401: Any,
+        body_0501: Optional[Dict[str, Any]],
+        mission_status: List[Dict[str, Any]],
+    ) -> None:
+        timestamp = self._safe_get(data_401, "timestamp", "Timestamp")
+        system_mode = self.manager.logic_store.get_data("SystemMode")
+        lines: List[str] = [
+            f"SystemMode={system_mode}, PlanID={self._current_mission_plan_id}, ActiveInput={self._current_input_mission_id}, PendingPlan={self._pending_mission_plan_id}"
+        ]
+        lines.append(f"0401 timestamp={timestamp}, entries={len(getattr(data_401, 'agentStateList', []) or [])}")
+        agent_states = getattr(data_401, "agentStateList", None) or []
+        for agent_state in agent_states:
+            aircraft_id = self._to_int(self._safe_get(agent_state, "aircraftID", "AircraftID"))
+            if aircraft_id is None:
+                continue
+            wp = self._extract_agent_waypoint(agent_state)
+            health = self._safe_get(agent_state, "health", "Health")
+            lines.append(f"  UAV{aircraft_id}: wp={wp}, health={health}")
+        if isinstance(body_0501, dict):
+            lines.append(
+                f"0501 currentMissionPlanID={body_0501.get('currentMissionPlanID')}, currentInputMissionID={body_0501.get('currentInputMissionID')}"
+            )
+        per_aircraft: Dict[int, List[str]] = {}
+        signature_entries: List[Tuple[int, int, int]] = []
+        for entry in mission_status:
+            aircraft_id = self._to_int(entry.get("aircraftID"))
+            mission_id = self._to_int(entry.get("individualMissionID"))
+            input_id = self._to_int(entry.get("inputMissionID"))
+            progress = entry.get("progress")
+            transit = entry.get("isTransitStage")
+            if aircraft_id is None:
+                continue
+            desc = f"mission={mission_id} input={input_id} progress={progress}%"
+            if transit:
+                desc += " (transit)"
+            per_aircraft.setdefault(aircraft_id, []).append(desc)
+            signature_entries.append(
+                (
+                    aircraft_id,
+                    mission_id if mission_id is not None else -1,
+                    int(progress) if isinstance(progress, (int, float)) else 0,
+                )
+            )
+        for aircraft_id in sorted(per_aircraft.keys()):
+            joined = " | ".join(per_aircraft[aircraft_id])
+            lines.append(f"  UAV{aircraft_id} status: {joined}")
+        signature_entries.sort()
+        cycle_signature = f"{self._current_mission_plan_id}|{self._current_input_mission_id}|{tuple(signature_entries)}"
+        if self._last_monitoring_cycle_signature == cycle_signature:
+            return
+        self._last_monitoring_cycle_signature = cycle_signature
+        self._log_operation("MonitoringCycle", lines)
+
+    def _log_progress_updates(self, entries: List[str]) -> None:
+        self._log_operation("ProgressUpdate", entries)
+
+    def _log_input_completion(self, messages: List[str]) -> None:
+        self._log_operation("InputMissionCompletion", messages)
+
+    @staticmethod
+    def _extract_agent_waypoint(agent_state: Any) -> Optional[int]:
+        direct = getattr(agent_state, "currentWaypointID", None)
+        if direct is None and hasattr(agent_state, "CurrentWaypointID"):
+            direct = getattr(agent_state, "CurrentWaypointID", None)
+        if isinstance(direct, (int, float)):
+            try:
+                return int(direct)
+            except (TypeError, ValueError):
+                return None
+        if hasattr(direct, "waypointID"):
+            try:
+                return int(getattr(direct, "waypointID"))
+            except (TypeError, ValueError):
+                return None
+        unmanned_info = getattr(agent_state, "unmannedInfo", None)
+        if unmanned_info and getattr(unmanned_info, "currentWaypointID", None):
+            current_wp_obj = getattr(unmanned_info, "currentWaypointID")
+            wp_value = getattr(current_wp_obj, "waypointID", None)
+            if wp_value is not None:
+                try:
+                    return int(wp_value)
+                except (TypeError, ValueError):
+                    return None
+        wp_candidate = MonitoringLogic._safe_candidate_to_int(getattr(agent_state, "waypointID", None))
+        return wp_candidate
+
+    @staticmethod
+    def _safe_candidate_to_int(value: Any) -> Optional[int]:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
 
     def _handle_situation_awareness(self, data: Any) -> None:
         message_ts = self._to_int(self._safe_get(data, "timestamp", "Timestamp"))
@@ -1820,6 +2083,9 @@ class MonitoringLogic:
                 )
 
                 self._update_input_mission_progress(mission_status)
+                self._log_monitoring_cycle(
+                    data_401, body_0501 if isinstance(body_0501, dict) else None, mission_status
+                )
                 if plan_context:
                     snapshot_ts = body_0501.get("timestamp") if isinstance(body_0501, dict) else None
                     try:
@@ -2029,6 +2295,18 @@ class MonitoringLogic:
         previous_key = self._latest_input_plan_key
         current_key = (package_id, timestamp)
         self._latest_input_plan_key = current_key
+        if (
+            package_id is not None
+            and self._input_mission_package_id is not None
+            and package_id != self._input_mission_package_id
+        ):
+            if not self._tracker_reset_pending:
+                self.manager._log(
+                    "MON_LOGIC",
+                    "INFO",
+                    f"InputMissionPackage change detected ({self._input_mission_package_id} -> {package_id}); scheduling plan refresh.",
+                )
+            self._tracker_reset_pending = True
         available_ids = self._extract_available_ids_from_payload(data)
         if (not available_ids) and package_id is not None:
             available_ids = self._load_available_ids_from_package(package_id)
@@ -2520,6 +2798,8 @@ class MonitoringLogic:
 
         normalized_entries: List[Tuple[Dict[str, Any], int, int]] = []
         transit_aircraft_ids: Set[int] = set()
+        progress_log_lines: List[str] = []
+        completion_log_lines: List[str] = []
         for entry in mission_status:
             try:
                 aircraft_id = int(entry.get("aircraftID", 0))
@@ -2592,6 +2872,15 @@ class MonitoringLogic:
                 tracker["completed"].add(key)
                 changed = True
                 self._mark_individual_mission_done(key)
+                completion_log_lines.append(
+                    f"Input {input_id}: UAV{aircraft_id} mission={mission_id} reached {progress}%"
+                )
+            if progress > prev:
+                progress_log_lines.append(
+                    f"UAV{aircraft_id} mission={mission_id} input={input_id} progress={progress}% (missionIndex={mission_index})"
+                )
+        if progress_log_lines:
+            self._log_progress_updates(progress_log_lines)
         if not changed:
             return
         if active_ids:
@@ -2628,12 +2917,15 @@ class MonitoringLogic:
                 for key in total - inactive:
                     self._mark_individual_mission_done(key)
                 self._notify_input_mission_completed(input_id)
+                completion_log_lines.append(f"Input {input_id} completed ({len(total)} missions)")
         if self._completed_input_ids and all(
             (info.get("total") or set())
             <= ((info.get("completed") or set()) | (info.get("inactive") or set()))
             for info in self._input_mission_tracker.values()
         ):
             self._handle_all_input_missions_completed()
+        if completion_log_lines:
+            self._log_input_completion(completion_log_lines)
         try:
             self.manager.logic_store.set_data(
                 "completed_input_ids", sorted(self._completed_input_ids)
@@ -2645,12 +2937,14 @@ class MonitoringLogic:
                 self.manager.gui_update_callback("logic", "mission_overview", None)
             except Exception:
                 pass
+        self._publish_aircraft_mission_summary()
 
     def _notify_input_mission_completed(self, input_id: int) -> None:
         self._queue_input_completion_write(input_id)
         if input_id in self._input_completion_notified:
             return
         self._input_completion_notified.add(input_id)
+        self._log_input_completion([f"Input mission {input_id} completion notification enqueued."])
         self._send_0503_notification(f"Input mission completed (ID={input_id})")
 
     def _send_0503_notification(self, log_context: str) -> None:
@@ -2908,6 +3202,7 @@ class MonitoringLogic:
         self._monitoring_suspended = True
         self._current_input_mission_id = None
         self._update_plan_context_active_input()
+        self._log_input_completion(["All input missions completed; monitoring paused."])
         self.manager._log(
             "MON_LOGIC",
             "INFO",

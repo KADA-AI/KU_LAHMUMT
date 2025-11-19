@@ -2,16 +2,20 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
+import math
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from modules.common import agent_status_snapshot, db_paths
 from modules.mission_planning.prior_mission_pipeline_impl import (
-    _inject_prior_waypoint,
     _load_latest_mission_progress_plan_id,
+    _normalize_altitude_value,
+    _project_coordinate,
     _resolve_plan_artifacts,
     _scan_latest_source_plan_id,
+    _trim_completed_waypoints,
+    _bearing_between,
     _next_imp_id,
     _next_individual_mission_id,
     _next_path_id,
@@ -21,6 +25,7 @@ from modules.mission_planning.prior_mission_pipeline_impl import (
 LogCallback = Callable[[str], None]
 
 LOG_FILENAME = "log_attack_algorithm.json"
+ATTACK_ENTRY_OFFSET_METERS = 100.0
 
 
 def run_attack_plan_pipeline(
@@ -33,12 +38,6 @@ def run_attack_plan_pipeline(
     """
 
     log_messages: List[str] = []
-
-    def _emit(message: str) -> None:
-        log_messages.append(message)
-        if log_callback:
-            log_callback(f"[ATTACK] {message}")
-
     attack_log: Dict[str, Any] = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "context": _json_safe(
@@ -52,8 +51,15 @@ def run_attack_plan_pipeline(
         ),
         "steps": [],
         "logMessages": log_messages,
+        "log_text": "",
         "result": {},
     }
+
+    def _emit(message: str) -> None:
+        log_messages.append(message)
+        attack_log["log_text"] = "\n".join(log_messages)
+        if log_callback:
+            log_callback(f"[ATTACK] {message}")
 
     # Step 1) Select the manned aircraft (aircraft 2 or 3) with the greatest fuel.
     agent_snapshot = agent_status_snapshot.load_agent_status_snapshot() or {}
@@ -63,7 +69,7 @@ def run_attack_plan_pipeline(
     attack_log["result"]["selected_aircraft"] = best_aircraft
     if best_aircraft:
         _emit(
-            "STEP1 유인기 선택: "
+            "STEP1 Selected manned aircraft: "
             f"aircraft {best_aircraft['aircraft_id']} "
             f"(fuel={best_aircraft.get('fuel')}, "
             f"coord={_coord_text(best_aircraft.get('coordinate'))})"
@@ -77,7 +83,7 @@ def run_attack_plan_pipeline(
             }
         )
     else:
-        _emit("STEP1 유인기 선택 실패: latest_0401_agent_status.json 누락")
+        _emit("STEP1 Manned-aircraft selection failed: latest_0401_agent_status.json unavailable")
         attack_log["steps"].append(
             {
                 "name": "select_manned_aircraft",
@@ -92,10 +98,10 @@ def run_attack_plan_pipeline(
     attack_log["result"]["target_tracking"] = target_entries
     if target_entries:
         tracking_summary = ", ".join(
-            f"watcher {entry.get('watcher_id')}→target {entry.get('target_id') or entry.get('key')}"
+            f"watcher {entry.get('watcher_id')}?’target {entry.get('target_id') or entry.get('key')}"
             for entry in target_entries
         )
-        _emit(f"STEP2 무인기 추적 현황: {tracking_summary or '추적 없음'}")
+        _emit(f"STEP2 UAV tracking summary: {tracking_summary or 'no active tracking'}")
         attack_log["steps"].append(
             {
                 "name": "analyze_uav_tracking",
@@ -104,7 +110,7 @@ def run_attack_plan_pipeline(
             }
         )
     else:
-        _emit(f"STEP2 무인기 추적 정보 없음: {target_error or 'targetInfo.json missing'}")
+        _emit(f"STEP2 UAV tracking info unavailable: {target_error or 'targetInfo.json missing'}")
         attack_log["steps"].append(
             {
                 "name": "analyze_uav_tracking",
@@ -125,7 +131,7 @@ def run_attack_plan_pipeline(
                 "message": "Missing friendly coordinate (cannot derive aircraft position)",
             }
         )
-        _emit("STEP3 공격 임무 생성 실패: 유인기 좌표 없음")
+        _emit("STEP3 Attack plan failed: manned aircraft coordinate missing")
         return _persist_attack_log(attack_log)
     if not primary_target or not primary_target.get("coordinate"):
         attack_log["steps"].append(
@@ -135,7 +141,7 @@ def run_attack_plan_pipeline(
                 "message": "No active target with coordinates found.",
             }
         )
-        _emit("STEP3 공격 임무 생성 보류: 추적 중 표적 좌표 없음")
+        _emit("STEP3 Attack plan deferred: no active target with coordinates")
         return _persist_attack_log(attack_log)
 
     attack_point, attack_error = _compute_attack_point(
@@ -145,10 +151,13 @@ def run_attack_plan_pipeline(
     attack_log["result"]["attack_point"] = attack_point
     mission_updates: Optional[Dict[str, Any]] = None
     if attack_point:
+        altitude_display = (
+            f"alt={attack_point['altitude']}m" if attack_point.get("altitude") is not None else "alt=unknown"
+        )
         _emit(
-            "STEP3 공격 임무 생성 완료: "
+            "STEP3 Attack plan completed: "
             f"lat={attack_point['latitude']:.6f}, lon={attack_point['longitude']:.6f}, "
-            f"alt≈{attack_point['altitude']:.1f}m"
+            f"{altitude_display}"
         )
         attack_log["steps"].append(
             {
@@ -168,7 +177,7 @@ def run_attack_plan_pipeline(
         if mission_updates:
             attack_log["result"]["missionUpdates"] = mission_updates
     else:
-        _emit(f"STEP3 공격 임무 생성 실패: {attack_error}")
+        _emit(f"STEP3 Attack plan failed: {attack_error}")
         attack_log["steps"].append(
             {
                 "name": "generate_attack_point",
@@ -333,11 +342,12 @@ def _compute_attack_point(
             best["centroid"],
             geotransform,
         )
+        altitude_int = _normalize_altitude_value(altitude)
         return (
             {
                 "latitude": best["centroid"][1],
                 "longitude": best["centroid"][0],
-                "altitude": altitude,
+                "altitude": altitude_int,
                 "friendly_distance_m": best["friendly_distance"],
                 "enemy_distance_m": best["enemy_distance"],
                 "raster_sources": used_rasters,
@@ -351,7 +361,9 @@ def _compute_attack_point(
 def _persist_attack_log(payload: Dict[str, Any]) -> Dict[str, Any]:
     directory = db_paths.get_db_subpath("DSS_Internal")
     directory.mkdir(parents=True, exist_ok=True)
-    target_path = directory / LOG_FILENAME
+    timestamp_token = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S_%f")
+    target_path = directory / f"log_attack_algorithm_{timestamp_token}.json"
+    payload["log_text"] = "\n".join(payload.get("logMessages") or [])
     try:
         target_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     except Exception as exc:
@@ -362,10 +374,11 @@ def _persist_attack_log(payload: Dict[str, Any]) -> Dict[str, Any]:
                     "status": "error",
                     "message": f"Failed to write {target_path}: {exc}",
                 }
-            )
+        )
         return payload
     payload["log_path"] = str(target_path)
-    payload.setdefault("logMessages", []).append(f"[LOG] Saved attack analysis → {target_path}")
+    payload.setdefault("logMessages", []).append(f"[LOG] Saved attack analysis -> {target_path}")
+    payload["log_text"] = "\n".join(payload.get("logMessages") or [])
     return payload
 
 
@@ -374,7 +387,7 @@ def _normalize_coordinate(value: Any) -> Optional[Dict[str, float]]:
         return None
     lat = _to_float(value.get("latitude") or value.get("lat"))
     lon = _to_float(value.get("longitude") or value.get("lon"))
-    alt = _to_float(value.get("altitude") or value.get("alt"))
+    alt = _normalize_altitude_value(value.get("altitude") or value.get("alt"))
     if lat is None or lon is None:
         return None
     return {"latitude": lat, "longitude": lon, "altitude": alt}
@@ -450,6 +463,7 @@ def _to_bool(value: Any) -> Optional[bool]:
     return None
 
 
+
 def _apply_attack_plan_overrides(
     *,
     ctx: Dict[str, Any],
@@ -472,8 +486,8 @@ def _apply_attack_plan_overrides(
     agent_index = _index_agent_states(agent_states)
     manned_state = agent_index.get(manned_id)
     uav_state = agent_index.get(watcher_id)
-    if not manned_state or not manned_state.get("current_waypoint_id"):
-        emit(f"[ATTACK] Current waypoint unavailable for manned aircraft {manned_id}.")
+    if not manned_state or not manned_state.get("coordinate"):
+        emit(f"[ATTACK] Coordinate unavailable for manned aircraft {manned_id}.")
         return None
     if not uav_state or not uav_state.get("current_waypoint_id"):
         emit(f"[ATTACK] Current waypoint unavailable for UAV {watcher_id}.")
@@ -484,17 +498,19 @@ def _apply_attack_plan_overrides(
         emit("[ATTACK] Mission override skipped (no MissionPlan found).")
         return None
 
-    plan_id_candidates = [
-        _to_int(value) for value in ctx.get("plan_ids") or [] if _to_int(value) is not None
-    ]
-    new_plan_id = plan_id_candidates[0] if plan_id_candidates else source_plan_id
-
     try:
         plan_src = db_paths.get_db_subpath("MissionPlan", f"{int(source_plan_id)}.json")
         plan_data = json.loads(plan_src.read_text(encoding="utf-8"))
     except Exception as exc:
         emit(f"[ATTACK] MissionPlan {source_plan_id} load failed: {exc}")
         return None
+
+    plan_ids_ctx = []
+    for value in ctx.get("plan_ids") or []:
+        value_int = _to_int(value)
+        if value_int is not None:
+            plan_ids_ctx.append(value_int)
+    new_plan_id = plan_ids_ctx[0] if plan_ids_ctx else source_plan_id
 
     new_plan_data = deepcopy(plan_data)
     now_ms = _now_timestamp_ms()
@@ -534,10 +550,13 @@ def _apply_attack_plan_overrides(
         aircraft_id = descriptor["aircraft_id"]
         state = descriptor["state"] or {}
         current_wp = _to_int(state.get("current_waypoint_id"))
-        previous_wp = _to_int(state.get("previous_waypoint_id"))
-        if aircraft_id is None or current_wp is None:
+        if aircraft_id is None:
+            emit(f"[ATTACK] {descriptor['label']} aircraft lacks identifier; skipping.")
+            continue
+        if descriptor["mode"] != "LAH" and current_wp is None:
             emit(f"[ATTACK] {descriptor['label']} aircraft lacks waypoint context; skipping.")
             continue
+
         artifacts = _resolve_plan_artifacts(
             source_plan_id=source_plan_id,
             aircraft_id=aircraft_id,
@@ -546,6 +565,7 @@ def _apply_attack_plan_overrides(
         )
         if artifacts is None:
             continue
+
         try:
             imp_src = db_paths.get_db_subpath(
                 "IndividualMissionPlan", f"{artifacts.individual_mission_package_id}.json"
@@ -558,22 +578,17 @@ def _apply_attack_plan_overrides(
             continue
 
         new_imp_id = _next_imp_id()
-        new_path_id = _next_path_id(aircraft_id)
-        new_individual_id = _next_individual_mission_id()
-        new_waypoint_id = _next_waypoint_id()
-        emit(
-            f"[ATTACK][STEP4-{descriptor['label']}] "
-            f"IDs 할당 → imp:{new_imp_id} path:{new_path_id} indiv:{new_individual_id} wp:{new_waypoint_id}"
-        )
-
         if not _update_plan_aircraft_entry(new_plan_data, aircraft_id, new_imp_id, emit):
             continue
 
         new_imp_data = deepcopy(imp_data)
+        mission_list = new_imp_data.get("individualMissionList", [])
         target_mission = None
-        for mission in new_imp_data.get("individualMissionList", []):
+        target_index = None
+        for idx, mission in enumerate(mission_list):
             if _to_int(mission.get("individualMissionID")) == artifacts.individual_mission_id:
                 target_mission = mission
+                target_index = idx
                 break
         if target_mission is None:
             emit(
@@ -581,71 +596,41 @@ def _apply_attack_plan_overrides(
                 f"not found for aircraft {aircraft_id}."
             )
             continue
-        target_mission["individualMissionID"] = new_individual_id
-        target_mission["pathID"] = new_path_id
-        target_mission["isDone"] = False
-        rel_block = dict(target_mission.get("relatedMission") or {})
-        rel_block["relatedMissionType"] = 3
-        rel_block.setdefault("inputMissionID", _to_int((ctx.get("mission_ids") or [None])[0]) or 0)
-        rel_block["attackReason"] = ctx.get("reason")
-        target_mission["relatedMission"] = rel_block
-        new_imp_data["individualMissionPackageID"] = new_imp_id
 
-        new_fp_data = deepcopy(fp_data)
-        new_fp_data["pathID"] = new_path_id
-        new_fp_data["timestamp"] = now_ms
-        new_fp_data["Source"] = new_fp_data.get("Source") or "MMR"
-
-        removed_wp_id: Optional[int] = None
-        inserted_wp: Optional[Dict[str, Any]] = None
-        try:
-            if descriptor["mode"] == "UAV":
-                removed_wp_id, inserted_wp = _inject_prior_waypoint(
-                    new_fp_data,
-                    artifacts.current_waypoint_id,
-                    artifacts.previous_waypoint_id,
-                    descriptor["target_coord"],
-                    new_waypoint_id,
-                    mission_type=3,
-                    target_tracking={"targetID": descriptor.get("target_id")},
-                )
-            else:
-                inserted_wp = _insert_lah_attack_waypoint(
-                    new_fp_data,
-                    artifacts.current_waypoint_id,
-                    attack_coord,
-                    new_waypoint_id,
-                    descriptor.get("target_id"),
-                )
-        except Exception as exc:
-            emit(f"[ATTACK] Waypoint injection failed for aircraft {aircraft_id}: {exc}")
+        if descriptor["mode"] == "LAH":
+            update = _build_lah_attack_package(
+                descriptor=descriptor,
+                new_imp_id=new_imp_id,
+                imp_data=new_imp_data,
+                fp_data=fp_data,
+                target_mission=target_mission,
+                attack_coord=attack_coord,
+                ctx=ctx,
+                state=state,
+                aircraft_id=aircraft_id,
+                emit=emit,
+                now_ms=now_ms,
+            )
+            if update:
+                aircraft_updates.append(update)
             continue
 
-        imp_dest = db_paths.get_db_subpath("IndividualMissionPlan", f"{new_imp_id}.json")
-        fp_dest = db_paths.get_db_subpath("FlightPath", f"{new_path_id}.json")
-        imp_dest.parent.mkdir(parents=True, exist_ok=True)
-        fp_dest.parent.mkdir(parents=True, exist_ok=True)
-        _write_json_file(imp_dest, new_imp_data)
-        _write_json_file(fp_dest, new_fp_data)
-        emit(
-            f"[ATTACK][ARTIFACT] aircraft {aircraft_id} → "
-            f"IMP:{imp_dest.name} PATH:{fp_dest.name}"
+        update = _build_uav_attack_tracking_package(
+            descriptor=descriptor,
+            new_imp_id=new_imp_id,
+            imp_data=new_imp_data,
+            fp_data=fp_data,
+            target_mission_template=target_mission,
+            target_index=target_index,
+            attack_coord=attack_coord,
+            ctx=ctx,
+            state=state,
+            artifacts=artifacts,
+            emit=emit,
+            now_ms=now_ms,
         )
-
-        aircraft_updates.append(
-            {
-                "aircraft_id": aircraft_id,
-                "role": descriptor["label"],
-                "individualMissionPackageID": new_imp_id,
-                "individualMissionID": new_individual_id,
-                "pathID": new_path_id,
-                "waypointID": new_waypoint_id,
-                "removedWaypointID": removed_wp_id,
-                "flightPath": str(fp_dest),
-                "missionPackage": str(imp_dest),
-                "insertedWaypoint": inserted_wp,
-            }
-        )
+        if update:
+            aircraft_updates.append(update)
 
     if not aircraft_updates:
         emit("[ATTACK] Mission override produced no artifacts.")
@@ -654,7 +639,7 @@ def _apply_attack_plan_overrides(
     plan_dest = db_paths.get_db_subpath("MissionPlan", f"{new_plan_id}.json")
     plan_dest.parent.mkdir(parents=True, exist_ok=True)
     _write_json_file(plan_dest, new_plan_data)
-    emit(f"[ATTACK][PLAN] MissionPlan 저장 → {plan_dest.name} (planID={new_plan_id})")
+    emit(f"[ATTACK][PLAN] MissionPlan saved -> {plan_dest.name} (planID={new_plan_id})")
 
     plan_meta_map = dict(ctx.get("_option_meta") or {})
     plan_meta_entry = plan_meta_map.setdefault(new_plan_id, {})
@@ -696,11 +681,16 @@ def _index_agent_states(agent_states: List[Any]) -> Dict[int, Dict[str, Any]]:
             unm_info = entry.get("unmannedInfo") or {}
             wp_block = unm_info.get("currentWaypointID") or {}
         current_wp = _to_int(wp_block.get("waypointID"))
+        velocity = entry.get("velocity") or {}
+        heading = _to_float(velocity.get("heading"))
+        if heading is not None:
+            heading = heading % 360.0
         index[aircraft_id] = {
             "aircraft_id": aircraft_id,
             "coordinate": coord,
             "current_waypoint_id": current_wp,
             "is_unmanned": bool(entry.get("isUnmanned")),
+            "heading": heading,
         }
     return index
 
@@ -727,12 +717,15 @@ def _insert_lah_attack_waypoint(
     if prev_index >= 0 and "nextWaypointID" in waypoints[prev_index]:
         waypoints[prev_index]["nextWaypointID"] = new_waypoint_id
 
+    altitude = _normalize_altitude_value(attack_coord.get("altitude"))
+    if altitude is None:
+        altitude = _normalize_altitude_value((template.get("coordinate") or {}).get("altitude"))
+    if altitude is None:
+        altitude = 800
     coordinate = {
         "latitude": attack_coord.get("latitude"),
         "longitude": attack_coord.get("longitude"),
-        "altitude": attack_coord.get("altitude")
-        or (template.get("coordinate") or {}).get("altitude")
-        or 800.0,
+        "altitude": altitude,
     }
     new_wp = {
         "waypointID": new_waypoint_id,
@@ -741,8 +734,8 @@ def _insert_lah_attack_waypoint(
         "eta": template.get("eta", 0),
         "ecf": template.get("ecf", 0.0),
         "nextWaypointID": current_waypoint_id,
-        "hovering": deepcopy(template.get("hovering") or {"time": 0}),
-        "loiter": deepcopy(template.get("loiter") or {"radius": 0, "direction": 0, "time": 0, "speed": 0}),
+        "hovering": {"time": 0},
+        "loiter": {"radius": 0, "direction": 0, "time": 0, "speed": 0},
         "attack": deepcopy(template.get("attack") or {}),
     }
     attack_block = new_wp["attack"] or {}
@@ -753,6 +746,528 @@ def _insert_lah_attack_waypoint(
     waypoints.insert(current_index, new_wp)
     flight_path["lahWaypointList"] = waypoints
     return new_wp
+
+
+def _build_uav_attack_tracking_package(
+    *,
+    descriptor: Dict[str, Any],
+    new_imp_id: int,
+    imp_data: Dict[str, Any],
+    fp_data: Dict[str, Any],
+    target_mission_template: Dict[str, Any],
+    target_index: Optional[int],
+    attack_coord: Dict[str, Any],
+    ctx: Dict[str, Any],
+    state: Dict[str, Any],
+    artifacts: Any,
+    emit: Callable[[str], None],
+    now_ms: int,
+) -> Optional[Dict[str, Any]]:
+    if target_index is None:
+        emit("[ATTACK][UAV] Target mission index unavailable; skipping UAV override.")
+        return None
+    agent_coord = _normalize_coordinate(state.get("coordinate"))
+    if not agent_coord:
+        emit(f"[ATTACK][UAV] Coordinate missing for aircraft {descriptor['aircraft_id']}.")
+        return None
+
+    target_coord_norm = _normalize_coordinate(descriptor.get("target_coord") or attack_coord)
+    if not target_coord_norm:
+        emit(f"[ATTACK][UAV] Target coordinate unavailable for aircraft {descriptor['aircraft_id']}.")
+        return None
+    if target_coord_norm.get("altitude") is None:
+        target_coord_norm["altitude"] = _normalize_altitude_value(agent_coord.get("altitude")) or 700
+
+    heading = state.get("heading")
+    approach_coord = _project_coordinate(agent_coord, heading, ATTACK_ENTRY_OFFSET_METERS)
+    if approach_coord is None:
+        try:
+            bearing = _bearing_between(
+                agent_coord["latitude"],
+                agent_coord["longitude"],
+                target_coord_norm["latitude"],
+                target_coord_norm["longitude"],
+            )
+            approach_coord = _project_coordinate(agent_coord, bearing, ATTACK_ENTRY_OFFSET_METERS)
+        except Exception:
+            approach_coord = None
+    if approach_coord is None:
+        approach_coord = {
+            "latitude": agent_coord["latitude"],
+            "longitude": agent_coord["longitude"],
+        }
+    approach_alt = _normalize_altitude_value(agent_coord.get("altitude"))
+    if approach_alt is None:
+        approach_alt = _normalize_altitude_value(target_coord_norm.get("altitude")) or 700
+    approach_coord["altitude"] = approach_alt
+
+    attack_path_id = _next_path_id(descriptor["aircraft_id"])
+    resume_path_id = _next_path_id(descriptor["aircraft_id"])
+    tracking_individual_id = _next_individual_mission_id()
+    resume_individual_id = _next_individual_mission_id()
+    approach_wp_id = _next_waypoint_id()
+    target_wp_id = _next_waypoint_id()
+
+    original_entry = deepcopy(target_mission_template)
+    base_rel_block = dict(original_entry.get("relatedMission") or {})
+    input_mission_id = _to_int(base_rel_block.get("inputMissionID")) or _to_int((ctx.get("mission_ids") or [None])[0]) or 0
+    prior_mission_id = _to_int(base_rel_block.get("priorMissionID")) or 0
+    attack_reason = ctx.get("reason")
+
+    tracking_rel = dict(base_rel_block)
+    tracking_rel["relatedMissionType"] = 3
+    tracking_rel["inputMissionID"] = input_mission_id
+    tracking_rel["priorMissionID"] = prior_mission_id
+    tracking_rel["attackReason"] = attack_reason
+    tracking_rel["targetID"] = descriptor.get("target_id") or 0
+
+    resume_rel = dict(base_rel_block)
+    resume_rel["relatedMissionType"] = base_rel_block.get("relatedMissionType", 1)
+    resume_rel["inputMissionID"] = input_mission_id
+    resume_rel["priorMissionID"] = prior_mission_id
+
+    mission_attack = {
+        "individualMissionID": tracking_individual_id,
+        "isDone": False,
+        "relatedMission": tracking_rel,
+        "individualMissionInfo": {
+            "individualMissionType": 1,
+            "patternType": 1,
+            "autoZoomIn": True,
+            "coordinateList": [
+                {
+                    "latitude": approach_coord["latitude"],
+                    "longitude": approach_coord["longitude"],
+                    "altitude": approach_coord["altitude"],
+                },
+                {
+                    "latitude": target_coord_norm["latitude"],
+                    "longitude": target_coord_norm["longitude"],
+                    "altitude": target_coord_norm["altitude"],
+                },
+            ],
+            "lineList": [],
+            "areaList": [],
+            "targetID": descriptor.get("target_id") or 0,
+        },
+        "pathID": attack_path_id,
+    }
+
+    mission_resume = deepcopy(original_entry)
+    mission_resume["individualMissionID"] = resume_individual_id
+    mission_resume["pathID"] = resume_path_id
+    mission_resume["relatedMission"] = resume_rel
+    mission_resume["isDone"] = False
+
+    resume_fp_data = deepcopy(fp_data)
+    original_resume_waypoints = deepcopy(resume_fp_data.get("waypointList") or [])
+    removed_wp_id = _trim_completed_waypoints(
+        resume_fp_data,
+        current_waypoint_id=artifacts.current_waypoint_id,
+        previous_waypoint_id=artifacts.previous_waypoint_id,
+    )
+    resume_waypoints = resume_fp_data.get("waypointList") or []
+    if not resume_waypoints and original_resume_waypoints:
+        resume_fp_data["waypointList"] = original_resume_waypoints
+        resume_waypoints = original_resume_waypoints
+
+    resume_fp_data["pathID"] = resume_path_id
+    resume_fp_data["timestamp"] = now_ms
+    resume_fp_data["Source"] = resume_fp_data.get("Source") or "MMR"
+    resume_fp_data["aircraftID"] = descriptor["aircraft_id"]
+    resume_fp_data["individualMissionID"] = resume_individual_id
+
+    approach_wp = {
+        "waypointID": approach_wp_id,
+        "coordinate": {
+            "latitude": approach_coord["latitude"],
+            "longitude": approach_coord["longitude"],
+            "altitude": approach_coord["altitude"],
+        },
+        "speed": 35.0,
+        "eta": 25,
+        "ecf": 0.0,
+        "nextWaypointID": target_wp_id,
+        "waypointPassType": 2,
+        "filmingProperty": {
+            "fieldOfView": 10.0,
+            "sensorType": 1,
+            "operationMode": 1,
+            "coordinateOrientation": {
+                "coordinate": {
+                    "latitude": target_coord_norm["latitude"],
+                    "longitude": target_coord_norm["longitude"],
+                    "altitude": target_coord_norm.get("altitude") or 0,
+                }
+            },
+        },
+        "loiterProperty": {
+            "radius": 200,
+            "direction": 1,
+            "time": 30,
+            "speed": 30,
+        },
+    }
+
+    target_wp = {
+        "waypointID": target_wp_id,
+        "coordinate": {
+            "latitude": target_coord_norm["latitude"],
+            "longitude": target_coord_norm["longitude"],
+            "altitude": target_coord_norm["altitude"],
+        },
+        "speed": 30.0,
+        "eta": 30,
+        "ecf": 0.0,
+        "nextWaypointID": 0,
+        "waypointPassType": 2,
+        "filmingProperty": {
+            "fieldOfView": 5.0,
+            "sensorType": 1,
+            "operationMode": 3,
+            "coordinateOrientation": {
+                "coordinate": {
+                    "latitude": target_coord_norm["latitude"],
+                    "longitude": target_coord_norm["longitude"],
+                    "altitude": target_coord_norm["altitude"],
+                }
+            },
+        },
+        "loiterProperty": {
+            "radius": 400,
+            "direction": 1,
+            "time": 300,
+            "speed": 30,
+        },
+    }
+    if descriptor.get("target_id") is not None:
+        target_wp["autoTracking"] = {"targetID": descriptor.get("target_id")}
+
+    tracking_fp_data = {
+        "timestamp": now_ms,
+        "Source": fp_data.get("Source") or "MMR",
+        "pathID": attack_path_id,
+        "aircraftID": descriptor["aircraft_id"],
+        "individualMissionID": tracking_individual_id,
+        "isFormationFlight": fp_data.get("isFormationFlight", False),
+        "waypointList": [approach_wp, target_wp],
+    }
+
+    imp_data["individualMissionPackageID"] = new_imp_id
+    imp_data["timestamp"] = now_ms
+    mission_list = imp_data.get("individualMissionList") or []
+    if 0 <= target_index < len(mission_list):
+        mission_list.pop(target_index)
+        mission_list[target_index:target_index] = [mission_attack, mission_resume]
+    else:
+        mission_list.insert(0, mission_attack)
+        mission_list.insert(1, mission_resume)
+        emit("[ATTACK][UAV] Target mission index invalid; appended missions at head.")
+
+    imp_dest = db_paths.get_db_subpath("IndividualMissionPlan", f"{new_imp_id}.json")
+    tracking_fp_dest = db_paths.get_db_subpath("FlightPath", f"{attack_path_id}.json")
+    resume_fp_dest = db_paths.get_db_subpath("FlightPath", f"{resume_path_id}.json")
+    for path in (imp_dest, tracking_fp_dest, resume_fp_dest):
+        path.parent.mkdir(parents=True, exist_ok=True)
+    _write_json_file(imp_dest, imp_data)
+    _write_json_file(tracking_fp_dest, tracking_fp_data)
+    _write_json_file(resume_fp_dest, resume_fp_data)
+
+    emit(
+        f"[ATTACK][UAV] Generated tracking/resume missions -> "
+        f"IMP:{imp_dest.name} PATHS:{tracking_fp_dest.name}/{resume_fp_dest.name}"
+    )
+
+    return {
+        "aircraft_id": descriptor["aircraft_id"],
+        "role": descriptor["label"],
+        "individualMissionPackageID": new_imp_id,
+        "tracking": {
+            "individualMissionID": tracking_individual_id,
+            "pathID": attack_path_id,
+            "approachWaypointID": approach_wp_id,
+            "targetWaypointID": target_wp_id,
+        },
+        "resume": {
+            "individualMissionID": resume_individual_id,
+            "pathID": resume_path_id,
+        },
+        "removedWaypointID": removed_wp_id,
+        "trackingPath": str(tracking_fp_dest),
+        "resumePath": str(resume_fp_dest),
+    }
+
+
+def _build_lah_attack_package(
+    *,
+    descriptor: Dict[str, Any],
+    new_imp_id: int,
+    imp_data: Dict[str, Any],
+    fp_data: Dict[str, Any],
+    target_mission: Dict[str, Any],
+    attack_coord: Dict[str, Any],
+    ctx: Dict[str, Any],
+    state: Dict[str, Any],
+    aircraft_id: int,
+    emit: Callable[[str], None],
+    now_ms: int,
+) -> Optional[Dict[str, Any]]:
+    current_coord = state.get("coordinate")
+    if not current_coord:
+        emit(f"[ATTACK][LAH] Coordinate missing for aircraft {aircraft_id}.")
+        return None
+    heading = _to_float(state.get("heading"))
+    if heading is None:
+        emit(f"[ATTACK][LAH] Heading missing for aircraft {aircraft_id}; defaulting to north.")
+        heading = 0.0
+
+    entry_coord = _project_coordinate(current_coord, heading, ATTACK_ENTRY_OFFSET_METERS) or dict(current_coord)
+    entry_alt = _normalize_altitude_value(entry_coord.get("altitude")) or _normalize_altitude_value(current_coord.get("altitude")) or 800
+    entry_coord["altitude"] = entry_alt
+
+    attack_coord_norm = _normalize_coordinate(attack_coord)
+    if not attack_coord_norm:
+        emit("[ATTACK][LAH] Attack coordinate unavailable for manned aircraft.")
+        return None
+    attack_alt = _normalize_altitude_value(attack_coord_norm.get("altitude"))
+    if attack_alt is None:
+        attack_alt = entry_alt
+    attack_coord_norm["altitude"] = attack_alt
+
+    final_coord = None
+    coord_list = (target_mission.get("individualMissionInfo") or {}).get("coordinateList") or []
+    for coord_entry in reversed(coord_list):
+        normalized = _normalize_coordinate(coord_entry)
+        if normalized:
+            final_coord = normalized
+            break
+    if final_coord is None:
+        final_coord = _extract_final_lah_coordinate(fp_data)
+    if final_coord is None:
+        final_coord = dict(current_coord)
+    final_alt = _normalize_altitude_value(final_coord.get("altitude")) or entry_alt
+    final_coord["altitude"] = final_alt
+
+    attack_path_id = _next_path_id(aircraft_id)
+    return_path_id = _next_path_id(aircraft_id)
+    attack_individual_id = _next_individual_mission_id()
+    return_individual_id = _next_individual_mission_id()
+    entry_wp_id = _next_waypoint_id()
+    attack_wp_id = _next_waypoint_id()
+    egress_start_wp_id = _next_waypoint_id()
+    egress_end_wp_id = _next_waypoint_id()
+
+    rel_info = dict(target_mission.get("relatedMission") or {})
+    input_mission_id = _to_int(rel_info.get("inputMissionID")) or _to_int((ctx.get("mission_ids") or [None])[0]) or 0
+    prior_mission_id = _to_int(rel_info.get("priorMissionID")) or 0
+    related_template = {
+        "relatedMissionType": 1,
+        "inputMissionID": input_mission_id,
+        "priorMissionID": prior_mission_id,
+    }
+
+    mission_attack = {
+        "individualMissionID": attack_individual_id,
+        "isDone": False,
+        "relatedMission": dict(related_template),
+        "individualMissionInfo": {
+            "individualMissionType": 2,
+            "patternType": 2,
+            "autoZoomIn": False,
+            "coordinateList": [
+                {
+                    "latitude": entry_coord["latitude"],
+                    "longitude": entry_coord["longitude"],
+                    "altitude": entry_coord["altitude"],
+                },
+                {
+                    "latitude": attack_coord_norm["latitude"],
+                    "longitude": attack_coord_norm["longitude"],
+                    "altitude": attack_coord_norm["altitude"],
+                },
+            ],
+        },
+        "pathID": attack_path_id,
+    }
+
+    mission_return = {
+        "individualMissionID": return_individual_id,
+        "isDone": False,
+        "relatedMission": dict(related_template),
+        "individualMissionInfo": {
+            "individualMissionType": 7,
+            "patternType": 10,
+            "autoZoomIn": False,
+            "coordinateList": [
+                {
+                    "latitude": attack_coord_norm["latitude"],
+                    "longitude": attack_coord_norm["longitude"],
+                    "altitude": attack_coord_norm["altitude"],
+                },
+                {
+                    "latitude": final_coord["latitude"],
+                    "longitude": final_coord["longitude"],
+                    "altitude": final_coord["altitude"],
+                },
+            ],
+        },
+        "pathID": return_path_id,
+    }
+
+    imp_data["individualMissionPackageID"] = new_imp_id
+    imp_data["timestamp"] = now_ms
+    imp_data["individualMissionList"] = [mission_attack, mission_return]
+
+    template_wp = deepcopy((fp_data.get("lahWaypointList") or [None])[0]) if fp_data.get("lahWaypointList") else _default_lah_waypoint_template()
+
+    entry_wp = _build_lah_waypoint_from_template(template_wp, entry_wp_id, entry_coord, attack_wp_id, mark_attack=False, target_id=None)
+    attack_wp = _build_lah_waypoint_from_template(template_wp, attack_wp_id, attack_coord_norm, 0, mark_attack=True, target_id=descriptor.get("target_id"))
+    egress_start_wp = _build_lah_waypoint_from_template(template_wp, egress_start_wp_id, attack_coord_norm, egress_end_wp_id, mark_attack=False, target_id=None)
+    egress_end_wp = _build_lah_waypoint_from_template(template_wp, egress_end_wp_id, final_coord, 0, mark_attack=False, target_id=None)
+
+    attack_fp_data = {
+        "timestamp": now_ms,
+        "Source": fp_data.get("Source") or "MMR",
+        "pathID": attack_path_id,
+        "aircraftID": aircraft_id,
+        "lahWaypointList": [entry_wp, attack_wp],
+    }
+    return_fp_data = {
+        "timestamp": now_ms,
+        "Source": fp_data.get("Source") or "MMR",
+        "pathID": return_path_id,
+        "aircraftID": aircraft_id,
+        "lahWaypointList": [egress_start_wp, egress_end_wp],
+    }
+
+    imp_dest = db_paths.get_db_subpath("IndividualMissionPlan", f"{new_imp_id}.json")
+    attack_fp_dest = db_paths.get_db_subpath("FlightPath", f"{attack_path_id}.json")
+    return_fp_dest = db_paths.get_db_subpath("FlightPath", f"{return_path_id}.json")
+    imp_dest.parent.mkdir(parents=True, exist_ok=True)
+    attack_fp_dest.parent.mkdir(parents=True, exist_ok=True)
+    return_fp_dest.parent.mkdir(parents=True, exist_ok=True)
+    _write_json_file(imp_dest, imp_data)
+    _write_json_file(attack_fp_dest, attack_fp_data)
+    _write_json_file(return_fp_dest, return_fp_data)
+    emit(
+        "[ATTACK][LAH] Generated attack/egress missions -> "
+        f"IMP:{imp_dest.name} PATHS:{attack_fp_dest.name}/{return_fp_dest.name}"
+    )
+
+    return {
+        "aircraft_id": aircraft_id,
+        "role": descriptor["label"],
+        "individualMissionPackageID": new_imp_id,
+        "individualMissionID": attack_individual_id,
+        "missions": [
+            {
+                "type": "attack",
+                "individualMissionID": attack_individual_id,
+                "pathID": attack_path_id,
+                "waypointIDs": [entry_wp_id, attack_wp_id],
+            },
+            {
+                "type": "egress",
+                "individualMissionID": return_individual_id,
+                "pathID": return_path_id,
+                "waypointIDs": [egress_start_wp_id, egress_end_wp_id],
+            },
+        ],
+        "missionPackage": str(imp_dest),
+        "flightPath": str(attack_fp_dest),
+        "flightPaths": {
+            "attack": str(attack_fp_dest),
+            "egress": str(return_fp_dest),
+        },
+        "pathID": attack_path_id,
+        "waypointID": attack_wp_id,
+        "removedWaypointID": None,
+        "insertedWaypoint": None,
+        "attackEntryCoordinate": dict(entry_coord),
+        "attackCoordinate": dict(attack_coord_norm),
+        "egressCoordinate": dict(final_coord),
+    }
+
+
+def _build_lah_waypoint_from_template(
+    template: Dict[str, Any],
+    waypoint_id: int,
+    coord: Dict[str, Any],
+    next_id: int,
+    *,
+    mark_attack: bool,
+    target_id: Optional[int],
+) -> Dict[str, Any]:
+    waypoint = deepcopy(template)
+    waypoint["waypointID"] = waypoint_id
+    waypoint["nextWaypointID"] = next_id or 0
+    coordinate = dict(template.get("coordinate") or {})
+    coordinate["latitude"] = coord.get("latitude")
+    coordinate["longitude"] = coord.get("longitude")
+    coordinate["altitude"] = _normalize_altitude_value(coord.get("altitude")) or coordinate.get("altitude") or 800
+    waypoint["coordinate"] = coordinate
+    waypoint["speed"] = 30.0
+    attack_block = dict(template.get("attack") or {"targetID": 0, "weaponType": 0})
+    if mark_attack:
+        attack_block["targetID"] = _to_int(target_id) or 0
+        attack_block["weaponType"] = 1
+    else:
+        attack_block["targetID"] = 0
+        attack_block["weaponType"] = attack_block.get("weaponType", 0)
+    waypoint["attack"] = attack_block
+    return waypoint
+
+
+def _default_lah_waypoint_template() -> Dict[str, Any]:
+    return {
+        "waypointID": 0,
+        "coordinate": {"latitude": 0.0, "longitude": 0.0, "altitude": 800},
+        "speed": 40.0,
+        "eta": 0,
+        "ecf": 0.0,
+        "nextWaypointID": 0,
+        "hovering": {"time": 0},
+        "loiter": {"radius": 0, "direction": 0, "time": 0, "speed": 0},
+        "attack": {"targetID": 0, "weaponType": 0},
+    }
+
+
+def _extract_final_lah_coordinate(fp_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    waypoints = fp_data.get("lahWaypointList") or []
+    if not waypoints:
+        return None
+    last = waypoints[-1].get("coordinate")
+    return _normalize_coordinate(last)
+
+
+def _project_coordinate(
+    coord: Optional[Dict[str, Any]],
+    heading_deg: Optional[float],
+    distance_m: float,
+) -> Optional[Dict[str, float]]:
+    if not coord:
+        return None
+    lat = _to_float(coord.get("latitude"))
+    lon = _to_float(coord.get("longitude"))
+    if lat is None or lon is None:
+        return None
+    heading = heading_deg if heading_deg is not None else 0.0
+    lat_rad = math.radians(lat)
+    lon_rad = math.radians(lon)
+    heading_rad = math.radians(heading)
+    angular_distance = distance_m / 6_371_000.0
+    new_lat = math.asin(
+        math.sin(lat_rad) * math.cos(angular_distance)
+        + math.cos(lat_rad) * math.sin(angular_distance) * math.cos(heading_rad)
+    )
+    new_lon = lon_rad + math.atan2(
+        math.sin(heading_rad) * math.sin(angular_distance) * math.cos(lat_rad),
+        math.cos(angular_distance) - math.sin(lat_rad) * math.sin(new_lat),
+    )
+    return {
+        "latitude": math.degrees(new_lat),
+        "longitude": math.degrees(new_lon),
+    }
 
 
 def _update_plan_aircraft_entry(
@@ -776,3 +1291,4 @@ def _write_json_file(path: Path, data: Dict[str, Any]) -> None:
 def _now_timestamp_ms() -> int:
     epoch = datetime(2000, 1, 1, tzinfo=timezone.utc)
     return int((datetime.now(timezone.utc) - epoch).total_seconds() * 1000)
+

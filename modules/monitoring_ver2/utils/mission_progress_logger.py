@@ -101,9 +101,8 @@ class MissionProgressExporter:
         self,
         key: Tuple[Optional[int], Optional[int], Optional[int]],
     ) -> Path:
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
         plan_id, input_pkg, active_input = key
-        file_name = f"mission_progress_{plan_id}_{input_pkg}_{active_input}_{stamp}.json"
+        file_name = f"mission_progress_{plan_id}_{input_pkg}_{active_input}.json"
         base_dir = self._resolve_base_dir()
         return base_dir / file_name
 

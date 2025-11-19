@@ -14,6 +14,7 @@ from types import ModuleType
 
 _EPOCH_2000_MS = 946_684_800_000
 _ID_ALLOCATOR_MOD: Optional[ModuleType] = None
+_MISSION_HELPERS_MOD: Optional[ModuleType] = None
 
 
 def _load_id_allocator() -> ModuleType:
@@ -50,6 +51,83 @@ def _next_waypoint_id() -> int:
     return _load_id_allocator().next_waypoint_id()
 
 
+def _load_mission_helpers_module() -> Optional[ModuleType]:
+    global _MISSION_HELPERS_MOD
+    if _MISSION_HELPERS_MOD is not None:
+        return _MISSION_HELPERS_MOD
+    helpers_path = (
+        Path(__file__).resolve().parent / "MissionPlanner" / "data_def" / "mission_helpers.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "mission_planner_mission_helpers", helpers_path
+    )
+    if spec is None or spec.loader is None:
+        return None
+    module = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        return None
+    _MISSION_HELPERS_MOD = module
+    return module
+
+
+def _sample_dem_altitude(lat: float, lon: float) -> Optional[float]:
+    module = _load_mission_helpers_module()
+    if module is None:
+        return None
+    terrain_func = getattr(module, "terrain_elev", None)
+    if not callable(terrain_func):
+        return None
+    try:
+        value = float(terrain_func(lat, lon))
+    except Exception:
+        return None
+    if not math.isfinite(value):
+        return None
+    return value
+
+
+def _project_coordinate(
+    coord: Optional[Dict[str, Any]],
+    heading_deg: Optional[float],
+    distance_m: float,
+) -> Optional[Dict[str, float]]:
+    if not coord:
+        return None
+    lat = _to_float(coord.get("latitude"))
+    lon = _to_float(coord.get("longitude"))
+    if lat is None or lon is None:
+        return None
+    heading = heading_deg if heading_deg is not None else 0.0
+    lat_rad = math.radians(lat)
+    lon_rad = math.radians(lon)
+    heading_rad = math.radians(heading)
+    angular_distance = distance_m / 6_371_000.0
+    new_lat = math.asin(
+        math.sin(lat_rad) * math.cos(angular_distance)
+        + math.cos(lat_rad) * math.sin(angular_distance) * math.cos(heading_rad)
+    )
+    new_lon = lon_rad + math.atan2(
+        math.sin(heading_rad) * math.sin(angular_distance) * math.cos(lat_rad),
+        math.cos(angular_distance) - math.sin(lat_rad) * math.sin(new_lat),
+    )
+    return {
+        "latitude": math.degrees(new_lat),
+        "longitude": math.degrees(new_lon),
+    }
+
+
+def _bearing_between(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    d_lambda = math.radians(lon2 - lon1)
+    y = math.sin(d_lambda) * math.cos(phi2)
+    x = math.cos(phi1) * math.sin(phi2) - math.sin(phi1) * math.cos(phi2) * math.cos(d_lambda)
+    bearing = math.degrees(math.atan2(y, x))
+    return (bearing + 360.0) % 360.0
+
+
 @dataclass
 class PriorMissionPipelineResult:
     plan_ids: List[int]
@@ -60,9 +138,13 @@ class PriorMissionPipelineResult:
     new_imp_id: int
     new_path_id: int
     new_individual_id: int
+    resume_path_id: int
+    resume_individual_id: int
     log_path: Path
     removed_waypoint_id: Optional[int]
     inserted_waypoint_id: int
+    approach_waypoint_id: int
+    target_waypoint_id: int
 
 
 @dataclass
@@ -72,6 +154,7 @@ class AgentSnapshotSummary:
     longitude: Optional[float]
     altitude: Optional[float]
     current_waypoint_id: Optional[int]
+    heading: Optional[float]
 
 
 @dataclass
@@ -107,6 +190,43 @@ def _to_float(value: Any) -> Optional[float]:
         return None
 
 
+def _normalize_altitude_value(value: Any) -> Optional[int]:
+    alt = _to_float(value)
+    if alt is None:
+        return None
+    try:
+        return int(round(alt))
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _apply_dem_altitude_if_needed(
+    coord: Dict[str, Any],
+    lat: Optional[float],
+    lon: Optional[float],
+    emit: Optional[Callable[[str], None]] = None,
+    *,
+    context: str = "Target coordinate",
+) -> Optional[int]:
+    current_alt = _normalize_altitude_value(coord.get("altitude"))
+    if current_alt is not None:
+        coord["altitude"] = current_alt
+    if lat is None or lon is None:
+        return current_alt
+    if current_alt is not None and current_alt != 0:
+        return current_alt
+    dem_alt = _sample_dem_altitude(lat, lon)
+    if dem_alt is None:
+        return current_alt
+    dem_alt_int = _normalize_altitude_value(dem_alt)
+    if dem_alt_int is None:
+        return current_alt
+    coord["altitude"] = dem_alt_int
+    if emit is not None:
+        emit(f"[PRIOR][STEP2] {context} altitude resolved via DEM ({dem_alt_int}m).")
+    return dem_alt_int
+
+
 def _ensure_option_names(plan_ids: List[int], option_names: List[str]) -> List[str]:
     if not option_names:
         option_names = ["선행임무 재계획"]
@@ -138,10 +258,14 @@ def run_prior_mission_pipeline(
     error_text: Optional[str] = None
     new_plan_id: Optional[int] = None
     new_imp_id: Optional[int] = None
-    new_path_id: Optional[int] = None
-    new_individual_id: Optional[int] = None
+    prior_path_id: Optional[int] = None
+    resume_path_id: Optional[int] = None
+    prior_individual_id: Optional[int] = None
+    resume_individual_id: Optional[int] = None
     removed_wp_id: Optional[int] = None
     inserted_wp_id: Optional[int] = None
+    prior_approach_wp_id: Optional[int] = None
+    prior_target_wp_id: Optional[int] = None
     prior_mission_id: Optional[int] = None
     mission_type: Optional[int] = None
     aircraft_id: Optional[int] = None
@@ -191,6 +315,9 @@ def run_prior_mission_pipeline(
         current_waypoint_id = _to_int(detail.get("currentWaypointID"))
         previous_waypoint_id = _to_int(detail.get("previousWaypointID"))
         target_coord = dict(detail.get("targetCoordinate") or {})
+        if "altitude" in target_coord:
+            target_coord["altitude"] = _normalize_altitude_value(target_coord.get("altitude"))
+        coord_source_label = "Target coordinate (0202 payload)"
         detail_summary = _build_detail_summary(detail)
 
         source_plan_id = _to_int(detail.get("sourceMissionPlanID"))
@@ -243,8 +370,9 @@ def run_prior_mission_pipeline(
                 ):
                     target_coord["latitude"] = coord_block.get("latitude")
                     target_coord["longitude"] = coord_block.get("longitude")
-                    target_coord["altitude"] = coord_block.get("altitude")
+                    target_coord["altitude"] = _normalize_altitude_value(coord_block.get("altitude"))
                     emit("[PRIOR][STEP2] Target coordinate 보강: PriorMissionInfo 최신 기록에서 좌표 복구.")
+                    coord_source_label = "CoordinateOrientation (PriorMissionInfo latest)"
 
         target_tracking_entry = None
         if mission_type == 2:
@@ -254,18 +382,27 @@ def run_prior_mission_pipeline(
                 if coord_block:
                     target_coord["latitude"] = coord_block.get("latitude")
                     target_coord["longitude"] = coord_block.get("longitude")
-                    target_coord["altitude"] = coord_block.get("altitude")
+                    target_coord["altitude"] = _normalize_altitude_value(coord_block.get("altitude"))
+                    coord_source_label = "Target tracking coordinate"
         if target_coord.get("latitude") is None or target_coord.get("longitude") is None:
             fallback_coord = _load_prior_coordinate_from_db(prior_mission_id)
             if fallback_coord:
                 target_coord["latitude"] = fallback_coord.get("latitude")
                 target_coord["longitude"] = fallback_coord.get("longitude")
-                target_coord["altitude"] = fallback_coord.get("altitude")
+                target_coord["altitude"] = _normalize_altitude_value(fallback_coord.get("altitude"))
                 emit(
                     f"[PRIOR][STEP2] Target coordinate 보강: PriorMissionInfo/{prior_mission_id}.json에서 좌표 복구."
                 )
+                coord_source_label = "CoordinateOrientation (PriorMissionInfo fallback)"
         lat = _to_float(target_coord.get("latitude"))
         lon = _to_float(target_coord.get("longitude"))
+        _apply_dem_altitude_if_needed(
+            target_coord,
+            lat,
+            lon,
+            emit,
+            context=coord_source_label,
+        )
         _log_step2_target_coordinate(emit, lat, lon, target_coord.get("altitude"))
         if lat is None or lon is None:
             emit("[PRIOR] Target coordinate missing latitude/longitude.")
@@ -330,22 +467,29 @@ def run_prior_mission_pipeline(
 
         new_plan_id = plan_ids[0]
         new_imp_id = _next_imp_id()
-        new_path_id = _next_path_id(aircraft_id)
-        new_individual_id = _next_individual_mission_id()
-        new_waypoint_id = _next_waypoint_id()
+        prior_individual_id = _next_individual_mission_id()
+        resume_individual_id = _next_individual_mission_id()
+        prior_path_id = _next_path_id(aircraft_id)
+        resume_path_id = _next_path_id(aircraft_id)
+        prior_approach_wp_id = _next_waypoint_id()
+        prior_target_wp_id = _next_waypoint_id()
         _log_step4_waypoint_allocation(
             emit,
-            new_waypoint_id,
+            prior_target_wp_id,
             selected_agent_summary,
             selected_agent_distance_m,
         )
         emit(
-            f"[PRIOR] Allocated IDs -> plan:{new_plan_id} imp:{new_imp_id} path:{new_path_id} indiv:{new_individual_id} wp:{new_waypoint_id}"
+            "[PRIOR] Allocated IDs -> "
+            f"plan:{new_plan_id} imp:{new_imp_id} "
+            f"path(prior/resume):{prior_path_id}/{resume_path_id} "
+            f"indiv(prior/resume):{prior_individual_id}/{resume_individual_id} "
+            f"wp(approach/target):{prior_approach_wp_id}/{prior_target_wp_id}"
         )
 
         new_plan_data = deepcopy(plan_data)
         new_imp_data = deepcopy(imp_data)
-        new_fp_data = deepcopy(fp_data)
+        resume_fp_data = deepcopy(fp_data)
 
         now_ms = _now_ms_since_2000()
         new_plan_data["missionPlanID"] = new_plan_id
@@ -361,53 +505,221 @@ def run_prior_mission_pipeline(
         if not updated_aircraft:
             emit(f"[PRIOR] Aircraft {aircraft_id} not found inside missionPlan {source_plan_id}.")
             return None
-        new_plan_data["_priorMissionContext"] = detail
 
-        target_mission_entry = None
-        for mission in new_imp_data.get("individualMissionList", []):
+        target_index = None
+        mission_list = new_imp_data.get("individualMissionList", [])
+        for idx, mission in enumerate(mission_list):
             if _to_int(mission.get("individualMissionID")) == individual_mission_id:
-                target_mission_entry = mission
+                target_index = idx
                 break
-        if not target_mission_entry:
+        if target_index is None:
             emit(f"[PRIOR] Individual mission {individual_mission_id} not found in package {imp_package_id}.")
             return None
 
-        target_mission_entry["individualMissionID"] = new_individual_id
-        target_mission_entry["pathID"] = new_path_id
-        rel_block = dict(target_mission_entry.get("relatedMission") or {})
-        rel_block["priorMissionID"] = prior_mission_id or 0
-        rel_block["relatedMissionType"] = 2
+        original_mission_template = deepcopy(mission_list[target_index])
+        mission_list.pop(target_index)
+
+        base_rel_block = dict(original_mission_template.get("relatedMission") or {})
         input_mission_id = _to_int(detail.get("inputMissionID"))
+        if input_mission_id is None:
+            input_mission_id = _to_int(base_rel_block.get("inputMissionID"))
+
+        prior_rel_block = dict(base_rel_block)
+        prior_rel_block["priorMissionID"] = prior_mission_id or 0
+        prior_rel_block["relatedMissionType"] = 2
         if input_mission_id is not None:
-            rel_block["inputMissionID"] = input_mission_id
-        target_mission_entry["relatedMission"] = rel_block
-        target_mission_entry["isDone"] = False
-        new_imp_data["individualMissionPackageID"] = new_imp_id
+            prior_rel_block["inputMissionID"] = input_mission_id
+
+        resume_rel_block = dict(base_rel_block)
+        resume_rel_block["priorMissionID"] = 0
+        if input_mission_id is not None and "inputMissionID" not in resume_rel_block:
+            resume_rel_block["inputMissionID"] = input_mission_id
+
+        prior_mission_entry = deepcopy(original_mission_template)
+        prior_mission_entry["individualMissionID"] = prior_individual_id
+        prior_mission_entry["pathID"] = prior_path_id
+        prior_mission_entry["relatedMission"] = prior_rel_block
+        prior_mission_entry["isDone"] = False
+
+        resume_mission_entry = deepcopy(original_mission_template)
+        resume_mission_entry["individualMissionID"] = resume_individual_id
+        resume_mission_entry["pathID"] = resume_path_id
+        resume_mission_entry["relatedMission"] = resume_rel_block
+        resume_mission_entry["isDone"] = False
 
         target_tracking_payload = {"targetID": target_id} if mission_type == 2 and target_id is not None else None
-        removed_wp_id, inserted_wp = _inject_prior_waypoint(
-            new_fp_data,
-            current_waypoint_id,
-            previous_waypoint_id,
-            target_coord,
-            new_waypoint_id,
-            mission_type=mission_type,
-            target_tracking=target_tracking_payload,
+
+        original_resume_waypoints = deepcopy(resume_fp_data.get("waypointList") or [])
+        removed_wp_id = _trim_completed_waypoints(
+            resume_fp_data,
+            current_waypoint_id=current_waypoint_id,
+            previous_waypoint_id=previous_waypoint_id,
         )
-        inserted_wp_id = new_waypoint_id
-        new_fp_data["pathID"] = new_path_id
-        new_fp_data["timestamp"] = now_ms
-        new_fp_data["Source"] = new_fp_data.get("Source") or "MMR"
+        resume_waypoints = resume_fp_data.get("waypointList") or []
+        if not resume_waypoints:
+            emit("[PRIOR] FlightPath trimming produced an empty waypoint list.")
+            return None
+        if len(resume_waypoints) <= 1 and len(original_resume_waypoints) > len(resume_waypoints):
+            resume_fp_data["waypointList"] = original_resume_waypoints
+            resume_waypoints = resume_fp_data["waypointList"]
+        resume_fp_data["pathID"] = resume_path_id
+        resume_fp_data["timestamp"] = now_ms
+        resume_fp_data["Source"] = resume_fp_data.get("Source") or "MMR"
+        resume_fp_data["aircraftID"] = aircraft_id
+        resume_fp_data["individualMissionID"] = resume_individual_id
+
+        agent_coord = None
+        if (
+            selected_agent_summary.latitude is not None
+            and selected_agent_summary.longitude is not None
+        ):
+            agent_coord = {
+                "latitude": selected_agent_summary.latitude,
+                "longitude": selected_agent_summary.longitude,
+            }
+        approach_coord = None
+        if agent_coord:
+            approach_coord = _project_coordinate(agent_coord, selected_agent_summary.heading, 100.0)
+            if approach_coord is None:
+                try:
+                    bearing = _bearing_between(
+                        agent_coord["latitude"],
+                        agent_coord["longitude"],
+                        target_coord["latitude"],
+                        target_coord["longitude"],
+                    )
+                    approach_coord = _project_coordinate(agent_coord, bearing, 100.0)
+                except Exception:
+                    approach_coord = None
+        if approach_coord is None:
+            approach_coord = {
+                "latitude": agent_coord["latitude"] if agent_coord else target_coord["latitude"],
+                "longitude": agent_coord["longitude"] if agent_coord else target_coord["longitude"],
+            }
+        approach_alt = _normalize_altitude_value(selected_agent_summary.altitude)
+        if approach_alt is None:
+            approach_alt = _normalize_altitude_value(target_coord.get("altitude")) or 700
+        approach_coord["altitude"] = approach_alt
+
+        prior_mission_entry["individualMissionInfo"] = {
+            "individualMissionType": 1 if mission_type == 2 else 5,
+            "patternType": 1,
+            "autoZoomIn": True,
+            "coordinateList": [
+                {
+                    "latitude": approach_coord["latitude"],
+                    "longitude": approach_coord["longitude"],
+                    "altitude": approach_coord["altitude"],
+                },
+                {
+                    "latitude": target_coord["latitude"],
+                    "longitude": target_coord["longitude"],
+                    "altitude": _normalize_altitude_value(target_coord.get("altitude")) or 0,
+                },
+            ],
+            "lineList": [],
+            "areaList": [],
+            "targetID": target_id if mission_type == 2 and target_id is not None else 0,
+        }
+
+        approach_wp = {
+            "waypointID": prior_approach_wp_id,
+            "coordinate": {
+                "latitude": approach_coord["latitude"],
+                "longitude": approach_coord["longitude"],
+                "altitude": approach_coord["altitude"],
+            },
+            "speed": 35.0,
+            "eta": 25,
+            "ecf": 0.0,
+            "nextWaypointID": prior_target_wp_id,
+            "waypointPassType": 2,
+            "filmingProperty": {
+                "fieldOfView": 10.0,
+                "sensorType": 1,
+                "operationMode": 1,
+                "coordinateOrientation": {
+                    "coordinate": {
+                        "latitude": target_coord["latitude"],
+                        "longitude": target_coord["longitude"],
+                        "altitude": target_coord.get("altitude") or 0,
+                    }
+                },
+            },
+            "loiterProperty": {},
+        }
+
+        target_wp = {
+            "waypointID": prior_target_wp_id,
+            "coordinate": {
+                "latitude": target_coord["latitude"],
+                "longitude": target_coord["longitude"],
+                "altitude": target_coord.get("altitude")
+                if target_coord.get("altitude") is not None
+                else 0,
+            },
+            "speed": 30.0,
+            "eta": 30,
+            "ecf": 0.0,
+            "nextWaypointID": 0,
+            "waypointPassType": 2,
+            "filmingProperty": {
+                "fieldOfView": 5.0,
+                "sensorType": 1,
+                "operationMode": 3 if mission_type == 2 else 1,
+                "coordinateOrientation": {
+                    "coordinate": {
+                        "latitude": target_coord["latitude"],
+                        "longitude": target_coord["longitude"],
+                        "altitude": target_coord.get("altitude")
+                        if target_coord.get("altitude") is not None
+                        else 0,
+                    }
+                },
+            },
+            "loiterProperty": {
+                "radius": 400,
+                "direction": 1,
+                "time": 30,
+                "speed": 30,
+            },
+        }
+        if mission_type == 2 and target_tracking_payload:
+            target_wp["autoTracking"] = {"targetID": target_tracking_payload.get("targetID")}
+
+        prior_fp_data = {
+            key: deepcopy(value)
+            for key, value in fp_data.items()
+            if key not in {"waypointList", "pathID", "timestamp", "individualMissionID"}
+        }
+        prior_fp_data["pathID"] = prior_path_id
+        prior_fp_data["timestamp"] = now_ms
+        prior_fp_data["Source"] = fp_data.get("Source") or prior_fp_data.get("Source") or "MMR"
+        prior_fp_data["aircraftID"] = aircraft_id
+        prior_fp_data["individualMissionID"] = prior_individual_id
+        prior_fp_data["isFormationFlight"] = fp_data.get("isFormationFlight", False)
+        prior_fp_data["waypointList"] = [approach_wp, target_wp]
+
+        mission_list[target_index:target_index] = [prior_mission_entry, resume_mission_entry]
+        new_imp_data["individualMissionPackageID"] = new_imp_id
+
+        inserted_wp = target_wp
+        inserted_wp_id = prior_target_wp_id
 
         plan_dest = db_paths.get_db_subpath("MissionPlan", f"{new_plan_id}.json")
         imp_dest = db_paths.get_db_subpath("IndividualMissionPlan", f"{new_imp_id}.json")
-        fp_dest = db_paths.get_db_subpath("FlightPath", f"{new_path_id}.json")
-        for path in (plan_dest, imp_dest, fp_dest):
+        prior_fp_dest = db_paths.get_db_subpath("FlightPath", f"{prior_path_id}.json")
+        resume_fp_dest = db_paths.get_db_subpath("FlightPath", f"{resume_path_id}.json")
+        for path in (plan_dest, imp_dest, prior_fp_dest, resume_fp_dest):
             path.parent.mkdir(parents=True, exist_ok=True)
         plan_dest.write_text(json.dumps(new_plan_data, ensure_ascii=False, indent=2), encoding="utf-8")
         imp_dest.write_text(json.dumps(new_imp_data, ensure_ascii=False, indent=2), encoding="utf-8")
-        fp_dest.write_text(json.dumps(new_fp_data, ensure_ascii=False, indent=2), encoding="utf-8")
-        emit(f"[PRIOR] Stored new artifacts -> plan:{plan_dest.name}, imp:{imp_dest.name}, fp:{fp_dest.name}")
+        prior_fp_dest.write_text(json.dumps(prior_fp_data, ensure_ascii=False, indent=2), encoding="utf-8")
+        resume_fp_dest.write_text(json.dumps(resume_fp_data, ensure_ascii=False, indent=2), encoding="utf-8")
+        emit(
+            "[PRIOR] Stored new artifacts -> "
+            f"plan:{plan_dest.name}, imp:{imp_dest.name}, fp:{prior_fp_dest.name}/{resume_fp_dest.name}"
+        )
 
         log_dir = db_paths.get_db_subpath("DSS_Internal")
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -428,8 +740,12 @@ def run_prior_mission_pipeline(
             "telemetrySnapshot": detail.get("telemetrySnapshot"),
             "generatedMissionPlanID": new_plan_id,
             "generatedIndividualMissionPackageID": new_imp_id,
-            "generatedIndividualMissionID": new_individual_id,
-            "generatedPathID": new_path_id,
+            "generatedPriorIndividualMissionID": prior_individual_id,
+            "generatedResumeIndividualMissionID": resume_individual_id,
+            "generatedPriorPathID": prior_path_id,
+            "generatedResumePathID": resume_path_id,
+            "priorApproachWaypointID": prior_approach_wp_id,
+            "priorTargetWaypointID": prior_target_wp_id,
             "logMessages": log_messages,
         }
         log_path.write_text(json.dumps(log_payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -442,11 +758,14 @@ def run_prior_mission_pipeline(
                 "priorMissionID": prior_mission_id,
                 "sourceMissionPlanID": source_plan_id,
                 "individualMissionPackageID": new_imp_id,
-                "individualMissionID": new_individual_id,
-                "pathID": new_path_id,
+                "individualMissionID": prior_individual_id,
+                "pathID": prior_path_id,
                 "logPath": str(log_path),
                 "removedWaypointID": removed_wp_id,
-                "insertedWaypointID": new_waypoint_id,
+                "insertedWaypointID": prior_target_wp_id,
+                "approachWaypointID": prior_approach_wp_id,
+                "resumeIndividualMissionID": resume_individual_id,
+                "resumePathID": resume_path_id,
                 "targetCoordinate": target_coord,
             }
         )
@@ -457,13 +776,17 @@ def run_prior_mission_pipeline(
             option_names=option_names,
             plan_meta_map=plan_meta_map,
             generated_imp_ids={new_imp_id},
-            generated_path_ids={new_path_id},
+            generated_path_ids={prior_path_id, resume_path_id},
             new_imp_id=new_imp_id,
-            new_path_id=new_path_id,
-            new_individual_id=new_individual_id,
+            new_path_id=prior_path_id,
+            new_individual_id=prior_individual_id,
+            resume_path_id=resume_path_id,
+            resume_individual_id=resume_individual_id,
+            approach_waypoint_id=prior_approach_wp_id,
+            target_waypoint_id=prior_target_wp_id,
             log_path=log_path,
             removed_waypoint_id=removed_wp_id,
-            inserted_waypoint_id=new_waypoint_id,
+            inserted_waypoint_id=prior_target_wp_id,
         )
         return result
     except Exception as exc:
@@ -482,10 +805,14 @@ def run_prior_mission_pipeline(
             "planIDs": plan_ids,
             "newMissionPlanID": new_plan_id,
             "newIndividualMissionPackageID": new_imp_id,
-            "newIndividualMissionID": new_individual_id,
-            "newPathID": new_path_id,
+            "priorIndividualMissionID": prior_individual_id,
+            "resumeIndividualMissionID": resume_individual_id,
+            "priorPathID": prior_path_id,
+            "resumePathID": resume_path_id,
             "removedWaypointID": removed_wp_id,
             "insertedWaypointID": inserted_wp_id,
+            "approachWaypointID": prior_approach_wp_id,
+            "targetWaypointID": prior_target_wp_id,
             "targetCoordinate": target_coord,
             "logMessages": list(log_messages),
             "detailSummary": detail_summary if detail_provided else {},
@@ -597,6 +924,12 @@ def _summarize_agent_states(
             unmanned_info = entry.get("unmannedInfo") or {}
             wp_block = unmanned_info.get("currentWaypointID") or {}
         current_wp = _to_int(wp_block.get("waypointID"))
+        heading = None
+        velocity = entry.get("velocity") or {}
+        if velocity:
+            heading = _to_float(velocity.get("heading"))
+        if heading is None:
+            heading = _to_float(entry.get("heading"))
         summaries.append(
             AgentSnapshotSummary(
                 aircraft_id=aircraft_id,
@@ -604,6 +937,7 @@ def _summarize_agent_states(
                 longitude=lon,
                 altitude=alt,
                 current_waypoint_id=current_wp,
+                heading=heading,
             )
         )
     return summaries
@@ -656,7 +990,7 @@ def _inject_prior_waypoint(
     flight_path: Dict[str, Any],
     current_waypoint_id: int,
     previous_waypoint_id: Optional[int],
-    target_coord: Dict[str, float],
+    target_coord: Dict[str, Any],
     new_waypoint_id: int,
     *,
     mission_type: Optional[int] = None,
@@ -672,24 +1006,26 @@ def _inject_prior_waypoint(
         raise ValueError(f"Current waypoint {current_waypoint_id} not found in flight path.")
 
     removed_waypoint_id = None
-    inherited_altitude: Optional[float] = None
+    inherited_altitude: Optional[int] = None
     if current_index > 0:
         completed_segment = waypoint_list[:current_index]
         waypoint_list = waypoint_list[current_index:]
         current_index = 0
         last_completed = completed_segment[-1]
         removed_waypoint_id = _to_int(last_completed.get("waypointID"))
-        inherited_altitude = _to_float((last_completed.get("coordinate") or {}).get("altitude"))
+        inherited_altitude = _normalize_altitude_value(
+            (last_completed.get("coordinate") or {}).get("altitude")
+        )
     elif previous_waypoint_id:
         # ensure previous pointer is cleared when explicit ID provided
         removed_waypoint_id = previous_waypoint_id
 
     preceding_index = current_index - 1
-    altitude = target_coord.get("altitude")
+    altitude = _normalize_altitude_value(target_coord.get("altitude"))
     if altitude is None and inherited_altitude is not None:
         altitude = inherited_altitude
     if altitude is None:
-        altitude = 700.0
+        altitude = 700
 
     inserted_wp = {
         "waypointID": new_waypoint_id,
@@ -708,14 +1044,14 @@ def _inject_prior_waypoint(
             "sensorType": 1,
             "operationMode": 1,
             "coordinateOrientation": {
-                "coordinate": {
-                    "latitude": target_coord["latitude"],
-                    "longitude": target_coord["longitude"],
-                    "altitude": target_coord["altitude"]
-                    if target_coord.get("altitude") is not None
-                    else 0.0,
-                }
-            },
+                    "coordinate": {
+                        "latitude": target_coord["latitude"],
+                        "longitude": target_coord["longitude"],
+                        "altitude": target_coord["altitude"]
+                        if target_coord.get("altitude") is not None
+                        else 0,
+                    }
+                },
         },
         "loiterProperty": {
             "radius": 400,
@@ -738,6 +1074,36 @@ def _inject_prior_waypoint(
         waypoint_list[preceding_index]["nextWaypointID"] = new_waypoint_id
     flight_path["waypointList"] = waypoint_list
     return removed_waypoint_id, inserted_wp
+
+
+def _trim_completed_waypoints(
+    flight_path: Dict[str, Any],
+    *,
+    current_waypoint_id: Optional[int],
+    previous_waypoint_id: Optional[int],
+) -> Optional[int]:
+    if current_waypoint_id is None:
+        return previous_waypoint_id
+    waypoint_list = list(flight_path.get("waypointList") or [])
+    if not waypoint_list:
+        return previous_waypoint_id
+    current_index = None
+    for idx, waypoint in enumerate(waypoint_list):
+        if _to_int(waypoint.get("waypointID")) == current_waypoint_id:
+            current_index = idx
+            break
+    if current_index is None:
+        return previous_waypoint_id
+    removed_waypoint_id = None
+    if current_index > 0:
+        completed_segment = waypoint_list[:current_index]
+        waypoint_list = waypoint_list[current_index:]
+        last_completed = completed_segment[-1]
+        removed_waypoint_id = _to_int(last_completed.get("waypointID"))
+    elif previous_waypoint_id:
+        removed_waypoint_id = previous_waypoint_id
+    flight_path["waypointList"] = waypoint_list
+    return removed_waypoint_id
 
 
 def _build_detail_summary(detail: Dict[str, Any]) -> Dict[str, Any]:
@@ -835,12 +1201,17 @@ def _load_prior_coordinate_from_db(prior_mission_id: Optional[int]) -> Optional[
     coordinate = coordinate_orientation.get("coordinate") or {}
     lat = _to_float(coordinate.get("latitude"))
     lon = _to_float(coordinate.get("longitude"))
-    alt = _to_float(coordinate.get("altitude"))
+    alt = _normalize_altitude_value(coordinate.get("altitude"))
     if lat is None or lon is None:
         return None
     result = {"latitude": lat, "longitude": lon}
-    if alt is not None:
+    if alt is not None and alt != 0:
         result["altitude"] = alt
+    else:
+        dem_alt = _sample_dem_altitude(lat, lon)
+        dem_alt_int = _normalize_altitude_value(dem_alt)
+        if dem_alt_int is not None:
+            result["altitude"] = dem_alt_int
     return result
 
 

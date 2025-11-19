@@ -225,9 +225,8 @@ def run_monitoring_procedure(
             if fallback_idx is not None:
                 current_idx, current_pos = fallback_idx, fallback_pos
             elif current_wp is not None:
-                # 완전히 알려지지 않은 waypoint라도 다음 진행률 업데이트를 위해
-                # 마지막 임무의 끝으로 간주한다.
-                current_idx = len(missions)
+                # Unable to map waypoint to any mission; reset progress to zero.
+                current_idx = None
                 current_pos = None
 
         # Waypoint ID 0은 특정 운용 모드에서 "미진입" 상태로 사용되므로 진행률을 0으로 강제.

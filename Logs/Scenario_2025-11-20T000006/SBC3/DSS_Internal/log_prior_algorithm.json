@@ -1,0 +1,54 @@
+[
+  {
+    "timestamp": 816879674024,
+    "status": "success",
+    "reason": "선행임무 : 좌표지향",
+    "priorMissionID": 1,
+    "missionType": 1,
+    "aircraftID": 4,
+    "sourceMissionPlanID": 700000001,
+    "planIDs": [
+      700000002
+    ],
+    "newMissionPlanID": 700000002,
+    "newIndividualMissionPackageID": 800012865,
+    "priorIndividualMissionID": 900145159,
+    "resumeIndividualMissionID": 900145160,
+    "priorPathID": 400000009,
+    "resumePathID": 400000010,
+    "removedWaypointID": 11,
+    "insertedWaypointID": 136,
+    "approachWaypointID": 135,
+    "targetWaypointID": 136,
+    "targetCoordinate": {
+      "latitude": 38.400001525878906,
+      "longitude": 127.5,
+      "altitude": 663
+    },
+    "logMessages": [
+      "[PRIOR] detail keys: ∅",
+      "[PRIOR] sourceMissionPlanID resolved from mission_progress (planID=700000001).",
+      "[PRIOR][STEP1] Loaded 0401 snapshot with 3 unmanned entries (saved_at=2025-11-19T15:01:04.570792+00:00).",
+      "[PRIOR][STEP1] UAV 4: currentWP=12, coord=(38.151802, 127.327431, alt=450.0)",
+      "[PRIOR][STEP1] UAV 5: currentWP=44, coord=(38.150105, 127.330475, alt=450.0)",
+      "[PRIOR][STEP1] UAV 6: currentWP=74, coord=(38.148685, 127.333290, alt=450.0)",
+      "[PRIOR][STEP2] Target coordinate 보강: PriorMissionInfo 최신 기록에서 좌표 복구.",
+      "[PRIOR][STEP2] CoordinateOrientation (PriorMissionInfo latest) altitude resolved via DEM (663m).",
+      "[PRIOR][STEP2] Target coordinate (0202) → (38.400002, 127.500000, alt=663.0)",
+      "[PRIOR][STEP3] Nearest UAV 4 selected based on 0401 snapshot (currentWP=12, distance≈31442.0 m).",
+      "[PRIOR][STEP4] Reserved new waypoint ID 136 for UAV 4 (currentWP=12, distance≈31442.0 m).",
+      "[PRIOR] Allocated IDs -> plan:700000002 imp:800012865 path(prior/resume):400000009/400000010 indiv(prior/resume):900145159/900145160 wp(approach/target):135/136",
+      "[PRIOR] Stored new artifacts -> plan:700000002.json, imp:800012865.json, fp:400000009.json/400000010.json",
+      "[PRIOR] Log captured -> C:\\Users\\LAHMUMT_2\\Desktop\\KU_LAHMUMT\\Logs\\Scenario_2025-11-20T000006\\SBC3\\DSS_Internal\\PriorMission_1_816879674020.json"
+    ],
+    "detailSummary": {},
+    "detailProvided": false,
+    "detailKeys": [],
+    "detailRawPreview": "{}",
+    "missingDetailFields": [],
+    "snapshotAgentCount": 3,
+    "selectedAgentID": 4,
+    "selectedAgentDistanceMeters": 31442.00298707427,
+    "error": null
+  }
+]

@@ -33,6 +33,7 @@ from dividing_Aisle_class import PolygonProcessor
 from Aisle_Sweep_CPP_shoot_plan import RectanglePath
 import json, pprint
 from data_def.mission_helpers import now_ms_since_2000
+from data_def.search_speed import spacing_based_search_speed
 
 Point = Tuple[float, float]        # generic (x,y) or (lat,lon)
 LatLon = Tuple[float, float]
@@ -129,6 +130,8 @@ class CorridorPlanner:
                 }
             }
 
+        strip_spacing = max(float(self.sep), 1e-3)
+
         # ── 세트별 스윕라인 ↔ 비행 WP 매핑 ───────────────────
         sequence: list[tuple[LatLon, LatLon, LatLon]] = []
         #           (flightWP, sweepStart, sweepEnd)
@@ -178,11 +181,14 @@ class CorridorPlanner:
 
             # 구간 거리 / 시간 (다음 WP까지)
             if idx < len(sequence) - 1:
-                seg_d = _dist(flt_ll, sequence[idx + 1][0])
-                seg_t = seg_d / cruise_speed          # s
-                search_spd = sweep_len / seg_t        # m/s
+                search_spd = spacing_based_search_speed(
+                    sweep_len_m=sweep_len,
+                    spacing_m=strip_spacing,
+                    cruise_speed_mps=cruise_speed,
+                )
+                if search_spd is None:
+                    search_spd = 0.0
             else:
-                seg_d = 0.0
                 search_spd = 0             # 마지막 WP는 고정
 
             # ETA·ECF

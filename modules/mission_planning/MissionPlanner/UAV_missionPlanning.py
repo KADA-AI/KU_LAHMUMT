@@ -25,7 +25,7 @@ import math, json
 from typing import List, Tuple
 
 try:
-    from .config import DEFAULT_SWEEP_SEPARATION_M
+    from ..config import DEFAULT_SWEEP_SEPARATION_M
 except ImportError:
     try:
         from config import DEFAULT_SWEEP_SEPARATION_M  # type: ignore

@@ -6,22 +6,31 @@ mission_helpers.py
 import random, folium, json
 import math
 import re
+from collections import namedtuple
 from functools import lru_cache
 from pathlib import Path
 from typing import Iterable, Tuple
+
+import numpy as np
+from PIL import Image
+from affine import Affine
 
 from branca.colormap import linear
 from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot
 from PyQt5.QtWidgets import (QDialog, QGridLayout, QLabel, QComboBox,
                              QDialogButtonBox, QDoubleSpinBox)
 from folium import CircleMarker   # ?뚯씪 留???import
-import rasterio
 from data_def.id_allocator import next_individual_mission_id, next_path_id
 
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[4]
 _DEM_DIR = _PROJECT_ROOT / "resource"
 _DEM_TILE_RE = re.compile(r"([ns])(\d+)_([ew])(\d+)", re.IGNORECASE)
+BoundingBox = namedtuple("BoundingBox", "left bottom right top")
+
+_MODEL_PIXEL_SCALE_TAG = 33550
+_MODEL_TIEPOINT_TAG = 33922
+_GDAL_NODATA_TAG = 42113
 
 
 def _scan_dem_tiles() -> Tuple[Tuple[Path, Tuple[float, float, float, float]], ...]:
@@ -56,17 +65,55 @@ def _available_dem_tiles():
     return _scan_dem_tiles()
 
 
+def _transform_from_tags(scale_tag, tiepoint_tag) -> Affine:
+    if scale_tag is None or tiepoint_tag is None:
+        raise ValueError("GeoTIFF metadata is missing ModelPixelScale or ModelTiepoint tags.")
+    if len(scale_tag) < 2 or len(tiepoint_tag) < 6:
+        raise ValueError("Incomplete GeoTIFF tags for affine transform.")
+
+    sx = float(scale_tag[0])
+    sy = float(scale_tag[1])
+    px = float(tiepoint_tag[0])
+    py = float(tiepoint_tag[1])
+    mx = float(tiepoint_tag[3])
+    my = float(tiepoint_tag[4])
+
+    # GeoTIFF tiepoints report pixel centers; convert to the upper-left corner.
+    origin_x = mx - sx * (px + 0.5)
+    origin_y = my + sy * (py + 0.5)
+    return Affine(sx, 0.0, origin_x, 0.0, -sy, origin_y)
+
+
+def _bounds_from_transform(shape: Tuple[int, int], transform: Affine) -> BoundingBox:
+    height, width = shape
+    corners = (
+        transform * (0, 0),
+        transform * (0, height),
+        transform * (width, 0),
+        transform * (width, height),
+    )
+    xs = [pt[0] for pt in corners]
+    ys = [pt[1] for pt in corners]
+    return BoundingBox(min(xs), min(ys), max(xs), max(ys))
+
+
 @lru_cache(maxsize=None)
 def _load_dem_data(path: Path):
     """단일 GeoTIFF 타일을 캐시와 함께 로드."""
     if not path.exists():
         raise FileNotFoundError(f"DEM 파일을 찾을 수 없습니다: {path}")
 
-    with rasterio.open(path) as src:
-        band = src.read(1)              # ?? ?? (??)
-        transform = src.transform
-        bounds = src.bounds
-        nodata = src.nodata
+    with Image.open(path) as img:
+        band = np.array(img)
+        scale_tag = img.tag_v2.get(_MODEL_PIXEL_SCALE_TAG)
+        tiepoint_tag = img.tag_v2.get(_MODEL_TIEPOINT_TAG)
+        transform = _transform_from_tags(scale_tag, tiepoint_tag)
+        bounds = _bounds_from_transform(band.shape, transform)
+        nodata_tag = img.tag_v2.get(_GDAL_NODATA_TAG)
+        try:
+            nodata = float(nodata_tag) if nodata_tag is not None else None
+        except (TypeError, ValueError):
+            nodata = None
 
     return band, transform, bounds, nodata
 

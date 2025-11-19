@@ -464,18 +464,21 @@ class MainGUI(QWidget):
                     **{"className": f"wp_{wp_id}"}
                 ).add_to(fmap)
 
-                # 2-B. scan-line(짝지은 좌표 0-1, 2-3, …)
+                # 2-B. scan-line(해당 WP의 좌표를 순차 연결)
                 fp = w.get("filmingProperty")
                 ls = (fp or {}).get("lineSearch", {})
                 coords = ls.get("coordinateList", [])
-                for k in range(0, len(coords) - 1, 2):
-                    p0, p1 = coords[k], coords[k + 1]
-                    p0 = (p0["latitude"], p0["longitude"])
-                    p1 = (p1["latitude"], p1["longitude"])
-
-                    ls_cls = f"ls_{aid}_{wp_id}_{k//2}"
+                seq = []
+                for coord in coords:
+                    lat = coord.get("latitude")
+                    lon = coord.get("longitude")
+                    if lat is None or lon is None:
+                        continue
+                    seq.append((lat, lon))
+                if len(seq) >= 2:
+                    ls_cls = f"ls_{aid}_{wp_id}_0"
                     folium.PolyLine(
-                        [p0, p1],
+                        seq,
                         color=c, weight=3, opacity=0.9, dash_array="5,4",
                         **{"className": ls_cls}
                     ).add_to(fmap)
