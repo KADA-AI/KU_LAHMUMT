@@ -6,8 +6,17 @@ import math
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
+import sys
 
 from modules.common import agent_status_snapshot, db_paths
+
+_ATTACK_ROOT = Path(__file__).resolve().parent
+_MP_DIR = _ATTACK_ROOT / "MissionPlanner"
+for _candidate in (_MP_DIR, _MP_DIR.parent, _ATTACK_ROOT):
+    _candidate_str = str(_candidate)
+    if _candidate.exists() and _candidate_str not in sys.path:
+        sys.path.insert(0, _candidate_str)
+
 from modules.mission_planning.prior_mission_pipeline_impl import (
     _load_latest_mission_progress_plan_id,
     _normalize_altitude_value,
@@ -510,7 +519,11 @@ def _apply_attack_plan_overrides(
         value_int = _to_int(value)
         if value_int is not None:
             plan_ids_ctx.append(value_int)
-    new_plan_id = plan_ids_ctx[0] if plan_ids_ctx else source_plan_id
+    if plan_ids_ctx:
+        new_plan_id = plan_ids_ctx[0]
+    else:
+        new_plan_id = source_plan_id
+        emit("[ATTACK] No missionPlanID supplied; falling back to source plan ID")
 
     new_plan_data = deepcopy(plan_data)
     now_ms = _now_timestamp_ms()

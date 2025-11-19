@@ -51,10 +51,59 @@ def _load() -> dict:
     except Exception:
         return {}
 
+
+
+def _read_store_state() -> dict:
+    """현재 디스크 상태를 불러와 최신 값을 유지한다."""
+    try:
+        if not _STORE.exists() or _STORE.stat().st_size == 0:
+            return {}
+        with _STORE.open('r', encoding='utf-8') as f:
+            data = json.load(f)
+            return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
 def _save(state: dict) -> None:
     """
     ID 상태를 안전하게 덮어쓰다.
     """
+    existing = _read_store_state()
+    if existing:
+        for key, value in existing.items():
+            if key in VOLATILE_KEYS:
+                continue
+            if key == 'pathID':
+                if not isinstance(value, dict):
+                    continue
+                target = state.setdefault('pathID', {})
+                for subkey, subval in value.items():
+                    try:
+                        aid = int(subkey)
+                        existing_val = int(subval)
+                    except (TypeError, ValueError):
+                        continue
+                    current_val = target.get(aid)
+                    try:
+                        current_int = int(current_val)
+                    except (TypeError, ValueError):
+                        current_int = None
+                    if current_int is None or existing_val > current_int:
+                        target[aid] = existing_val
+                continue
+            try:
+                existing_int = int(value)
+            except (TypeError, ValueError):
+                continue
+            current_val = state.get(key)
+            try:
+                current_int = int(current_val)
+            except (TypeError, ValueError):
+                current_int = None
+            if current_int is None or existing_int > current_int:
+                state[key] = existing_int
+
     _STORE.parent.mkdir(parents=True, exist_ok=True)
     tmp = _STORE.with_suffix(_STORE.suffix + ".tmp")
     with tmp.open("w", encoding="utf-8") as f:
@@ -147,14 +196,32 @@ def _next(key: str, inc: int = 1, subkey=None) -> int:
                 _record_waypoint_usage(cur)
             return cur
 
+        disk_state = _read_store_state()
+
         if subkey is None:
-            cur = _state.get(key, BASE[key] - 1)
-            cur += inc
+            current_base = BASE.get(key, 0) - 1
+            try:
+                disk_value = int(disk_state.get(key, current_base))
+            except (TypeError, ValueError):
+                disk_value = current_base
+            try:
+                mem_value = int(_state.get(key, current_base))
+            except (TypeError, ValueError):
+                mem_value = current_base
+            cur = max(mem_value, disk_value) + inc
             _state[key] = cur
         else:                 # pathID
             path_map = _state.setdefault(key, {})
-            cur = path_map.get(subkey, BASE[key][subkey] - 1)
-            cur += inc
+            disk_map = disk_state.get(key, {})
+            try:
+                disk_value = int(disk_map.get(subkey, BASE[key][subkey] - 1))
+            except (TypeError, ValueError):
+                disk_value = BASE[key][subkey] - 1
+            try:
+                mem_value = int(path_map.get(subkey, BASE[key][subkey] - 1))
+            except (TypeError, ValueError):
+                mem_value = BASE[key][subkey] - 1
+            cur = max(mem_value, disk_value) + inc
             path_map[subkey] = cur
         _save(_state)
         if key == "pathID" and subkey is not None:

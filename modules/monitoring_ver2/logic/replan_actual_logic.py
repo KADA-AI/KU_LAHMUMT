@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import sys
 import time
 from dataclasses import asdict
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 import udp_reporter
@@ -21,6 +23,31 @@ from data.message_models import (
 )
 from push.message0902_push import make_and_push as push_message_0902
 from .replan_utils import ensure_replan_level_details_file, mark_targets_as_used
+try:
+    from modules.mission_planning.MissionPlanner.data_def.id_allocator import next_mission_plan_id
+except Exception:
+    try:
+        from importlib import util as _importlib_util
+
+        _allocator_path = (
+            Path(__file__)
+            .resolve()
+            .parents[3]
+            / "modules"
+            / "mission_planning"
+            / "MissionPlanner"
+            / "data_def"
+            / "id_allocator.py"
+        )
+        spec = _importlib_util.spec_from_file_location("mission_planning_id_allocator", _allocator_path)
+        if spec and spec.loader:
+            _module = _importlib_util.module_from_spec(spec)
+            spec.loader.exec_module(_module)
+            next_mission_plan_id = getattr(_module, "next_mission_plan_id", None)
+        else:
+            next_mission_plan_id = None
+    except Exception:
+        next_mission_plan_id = None
 
 
 FORCED_HOLD_DELAY_SECONDS = 10.0
@@ -575,15 +602,33 @@ def _allocate_unique_option_ids(manager, count: int) -> List[int]:
     return allocated
 
 
+def _allocate_mission_plan_ids_central(count: int) -> List[int]:
+    if next_mission_plan_id is None:
+        raise RuntimeError("missionPlanID allocator is unavailable")
+
+    try:
+        total = max(int(count), 0)
+    except Exception:
+        total = 0
+
+    if total <= 0:
+        return []
+
+    allocated: List[int] = []
+    for _ in range(total):
+        allocated.append(int(next_mission_plan_id()))
+    return allocated
+
+
 def _fallback_option_list(manager, timestamp_ms: int) -> Tuple[List[OptionListModel], List[int]]:
     option_names = ["옵션 A", "옵션 B", "옵션 C"]
-    base_plan_id = 700_000_000 + (timestamp_ms % 10_000)
-    options: List[OptionListModel] = []
-    mission_plan_ids: List[int] = []
     option_ids = _allocate_unique_option_ids(manager, len(option_names))
-    for idx, (name, option_id) in enumerate(zip(option_names, option_ids), start=1):
-        plan_id = base_plan_id + idx
-        mission_plan_ids.append(plan_id)
+    mission_plan_ids = _allocate_mission_plan_ids_central(len(option_names))
+    if len(mission_plan_ids) < len(option_names):
+        raise RuntimeError("missionPlanID allocation failed for fallback options")
+
+    options: List[OptionListModel] = []
+    for name, option_id, plan_id in zip(option_names, option_ids, mission_plan_ids):
         options.append(
             OptionListModel(
                 optionID=option_id,
@@ -643,11 +688,13 @@ def _pending_input_ids_from_plan(manager, plan_context: Dict[str, Any]) -> List[
 
 
 def _build_target_detection_option_list() -> Tuple[List[OptionListModel], List[int]]:
+    mission_plan_ids = _allocate_mission_plan_ids_central(len(TARGET_OPTION_PRESETS))
+    if len(mission_plan_ids) < len(TARGET_OPTION_PRESETS):
+        raise RuntimeError("missionPlanID allocation failed for target detection options")
+
     options: List[OptionListModel] = []
-    mission_plan_ids: List[int] = []
-    for option_id, name, plan_id in TARGET_OPTION_PRESETS:
+    for (option_id, name, _), plan_id in zip(TARGET_OPTION_PRESETS, mission_plan_ids):
         options.append(OptionListModel(optionID=option_id, optionName=name, missionPlanID=plan_id))
-        mission_plan_ids.append(plan_id)
     return options, mission_plan_ids
 
 
@@ -748,15 +795,20 @@ def _prepare_common_replan_payload(
         input_ids = [0]
         input_models = [InputMissionIDModel(inputMissionID=0)]
 
-    if is_target_trigger:
-        option_models, mission_plan_ids = _build_target_detection_option_list()
-    elif monitoring_logic is not None and hasattr(monitoring_logic, "_build_collab_option_list"):
-        try:
+    try:
+        if is_target_trigger:
+            option_models, mission_plan_ids = _build_target_detection_option_list()
+        elif monitoring_logic is not None and hasattr(monitoring_logic, "_build_collab_option_list"):
             option_models, mission_plan_ids = monitoring_logic._build_collab_option_list()
-        except Exception:
+        else:
             option_models, mission_plan_ids = _fallback_option_list(manager, timestamp_ms)
-    else:
-        option_models, mission_plan_ids = _fallback_option_list(manager, timestamp_ms)
+    except Exception as exc:
+        manager._log(
+            "REPLAN_PUSH",
+            "ERR",
+            f"missionPlanID 중앙 발급 실패: {exc}",
+        )
+        raise
     if not mission_plan_ids:
         mission_plan_ids = [opt.missionPlanID for opt in option_models]
 

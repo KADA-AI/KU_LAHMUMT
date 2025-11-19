@@ -36,6 +36,7 @@ from modules.monitoring.config import RECEIVE_MESSAGES as VER2_RECEIVE_MESSAGES
 from modules.monitoring.tabs.ver2_monitoring_tab import Ver2MonitoringTab
 
 from modules.monitoring.tabs.ver2_replan_tab import Ver2ReplanTab   # ★ 0101 리스너 등록용
+from modules.mission_planning.MissionPlanner.data_def.id_allocator import next_mission_plan_id
 
 # ───────── Qt 경고 필터 ─────────
 def _qt_silent_handler(mode: QtMsgType, context, message: str):
@@ -364,26 +365,27 @@ class MainWindow(QMainWindow):
     # ───────── 0902: missionPlanID 시퀀스 ─────────
     def _next_mission_plan_ids(self, count: int) -> list:
         """
-        database/mission_plan_seq.txt 에서 연속 missionPlanID 지급.
-        - 최초: 700000001 시작
-        - 호출마다 오름차순, 중복 방지
+        missionPlanID는 mission_planning.MissionPlanner에서 중앙 관리한다.
+        - id_allocator.next_mission_plan_id()를 통해서만 발급
+        - 실패 시 0902 자체를 막고 로그만 남긴다.
         """
-        seq_file = db_paths.get_db_subpath("mission_plan_seq.txt")
-        start = 700000001
         try:
-            if seq_file.exists():
-                txt = seq_file.read_text(encoding="utf-8").strip()
-                if txt:
-                    start = max(start, int(txt))
+            total = max(int(count), 0)
         except Exception:
-            start = 700000001
-        out = list(range(start, start + int(count)))
-        try:
-            seq_file.parent.mkdir(parents=True, exist_ok=True)
-            seq_file.write_text(str(start + int(count)), encoding="utf-8")
-        except Exception:
-            pass
-        return out
+            total = 0
+        if total <= 0:
+            return []
+
+        allocated = []
+        for _ in range(total):
+            try:
+                allocated.append(int(next_mission_plan_id()))
+            except Exception as exc:
+                self._append_log_line(
+                    f"[ERR] missionPlanID 중앙 발급 실패: {exc} (0902 중단)"
+                )
+                raise
+        return allocated
 
     # ───────── 0902: 하드코딩 바디 생성 ─────────
     def _build_0902_body(self) -> dict:

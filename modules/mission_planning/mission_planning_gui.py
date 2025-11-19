@@ -766,36 +766,43 @@ class MainWindow(QMainWindow):
         reason = _sanitize_reason(payload.get("reason"), "init-plan")
         plan_meta = payload.get("option_meta") or {}
 
+        is_execution_mode = False
+        if not force_direct:
+            try:
+                mode_slider = getattr(self, "mode_slider", None)
+                if mode_slider is not None:
+                    is_execution_mode = int(mode_slider.value()) == 4
+            except Exception:
+                is_execution_mode = False
+        else:
+            self._append_log_line("[INFO] replanLevel=4 → skip 0901/0701, direct 0903 delivery")
+
         if not plan_ids:
             self._append_log_line("[WARN] No missionPlanID to push (0301)")
             return
 
-        if not force_direct:
-            self._append_log_line("[INFO] Option mode → sending 0901 only (wait for 0702 decision before 0301/0903)")
-            QTimer.singleShot(900, lambda meta=plan_meta: self._push_0901_options(plan_ids, option_names, meta))
-            self._pending_plan_push = None
-            return
-
-        self._append_log_line("[INFO] replanLevel=4 → skip 0901/0701, direct 0903 delivery")
-
-        # send 0301 immediately for direct update
+        # send 0301 immediately for any plan delivery
         QTimer.singleShot(0, lambda: self._click_tx_button_for("0301"))
-        # send 0305 completion
+        # send 0305 completion shortly after
         QTimer.singleShot(600, lambda: self._push_0305(status=2, reason=reason))
 
-        base_delay = 900
-        scheduled = False
-        for idx, plan_id in enumerate(plan_ids):
-            try:
-                mpid = int(plan_id)
-            except Exception:
-                self._append_log_line(f"[WARN] 0903 skip: invalid missionPlanID={plan_id}")
-                continue
-            delay = base_delay + idx * 200
-            QTimer.singleShot(delay, lambda pid=mpid: self._push_0903(pid))
-            scheduled = True
-        if not scheduled:
-            self._append_log_line("[WARN] No valid missionPlanID for 0903 push")
+        if is_execution_mode and not force_direct:
+            self._append_log_line("[INFO] Execution mode -> sending 0901 instead of 0903")
+            QTimer.singleShot(900, lambda meta=plan_meta: self._push_0901_options(plan_ids, option_names, meta))
+        else:
+            base_delay = 900
+            scheduled = False
+            for idx, plan_id in enumerate(plan_ids):
+                try:
+                    mpid = int(plan_id)
+                except Exception:
+                    self._append_log_line(f"[WARN] 0903 skip: invalid missionPlanID={plan_id}")
+                    continue
+                delay = base_delay + idx * 200
+                QTimer.singleShot(delay, lambda pid=mpid: self._push_0903(pid))
+                scheduled = True
+            if not scheduled:
+                self._append_log_line("[WARN] No valid missionPlanID for 0903 push")
 
         self._pending_plan_push = None
 
@@ -1334,9 +1341,12 @@ class MainWindow(QMainWindow):
         reason = _sanitize_reason(payload.get("replanReason"), staged_reason)
 
         ctx = dict(staged)
-        if plan_ids:     ctx["plan_ids"] = plan_ids
-        if option_names: ctx["option_names"] = option_names
-        if mission_ids:  ctx["mission_ids"] = mission_ids
+        if plan_ids:
+            ctx["plan_ids"] = plan_ids
+        if option_names:
+            ctx["option_names"] = option_names
+        if mission_ids:
+            ctx["mission_ids"] = mission_ids
         ctx["reason"] = reason
         detail_payload = payload.get("replanDetail")
         if detail_payload is not None:
@@ -2436,14 +2446,14 @@ class MainWindow(QMainWindow):
         self._last_mission_plan_ids = plan_ids
         self._last_mission_plan_id = plan_ids[0] if plan_ids else None
 
-        try:
-            input_pkg_id_int = int(ctx.get("inputMissionPackageID"))
-        except Exception:
-            input_pkg_id_int = None
-        try:
-            ref_pkg_id_int = int(ctx.get("missionReferencePackageID"))
-        except Exception:
-            ref_pkg_id_int = None
+        def _safe_int(value):
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return None
+
+        input_pkg_id_int = _safe_int(ctx.get("inputMissionPackageID"))
+        ref_pkg_id_int = _safe_int(ctx.get("missionReferencePackageID"))
 
         plan_id_set = {int(pid) for pid in plan_ids if pid is not None}
         generated_imp_ids, generated_path_ids = self._collect_attack_generated_ids(attack_updates)

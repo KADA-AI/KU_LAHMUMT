@@ -13,6 +13,11 @@ from typing import Any, Dict, Iterable, List
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+_MP_DIR = PROJECT_ROOT / 'modules' / 'mission_planning' / 'MissionPlanner'
+for _p in (_MP_DIR, _MP_DIR.parent):
+    _ps = str(_p)
+    if _p.exists() and _ps not in sys.path:
+        sys.path.insert(0, _ps)
 
 from PyQt5.QtCore import pyqtSignal, pyqtSlot
 from PyQt5.QtWidgets import QApplication, QMainWindow, QTabWidget
@@ -33,6 +38,7 @@ from modules.monitoring_ver2.data.message_models import (
     ReplanRequestTimeStampModel,
 )
 from modules.common import db_paths
+from modules.mission_planning.MissionPlanner.data_def.id_allocator import next_mission_plan_id
 
 
 def _now_ms_since_2000() -> int:
@@ -200,24 +206,25 @@ class MainWindow(QMainWindow):
         return unique_ids
 
     def _next_mission_plan_ids(self, count: int) -> List[int]:
-        """mission_plan_seq.txt를 이용해 연속된 missionPlanID를 생성한다."""
-        seq_file = db_paths.get_db_subpath("mission_plan_seq.txt")
-        start = 700000001
+        """missionPlanID는 MissionPlanner의 중앙 시퀀스를 통해서만 발급한다."""
         try:
-            if seq_file.exists():
-                raw = seq_file.read_text(encoding="utf-8").strip()
-                if raw:
-                    start = max(start, int(raw))
+            total = max(int(count), 0)
         except Exception:
-            start = 700000001
+            total = 0
 
-        out = list(range(start, start + int(count)))
-        try:
-            seq_file.parent.mkdir(parents=True, exist_ok=True)
-            seq_file.write_text(str(start + int(count)), encoding="utf-8")
-        except Exception:
-            pass
-        return out
+        if total <= 0:
+            return []
+
+        allocated: List[int] = []
+        for _ in range(total):
+            try:
+                allocated.append(int(next_mission_plan_id()))
+            except Exception as exc:
+                self._append_log_line(
+                    f"[ERR] missionPlanID 중앙 발급 실패: {exc} (0902 중단)"
+                )
+                raise
+        return allocated
 
     def _build_0902_body(self) -> ReplanRequestBodyModel:
         """Build a 0902 replan request payload following the agreed defaults."""

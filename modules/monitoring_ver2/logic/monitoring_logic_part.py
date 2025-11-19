@@ -47,6 +47,31 @@ from modules.monitoring_ver2.utils.vehicle_status import (
 from modules.monitoring_ver2.logic.prior_mission_replan import PriorMissionReplanCoordinator
 from modules.monitoring_ver2.utils.mission_progress_logger import MissionProgressExporter
 from modules.monitoring_ver2.utils.monitoring_operation_logger import MonitoringOperationLogger
+try:
+    from modules.mission_planning.MissionPlanner.data_def.id_allocator import next_mission_plan_id
+except Exception:
+    try:
+        from importlib import util as _importlib_util
+
+        _allocator_path = (
+            Path(__file__)
+            .resolve()
+            .parents[3]
+            / "modules"
+            / "mission_planning"
+            / "MissionPlanner"
+            / "data_def"
+            / "id_allocator.py"
+        )
+        spec = _importlib_util.spec_from_file_location("mission_planning_id_allocator", _allocator_path)
+        if spec and spec.loader:
+            _module = _importlib_util.module_from_spec(spec)
+            spec.loader.exec_module(_module)
+            next_mission_plan_id = getattr(_module, "next_mission_plan_id", None)
+        else:
+            next_mission_plan_id = None
+    except Exception:
+        next_mission_plan_id = None
 
 
 def _resolve_fuel_capacity() -> float:
@@ -3136,18 +3161,27 @@ class MonitoringLogic:
         return allocated
 
     def _allocate_mission_plan_ids(self, count: int) -> List[int]:
-        existing = self._scan_existing_mission_plan_ids()
-        combined = set(existing) | set(self._allocated_plan_ids)
-        base = max(combined) if combined else 700000000
-        next_candidate = base
+        try:
+            total = max(int(count), 0)
+        except Exception:
+            total = 0
+        if total <= 0:
+            return []
+
+        if next_mission_plan_id is None:
+            raise RuntimeError("missionPlanID allocator unavailable")
+
         allocated: List[int] = []
-        while len(allocated) < count:
-            next_candidate += 1
-            if next_candidate not in combined:
-                allocated.append(next_candidate)
-                self._allocated_plan_ids.add(next_candidate)
-                combined.add(next_candidate)
-        self._existing_mission_plan_ids.update(allocated)
+        for _ in range(total):
+            try:
+                allocated.append(int(next_mission_plan_id()))
+            except Exception as exc:
+                if hasattr(self, "manager") and self.manager is not None:
+                    try:
+                        self.manager._log("MON_LOGIC", "ERR", f"missionPlanID 중앙 발급 실패: {exc}")
+                    except Exception:
+                        pass
+                raise
         return allocated
 
     def _scan_existing_mission_plan_ids(self) -> Set[int]:
