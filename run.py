@@ -12,7 +12,7 @@
 #   본 파일의 46981~46984는 ‘모듈→대시보드(본 파일)’ 모니터링 수 용입니다.
 
 from __future__ import annotations
-import os, sys, subprocess, threading
+import os, sys, subprocess, threading, json
 os.environ["KU_ROLE"] = "decision"
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -62,6 +62,86 @@ def _bootstrap_paths():
 PROJECT_ROOT, COMMON_DIR, DS_DIR = _bootstrap_paths()
 
 
+hardened_base_ids = {
+    "missionPlanID": 700_000_000,
+    "individualMissionPackage": 800_000_000,
+    "individualMission": 900_000_000,
+    "pathID": {
+        1: 100_000_000,
+        2: 200_000_000,
+        3: 300_000_000,
+        4: 400_000_000,
+        5: 500_000_000,
+        6: 600_000_000,
+    },
+}
+
+
+def _force_reset_id_files() -> None:
+    """
+    Override mission/IMP/path counters to a fixed baseline on each launch.
+    This writes directly to data_def id tracker files regardless of runtime state.
+    """
+    try:
+        data_def_dir = PROJECT_ROOT / "modules" / "mission_planning" / "MissionPlanner" / "data_def"
+        data_def_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        return
+
+    tracker_path = data_def_dir / "id_tracker.json"
+    tracker_0202_path = data_def_dir / "id_tracker_0202.json"
+    counters_path = data_def_dir / "_id_counters.json"
+
+    tracker_payload = {
+        "missionPlanID": hardened_base_ids["missionPlanID"],
+        "individualMissionPackage": hardened_base_ids["individualMissionPackage"],
+        "individualMission": hardened_base_ids["individualMission"],
+        "pathID": hardened_base_ids["pathID"],
+    }
+    tracker_0202_payload = {"individualMissionID": 950_000_000}
+    counters_payload = {
+        "missionPlanID": hardened_base_ids["missionPlanID"],
+        "impPackageID": hardened_base_ids["individualMissionPackage"],
+    }
+
+    try:
+        tracker_path.write_text(
+            json.dumps(tracker_payload, ensure_ascii=False, separators=(",", ":")),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+    try:
+        tracker_0202_path.write_text(
+            json.dumps(tracker_0202_payload, ensure_ascii=False, separators=(",", ":")),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+    try:
+        counters_path.write_text(
+            json.dumps(counters_payload, ensure_ascii=False, separators=(",", ":")),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+    # Clear path/waypoint usage so id_allocator seeding does not pull old maxima.
+    try:
+        root = db_paths.bootstrap_db_root()
+        dss_dir = root / "DSS_Internal"
+        for fname in ("path_usage.json", "waypoint_usage.json"):
+            target = dss_dir / fname
+            if target.exists():
+                try:
+                    target.unlink()
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+
+_force_reset_id_files()
 db_paths.bootstrap_db_root()
 
 # ─────────────────────────────────────────────────────────────
@@ -136,6 +216,77 @@ def _load_msglib_and_deps():
                     pass
 
 # ─────────────────────────────────────────────────────────────
+
+# ---------------------------------------------------------------------------
+# ID counter reset on cold start (missionPlan/IMP/path/0202 IDs)
+def _reset_id_counters() -> None:
+    """
+    Reset mission/IMP/path ID trackers so each app launch starts from base seeds.
+    This is intentionally aggressive: existing counter files are overwritten.
+    """
+    try:
+        from modules.mission_planning.MissionPlanner.data_def import id_allocator
+        from modules.mission_planning.MissionPlanner.data_def import id_allocator_0202
+    except Exception:
+        return
+
+    base = id_allocator.BASE
+    target = {
+        # Reset so the next allocation starts at the *_001 baseline.
+        "missionPlanID": max(0, int(base.get("missionPlanID", 0) - 1)),
+        "individualMissionPackage": max(0, int(base.get("individualMissionPackage", 0) - 1)),
+        "individualMission": max(0, int(base.get("individualMission", 0) - 1)),
+        "pathID": {int(k): max(0, int(v) - 1) for k, v in (base.get("pathID") or {}).items()},
+    }
+    try:
+        store = Path(id_allocator.__file__).resolve().parent / "id_tracker.json"
+        store.parent.mkdir(parents=True, exist_ok=True)
+        # reset in-memory state as well as file
+        new_state = dict(target)
+        try:
+            id_allocator._state.clear()  # type: ignore[attr-defined]
+            id_allocator._state.update(new_state)  # type: ignore[attr-defined]
+            id_allocator._volatile_counters = {  # type: ignore[attr-defined]
+                key: base.get(key, 1) - 1 for key in id_allocator.VOLATILE_KEYS  # type: ignore[attr-defined]
+            }
+        except Exception:
+            pass
+        store.write_text(
+            json.dumps(new_state, ensure_ascii=False, separators=(",", ":")),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+    try:
+        base_0202 = getattr(id_allocator_0202, "_BASE_STATE", {"individualMissionID": 0})
+        state_0202 = {"individualMissionID": base_0202.get("individualMissionID", 0)}
+        try:
+            if hasattr(id_allocator_0202, "_STATE"):
+                id_allocator_0202._STATE.clear()  # type: ignore[attr-defined]
+                id_allocator_0202._STATE.update(state_0202)  # type: ignore[attr-defined]
+        except Exception:
+            pass
+        store_0202 = Path(id_allocator_0202.__file__).resolve().parent / "id_tracker_0202.json"
+        store_0202.write_text(
+            json.dumps(state_0202, ensure_ascii=False, separators=(",", ":")),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+    try:
+        counter_file = Path(id_allocator.__file__).resolve().parent / "_id_counters.json"
+        counter_payload = {
+            "missionPlanID": base.get("missionPlanID", 0),
+            "impPackageID": base.get("individualMissionPackage", 0),
+        }
+        counter_file.write_text(
+            json.dumps(counter_payload, ensure_ascii=False, separators=(",", ":")),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
 # 메인 윈도우 로드(경로 가변 지원)
 try:
     from app.ui.main_window import MainWindow  # type: ignore
@@ -1421,6 +1572,10 @@ def _arm_auto_boot(win, delay_ms: int = 1000) -> None:
 
 # ─────────────────────────────────────────────────────────────
 def main():
+    try:
+        _reset_id_counters()
+    except Exception:
+        pass
     app = QApplication(sys.argv)
     _load_qss(app)
     win = MainWindow()
