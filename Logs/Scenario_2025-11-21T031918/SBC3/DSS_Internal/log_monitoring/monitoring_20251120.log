@@ -1,0 +1,174 @@
+[MON][2025-11-20 18:19:31] PlanLoad
+  - MissionPlan 700000175 활성화 (inputPkg=1, activeInput=1)
+  - InputMissionIDs=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+  - 적용상태: appliedPlanID=700000175, previousPlanID=None
+  - UAV1: missions=11 pkg=800013841
+  - UAV2: missions=11 pkg=800013842
+  - UAV3: missions=11 pkg=800013843
+  - UAV4: missions=11 pkg=800013844
+  - UAV5: missions=11 pkg=800013845
+  - UAV6: missions=11 pkg=800013846
+[MON][2025-11-20 18:19:48] MonitoringCycle
+  - SystemMode=3, PlanID=700000175, ActiveInput=1, PendingPlan=None
+  - 0401 timestamp=811517583600, entries=6
+  -   UAV1: wp=None, health=1
+  -   UAV2: wp=None, health=1
+  -   UAV3: wp=None, health=1
+  -   UAV4: wp=1, health=1
+  -   UAV5: wp=45, health=1
+  -   UAV6: wp=92, health=1
+  - 0501 currentMissionPlanID=700000175, currentInputMissionID=1
+  -   UAV4 status: mission=900156264 input=1 progress=0% (transit) | mission=900156265 input=2 progress=0% | mission=900156266 input=3 progress=0% | mission=900156267 input=4 progress=0% | mission=900156268 input=5 progress=0% | mission=900156269 input=6 progress=0% | mission=900156270 input=7 progress=0% | mission=900156271 input=8 progress=0% | mission=900156272 input=9 progress=0% | mission=900156273 input=10 progress=0% | mission=900156274 input=11 progress=0%
+  -   UAV5 status: mission=900156275 input=1 progress=0% (transit) | mission=900156276 input=2 progress=0% | mission=900156277 input=3 progress=0% | mission=900156278 input=4 progress=0% | mission=900156279 input=5 progress=0% | mission=900156280 input=6 progress=0% | mission=900156281 input=7 progress=0% | mission=900156282 input=8 progress=0% | mission=900156283 input=9 progress=0% | mission=900156284 input=10 progress=0% | mission=900156285 input=11 progress=0%
+  -   UAV6 status: mission=900156286 input=1 progress=0% (transit) | mission=900156287 input=2 progress=0% | mission=900156288 input=3 progress=0% | mission=900156289 input=4 progress=0% | mission=900156290 input=5 progress=0% | mission=900156291 input=6 progress=0% | mission=900156292 input=7 progress=0% | mission=900156293 input=8 progress=0% | mission=900156294 input=9 progress=0% | mission=900156295 input=10 progress=0% | mission=900156296 input=11 progress=0%
+[MON][2025-11-20 18:19:50] ProgressUpdate
+  - UAV4 mission=900156264 input=1 progress=33% (missionIndex=0)
+  - UAV5 mission=900156275 input=1 progress=33% (missionIndex=0)
+  - UAV6 mission=900156286 input=1 progress=33% (missionIndex=0)
+[MON][2025-11-20 18:19:50] MonitoringCycle
+  - SystemMode=3, PlanID=700000175, ActiveInput=1, PendingPlan=None
+  - 0401 timestamp=811517585400, entries=6
+  -   UAV1: wp=None, health=1
+  -   UAV2: wp=None, health=1
+  -   UAV3: wp=None, health=1
+  -   UAV4: wp=2, health=1
+  -   UAV5: wp=46, health=1
+  -   UAV6: wp=93, health=1
+  - 0501 currentMissionPlanID=700000175, currentInputMissionID=1
+  -   UAV4 status: mission=900156264 input=1 progress=33% | mission=900156265 input=2 progress=0% | mission=900156266 input=3 progress=0% | mission=900156267 input=4 progress=0% | mission=900156268 input=5 progress=0% | mission=900156269 input=6 progress=0% | mission=900156270 input=7 progress=0% | mission=900156271 input=8 progress=0% | mission=900156272 input=9 progress=0% | mission=900156273 input=10 progress=0% | mission=900156274 input=11 progress=0%
+  -   UAV5 status: mission=900156275 input=1 progress=33% | mission=900156276 input=2 progress=0% | mission=900156277 input=3 progress=0% | mission=900156278 input=4 progress=0% | mission=900156279 input=5 progress=0% | mission=900156280 input=6 progress=0% | mission=900156281 input=7 progress=0% | mission=900156282 input=8 progress=0% | mission=900156283 input=9 progress=0% | mission=900156284 input=10 progress=0% | mission=900156285 input=11 progress=0%
+  -   UAV6 status: mission=900156286 input=1 progress=33% | mission=900156287 input=2 progress=0% | mission=900156288 input=3 progress=0% | mission=900156289 input=4 progress=0% | mission=900156290 input=5 progress=0% | mission=900156291 input=6 progress=0% | mission=900156292 input=7 progress=0% | mission=900156293 input=8 progress=0% | mission=900156294 input=9 progress=0% | mission=900156295 input=10 progress=0% | mission=900156296 input=11 progress=0%
+[MON][2025-11-20 18:19:52] ProgressUpdate
+  - UAV4 mission=900156264 input=1 progress=67% (missionIndex=0)
+  - UAV5 mission=900156275 input=1 progress=67% (missionIndex=0)
+  - UAV6 mission=900156286 input=1 progress=67% (missionIndex=0)
+[MON][2025-11-20 18:19:52] MonitoringCycle
+  - SystemMode=3, PlanID=700000175, ActiveInput=1, PendingPlan=None
+  - 0401 timestamp=811517587400, entries=6
+  -   UAV1: wp=None, health=1
+  -   UAV2: wp=None, health=1
+  -   UAV3: wp=None, health=1
+  -   UAV4: wp=3, health=1
+  -   UAV5: wp=47, health=1
+  -   UAV6: wp=94, health=1
+  - 0501 currentMissionPlanID=700000175, currentInputMissionID=1
+  -   UAV4 status: mission=900156264 input=1 progress=67% | mission=900156265 input=2 progress=0% | mission=900156266 input=3 progress=0% | mission=900156267 input=4 progress=0% | mission=900156268 input=5 progress=0% | mission=900156269 input=6 progress=0% | mission=900156270 input=7 progress=0% | mission=900156271 input=8 progress=0% | mission=900156272 input=9 progress=0% | mission=900156273 input=10 progress=0% | mission=900156274 input=11 progress=0%
+  -   UAV5 status: mission=900156275 input=1 progress=67% | mission=900156276 input=2 progress=0% | mission=900156277 input=3 progress=0% | mission=900156278 input=4 progress=0% | mission=900156279 input=5 progress=0% | mission=900156280 input=6 progress=0% | mission=900156281 input=7 progress=0% | mission=900156282 input=8 progress=0% | mission=900156283 input=9 progress=0% | mission=900156284 input=10 progress=0% | mission=900156285 input=11 progress=0%
+  -   UAV6 status: mission=900156286 input=1 progress=67% | mission=900156287 input=2 progress=0% | mission=900156288 input=3 progress=0% | mission=900156289 input=4 progress=0% | mission=900156290 input=5 progress=0% | mission=900156291 input=6 progress=0% | mission=900156292 input=7 progress=0% | mission=900156293 input=8 progress=0% | mission=900156294 input=9 progress=0% | mission=900156295 input=10 progress=0% | mission=900156296 input=11 progress=0%
+[MON][2025-11-20 18:19:54] ProgressUpdate
+  - UAV4 mission=900156264 input=1 progress=100% (missionIndex=0)
+  - UAV5 mission=900156275 input=1 progress=100% (missionIndex=0)
+  - UAV6 mission=900156286 input=1 progress=100% (missionIndex=0)
+[MON][2025-11-20 18:19:54] InputMissionCompletion
+  - Input mission 1 completion notification enqueued.
+[MON][2025-11-20 18:19:54] InputMissionCompletion
+  - Input 1: UAV4 mission=900156264 reached 100%
+  - Input 1: UAV5 mission=900156275 reached 100%
+  - Input 1: UAV6 mission=900156286 reached 100%
+  - Input 1 completed (6 missions)
+[MON][2025-11-20 18:19:54] MonitoringCycle
+  - SystemMode=3, PlanID=700000175, ActiveInput=1, PendingPlan=None
+  - 0401 timestamp=811517589400, entries=6
+  -   UAV1: wp=None, health=1
+  -   UAV2: wp=None, health=1
+  -   UAV3: wp=None, health=1
+  -   UAV4: wp=4, health=1
+  -   UAV5: wp=48, health=1
+  -   UAV6: wp=95, health=1
+  - 0501 currentMissionPlanID=700000175, currentInputMissionID=1
+  -   UAV4 status: mission=900156264 input=1 progress=100% | mission=900156265 input=2 progress=0% | mission=900156266 input=3 progress=0% | mission=900156267 input=4 progress=0% | mission=900156268 input=5 progress=0% | mission=900156269 input=6 progress=0% | mission=900156270 input=7 progress=0% | mission=900156271 input=8 progress=0% | mission=900156272 input=9 progress=0% | mission=900156273 input=10 progress=0% | mission=900156274 input=11 progress=0%
+  -   UAV5 status: mission=900156275 input=1 progress=100% | mission=900156276 input=2 progress=0% | mission=900156277 input=3 progress=0% | mission=900156278 input=4 progress=0% | mission=900156279 input=5 progress=0% | mission=900156280 input=6 progress=0% | mission=900156281 input=7 progress=0% | mission=900156282 input=8 progress=0% | mission=900156283 input=9 progress=0% | mission=900156284 input=10 progress=0% | mission=900156285 input=11 progress=0%
+  -   UAV6 status: mission=900156286 input=1 progress=100% | mission=900156287 input=2 progress=0% | mission=900156288 input=3 progress=0% | mission=900156289 input=4 progress=0% | mission=900156290 input=5 progress=0% | mission=900156291 input=6 progress=0% | mission=900156292 input=7 progress=0% | mission=900156293 input=8 progress=0% | mission=900156294 input=9 progress=0% | mission=900156295 input=10 progress=0% | mission=900156296 input=11 progress=0%
+[MON][2025-11-20 18:20:00] MonitoringCycle
+  - SystemMode=3, PlanID=700000175, ActiveInput=2, PendingPlan=None
+  - 0401 timestamp=811517591400, entries=6
+  -   UAV1: wp=None, health=1
+  -   UAV2: wp=None, health=1
+  -   UAV3: wp=None, health=1
+  -   UAV4: wp=4, health=1
+  -   UAV5: wp=48, health=1
+  -   UAV6: wp=95, health=1
+  - 0501 currentMissionPlanID=700000175, currentInputMissionID=2
+  -   UAV4 status: mission=900156264 input=1 progress=100% | mission=900156265 input=2 progress=0% | mission=900156266 input=3 progress=0% | mission=900156267 input=4 progress=0% | mission=900156268 input=5 progress=0% | mission=900156269 input=6 progress=0% | mission=900156270 input=7 progress=0% | mission=900156271 input=8 progress=0% | mission=900156272 input=9 progress=0% | mission=900156273 input=10 progress=0% | mission=900156274 input=11 progress=0%
+  -   UAV5 status: mission=900156275 input=1 progress=100% | mission=900156276 input=2 progress=0% | mission=900156277 input=3 progress=0% | mission=900156278 input=4 progress=0% | mission=900156279 input=5 progress=0% | mission=900156280 input=6 progress=0% | mission=900156281 input=7 progress=0% | mission=900156282 input=8 progress=0% | mission=900156283 input=9 progress=0% | mission=900156284 input=10 progress=0% | mission=900156285 input=11 progress=0%
+  -   UAV6 status: mission=900156286 input=1 progress=100% | mission=900156287 input=2 progress=0% | mission=900156288 input=3 progress=0% | mission=900156289 input=4 progress=0% | mission=900156290 input=5 progress=0% | mission=900156291 input=6 progress=0% | mission=900156292 input=7 progress=0% | mission=900156293 input=8 progress=0% | mission=900156294 input=9 progress=0% | mission=900156295 input=10 progress=0% | mission=900156296 input=11 progress=0%
+[MON][2025-11-20 18:20:02] ProgressUpdate
+  - UAV4 mission=900156265 input=2 progress=33% (missionIndex=1)
+  - UAV5 mission=900156276 input=2 progress=33% (missionIndex=1)
+  - UAV6 mission=900156287 input=2 progress=33% (missionIndex=1)
+[MON][2025-11-20 18:20:02] MonitoringCycle
+  - SystemMode=3, PlanID=700000175, ActiveInput=2, PendingPlan=None
+  - 0401 timestamp=811517593400, entries=6
+  -   UAV1: wp=None, health=1
+  -   UAV2: wp=None, health=1
+  -   UAV3: wp=None, health=1
+  -   UAV4: wp=6, health=1
+  -   UAV5: wp=50, health=1
+  -   UAV6: wp=97, health=1
+  - 0501 currentMissionPlanID=700000175, currentInputMissionID=2
+  -   UAV4 status: mission=900156264 input=1 progress=100% | mission=900156265 input=2 progress=33% | mission=900156266 input=3 progress=0% | mission=900156267 input=4 progress=0% | mission=900156268 input=5 progress=0% | mission=900156269 input=6 progress=0% | mission=900156270 input=7 progress=0% | mission=900156271 input=8 progress=0% | mission=900156272 input=9 progress=0% | mission=900156273 input=10 progress=0% | mission=900156274 input=11 progress=0%
+  -   UAV5 status: mission=900156275 input=1 progress=100% | mission=900156276 input=2 progress=33% | mission=900156277 input=3 progress=0% | mission=900156278 input=4 progress=0% | mission=900156279 input=5 progress=0% | mission=900156280 input=6 progress=0% | mission=900156281 input=7 progress=0% | mission=900156282 input=8 progress=0% | mission=900156283 input=9 progress=0% | mission=900156284 input=10 progress=0% | mission=900156285 input=11 progress=0%
+  -   UAV6 status: mission=900156286 input=1 progress=100% | mission=900156287 input=2 progress=33% | mission=900156288 input=3 progress=0% | mission=900156289 input=4 progress=0% | mission=900156290 input=5 progress=0% | mission=900156291 input=6 progress=0% | mission=900156292 input=7 progress=0% | mission=900156293 input=8 progress=0% | mission=900156294 input=9 progress=0% | mission=900156295 input=10 progress=0% | mission=900156296 input=11 progress=0%
+[MON][2025-11-20 18:20:04] ProgressUpdate
+  - UAV4 mission=900156265 input=2 progress=67% (missionIndex=1)
+  - UAV5 mission=900156276 input=2 progress=67% (missionIndex=1)
+  - UAV6 mission=900156287 input=2 progress=67% (missionIndex=1)
+[MON][2025-11-20 18:20:04] MonitoringCycle
+  - SystemMode=3, PlanID=700000175, ActiveInput=2, PendingPlan=None
+  - 0401 timestamp=811517595400, entries=6
+  -   UAV1: wp=None, health=1
+  -   UAV2: wp=None, health=1
+  -   UAV3: wp=None, health=1
+  -   UAV4: wp=7, health=1
+  -   UAV5: wp=51, health=1
+  -   UAV6: wp=98, health=1
+  - 0501 currentMissionPlanID=700000175, currentInputMissionID=2
+  -   UAV4 status: mission=900156264 input=1 progress=100% | mission=900156265 input=2 progress=67% | mission=900156266 input=3 progress=0% | mission=900156267 input=4 progress=0% | mission=900156268 input=5 progress=0% | mission=900156269 input=6 progress=0% | mission=900156270 input=7 progress=0% | mission=900156271 input=8 progress=0% | mission=900156272 input=9 progress=0% | mission=900156273 input=10 progress=0% | mission=900156274 input=11 progress=0%
+  -   UAV5 status: mission=900156275 input=1 progress=100% | mission=900156276 input=2 progress=67% | mission=900156277 input=3 progress=0% | mission=900156278 input=4 progress=0% | mission=900156279 input=5 progress=0% | mission=900156280 input=6 progress=0% | mission=900156281 input=7 progress=0% | mission=900156282 input=8 progress=0% | mission=900156283 input=9 progress=0% | mission=900156284 input=10 progress=0% | mission=900156285 input=11 progress=0%
+  -   UAV6 status: mission=900156286 input=1 progress=100% | mission=900156287 input=2 progress=67% | mission=900156288 input=3 progress=0% | mission=900156289 input=4 progress=0% | mission=900156290 input=5 progress=0% | mission=900156291 input=6 progress=0% | mission=900156292 input=7 progress=0% | mission=900156293 input=8 progress=0% | mission=900156294 input=9 progress=0% | mission=900156295 input=10 progress=0% | mission=900156296 input=11 progress=0%
+[MON][2025-11-20 18:20:06] MonitoringCycle
+  - SystemMode=3, PlanID=700000175, ActiveInput=2, PendingPlan=None
+  - 0401 timestamp=811517583600, entries=6
+  -   UAV1: wp=None, health=1
+  -   UAV2: wp=None, health=1
+  -   UAV3: wp=None, health=1
+  -   UAV4: wp=381, health=1
+  -   UAV5: wp=425, health=1
+  -   UAV6: wp=472, health=1
+  - 0501 currentMissionPlanID=700000175, currentInputMissionID=2
+  -   UAV4 status: mission=900156264 input=1 progress=0% | mission=900156265 input=2 progress=0% | mission=900156266 input=3 progress=0% | mission=900156267 input=4 progress=0% | mission=900156268 input=5 progress=0% | mission=900156269 input=6 progress=0% | mission=900156270 input=7 progress=0% | mission=900156271 input=8 progress=0% | mission=900156272 input=9 progress=0% | mission=900156273 input=10 progress=0% | mission=900156274 input=11 progress=0%
+  -   UAV5 status: mission=900156275 input=1 progress=0% | mission=900156276 input=2 progress=0% | mission=900156277 input=3 progress=0% | mission=900156278 input=4 progress=0% | mission=900156279 input=5 progress=0% | mission=900156280 input=6 progress=0% | mission=900156281 input=7 progress=0% | mission=900156282 input=8 progress=0% | mission=900156283 input=9 progress=0% | mission=900156284 input=10 progress=0% | mission=900156285 input=11 progress=0%
+  -   UAV6 status: mission=900156286 input=1 progress=0% | mission=900156287 input=2 progress=0% | mission=900156288 input=3 progress=0% | mission=900156289 input=4 progress=0% | mission=900156290 input=5 progress=0% | mission=900156291 input=6 progress=0% | mission=900156292 input=7 progress=0% | mission=900156293 input=8 progress=0% | mission=900156294 input=9 progress=0% | mission=900156295 input=10 progress=0% | mission=900156296 input=11 progress=0%
+[MON][2025-11-20 18:20:20] PlanLoad
+  - MissionPlan 700000176 활성화 (inputPkg=1, activeInput=2)
+  - InputMissionIDs=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+  - 적용상태: appliedPlanID=700000176, previousPlanID=700000176
+  - UAV1: missions=11 pkg=800013849
+  - UAV2: missions=11 pkg=800013850
+  - UAV3: missions=11 pkg=800013851
+  - UAV4: missions=11 pkg=800013852
+  - UAV5: missions=11 pkg=800013853
+  - UAV6: missions=11 pkg=800013854
+[MON][2025-11-20 18:20:20] PlanLoad
+  - MissionPlan 700000176 활성화 (inputPkg=1, activeInput=1)
+  - InputMissionIDs=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+  - 적용상태: appliedPlanID=700000176, previousPlanID=700000175
+  - UAV1: missions=11 pkg=800013849
+  - UAV2: missions=11 pkg=800013850
+  - UAV3: missions=11 pkg=800013851
+  - UAV4: missions=11 pkg=800013852
+  - UAV5: missions=11 pkg=800013853
+  - UAV6: missions=11 pkg=800013854
+[MON][2025-11-20 18:20:20] MonitoringCycle
+  - SystemMode=3, PlanID=700000176, ActiveInput=1, PendingPlan=None
+  - 0401 timestamp=811517591400, entries=6
+  -   UAV1: wp=None, health=1
+  -   UAV2: wp=None, health=1
+  -   UAV3: wp=None, health=1
+  -   UAV4: wp=384, health=1
+  -   UAV5: wp=428, health=1
+  -   UAV6: wp=475, health=1
+  - 0501 currentMissionPlanID=700000176, currentInputMissionID=1
+  -   UAV4 status: mission=900156388 input=1 progress=0% | mission=900156389 input=2 progress=0% | mission=900156390 input=3 progress=0% | mission=900156391 input=4 progress=0% | mission=900156392 input=5 progress=0% | mission=900156393 input=6 progress=0% | mission=900156394 input=7 progress=0% | mission=900156395 input=8 progress=0% | mission=900156396 input=9 progress=0% | mission=900156397 input=10 progress=0% | mission=900156398 input=11 progress=0%
+  -   UAV5 status: mission=900156399 input=1 progress=0% | mission=900156400 input=2 progress=0% | mission=900156401 input=3 progress=0% | mission=900156402 input=4 progress=0% | mission=900156403 input=5 progress=0% | mission=900156404 input=6 progress=0% | mission=900156405 input=7 progress=0% | mission=900156406 input=8 progress=0% | mission=900156407 input=9 progress=0% | mission=900156408 input=10 progress=0% | mission=900156409 input=11 progress=0%
+  -   UAV6 status: mission=900156410 input=1 progress=0% | mission=900156411 input=2 progress=0% | mission=900156412 input=3 progress=0% | mission=900156413 input=4 progress=0% | mission=900156414 input=5 progress=0% | mission=900156415 input=6 progress=0% | mission=900156416 input=7 progress=0% | mission=900156417 input=8 progress=0% | mission=900156418 input=9 progress=0% | mission=900156419 input=10 progress=0% | mission=900156420 input=11 progress=0%

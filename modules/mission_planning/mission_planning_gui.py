@@ -23,6 +23,7 @@ from mission_planning_gui_env import (
     _z4,
 )
 from mission_planning_pipeline_logging import PipelineLogManager
+from mission_plan_file_logger import MissionPlanFileLogger
 
 PROJECT_ROOT, COMMON_DIR = _bootstrap_paths(Path(__file__))
 
@@ -142,6 +143,8 @@ class MainWindow(QMainWindow):
             log_tab_provider=lambda: getattr(self, "_log_tab", None),
             sanitize_reason=_sanitize_reason,
         )
+        self._mission_plan_logger = MissionPlanFileLogger()
+        self._active_plan_log_run = None
         self._log_file_path: Optional[Path] = None
         self._init_gui_log_file_sink()
 
@@ -776,7 +779,7 @@ class MainWindow(QMainWindow):
             except Exception:
                 is_execution_mode = False
         else:
-            self._append_log_line("[INFO] replanLevel=4 → skip 0901/0701, direct 0903 delivery")
+            self._append_log_line("[INFO] Direct delivery -> skip 0901/0701, send 0301+0903 only")
 
         if not plan_ids:
             self._append_log_line("[WARN] No missionPlanID to push (0301)")
@@ -881,6 +884,12 @@ class MainWindow(QMainWindow):
             pass
 
     def _append_log_line(self, text: str):
+        try:
+            run_log = getattr(self, "_active_plan_log_run", None)
+            if run_log:
+                run_log.add_message(text)
+        except Exception:
+            pass
         self._persist_gui_log(text)
         try:
             if getattr(self, "_tab", None) and hasattr(self._tab, "append_log"):
@@ -1454,28 +1463,53 @@ class MainWindow(QMainWindow):
             timer.stop()
             timer.deleteLater()
             self._replan_delay_timer = None
+        ctx = getattr(self, "_active_plan_context", {}) or {}
+        reason = _sanitize_reason(ctx.get("reason"), "??????????")
+        plan_logger = getattr(self, "_mission_plan_logger", None)
         if not self._power_on:
-            self._append_log_line("[BLOCK] Power OFF → replan pipeline 차단")
+            msg = "[BLOCK] Power OFF ?? replan pipeline ????"
+            self._append_log_line(msg)
+            try:
+                if plan_logger:
+                    plan_logger.log_blocked(ctx, reason, msg)
+            except Exception:
+                pass
             return
         if self._initplan_running:
-            self._append_log_line("[INFO] replan pipeline already running")
+            msg = "[INFO] replan pipeline already running"
+            self._append_log_line(msg)
+            try:
+                if plan_logger:
+                    plan_logger.log_blocked(ctx, reason, msg)
+            except Exception:
+                pass
             return
         self._initplan_running = True
         self._pending_plan_push = None
-        ctx = getattr(self, "_active_plan_context", {}) or {}
-        reason = _sanitize_reason(ctx.get("reason"), "초기임무재계획")
         self._push_0305(status=1, reason=reason)
         session_id = self._pipeline_logger.open_session(ctx, reason)
+        plan_run_log = None
+        try:
+            if plan_logger:
+                plan_run_log = plan_logger.start_run(ctx, reason, session_id=session_id)
+        except Exception:
+            plan_run_log = None
         threading.Thread(
             target=self._run_replan_pipeline_do,
-            args=(session_id,),
+            args=(session_id, plan_run_log),
             name="Replan-GUI",
             daemon=True,
         ).start()
 
-    def _run_replan_pipeline_do(self, session_id: Optional[str]):
+    def _run_replan_pipeline_do(self, session_id: Optional[str], plan_run_log=None):
         success = False
+        plan_log_status = "error"
+        plan_log_stop_reason: Optional[str] = None
+        plan_log_summary: Dict[str, Any] = {}
         summary_info: Optional[Dict[str, Any]] = None
+        plan_log = plan_run_log
+        ctx: Dict[str, Any] = {}
+        staged: Dict[str, Any] = {}
         try:
             import os, json
             from pathlib import Path
@@ -1490,6 +1524,36 @@ class MainWindow(QMainWindow):
             self._ensure_ctx_package_ids(ctx, staged)
             staged_reason = _sanitize_reason(staged.get('reason'), 'init-plan')
             reason = _sanitize_reason(ctx.get('reason'), staged_reason)
+
+            plan_log = plan_run_log
+            if plan_log is None:
+                try:
+                    plan_log = self._mission_plan_logger.start_run(ctx, reason, session_id=session_id)
+                except Exception:
+                    plan_log = None
+            if plan_log:
+                self._active_plan_log_run = plan_log
+                plan_log.add_step(
+                    "start",
+                    "info",
+                    detail={
+                        "reason": reason,
+                        "plan_ids": list(ctx.get("plan_ids") or []),
+                        "replan_level": ctx.get("replan_level", ctx.get("replanLevel")),
+                    },
+                )
+            def _record_step(name: str, status: str, detail: Optional[Dict[str, Any]] = None, message: str = "") -> None:
+                if plan_log:
+                    plan_log.add_step(name, status, detail=detail, message=message)
+
+            def _record_issue(code: str, message: str = "", detail: Optional[Dict[str, Any]] = None, *, status: str = "error") -> None:
+                nonlocal plan_log_status, plan_log_stop_reason
+                plan_log_stop_reason = plan_log_stop_reason or code
+                plan_log_status = status or plan_log_status
+                if plan_log:
+                    if message or detail:
+                        plan_log.add_issue(code, message=message or None, detail=detail)
+                    plan_log.add_step(code, status or "error", detail=detail, message=message)
 
             self.log_sig.emit(f"[STEP 0] Replan pipeline start (reason={reason})")
             self._pipeline_logger.log_event(
@@ -1506,6 +1570,7 @@ class MainWindow(QMainWindow):
 
             attack_summary_info: Optional[Dict[str, Any]] = None
             if self._should_use_attack_pipeline(ctx):
+                _record_step("attack_pipeline", "start", detail={"reason": reason})
                 self.log_sig.emit("[ATTACK] 공격 특화 재계획 요청 감지 → 전용 파이프라인 실행")
                 try:
                     attack_result = run_attack_plan_pipeline(ctx, log_callback=self._append_log_line)
@@ -1519,6 +1584,7 @@ class MainWindow(QMainWindow):
                         "Attack pipeline evaluated",
                         detail={"log_path": log_path},
                     )
+                    _record_step("attack_pipeline", "evaluated", detail={"log_path": str(log_path) if log_path else None})
                     attack_updates = ((attack_result or {}).get("result") or {}).get("missionUpdates")
                     if attack_updates:
                         try:
@@ -1539,20 +1605,31 @@ class MainWindow(QMainWindow):
                                     "option_meta": dict(ctx.get("_option_meta") or {}),
                                 }
                             )
+                            _record_step("attack_pipeline", "complete", detail={"plan_ids": list(ctx.get("plan_ids") or []), "log_path": str(log_path) if log_path else None})
                         except Exception as exc:
                             self._append_log_line(f"[ATTACK][ERR] finalize failed: {exc}")
                             self._pipeline_logger.log_event(
                                 session_id, "error", f"Attack finalize failed: {exc}"
                             )
+                            _record_issue("attack_finalize_failed", f"Attack finalize failed: {exc}")
                 except Exception as exc:
                     self._append_log_line(f"[ATTACK][ERR] pipeline failed: {exc}")
                     self._pipeline_logger.log_event(
                         session_id, "error", f"Attack pipeline failed: {exc}"
                     )
+                    _record_issue("attack_pipeline_failed", f"Attack pipeline failed: {exc}")
 
             prior_summary = self._try_run_prior_mission_pipeline(ctx, reason, session_id=session_id)
             if prior_summary:
                 summary_info = {"mode": "prior", **prior_summary}
+                plan_log_status = "success"
+                plan_log_summary.update(summary_info or {})
+                if plan_log:
+                    plan_log.set_plan_ids(
+                        prior_summary.get("plan_ids") or prior_summary.get("planIds") or ctx.get("plan_ids") or []
+                    )
+                    plan_log.update_summary(summary_info)
+                    _record_step("prior_pipeline", "success", detail=summary_info)
                 success = True
                 return
 
@@ -1842,6 +1919,9 @@ class MainWindow(QMainWindow):
                         self.log_sig.emit(f"[ERR] Latest 0201 ID {latest_cmpk_id} missing and cache payload unavailable")
                         cmpk_missing = True
             if cmpk_missing:
+                failure_detail = {"latest_0201": latest_cmpk_id}
+                _record_issue("0201_missing", "latest 0201 missing", detail=failure_detail)
+                plan_log_summary.update({"stop_reason": "0201_missing", **failure_detail})
                 self._plan_status = "임무계획 실패"
                 self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
                 return
@@ -1855,6 +1935,8 @@ class MainWindow(QMainWindow):
                         pass
                     self.log_sig.emit(f"[INFO] Fallback 0201 file selected: {cmpk_path.name}")
 
+            if cmpk_path:
+                _record_step("0201_resolved", "ok", detail={"path": str(cmpk_path), "latest_id": latest_cmpk_id})
             mrpk_path = None
             mrpk_missing = False
             if latest_mrpk_id is not None:
@@ -1883,6 +1965,9 @@ class MainWindow(QMainWindow):
                         self.log_sig.emit(f"[ERR] Latest 0203 ID {latest_mrpk_id} missing and cache payload unavailable")
                         mrpk_missing = True
             if mrpk_missing:
+                failure_detail = {"latest_0203": latest_mrpk_id}
+                _record_issue("0203_missing", "latest 0203 missing", detail=failure_detail)
+                plan_log_summary.update({"stop_reason": "0203_missing", **failure_detail})
                 self._plan_status = "임무계획 실패"
                 self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
                 return
@@ -1896,8 +1981,12 @@ class MainWindow(QMainWindow):
                         pass
                     self.log_sig.emit(f"[INFO] Fallback 0203 file selected: {mrpk_path.name}")
 
+            if mrpk_path:
+                _record_step("0203_resolved", "ok", detail={"path": str(mrpk_path), "latest_id": latest_mrpk_id})
             if not cmpk_path or not mrpk_path:
                 self.log_sig.emit('[ERR] Replan pipeline aborted: missing 0201/0203 input')
+                _record_issue("input_missing", "missing 0201/0203 input", detail= {"cmpk_path": str(cmpk_path) if cmpk_path else None, "mrpk_path": str(mrpk_path) if mrpk_path else None})
+                plan_log_summary.update({"stop_reason": "input_missing", "cmpk_path": str(cmpk_path) if cmpk_path else None, "mrpk_path": str(mrpk_path) if mrpk_path else None})
                 self._plan_status = "임무계획 실패"
                 self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
                 return
@@ -1965,6 +2054,18 @@ class MainWindow(QMainWindow):
                         if mid_int is not None:
                             active_ids.append(mid_int)
                     if not filtered_list:
+                        plan_log_status = "skipped"
+                        _record_issue(
+                            "0201_filter_empty",
+                            "filtered 0201 has no missions",
+                            detail={"removed": removed_ids, "mission_whitelist": sorted(mission_whitelist) if mission_whitelist else []},
+                            status="skipped",
+                        )
+                        plan_log_summary.update({
+                            "stop_reason": "0201_filter_empty",
+                            "removed_input_ids": removed_ids,
+                            "mission_whitelist": sorted(mission_whitelist) if mission_whitelist else [],
+                        })
                         self.log_sig.emit("[WARN] No pending missions remain after filtering; skipping replan pipeline.")
                         self._plan_status = "replan_skipped"
                         self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
@@ -2101,10 +2202,9 @@ class MainWindow(QMainWindow):
                 if preferred is not None:
                     try:
                         candidate = int(preferred)
-                        if candidate not in used_plan_ids:
-                            used_plan_ids.add(candidate)
-                            return candidate
-                        self.log_sig.emit(f"[WARN] missionPlanID {candidate} already exists; allocating new ID")
+                        # 요청된 ID가 기존에 있어도 그대로 재사용 (재계획 요청 준수)
+                        used_plan_ids.add(candidate)
+                        return candidate
                     except Exception:
                         pass
                 while next_plan_id_seed in used_plan_ids:
@@ -2160,6 +2260,8 @@ class MainWindow(QMainWindow):
                 )
                 if not imp_paths:
                     self.log_sig.emit(f"[ERR] IMP generation failed (variant={variant_no})")
+                    _record_issue("imp_generation_failed", f"IMP generation failed (variant={variant_no})", status="error")
+                    plan_log_summary.update({"stop_reason": "imp_generation_failed", "variant": variant_no})
                     self._plan_status = "임무계획 실패"
                     self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
                     return
@@ -2240,6 +2342,8 @@ class MainWindow(QMainWindow):
                     self.log_sig.emit(f"[INFO] FlightPath pathID enforced (variant={variant_no}): 0303={fixed3}, 0304={fixed4}")
                 if not flight_plans_0303 and not flight_plans_0304:
                     self.log_sig.emit(f"[ERR] FlightPath generation failed (variant={variant_no})")
+                    _record_issue("flightpath_generation_failed", f"FlightPath generation failed (variant={variant_no})")
+                    plan_log_summary.update({"stop_reason": "flightpath_generation_failed", "variant": variant_no})
                     return
                 self.log_sig.emit(f"[OK] FlightPath counts (variant={variant_no}): 0303={len(flight_plans_0303)} / 0304={len(flight_plans_0304)}")
 
@@ -2270,7 +2374,9 @@ class MainWindow(QMainWindow):
                     self.log_sig.emit(
                         f"[ERR] FlightPath generation incomplete (variant={variant_no}): missing pathID(s) {missing_summary}"
                     )
-                    self._plan_status = "임무계획 실패"
+                    _record_issue("flightpath_missing_ids", f"missing pathID(s) {missing_summary}")
+                    plan_log_summary.update({"stop_reason": "flightpath_missing_ids", "missing_paths": missing_summary})
+                    self._plan_status = "?????? ????"
                     self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
                     return
 
@@ -2361,6 +2467,7 @@ class MainWindow(QMainWindow):
                 pass
 
             self.log_sig.emit(f"[OK] Stored mission data: MissionPlan={len(generated_plan_ids)}, IndividualMission={total_imp_files}, FlightPath={total_fp_files}")
+            _record_step("store_output", "ok", detail={"plan_count": len(generated_plan_ids), "imp_files": total_imp_files, "flightpath_files": total_fp_files})
 
             self._last_mission_plan_ids = generated_plan_ids
             self._last_mission_plan_id = generated_plan_ids[0] if generated_plan_ids else None
@@ -2397,9 +2504,14 @@ class MainWindow(QMainWindow):
 
             force_direct_update = False
             try:
-                force_direct_update = int(ctx.get("replan_level", 0)) == 4
+                replan_level_val = int(ctx.get("replan_level", 0))
             except Exception:
-                force_direct_update = False
+                replan_level_val = 0
+            force_direct_update = (replan_level_val == 4)
+            # 초기임무재계획: 옵션 정보 없이 바로 0903 전달
+            initial_replan = (replan_level_val == 1) or ("초기임무" in str(reason))
+            if initial_replan:
+                force_direct_update = True
 
             self._schedule_plan_delivery(
                 generated_plan_ids,
@@ -2413,15 +2525,64 @@ class MainWindow(QMainWindow):
                 "plan_ids": list(generated_plan_ids),
                 "option_codes": list(option_codes_out),
             }
+            plan_log_status = "success"
+            plan_log_summary.update(summary_info)
+            if plan_log:
+                try:
+                    plan_log.set_plan_ids(generated_plan_ids)
+                    plan_log.update_summary(summary_info)
+                    _record_step(
+                        "replan_pipeline",
+                        "success",
+                        detail={"plan_ids": list(generated_plan_ids), "option_codes": list(option_codes_out)},
+                    )
+                except Exception:
+                    pass
             success = True
 
         except Exception as exc:
             self.log_sig.emit(f"[ERR] Replan pipeline failed: {exc}")
             self._pipeline_logger.log_event(session_id, "error", f"Replan pipeline failed: {exc}")
+            plan_log_status = "error"
+            plan_log_stop_reason = plan_log_stop_reason or "exception"
+            try:
+                _record_issue("exception", f"{exc}", detail={"reason": reason})
+                plan_log_summary.setdefault("stop_reason", plan_log_stop_reason)
+                plan_log_summary.setdefault("exception", str(exc))
+            except Exception:
+                pass
         finally:
             self._initplan_running = False
-            status_text = "success" if success else "error"
-            self._pipeline_logger.close_session(session_id, status_text, summary=summary_info)
+            final_status = "success" if success else plan_log_status
+            summary_payload: Dict[str, Any] = {}
+            if plan_log_summary:
+                summary_payload.update(plan_log_summary)
+            if summary_info:
+                try:
+                    summary_payload.update(summary_info)
+                except Exception:
+                    pass
+            if plan_log:
+                try:
+                    if plan_log_stop_reason and final_status != "success":
+                        plan_log.set_stop_reason(plan_log_stop_reason)
+                    plan_log.set_plan_ids(
+                        getattr(self, "_last_mission_plan_ids", None) or ctx.get("plan_ids") or []
+                    )
+                    plan_log.finalize(final_status, summary=summary_payload or summary_info)
+                except Exception:
+                    pass
+            try:
+                self._mission_plan_logger.clear_active()
+            except Exception:
+                pass
+            self._active_plan_log_run = None
+            status_text = (
+                "success"
+                if success
+                else (final_status if final_status in ("success", "error") else "error")
+            )
+            self._pipeline_logger.close_session(session_id, status_text, summary=summary_info or summary_payload)
 
     def _finalize_attack_pipeline(
         self,
@@ -2432,16 +2593,22 @@ class MainWindow(QMainWindow):
         session_id: Optional[str],
         *,
         schedule_delivery: bool = True,
+        plan_log=None,
     ) -> None:
         try:
             attack_plan_id = int(attack_updates.get("mission_plan_id"))
         except Exception:
             attack_plan_id = None
 
-        plan_ids = list(ctx.get("plan_ids") or [])
-        if attack_plan_id and attack_plan_id not in plan_ids:
-            plan_ids.insert(0, attack_plan_id)
-        if not plan_ids and attack_plan_id:
+        provided_plan_ids = list(ctx.get("plan_ids") or [])
+        plan_ids = list(provided_plan_ids) or []
+        if attack_plan_id is None:
+            attack_plan_id = plan_ids[0] if plan_ids else None
+        if plan_ids:
+            if attack_plan_id is not None and attack_plan_id not in plan_ids:
+                # Respect externally provided plan IDs; map attack result onto the first one.
+                attack_plan_id = plan_ids[0]
+        elif attack_plan_id is not None:
             plan_ids = [attack_plan_id]
         if not plan_ids:
             raise RuntimeError("Attack pipeline produced no mission plan IDs.")
@@ -2462,6 +2629,20 @@ class MainWindow(QMainWindow):
                     },
                 }
             )
+
+        if plan_log:
+            try:
+                plan_log.set_plan_ids(plan_ids)
+                plan_log.update_summary(
+                    {"attack_plan_ids": list(plan_ids), "attack_log": attack_result.get("log_path")}
+                )
+                plan_log.add_step(
+                    "attack_pipeline",
+                    "success",
+                    detail={"plan_ids": list(plan_ids), "log_path": attack_result.get("log_path")},
+                )
+            except Exception:
+                pass
 
         ctx["plan_ids"] = plan_ids
         ctx["option_names"] = option_names
