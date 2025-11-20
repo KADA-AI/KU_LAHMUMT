@@ -351,7 +351,8 @@ def _compute_attack_point(
             best["centroid"],
             geotransform,
         )
-        altitude_int = _normalize_altitude_value(altitude)
+        # Use terrain altitude with a fixed safety offset (DEM + 300m)
+        altitude_int = _normalize_altitude_value(altitude + 300.0 if altitude is not None else 300.0)
         return (
             {
                 "latitude": best["centroid"][1],
@@ -954,7 +955,9 @@ def _build_uav_attack_tracking_package(
         },
     }
     if descriptor.get("target_id") is not None:
-        target_wp["autoTracking"] = {"targetID": descriptor.get("target_id")}
+        filming = target_wp.get("filmingProperty") or {}
+        filming["autoTracking"] = {"targetID": descriptor.get("target_id")}
+        target_wp["filmingProperty"] = filming
 
     tracking_fp_data = {
         "timestamp": now_ms,

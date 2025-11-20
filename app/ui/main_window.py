@@ -15,7 +15,7 @@ import os, subprocess, json, socket, shutil
 from pathlib import Path
 from modules.common import db_paths
 
-APP_TITLE = "KU Mission Decision Support Dashboard (v251111)"
+APP_TITLE = "KU Mission Decision Support Dashboard (v251120)"
 SW_UPDATE_FILE = db_paths.PROJECT_ROOT / "memo" / "SW_UPDATE_LOG.txt"
 SW_MEMO_FILE = db_paths.PROJECT_ROOT / "memo" / "SW_MEMO_NOTE.txt"
 REFERENCE_PDF_PATH = db_paths.PROJECT_ROOT / "ref" / "04. 모듈 간 인터페이스 설계-v7-20250917_133206.pdf"

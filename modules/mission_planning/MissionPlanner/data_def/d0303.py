@@ -39,7 +39,7 @@ Point = Tuple[float, float]
 Line  = Tuple[Point, Point]
 
 # ── 고정 상수 ───────────────────────────────────────────
-FOV_DEG         = 25
+FOV_DEG         = 15
 SWEEP_ENTRY_OFFSET_M = 1500.0
 SWEEP_MERGE_HEADING_DEG = 5
 SWEEP_LINE_INTERP_POINTS = 3  # >=2; controls how many sample points are emitted per sweep line

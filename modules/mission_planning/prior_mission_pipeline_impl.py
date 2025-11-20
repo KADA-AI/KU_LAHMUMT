@@ -622,6 +622,24 @@ def run_prior_mission_pipeline(
             "targetID": target_id if mission_type == 2 and target_id is not None else 0,
         }
 
+        # 접근 WP 시선 방향: 현재 접근 좌표에서 목표 좌표 방향으로 100m 앞 좌표
+        orientation_coord = _project_coordinate(
+            approach_coord,
+            _bearing_between(
+                approach_coord["latitude"],
+                approach_coord["longitude"],
+                target_coord["latitude"],
+                target_coord["longitude"],
+            ),
+            100.0,
+        ) or dict(target_coord)
+
+        target_altitude = (
+            _normalize_altitude_value(approach_coord.get("altitude"))
+            or _normalize_altitude_value(target_coord.get("altitude"))
+            or 700
+        )
+
         approach_wp = {
             "waypointID": prior_approach_wp_id,
             "coordinate": {
@@ -633,16 +651,16 @@ def run_prior_mission_pipeline(
             "eta": 25,
             "ecf": 0.0,
             "nextWaypointID": prior_target_wp_id,
-            "waypointPassType": 2,
+            "waypointPassType": 1,
             "filmingProperty": {
                 "fieldOfView": 10.0,
                 "sensorType": 1,
                 "operationMode": 1,
                 "coordinateOrientation": {
                     "coordinate": {
-                        "latitude": target_coord["latitude"],
-                        "longitude": target_coord["longitude"],
-                        "altitude": target_coord.get("altitude") or 0,
+                        "latitude": orientation_coord.get("latitude", target_coord["latitude"]),
+                        "longitude": orientation_coord.get("longitude", target_coord["longitude"]),
+                        "altitude": orientation_coord.get("altitude") or target_coord.get("altitude") or 0,
                     }
                 },
             },
@@ -654,9 +672,7 @@ def run_prior_mission_pipeline(
             "coordinate": {
                 "latitude": target_coord["latitude"],
                 "longitude": target_coord["longitude"],
-                "altitude": target_coord.get("altitude")
-                if target_coord.get("altitude") is not None
-                else 0,
+                "altitude": target_altitude,
             },
             "speed": 30.0,
             "eta": 30,
@@ -671,21 +687,21 @@ def run_prior_mission_pipeline(
                     "coordinate": {
                         "latitude": target_coord["latitude"],
                         "longitude": target_coord["longitude"],
-                        "altitude": target_coord.get("altitude")
-                        if target_coord.get("altitude") is not None
-                        else 0,
+                        "altitude": target_altitude,
                     }
                 },
             },
             "loiterProperty": {
                 "radius": 400,
                 "direction": 1,
-                "time": 30,
+                "time": 100,
                 "speed": 30,
             },
         }
         if mission_type == 2 and target_tracking_payload:
-            target_wp["autoTracking"] = {"targetID": target_tracking_payload.get("targetID")}
+            filming = target_wp.get("filmingProperty") or {}
+            filming["autoTracking"] = {"targetID": target_tracking_payload.get("targetID")}
+            target_wp["filmingProperty"] = filming
 
         prior_fp_data = {
             key: deepcopy(value)
@@ -1035,7 +1051,7 @@ def _inject_prior_waypoint(
             "altitude": altitude,
         },
         "speed": 30.0,
-        "eta": 30,
+        "eta": 700,
         "ecf": 0.0,
         "nextWaypointID": current_waypoint_id,
         "waypointPassType": 2,
@@ -1056,7 +1072,7 @@ def _inject_prior_waypoint(
         "loiterProperty": {
             "radius": 400,
             "direction": 1,
-            "time": 30,
+            "time": 100,
             "speed": 30,
         },
     }
@@ -1067,7 +1083,8 @@ def _inject_prior_waypoint(
         inserted_wp["filmingProperty"] = filming
         target_track_id = _to_int((target_tracking or {}).get("targetID"))
         if target_track_id is not None:
-            inserted_wp["autoTracking"] = {"targetID": target_track_id}
+            filming["autoTracking"] = {"targetID": target_track_id}
+            inserted_wp["filmingProperty"] = filming
 
     waypoint_list.insert(current_index, inserted_wp)
     if preceding_index >= 0:

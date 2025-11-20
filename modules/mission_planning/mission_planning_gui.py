@@ -114,6 +114,7 @@ class MainWindow(QMainWindow):
         self._plan_status = "임무계획 전"
         self._option_id_counter = 0
         self._bus_ready = False
+        self._attack_delivery_buffer: list[dict] = []
 
         reset_latest_inputs()
         self._last_logged_input_ids = {"0201": None, "0203": None}
@@ -1359,6 +1360,13 @@ class MainWindow(QMainWindow):
             try: ctx["fallback_plan_id"] = int(payload.get("fallbackPlanId"))
             except Exception: pass
 
+        # 새 0902 요청 수신 시 이전 전송 버퍼 초기화
+        self._pending_plan_push = None
+        try:
+            self._attack_delivery_buffer.clear()
+        except Exception:
+            self._attack_delivery_buffer = []
+
         self._active_plan_context = ctx
         summary = ", ".join(str(pid) for pid in ctx.get("plan_ids", [])) or "-"
         self._append_log_line(f"[AUTO] 0902 received (planIds={summary})")
@@ -1474,6 +1482,11 @@ class MainWindow(QMainWindow):
 
             ctx = getattr(self, '_active_plan_context', {}) or {}
             staged = self._staged_plan_context if isinstance(getattr(self, '_staged_plan_context', {}), dict) else {}
+            self._pending_plan_push = None
+            try:
+                self._attack_delivery_buffer.clear()
+            except Exception:
+                self._attack_delivery_buffer = []
             self._ensure_ctx_package_ids(ctx, staged)
             staged_reason = _sanitize_reason(staged.get('reason'), 'init-plan')
             reason = _sanitize_reason(ctx.get('reason'), staged_reason)
@@ -1491,6 +1504,7 @@ class MainWindow(QMainWindow):
             )
 
 
+            attack_summary_info: Optional[Dict[str, Any]] = None
             if self._should_use_attack_pipeline(ctx):
                 self.log_sig.emit("[ATTACK] 공격 특화 재계획 요청 감지 → 전용 파이프라인 실행")
                 try:
@@ -1508,20 +1522,28 @@ class MainWindow(QMainWindow):
                     attack_updates = ((attack_result or {}).get("result") or {}).get("missionUpdates")
                     if attack_updates:
                         try:
-                            self._finalize_attack_pipeline(ctx, attack_result, attack_updates, reason, session_id)
+                            self._finalize_attack_pipeline(
+                                ctx, attack_result, attack_updates, reason, session_id, schedule_delivery=False
+                            )
+
+                            attack_summary_info = {
+                                "mode": "attack",
+                                "plan_ids": list(ctx.get("plan_ids") or []),
+                                "attack_log": log_path,
+                            }
+
+                            self._attack_delivery_buffer.append(
+                                {
+                                    "plan_ids": list(ctx.get("plan_ids") or []),
+                                    "option_names": list(ctx.get("option_names") or []),
+                                    "option_meta": dict(ctx.get("_option_meta") or {}),
+                                }
+                            )
                         except Exception as exc:
                             self._append_log_line(f"[ATTACK][ERR] finalize failed: {exc}")
                             self._pipeline_logger.log_event(
                                 session_id, "error", f"Attack finalize failed: {exc}"
                             )
-                        else:
-                            summary_info = {
-                                "mode": "attack",
-                                "plan_ids": list(ctx.get("plan_ids") or []),
-                                "attack_log": log_path,
-                            }
-                            success = True
-                            return
                 except Exception as exc:
                     self._append_log_line(f"[ATTACK][ERR] pipeline failed: {exc}")
                     self._pipeline_logger.log_event(
@@ -2408,6 +2430,8 @@ class MainWindow(QMainWindow):
         attack_updates: Dict[str, Any],
         reason: str,
         session_id: Optional[str],
+        *,
+        schedule_delivery: bool = True,
     ) -> None:
         try:
             attack_plan_id = int(attack_updates.get("mission_plan_id"))
@@ -2480,13 +2504,14 @@ class MainWindow(QMainWindow):
             },
         )
 
-        self._schedule_plan_delivery(
-            plan_ids,
-            option_names,
-            reason,
-            plan_meta_map,
-            force_direct_update=False,
-        )
+        if schedule_delivery:
+            self._schedule_plan_delivery(
+                plan_ids,
+                option_names,
+                reason,
+                plan_meta_map,
+                force_direct_update=False,
+            )
 
     def _collect_attack_generated_ids(self, attack_updates: Dict[str, Any]) -> tuple[Set[int], Set[int]]:
         imp_ids: Set[int] = set()
@@ -2671,18 +2696,85 @@ class MainWindow(QMainWindow):
         force_direct_update: bool = False,
     ):
         safe_reason = _sanitize_reason(reason, "init-plan")
+        new_plan_ids = [pid for pid in (plan_ids or []) if pid is not None]
+        new_option_names = list(option_names or [])
+        while len(new_option_names) < len(new_plan_ids):
+            new_option_names.append(f"option{len(new_option_names) + 1}")
+
+        # Prior/force-direct 흐름은 옵션 생성(0901) 병합 없이 최신 플랜만 전달
+        if force_direct_update:
+            try:
+                self._attack_delivery_buffer.clear()
+            except Exception:
+                self._attack_delivery_buffer = []
+            self._pending_plan_push = None
+
+        if getattr(self, "_attack_delivery_buffer", None):
+            for buf in self._attack_delivery_buffer:
+                buf_ids = list(buf.get("plan_ids") or [])
+                buf_names = list(buf.get("option_names") or [])
+                for idx, pid in enumerate(buf_ids):
+                    try:
+                        pid_int = int(pid)
+                    except Exception:
+                        continue
+                    if pid_int in new_plan_ids:
+                        continue
+                    new_plan_ids.append(pid_int)
+                    if idx < len(buf_names):
+                        new_option_names.append(str(buf_names[idx]))
+                    else:
+                        new_option_names.append(f"option{len(new_option_names) + 1}")
+                try:
+                    buf_meta = dict(buf.get("option_meta") or {})
+                    if buf_meta:
+                        option_meta = dict(option_meta or {})
+                        option_meta.update(buf_meta)
+                except Exception:
+                    pass
+            self._attack_delivery_buffer.clear()
+
+        if self._pending_plan_push:
+            pending = self._pending_plan_push
+            merged_ids = list(pending.get("plan_ids") or [])
+            merged_names = list(pending.get("option_names") or [])
+            merged_meta = dict(pending.get("option_meta") or {})
+
+            for idx, pid in enumerate(new_plan_ids):
+                try:
+                    pid_int = int(pid)
+                except Exception:
+                    continue
+                if pid_int in merged_ids:
+                    continue
+                merged_ids.append(pid_int)
+                if idx < len(new_option_names):
+                    merged_names.append(new_option_names[idx])
+                else:
+                    merged_names.append(f"option{len(merged_names) + 1}")
+
+            merged_meta.update(dict(option_meta or {}))
+            pending["plan_ids"] = merged_ids
+            pending["option_names"] = merged_names
+            pending["option_meta"] = merged_meta
+            pending["force_direct_update"] = pending.get("force_direct_update") or bool(force_direct_update)
+            self._pending_plan_push = pending
+            summary = ", ".join(str(pid) for pid in merged_ids) or "-"
+            self.log_sig.emit(f"[STEP 4] 0301 push merged (planIds={summary})")
+            return
+
         self._pending_plan_push = {
-            "plan_ids":     list(plan_ids or []),
-            "option_names": list(option_names or []),
-            "reason":       safe_reason,
-            "option_meta":  dict(option_meta or {}),
+            "plan_ids": new_plan_ids,
+            "option_names": new_option_names,
+            "reason": safe_reason,
+            "option_meta": dict(option_meta or {}),
             "force_direct_update": bool(force_direct_update),
         }
         try:
-            self._scheduled_0301_plan_ids = [int(pid) for pid in (plan_ids or []) if pid is not None]
+            self._scheduled_0301_plan_ids = [int(pid) for pid in new_plan_ids if pid is not None]
         except Exception:
-            self._scheduled_0301_plan_ids = list(plan_ids or [])
-        summary = ", ".join(str(pid) for pid in plan_ids or []) or "-"
+            self._scheduled_0301_plan_ids = list(new_plan_ids)
+        summary = ", ".join(str(pid) for pid in new_plan_ids) or "-"
         self.log_sig.emit(f"[STEP 4] 0301 push queued (planIds={summary})")
         self.start_push_seq.emit()
 
