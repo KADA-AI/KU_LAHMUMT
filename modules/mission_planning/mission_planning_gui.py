@@ -150,7 +150,13 @@ class MainWindow(QMainWindow):
 
         # ── 상단 모드 슬라이더
         top = QWidget(); top_layout = QHBoxLayout(top)
-        top_layout.setContentsMargins(8, 4, 8, 4); top_layout.addStretch(1)
+        top_layout.setContentsMargins(8, 4, 8, 4)
+        self._latest_input_label = QLabel("0201/0203 \uc218\uc2e0 \ud604\ud669")
+        self._latest_input_label.setStyleSheet(
+            "color:#123; background:#eef2ff; padding:6px 10px; border-radius:8px; border:1px solid #dce5ff;"
+        )
+        top_layout.addWidget(self._latest_input_label)
+        top_layout.addStretch(1)
         self.mode_slider = QSlider(Qt.Horizontal)
         self.mode_slider.setRange(0, 4)
         self.mode_slider.setSingleStep(1)
@@ -161,6 +167,7 @@ class MainWindow(QMainWindow):
         self.mode_now = QLabel("대기모드"); self.mode_now.setStyleSheet("font-weight:600; padding-left:8px;")
         lbl = QLabel("모드:"); lbl.setStyleSheet("color:#789; padding-right:6px;")
         top_layout.addWidget(lbl); top_layout.addWidget(self.mode_slider); top_layout.addWidget(self.mode_now)
+        self._refresh_input_banner()
 
         center = QWidget(); v = QVBoxLayout(center); v.setContentsMargins(0, 0, 0, 0)
         v.addWidget(top); v.addWidget(tabs)
@@ -542,6 +549,69 @@ class MainWindow(QMainWindow):
             except Exception:
                 self._append_log_line(f"[WARN] Listener registration failed for {msg_id}")
 
+    # ───────── 0201/0203 최신 상태 배너 ─────────
+    def _build_input_banner_info(self) -> tuple[str, str]:
+        """GUI 상단 배너에 보여줄 0201/0203 ID·파일 정보를 만든다."""
+        try:
+            db_root = db_paths.get_active_db_root()
+        except Exception:
+            db_root = Path(PROJECT_ROOT) / "database"
+
+        entries = []
+        tips = []
+        for msg_id, directory in (("0201", db_root / "InputMissionPlan"), ("0203", db_root / "MissionReferenceInfo")):
+            pid = get_latest_package_id(msg_id)
+            pid_text = str(pid) if pid is not None else "미수신"
+
+            resolved_path = None
+            if pid is not None:
+                try:
+                    candidate = directory / f"{pid}.json"
+                    if candidate.exists():
+                        resolved_path = candidate
+                    else:
+                        cached = resolve_path_from_cache(msg_id, directory)
+                        if cached and Path(cached).exists():
+                            resolved_path = Path(cached)
+                except Exception:
+                    resolved_path = None
+
+            file_label = "파일 없음"
+            file_tip = f"{directory} (파일 없음)"
+            if resolved_path:
+                file_label = f"{resolved_path.parent.name}/{resolved_path.name}"
+                file_tip = str(resolved_path)
+            elif pid is not None:
+                file_label = "미존재"
+                file_tip = str(directory / f"{pid}.json")
+
+            entries.append(f"{msg_id}: {pid_text} ({file_label})")
+            tips.append(f"{msg_id}: ID={pid_text}, file={file_tip}")
+
+        return " | ".join(entries), "\n".join(tips)
+
+    def _refresh_input_banner(self) -> None:
+        label = getattr(self, "_latest_input_label", None)
+        if label is None:
+            return
+        try:
+            text, tip = self._build_input_banner_info()
+        except Exception as exc:
+            text = f"0201/0203 상태 표시 실패: {exc}"
+            tip = text
+
+        def _apply() -> None:
+            lbl = getattr(self, "_latest_input_label", None)
+            if lbl is None:
+                return
+            try:
+                lbl.setText(text)
+                lbl.setToolTip(tip)
+            except Exception:
+                pass
+
+        QTimer.singleShot(0, _apply)
+
     def _load_attack_context(self, cmpk_path: Path) -> Optional[Dict[str, Any]]:
         return load_attack_context(cmpk_path, getattr(self.log_sig, "emit", None))
 
@@ -630,6 +700,7 @@ class MainWindow(QMainWindow):
         except Exception:
             prev = None
         cache_update_from_payload(msg_id, payload)
+        self._refresh_input_banner()
         current = get_latest_package_id(msg_id)
         if current is None or current == prev:
             self._submit_id_tab_update(plan_state=self._plan_status)

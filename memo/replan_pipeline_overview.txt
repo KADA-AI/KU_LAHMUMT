@@ -1,0 +1,20 @@
+재계획 파이프라인 개요 (트리거→0902→미션 생성)
+- 트리거→0902 생성: monitoring_ver2가 ReplanSituations를 평가해 0902(ReplanRequest) 전송. missionPlanID/optionList를 포함해 재계획 수준(replanLevel)과 사유를 전달. missionPlanID는 중앙 발급(next_mission_plan_id)으로 새 값을 쓰되, 이미 옵션에 담겨온 값이 있으면 그대로 사용(중복 방지).
+- 수신 및 파이프라인 기동: mission_planning_gui가 0902를 수신해 _schedule_replan_pipeline → _run_replan_pipeline_do 실행. Power OFF이거나 이전 파이프라인이 돌면 차단 로그만 남김. 시작 시 0305 상태=1를 push하고, PipelineLog에 세션을 연다.
+- 컨텍스트 준비/ID 보정: 
+  - _ensure_ctx_package_ids가 inputMissionPackageID(0201), missionReferencePackageID(0203)가 비면 최신 수신 스냅샷에서 보충(스택/캐시 기반 재사용).
+  - plan_ids가 0902에 없으면 divide&pattern 단계에서 디렉터리 스캔 후 가장 큰 값+1로 채움(스택 기반), 있으면 그대로 유지(중앙 발급 전달 그대로 사용).
+  - pathID는 개별 임무/기체별 next_path_id(기체별 카운터)로 재할당하거나 기존 값을 유지; flight path와 individual mission 간 pathID 일치 여부를 재검사해 강제로 맞춤.
+- 파이프라인 분기:
+  1) 공격 특화 파이프라인 (run_attack_plan_pipeline): replanReason/옵션/0402 trigger에 “공격 특화” 플래그가 있으면 실행. attack CMPK를 읽어 공격 맥락(타겟/좌표)을 적용 후 divide&pattern으로 IMP/경로를 생성, 결과를 _attack_delivery_buffer에 누적.
+  2) Prior Mission 파이프라인 (run_prior_mission_pipeline): replanLevel=4이거나 prior 옵션이 선택된 경우 실행. DSS_Internal/0201_prior 최신 파일을 불러 과거 경로/좌표를 그대로 반영해 경로만 수정(Flight Path 중심). prior_mission_replan_detail이 없으면 기본 prior 파이프라인으로 빈 컨텍스트라도 실행.
+  3) 기본 재계획 파이프라인: AnS.run_divide_and_pattern으로 IMP(0202) 생성 → build_mission_plan_0301으로 MissionPlan(0301) 작성. 옵션별(variant)로 반복하며 missionPlanID는 요청된 값 유지, 없으면 새로 할당. 이후 0303(FlightPath)로 pathID를 재검증/강제 설정, 0304(IndividualMission)까지 맞춰서 저장.
+- 출력/전송:
+  - 생성된 MissionPlan/IMP/FlightPath 파일을 DB 폴더에 기록하고, plan_meta_map으로 option 코드/planID 매핑을 유지.
+  - _pending_plan_push에 결과를 쌓고 start_push_seq가 0301/0305/0901 순으로 push. 0305 status=2로 완료를 알림.
+  - Pipeline 로그에 각 스텝(start/prior/attack/divide&pattern/build_0301/0303/0304/push) 기록, 오류 시 plan_log_stop_reason 남김.
+- ID 전략 요약:
+  - missionPlanID: 중앙 발급(next_mission_plan_id) 우선, 요청이 명시되면 그대로 사용(중복 허용). 기존 파일이 있으면 스캔 후 다음 값(seed)으로 채움(스택).
+  - individualMissionPackage/individualMission: divide&pattern에서 생성하며, 기존 값이 있으면 유지, 없으면 내부 카운터로 채움.
+  - pathID: 기체별 next_path_id로 재할당하거나 기존 pathID를 flight path/mission 간 일관성 있게 강제 교정.
+  - package IDs(0201/0203): 최신 수신 스냅샷 캐시를 재사용해 누락 시 보충.
