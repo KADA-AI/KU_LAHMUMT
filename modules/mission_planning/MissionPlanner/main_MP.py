@@ -947,6 +947,7 @@ class MainGUI(QWidget):
         out_root.mkdir(parents=True, exist_ok=True)
 
         self.log_init.appendPlainText("=== Pipeline 시작 ===")
+        plan_start = time.perf_counter()
 
         # ── 1. 0201+0203 → IMP(0302) ---------------------------------
         try:
@@ -1005,6 +1006,16 @@ class MainGUI(QWidget):
         # ── 4. 0303 / 0304 자동 생성(기존 버튼 로직 재사용) ------------
         self._refresh_0303()
         self._refresh_0304()
+
+        # ── 4-1. planningTime을 전체 파이프라인 경과(ms)로 갱신 ---------
+        try:
+            elapsed_ms = (time.perf_counter() - plan_start) * 1000.0
+            mp_data = json.loads(mp_path.read_text(encoding="utf-8"))
+            mp_data["planningTime"] = float(elapsed_ms)
+            mp_path.write_text(json.dumps(mp_data, ensure_ascii=False, indent=2), encoding="utf-8")
+            self.log_init.appendPlainText(f"[INFO] planningTime 업데이트: {elapsed_ms:.1f} ms")
+        except Exception as e:
+            self.log_init.appendPlainText(f"[WARN] planningTime 업데이트 실패: {e}")
 
         # ── 5. 결과 로그 & 0301 텍스트 창 갱신 ------------------------
         self.log_init.appendPlainText(f"[OK] 0301 MissionPlan 저장 → {mp_path}")

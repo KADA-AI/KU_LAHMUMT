@@ -2322,6 +2322,7 @@ class MainWindow(QMainWindow):
                     shutil.rmtree(iter_out_root)
                 iter_out_root.mkdir(parents=True, exist_ok=True)
 
+                variant_start = time.perf_counter()
                 self.log_sig.emit(f"[STEP 1.{variant_no}] Divide & Pattern start")
                 imp_paths = run_divide_and_pattern(
                     str(cmpk_source_path),
@@ -2485,8 +2486,6 @@ class MainWindow(QMainWindow):
                         }
                     )
 
-                (dir_mp / f"{plan_id}.json").write_text(json.dumps(mp_json, indent=2, ensure_ascii=False), encoding='utf-8')
-
                 imp_pkgs = d0302.build_mission_packages(missions, cmpk_id=cmpk_id, plan_pkg_map=imp_id_map)
                 for pkg in imp_pkgs:
                     imp_id = pkg.get('individualMissionPackageID') or pkg.get('individualMissionPlanPackageID')
@@ -2516,6 +2515,9 @@ class MainWindow(QMainWindow):
                 fp_count_0303 = _dump_fp(dir_fp, flight_plans_0303)
                 fp_count_0304 = _dump_fp(dir_fp, flight_plans_0304)
                 total_fp_files += fp_count_0303 + fp_count_0304
+
+                mp_json["planningTime"] = float((time.perf_counter() - variant_start) * 1000.0)
+                (dir_mp / f"{plan_id}.json").write_text(json.dumps(mp_json, indent=2, ensure_ascii=False), encoding='utf-8')
 
                 self.log_sig.emit(f"[OK] Stored variant {variant_no}: MissionPlanID={plan_id}, IMP={len(imp_pkgs)}, FlightPath={fp_count_0303 + fp_count_0304}")
 

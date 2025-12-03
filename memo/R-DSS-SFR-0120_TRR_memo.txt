@@ -1,0 +1,63 @@
+R-DSS-SFR-0120 의사결정 옵션 선택 기능(TRR 준비 메모)
+----------------------------------------------------------------
+목적: SRS/HRS(SS: DSPS-SS-0110, SRS/HRS: R-DSS-SFR-0120) 상 "무인기 전술옵션 선택기능 제공" 요구에 대해 현재 구현 현황을 정리하고 TRR 시연·검증 관점의 흐름을 정리한다.
+
+1) 요구사항 ↔ 구현 매핑
+- SRS/HRS 요구: 연동모듈은 의사결정 옵션정보를 선택할 수 있는 인터페이스를 제공해야 한다.
+- 구현 포인트
+  · 옵션 요청(0901) 수신 → 옵션 정보(0701) 생성·전송: modules/decision_support/decision_support_gui.py::_install_option_request_listener/_on_rx_0901, _push_0701_from_entries
+  · 옵션 정보 파싱/구성 로직 분리: modules/decision_support/core/option_processing.py::OptionRequestDecoder, OptionPayloadBuilder
+  · 외부 연동 송신: OptionInfoMessenger(push_center->NodeMessenger, msg 0701), MonitorBroadcaster(로컬 UDP 미러)
+  · 시나리오 DB 보관 경로: db_paths 기반 MissionPlanOptionInfo/<n>.json으로 저장, agency 코드/시나리오 디렉터리 자동 결정
+  · 사용자 인터페이스: 공통 CSC 탭(modules/common/Tabs/decision_support_tab.py)로 RX/TX 모니터링 및 수동 송신, 메인 GUI에서 전술옵션 처리 상태 표시
+  · 옵션 생성 요청 발신 측: modules/mission_planning/mission_planning_gui.py::_push_0901_options 에서 미션플랜 ID/옵션코드 목록을 구성 후 0901 Push
+
+2) 주요 동작 흐름 (텍스트 플로우차트)
+  [Mission Planning GUI] --(0901 RequestOptionInfo push_message)--> [receive_center]
+      -> decision_support_gui._install_option_request_listener 등록된 _Rx0901 호출
+      -> OptionRequestDecoder.decode(raw)로 pendingOptionList 파싱(optionID, missionPlanID, optionName 정규화)
+      -> (버스 미준비 시 큐잉 후 재시도)
+      -> OptionPayloadBuilder.build_body(entries, source="MOB")로 0701 body 구성
+          · metrics 템플릿(survivalRate/timeContraction/recogEffectiveness) 적용, distance=50000, target 개수 보정
+          · db_paths.get_info()를 사용해 MissionPlanOptionInfo/<증가번호>.json 저장
+      -> OptionInfoMessenger.send("0701", body)로 외부 연동, MonitorBroadcaster로 로컬 모니터링 포트에도 UDP 브로드캐스트
+      -> DecisionSupportTab.mark_sent 등을 통해 GUI TX 테이블/로그 표시
+  (보조) systemMode(0101) 수신 시 실행 모드 진입 시점에 큐잉된 옵션 즉시 처리, 0102(Self-check) 자동 송신으로 모듈 상태 보고
+
+3) 데이터/인터페이스 요약
+- 0901 RequestOptionInfo
+  · 필드: timestamp/source/MMR, requestTime, pendingOptionList[{optionID, missionPlanID, optionName, optionMeta(optional: attack, targetCount 등)}]
+  · 생성: mission_planning_gui._push_0901_options – DEFAULT_OPTION_CODE_SEQUENCE(1,4,5) 기반 fallback, optionMeta로 공격/표적수 전달 가능
+- 0701 OptionInfo
+  · 필드: timestamp(now_ms_since_2000), source="MOB", autoExecution=False, optionList[{optionID, optionName(code), missionPlanID, survivalRate, timeContraction, recogEffectiveness, distance, target}]
+  · 생성/저장: OptionPayloadBuilder.persist_body → scenario_dir/agency/MissionPlanOptionInfo/<번호>.json
+  · 송신: OptionInfoMessenger(push_center->NodeMessenger), GUI 로그/로컬 모니터 반영
+- 상태 보고: SelfCheckMessenger(0102) 및 send_status_ok를 통해 MOB 모듈 상태 1회/재시도 송신
+
+4) 관련 모듈/파일 참조
+- 옵션 요청 생성: modules/mission_planning/mission_planning_gui.py::_push_0901_options
+- 옵션 수신/응답: modules/decision_support/decision_support_gui.py::_install_option_request_listener, _on_rx_0901, _push_0701_from_entries
+- 데이터 빌더: modules/decision_support/core/option_processing.py::OptionRequestDecoder, OptionPayloadBuilder
+- 메시지 송신 헬퍼: modules/decision_support/core/messaging.py::OptionInfoMessenger/SelfCheckMessenger
+- GUI 탭: modules/common/Tabs/decision_support_tab.py (RX/TX 테이블, 0701 body override fallback)
+- 시나리오 경로 관리: modules/common/db_paths.py (scenario_dir/agency 코드/DB root 동기화)
+- 재계획/옵션 기준 맥락: modules/monitoring_ver2/logic/replan_actual_logic.py, prior_mission_replan.py (0801/0802/0202 등 이벤트 기반 0902 재계획 생성 및 optionList 구성 규칙)
+
+5) TRR 시연/검증 포인트
+- 다수 무인기 옵션 제공 여부: missionPlanID별 optionID 부여 및 pendingOptionList 다중 엔트리 처리 확인(0901 송신 로그, 0701 optionList 개수·missionPlanID 매핑 검증)
+- 조종사 선택 가능 정보: DecisionSupportTab 및 main GUI에서 0901/0701 RX/TX 로그 노출, saved MissionPlanOptionInfo/*.json 열람으로 옵션 코드/레이블 확인
+- 선택 옵션 → 임무 수행 명령: mission_planning 측에서 Execution 모드 전환 시 0901 전송 → MOB 0701 응답 후 외부 연동체계(NodeMessenger)로 전달되는지 push_center 로그 확인
+- 옵션 제시 기준: OptionPayloadBuilder 템플릿(생존/시간/정찰 효과) 적용, 공격 메타(optionMeta.attack) 시 음수 스코어/target 보정 로직 검토
+- 재계획 연계: monitoring_ver2 replan_actual_logic.judge_replan_situation 등에서 0402/0801/0802/0201 입력을 통해 0902 재계획 생성 → mission_planning 파이프라인과 병행 동작 여부 확인
+
+6) 권고 테스트 절차(수동)
+- 시나리오 활성화 후 mission_planning GUI에서 2개 이상 plan 생성 → 0901 발행 → decision_support GUI 로그에 “[0901] …”, “[0701] option info sent …” 확인
+- Logs/<Scenario>/SBC3/MissionPlanOptionInfo/<n>.json 파일 내용 검토: optionID/missionPlanID/optionName 매핑 및 metrics 값 확인
+- Monitor 포트(디폴트 46983) 수신 확인: UDP 패킷(kind=tx/rx,msg_id=0701/0901) 수신 여부로 모니터링 연동 확인
+- systemMode 슬라이더 3/4 전환 시 pending option 자동 처리 동작 확인(실행 모드 진입 시 flush)
+- replan_actual_logic 경로: 0801/0802 모의 입력 or targetInfo(0402) 유입 → 0902 생성, replanInfo.json 업데이트 여부 확인(ensure_replan_level_details_file)
+
+7) 남은 확인/개선 과제
+- optionMeta.attack/targetCount 연계 시 거리·표적수 계산 규칙에 대한 TRR용 근거자료 필요(필요 시 SDD에 metric 템플릿 근거 추가)
+- NodeMessenger 미준비 상태에서 pendingOptionEntries 반복 재시도 시 백오프/알림 정책 점검(현 재시도 300ms 고정)
+- 다중 무인기 식별자 표준화: missionPlanID 외 UAV ID 매핑 여부 추가 확인 필요(현 로직은 plan ID 기준)
