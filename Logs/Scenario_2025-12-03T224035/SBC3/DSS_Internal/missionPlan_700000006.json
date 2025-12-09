@@ -1,0 +1,978 @@
+{
+  "timestamp": "2025-12-03T13:42:56.373195+00:00",
+  "status": "success",
+  "stopReason": null,
+  "reason": "강제귀환으로 인한 재계획",
+  "replanLevel": 1,
+  "sessionId": "run-0003",
+  "context": {
+    "plan_ids": [
+      700000005,
+      700000006,
+      700000007
+    ],
+    "option_names": [
+      "시스템추천",
+      "촬영효율우선",
+      "비행효율우선"
+    ],
+    "mission_ids": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11
+    ],
+    "reason": "강제귀환으로 인한 재계획",
+    "replan_level": 1
+  },
+  "planIds": [
+    700000005,
+    700000006,
+    700000007
+  ],
+  "summary": {
+    "mode": "legacy",
+    "plan_ids": [
+      700000005,
+      700000006,
+      700000007
+    ],
+    "option_codes": [
+      1,
+      4,
+      5
+    ]
+  },
+  "steps": [
+    {
+      "step": "start",
+      "status": "info",
+      "detail": {
+        "reason": "강제귀환으로 인한 재계획",
+        "plan_ids": [
+          700000005,
+          700000006,
+          700000007
+        ],
+        "replan_level": 1
+      }
+    },
+    {
+      "step": "0201_resolved",
+      "status": "ok",
+      "detail": {
+        "path": "C:\\Users\\LAHMUMT_2\\Desktop\\KU_LAHMUMT\\Logs\\Scenario_2025-12-03T224035\\SBC3\\InputMissionPlan\\1.json",
+        "latest_id": 1
+      }
+    },
+    {
+      "step": "0203_resolved",
+      "status": "ok",
+      "detail": {
+        "path": "C:\\Users\\LAHMUMT_2\\Desktop\\KU_LAHMUMT\\Logs\\Scenario_2025-12-03T224035\\SBC3\\MissionReferenceInfo\\1.json",
+        "latest_id": 1
+      }
+    },
+    {
+      "step": "store_output",
+      "status": "ok",
+      "detail": {
+        "plan_count": 3,
+        "imp_files": 15,
+        "flightpath_files": 165
+      }
+    },
+    {
+      "step": "replan_pipeline",
+      "status": "success",
+      "detail": {
+        "plan_ids": [
+          700000005,
+          700000006,
+          700000007
+        ],
+        "option_codes": [
+          1,
+          4,
+          5
+        ]
+      }
+    }
+  ],
+  "issues": [],
+  "messages": [
+    {
+      "ts": "2025-12-03T13:42:56.374700+00:00",
+      "text": "[INFO] Using latest 0201 ID 1 for inputMissionPackageID (fallback)"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.374700+00:00",
+      "text": "[INFO] Using latest 0203 ID 1 for missionReferencePackageID (fallback)"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.375705+00:00",
+      "text": "[STEP 0] Replan pipeline start (reason=강제귀환으로 인한 재계획)"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.376705+00:00",
+      "text": "[INFO] Latest input snapshot → 0201:ID=1,ts=816922549226,src=-, 0203:ID=1,ts=818084440320,src=-"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.376705+00:00",
+      "text": "[STEP 0] Using latest 0201 ID 1 (1.json)"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.377706+00:00",
+      "text": "[STEP 0] Using latest 0203 ID 1 (1.json)"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.377706+00:00",
+      "text": "[STEP 1.1] Divide & Pattern start"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.377706+00:00",
+      "text": "[variant 1] [1] CMPK 로드"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.383823+00:00",
+      "text": "[variant 1]     ▸ VehicleStatus 적용: 불가 기체 제외 [4]"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.383823+00:00",
+      "text": "[variant 1]     MRPK 로드"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.383823+00:00",
+      "text": "[variant 1]     ▸ 로드 완료  (소요 0.01s)"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.384827+00:00",
+      "text": "[variant 1] [2] LAH 임무 저장 시작"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.689237+00:00",
+      "text": "[variant 1] [LAH1] LAH 임무파일 저장 → C:\\Users\\LAHMUMT_2\\Desktop\\KU_LAHMUMT\\Logs\\Scenario_2025-12-03T224035\\SBC3\\mission_output\\variant_01\\IndividualMissionPlan_LAH001.json"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.689237+00:00",
+      "text": "[variant 1] [LAH2] LAH 임무파일 저장 → C:\\Users\\LAHMUMT_2\\Desktop\\KU_LAHMUMT\\Logs\\Scenario_2025-12-03T224035\\SBC3\\mission_output\\variant_01\\IndividualMissionPlan_LAH002.json"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.692237+00:00",
+      "text": "[variant 1] [LAH3] LAH 임무파일 저장 → C:\\Users\\LAHMUMT_2\\Desktop\\KU_LAHMUMT\\Logs\\Scenario_2025-12-03T224035\\SBC3\\mission_output\\variant_01\\IndividualMissionPlan_LAH003.json"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.692237+00:00",
+      "text": "[variant 1]     ▸ LAH 3개 파일 저장"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.693238+00:00",
+      "text": "[variant 1] [3] InputMission 분할"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.693238+00:00",
+      "text": "[variant 1] [3] InputMission 분할"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.693238+00:00",
+      "text": "[variant 1]     ▸ (1/11) inputMissionID=1 type=1"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.694237+00:00",
+      "text": "[variant 1]        └─ sub-area 2개 추가 (누적 2)"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.694237+00:00",
+      "text": "[variant 1]     ▸ (2/11) inputMissionID=2 type=1"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.695237+00:00",
+      "text": "[variant 1]        └─ sub-area 2개 추가 (누적 4)"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.695237+00:00",
+      "text": "[variant 1]     ▸ (3/11) inputMissionID=3 type=2"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.696236+00:00",
+      "text": "[variant 1]        └─ sub-area 2개 추가 (누적 6)"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.696236+00:00",
+      "text": "[variant 1]     ▸ (4/11) inputMissionID=4 type=1"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.697236+00:00",
+      "text": "[variant 1]        └─ sub-area 2개 추가 (누적 8)"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.697236+00:00",
+      "text": "[variant 1]     ▸ (5/11) inputMissionID=5 type=2"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.698237+00:00",
+      "text": "[variant 1]        └─ sub-area 2개 추가 (누적 10)"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.699238+00:00",
+      "text": "[variant 1]     ▸ (6/11) inputMissionID=6 type=1"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.699238+00:00",
+      "text": "[variant 1]        └─ sub-area 2개 추가 (누적 12)"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.700237+00:00",
+      "text": "[variant 1]     ▸ (7/11) inputMissionID=7 type=2"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.700237+00:00",
+      "text": "[variant 1]        └─ sub-area 2개 추가 (누적 14)"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.700237+00:00",
+      "text": "[variant 1]     ▸ (8/11) inputMissionID=8 type=1"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.700237+00:00",
+      "text": "[variant 1]        └─ sub-area 2개 추가 (누적 16)"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.700237+00:00",
+      "text": "[variant 1]     ▸ (9/11) inputMissionID=9 type=2"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.701236+00:00",
+      "text": "[variant 1]        └─ sub-area 2개 추가 (누적 18)"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.701236+00:00",
+      "text": "[variant 1]     ▸ (10/11) inputMissionID=10 type=1"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.701236+00:00",
+      "text": "[variant 1]        └─ sub-area 2개 추가 (누적 20)"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.701236+00:00",
+      "text": "[variant 1]     ▸ (11/11) inputMissionID=11 type=1"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.702234+00:00",
+      "text": "[variant 1]        └─ sub-area 2개 추가 (누적 22)"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.702234+00:00",
+      "text": "[variant 1]     ▸ 분할 완료: 22개 sub-area"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.702234+00:00",
+      "text": "[variant 1] [4] RL 예상시간 계산"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.702234+00:00",
+      "text": "[variant 1]        RL 진행    1/22  (소요  0.0s)"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.702234+00:00",
+      "text": "[variant 1]        RL 진행    2/22  (소요  0.0s)"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.703236+00:00",
+      "text": "[variant 1]        RL 진행    4/22  (소요  0.0s)"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.703236+00:00",
+      "text": "[variant 1]        RL 진행    6/22  (소요  0.0s)"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.703236+00:00",
+      "text": "[variant 1]        RL 진행    8/22  (소요  0.0s)"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.703236+00:00",
+      "text": "[variant 1]        RL 진행   10/22  (소요  0.0s)"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.704238+00:00",
+      "text": "[variant 1]        RL 진행   12/22  (소요  0.0s)"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.704238+00:00",
+      "text": "[variant 1]        RL 진행   14/22  (소요  0.0s)"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.704238+00:00",
+      "text": "[variant 1]        RL 진행   16/22  (소요  0.0s)"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.705344+00:00",
+      "text": "[variant 1]        RL 진행   18/22  (소요  0.0s)"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.705344+00:00",
+      "text": "[variant 1]        RL 진행   20/22  (소요  0.0s)"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.705344+00:00",
+      "text": "[variant 1]        RL 진행   22/22  (소요  0.0s)"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.706345+00:00",
+      "text": "[variant 1]        ┌─ RL 세부 소요(ms) ─────────────"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.706345+00:00",
+      "text": "[variant 1]        │ predict :    0.0  / p95    0.0"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.706345+00:00",
+      "text": "[variant 1]        │ env.step:    0.0  / p95    0.0"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.706345+00:00",
+      "text": "[variant 1]        │ distance:    0.0  / p95    0.0"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.707343+00:00",
+      "text": "[variant 1]        └───────────────────────────────"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.707343+00:00",
+      "text": "[variant 1] [5] PuLP 균등 스케줄링"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.707343+00:00",
+      "text": "[variant 1] [PuLP] 입력 IMP 로드 → _flat.json"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.709345+00:00",
+      "text": "[variant 1] [PuLP] 임무 22개 → 11개 그룹 (그룹당 ≤2개)"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.735853+00:00",
+      "text": "[variant 1] [PuLP] Status = Optimal"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.736856+00:00",
+      "text": "[variant 1] [PuLP] 최적 편차 = 39.50 s"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.736856+00:00",
+      "text": "[variant 1] [PuLP] 저장 완료 → C:\\Users\\LAHMUMT_2\\Desktop\\KU_LAHMUMT\\Logs\\Scenario_2025-12-03T224035\\SBC3\\mission_output\\variant_01\\_flat_sched.json"
+    },
+    {
+      "ts": "2025-12-03T13:42:56.744986+00:00",
+      "text": "[variant 1] [6] UAV IMP 생성‧저장"
+    },
+    {
+      "ts": "2025-12-03T13:42:57.066792+00:00",
+      "text": "[variant 1]     ▸ IMP 저장: C:\\Users\\LAHMUMT_2\\Desktop\\KU_LAHMUMT\\Logs\\Scenario_2025-12-03T224035\\SBC3\\mission_output\\variant_01\\IndividualMissionPlan_UAV005.json"
+    },
+    {
+      "ts": "2025-12-03T13:42:57.067792+00:00",
+      "text": "[variant 1]     ▸ IMP 저장: C:\\Users\\LAHMUMT_2\\Desktop\\KU_LAHMUMT\\Logs\\Scenario_2025-12-03T224035\\SBC3\\mission_output\\variant_01\\IndividualMissionPlan_UAV006.json"
+    },
+    {
+      "ts": "2025-12-03T13:42:57.068795+00:00",
+      "text": "[variant 1] [✔] divide_and_pattern 끝 (총 1762930614.0s 경과)"
+    },
+    {
+      "ts": "2025-12-03T13:42:57.068795+00:00",
+      "text": "[OK] IMP generated: 5 file(s) (variant=1)"
+    },
+    {
+      "ts": "2025-12-03T13:42:57.094921+00:00",
+      "text": "[OK] MissionPlan built: MissionPlan_1764769377067.json (variant=1)"
+    },
+    {
+      "ts": "2025-12-03T13:42:57.422702+00:00",
+      "text": "[INFO] pathID mapping done for 0302/0303/0304 (variant=1)"
+    },
+    {
+      "ts": "2025-12-03T13:42:57.924105+00:00",
+      "text": "[OK] FlightPath counts (variant=1): 0303=22 / 0304=33"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.207748+00:00",
+      "text": "[OK] Stored variant 1: MissionPlanID=700000005, IMP=5, FlightPath=55"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.207748+00:00",
+      "text": "[INFO] Option mapping #1: planID=700000005, optionCode=1(시스템추천)"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.208746+00:00",
+      "text": "[STEP 1.2] Divide & Pattern start"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.208746+00:00",
+      "text": "[variant 2] [1] CMPK 로드"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.208746+00:00",
+      "text": "[variant 2]     ▸ VehicleStatus 적용: 불가 기체 제외 [4]"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.209746+00:00",
+      "text": "[variant 2]     MRPK 로드"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.209746+00:00",
+      "text": "[variant 2]     ▸ 로드 완료  (소요 0.00s)"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.209746+00:00",
+      "text": "[variant 2] [2] LAH 임무 저장 시작"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.512361+00:00",
+      "text": "[variant 2] [LAH1] LAH 임무파일 저장 → C:\\Users\\LAHMUMT_2\\Desktop\\KU_LAHMUMT\\Logs\\Scenario_2025-12-03T224035\\SBC3\\mission_output\\variant_02\\IndividualMissionPlan_LAH001.json"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.513361+00:00",
+      "text": "[variant 2] [LAH2] LAH 임무파일 저장 → C:\\Users\\LAHMUMT_2\\Desktop\\KU_LAHMUMT\\Logs\\Scenario_2025-12-03T224035\\SBC3\\mission_output\\variant_02\\IndividualMissionPlan_LAH002.json"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.514361+00:00",
+      "text": "[variant 2] [LAH3] LAH 임무파일 저장 → C:\\Users\\LAHMUMT_2\\Desktop\\KU_LAHMUMT\\Logs\\Scenario_2025-12-03T224035\\SBC3\\mission_output\\variant_02\\IndividualMissionPlan_LAH003.json"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.514361+00:00",
+      "text": "[variant 2]     ▸ LAH 3개 파일 저장"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.515361+00:00",
+      "text": "[variant 2] [3] InputMission 분할"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.515361+00:00",
+      "text": "[variant 2] [3] InputMission 분할"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.516364+00:00",
+      "text": "[variant 2]     ▸ (1/11) inputMissionID=1 type=1"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.516364+00:00",
+      "text": "[variant 2]        └─ sub-area 2개 추가 (누적 2)"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.517364+00:00",
+      "text": "[variant 2]     ▸ (2/11) inputMissionID=2 type=1"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.517364+00:00",
+      "text": "[variant 2]        └─ sub-area 2개 추가 (누적 4)"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.517364+00:00",
+      "text": "[variant 2]     ▸ (3/11) inputMissionID=3 type=2"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.518364+00:00",
+      "text": "[variant 2]        └─ sub-area 2개 추가 (누적 6)"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.518364+00:00",
+      "text": "[variant 2]     ▸ (4/11) inputMissionID=4 type=1"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.519364+00:00",
+      "text": "[variant 2]        └─ sub-area 2개 추가 (누적 8)"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.521364+00:00",
+      "text": "[variant 2]     ▸ (5/11) inputMissionID=5 type=2"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.521364+00:00",
+      "text": "[variant 2]        └─ sub-area 2개 추가 (누적 10)"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.521364+00:00",
+      "text": "[variant 2]     ▸ (6/11) inputMissionID=6 type=1"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.522364+00:00",
+      "text": "[variant 2]        └─ sub-area 2개 추가 (누적 12)"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.522364+00:00",
+      "text": "[variant 2]     ▸ (7/11) inputMissionID=7 type=2"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.522364+00:00",
+      "text": "[variant 2]        └─ sub-area 2개 추가 (누적 14)"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.523364+00:00",
+      "text": "[variant 2]     ▸ (8/11) inputMissionID=8 type=1"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.523364+00:00",
+      "text": "[variant 2]        └─ sub-area 2개 추가 (누적 16)"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.523364+00:00",
+      "text": "[variant 2]     ▸ (9/11) inputMissionID=9 type=2"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.524457+00:00",
+      "text": "[variant 2]        └─ sub-area 2개 추가 (누적 18)"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.524457+00:00",
+      "text": "[variant 2]     ▸ (10/11) inputMissionID=10 type=1"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.524457+00:00",
+      "text": "[variant 2]        └─ sub-area 2개 추가 (누적 20)"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.524457+00:00",
+      "text": "[variant 2]     ▸ (11/11) inputMissionID=11 type=1"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.525457+00:00",
+      "text": "[variant 2]        └─ sub-area 2개 추가 (누적 22)"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.525457+00:00",
+      "text": "[variant 2]     ▸ 분할 완료: 22개 sub-area"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.525457+00:00",
+      "text": "[variant 2] [4] RL 예상시간 계산"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.526457+00:00",
+      "text": "[variant 2]        RL 진행    1/22  (소요  0.0s)"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.526457+00:00",
+      "text": "[variant 2]        RL 진행    2/22  (소요  0.0s)"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.526457+00:00",
+      "text": "[variant 2]        RL 진행    4/22  (소요  0.0s)"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.526457+00:00",
+      "text": "[variant 2]        RL 진행    6/22  (소요  0.0s)"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.527457+00:00",
+      "text": "[variant 2]        RL 진행    8/22  (소요  0.0s)"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.527457+00:00",
+      "text": "[variant 2]        RL 진행   10/22  (소요  0.0s)"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.527457+00:00",
+      "text": "[variant 2]        RL 진행   12/22  (소요  0.0s)"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.527457+00:00",
+      "text": "[variant 2]        RL 진행   14/22  (소요  0.0s)"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.528457+00:00",
+      "text": "[variant 2]        RL 진행   16/22  (소요  0.0s)"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.528457+00:00",
+      "text": "[variant 2]        RL 진행   18/22  (소요  0.0s)"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.528457+00:00",
+      "text": "[variant 2]        RL 진행   20/22  (소요  0.0s)"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.528457+00:00",
+      "text": "[variant 2]        RL 진행   22/22  (소요  0.0s)"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.529457+00:00",
+      "text": "[variant 2]        ┌─ RL 세부 소요(ms) ─────────────"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.529457+00:00",
+      "text": "[variant 2]        │ predict :    0.0  / p95    0.0"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.529457+00:00",
+      "text": "[variant 2]        │ env.step:    0.0  / p95    0.0"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.529457+00:00",
+      "text": "[variant 2]        │ distance:    0.0  / p95    0.0"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.529457+00:00",
+      "text": "[variant 2]        └───────────────────────────────"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.529457+00:00",
+      "text": "[variant 2] [5] PuLP 균등 스케줄링"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.529457+00:00",
+      "text": "[variant 2] [PuLP] 입력 IMP 로드 → _flat.json"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.530960+00:00",
+      "text": "[variant 2] [PuLP] 임무 22개 → 11개 그룹 (그룹당 ≤2개)"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.546968+00:00",
+      "text": "[variant 2] [PuLP] Status = Optimal"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.546968+00:00",
+      "text": "[variant 2] [PuLP] 최적 편차 = 39.50 s"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.547969+00:00",
+      "text": "[variant 2] [PuLP] 저장 완료 → C:\\Users\\LAHMUMT_2\\Desktop\\KU_LAHMUMT\\Logs\\Scenario_2025-12-03T224035\\SBC3\\mission_output\\variant_02\\_flat_sched.json"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.547969+00:00",
+      "text": "[variant 2] [6] UAV IMP 생성‧저장"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.856028+00:00",
+      "text": "[variant 2]     ▸ IMP 저장: C:\\Users\\LAHMUMT_2\\Desktop\\KU_LAHMUMT\\Logs\\Scenario_2025-12-03T224035\\SBC3\\mission_output\\variant_02\\IndividualMissionPlan_UAV005.json"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.857028+00:00",
+      "text": "[variant 2]     ▸ IMP 저장: C:\\Users\\LAHMUMT_2\\Desktop\\KU_LAHMUMT\\Logs\\Scenario_2025-12-03T224035\\SBC3\\mission_output\\variant_02\\IndividualMissionPlan_UAV006.json"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.857028+00:00",
+      "text": "[variant 2] [✔] divide_and_pattern 끝 (총 1762930614.0s 경과)"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.857028+00:00",
+      "text": "[OK] IMP generated: 5 file(s) (variant=2)"
+    },
+    {
+      "ts": "2025-12-03T13:42:58.881820+00:00",
+      "text": "[OK] MissionPlan built: MissionPlan_1764769378857.json (variant=2)"
+    },
+    {
+      "ts": "2025-12-03T13:42:59.167300+00:00",
+      "text": "[INFO] pathID mapping done for 0302/0303/0304 (variant=2)"
+    },
+    {
+      "ts": "2025-12-03T13:42:59.615674+00:00",
+      "text": "[OK] FlightPath counts (variant=2): 0303=22 / 0304=33"
+    },
+    {
+      "ts": "2025-12-03T13:42:59.906510+00:00",
+      "text": "[OK] Stored variant 2: MissionPlanID=700000006, IMP=5, FlightPath=55"
+    },
+    {
+      "ts": "2025-12-03T13:42:59.906510+00:00",
+      "text": "[INFO] Option mapping #2: planID=700000006, optionCode=4(정찰특화)"
+    },
+    {
+      "ts": "2025-12-03T13:42:59.907519+00:00",
+      "text": "[STEP 1.3] Divide & Pattern start"
+    },
+    {
+      "ts": "2025-12-03T13:42:59.907519+00:00",
+      "text": "[variant 3] [1] CMPK 로드"
+    },
+    {
+      "ts": "2025-12-03T13:42:59.907519+00:00",
+      "text": "[variant 3]     ▸ VehicleStatus 적용: 불가 기체 제외 [4]"
+    },
+    {
+      "ts": "2025-12-03T13:42:59.908517+00:00",
+      "text": "[variant 3]     MRPK 로드"
+    },
+    {
+      "ts": "2025-12-03T13:42:59.908517+00:00",
+      "text": "[variant 3]     ▸ 로드 완료  (소요 0.00s)"
+    },
+    {
+      "ts": "2025-12-03T13:42:59.908517+00:00",
+      "text": "[variant 3] [2] LAH 임무 저장 시작"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.245820+00:00",
+      "text": "[variant 3] [LAH1] LAH 임무파일 저장 → C:\\Users\\LAHMUMT_2\\Desktop\\KU_LAHMUMT\\Logs\\Scenario_2025-12-03T224035\\SBC3\\mission_output\\variant_03\\IndividualMissionPlan_LAH001.json"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.246822+00:00",
+      "text": "[variant 3] [LAH2] LAH 임무파일 저장 → C:\\Users\\LAHMUMT_2\\Desktop\\KU_LAHMUMT\\Logs\\Scenario_2025-12-03T224035\\SBC3\\mission_output\\variant_03\\IndividualMissionPlan_LAH002.json"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.247823+00:00",
+      "text": "[variant 3] [LAH3] LAH 임무파일 저장 → C:\\Users\\LAHMUMT_2\\Desktop\\KU_LAHMUMT\\Logs\\Scenario_2025-12-03T224035\\SBC3\\mission_output\\variant_03\\IndividualMissionPlan_LAH003.json"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.247823+00:00",
+      "text": "[variant 3]     ▸ LAH 3개 파일 저장"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.247823+00:00",
+      "text": "[variant 3] [3] InputMission 분할"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.248824+00:00",
+      "text": "[variant 3] [3] InputMission 분할"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.249823+00:00",
+      "text": "[variant 3]     ▸ (1/11) inputMissionID=1 type=1"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.250329+00:00",
+      "text": "[variant 3]        └─ sub-area 2개 추가 (누적 2)"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.251334+00:00",
+      "text": "[variant 3]     ▸ (2/11) inputMissionID=2 type=1"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.251334+00:00",
+      "text": "[variant 3]        └─ sub-area 2개 추가 (누적 4)"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.252334+00:00",
+      "text": "[variant 3]     ▸ (3/11) inputMissionID=3 type=2"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.252334+00:00",
+      "text": "[variant 3]        └─ sub-area 2개 추가 (누적 6)"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.253335+00:00",
+      "text": "[variant 3]     ▸ (4/11) inputMissionID=4 type=1"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.253335+00:00",
+      "text": "[variant 3]        └─ sub-area 2개 추가 (누적 8)"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.254334+00:00",
+      "text": "[variant 3]     ▸ (5/11) inputMissionID=5 type=2"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.254334+00:00",
+      "text": "[variant 3]        └─ sub-area 2개 추가 (누적 10)"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.255334+00:00",
+      "text": "[variant 3]     ▸ (6/11) inputMissionID=6 type=1"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.256334+00:00",
+      "text": "[variant 3]        └─ sub-area 2개 추가 (누적 12)"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.256334+00:00",
+      "text": "[variant 3]     ▸ (7/11) inputMissionID=7 type=2"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.256334+00:00",
+      "text": "[variant 3]        └─ sub-area 2개 추가 (누적 14)"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.257334+00:00",
+      "text": "[variant 3]     ▸ (8/11) inputMissionID=8 type=1"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.257334+00:00",
+      "text": "[variant 3]        └─ sub-area 2개 추가 (누적 16)"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.258335+00:00",
+      "text": "[variant 3]     ▸ (9/11) inputMissionID=9 type=2"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.258335+00:00",
+      "text": "[variant 3]        └─ sub-area 2개 추가 (누적 18)"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.258335+00:00",
+      "text": "[variant 3]     ▸ (10/11) inputMissionID=10 type=1"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.259335+00:00",
+      "text": "[variant 3]        └─ sub-area 2개 추가 (누적 20)"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.259335+00:00",
+      "text": "[variant 3]     ▸ (11/11) inputMissionID=11 type=1"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.259335+00:00",
+      "text": "[variant 3]        └─ sub-area 2개 추가 (누적 22)"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.259335+00:00",
+      "text": "[variant 3]     ▸ 분할 완료: 22개 sub-area"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.259335+00:00",
+      "text": "[variant 3] [4] RL 예상시간 계산"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.260336+00:00",
+      "text": "[variant 3]        RL 진행    1/22  (소요  0.0s)"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.260336+00:00",
+      "text": "[variant 3]        RL 진행    2/22  (소요  0.0s)"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.260336+00:00",
+      "text": "[variant 3]        RL 진행    4/22  (소요  0.0s)"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.260336+00:00",
+      "text": "[variant 3]        RL 진행    6/22  (소요  0.0s)"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.261335+00:00",
+      "text": "[variant 3]        RL 진행    8/22  (소요  0.0s)"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.261335+00:00",
+      "text": "[variant 3]        RL 진행   10/22  (소요  0.0s)"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.261335+00:00",
+      "text": "[variant 3]        RL 진행   12/22  (소요  0.0s)"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.261335+00:00",
+      "text": "[variant 3]        RL 진행   14/22  (소요  0.0s)"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.262334+00:00",
+      "text": "[variant 3]        RL 진행   16/22  (소요  0.0s)"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.262334+00:00",
+      "text": "[variant 3]        RL 진행   18/22  (소요  0.0s)"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.262334+00:00",
+      "text": "[variant 3]        RL 진행   20/22  (소요  0.0s)"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.262334+00:00",
+      "text": "[variant 3]        RL 진행   22/22  (소요  0.0s)"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.262334+00:00",
+      "text": "[variant 3]        ┌─ RL 세부 소요(ms) ─────────────"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.263336+00:00",
+      "text": "[variant 3]        │ predict :    0.0  / p95    0.0"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.263336+00:00",
+      "text": "[variant 3]        │ env.step:    0.0  / p95    0.0"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.263336+00:00",
+      "text": "[variant 3]        │ distance:    0.0  / p95    0.0"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.263336+00:00",
+      "text": "[variant 3]        └───────────────────────────────"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.263336+00:00",
+      "text": "[variant 3] [5] PuLP 균등 스케줄링"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.264335+00:00",
+      "text": "[variant 3] [PuLP] 입력 IMP 로드 → _flat.json"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.264335+00:00",
+      "text": "[variant 3] [PuLP] 임무 22개 → 11개 그룹 (그룹당 ≤2개)"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.283990+00:00",
+      "text": "[variant 3] [PuLP] Status = Optimal"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.283990+00:00",
+      "text": "[variant 3] [PuLP] 최적 편차 = 39.50 s"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.284990+00:00",
+      "text": "[variant 3] [PuLP] 저장 완료 → C:\\Users\\LAHMUMT_2\\Desktop\\KU_LAHMUMT\\Logs\\Scenario_2025-12-03T224035\\SBC3\\mission_output\\variant_03\\_flat_sched.json"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.285990+00:00",
+      "text": "[variant 3] [6] UAV IMP 생성‧저장"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.651474+00:00",
+      "text": "[variant 3]     ▸ IMP 저장: C:\\Users\\LAHMUMT_2\\Desktop\\KU_LAHMUMT\\Logs\\Scenario_2025-12-03T224035\\SBC3\\mission_output\\variant_03\\IndividualMissionPlan_UAV005.json"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.651474+00:00",
+      "text": "[variant 3]     ▸ IMP 저장: C:\\Users\\LAHMUMT_2\\Desktop\\KU_LAHMUMT\\Logs\\Scenario_2025-12-03T224035\\SBC3\\mission_output\\variant_03\\IndividualMissionPlan_UAV006.json"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.652473+00:00",
+      "text": "[variant 3] [✔] divide_and_pattern 끝 (총 1762930614.1s 경과)"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.652473+00:00",
+      "text": "[OK] IMP generated: 5 file(s) (variant=3)"
+    },
+    {
+      "ts": "2025-12-03T13:43:00.687217+00:00",
+      "text": "[OK] MissionPlan built: MissionPlan_1764769380652.json (variant=3)"
+    },
+    {
+      "ts": "2025-12-03T13:43:01.009893+00:00",
+      "text": "[INFO] pathID mapping done for 0302/0303/0304 (variant=3)"
+    },
+    {
+      "ts": "2025-12-03T13:43:01.463073+00:00",
+      "text": "[OK] FlightPath counts (variant=3): 0303=22 / 0304=33"
+    },
+    {
+      "ts": "2025-12-03T13:43:01.756465+00:00",
+      "text": "[OK] Stored variant 3: MissionPlanID=700000007, IMP=5, FlightPath=55"
+    },
+    {
+      "ts": "2025-12-03T13:43:01.756465+00:00",
+      "text": "[INFO] Option mapping #3: planID=700000007, optionCode=5(최소시간)"
+    },
+    {
+      "ts": "2025-12-03T13:43:01.757465+00:00",
+      "text": "[OK] Stored mission data: MissionPlan=3, IndividualMission=15, FlightPath=165"
+    },
+    {
+      "ts": "2025-12-03T13:43:01.758465+00:00",
+      "text": "[STEP 4] 0301 push queued (planIds=700000005, 700000006, 700000007)"
+    },
+    {
+      "ts": "2025-12-03T13:43:01.758465+00:00",
+      "text": "[INFO] Direct delivery -> skip 0901/0701, send 0301+0903 only"
+    }
+  ],
+  "missionPlanID": 700000006,
+  "logPath": "C:\\Users\\LAHMUMT_2\\Desktop\\KU_LAHMUMT\\Logs\\Scenario_2025-12-03T224035\\SBC3\\DSS_Internal\\missionPlan_700000006.json"
+}

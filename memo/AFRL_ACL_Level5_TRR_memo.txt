@@ -1,0 +1,42 @@
+AFRL ACL Level 5 고려 임무계획/할당 TRR 메모
+-------------------------------------------
+적용 요구
+- DSPS-SS-0280 / R-DSS-SFR-0181: AFRL ACL Level5 자율성 수준 고려, 3대 이상 무인기 집단 계획/재계획 수행.
+- R-DSS-SFR-0291: 같은 수준을 고려한 임무 할당·스케줄링 수행.
+- 설계 한정: 해석 여지가 큰 ACL을 국방부 포럼 번역본 기준으로 하며, MOB 범위에서는 “전술적 집단 계획·지정(임무 계획/재계획, 할당/스케줄링)” 수행에 집중.
+
+구현 근거 요약
+- 집단 계획/재계획 파이프라인: modules/monitoring_ver2/logic/replan_actual_logic.py
+  · run_replan_procedure → judge_replan_situation → manage_replan_triggers → determine_level_and_send_request.
+  · 0902 replan payload 생성 시 다중 inputMissionIDList/optionList/mission_plan_ids, excludedAircraft 반영 → 집단 단위 재계획/할당 지원.
+  · mission_planning/MissionPlanner의 next_mission_plan_id 사용으로 신규 플랜 ID 발급.
+- 다중 무인기 가용성·상태 기반 스케줄링: modules/monitoring_ver2/logic/monitoring_logic_part.py
+  · 0401 agentStatus에서 health/좌표/연료 검증 → _update_health_based_availability → availability set 갱신.
+  · mandatory override(0802 강제/복귀)와 baseline을 합쳐 가용기체 집합 관리, hold/강제복귀 재계획 트리거.
+  · mission_status/waypoint 맵으로 각 항공기의 현재 미션 진행도 관리 → run_monitoring_procedure에서 0501 생성 시 기체별 진행도 반영.
+- 표적·상황 기반 집단 재계획: modules/monitoring_ver2/logic/replan_utils.py
+  · targetInfo.json 업데이트(0402) 및 신규 표적 감지 시 replan_situations 적재 → 집단 재계획 옵션으로 확장.
+- 협업/옵션 제공: modules/mission_planning/mission_planning_gui.py::_push_0901_options, modules/decision_support/core/option_processing.py
+  · 다수 missionPlanID에 대한 옵션 리스트 생성(0901→0701), DEFAULT_OPTION_CODE_SEQUENCE 기반 코드/메트릭 자동 부여 → 조종사 선택형 집단 옵션 제공.
+- 상태/결과 저장: db_paths 경로로 DSS_Internal/replanInfo.json, targetInfo.json, VehicleStatus/status.json, MissionPlanOptionInfo/*.json 등을 Logs/<Scenario>/SBC3 하위에 기록 → 정보관리 모듈과 공유.
+
+재계획/임무할당 방법론 흐름
+1) 트리거 수집
+   - 0402 상황/표적, 0801 사용자 명령, 0802 강제/고장, 0201 입력 플랜 갱신, 0202 prior mission, 0803 협업 명령 등.
+2) 가용성 계산
+   - 0401 기반 health/좌표/연료 검증 + 0802 override → availability_health_block/mandatory_override/baseline 합성.
+3) 재계획 판단
+   - judge_replan_situation: 입력 트리거를 ReplanSituations에 누적, 강제/표적/입력플랜 등 상황별 reason 텍스트/레벨 결정.
+4) 트리거 확정/레벨 결정
+   - manage_replan_triggers: 우선순위/중복 조정 후 confirmed_request 산출, determine_level_and_send_request에서 replanLevel/option/input/제외기체 결정.
+5) 0902 생성/송신
+   - ReplanRequestBodyModel(timestamp, replanLevel, inputMissionIDList, optionList, excludedAircraftIDs 등) 생성 → push_message_0902 → push_store/logic_store 기록.
+6) 후속 할당/스케줄링
+   - mission_planning 측에서 신규 missionPlanID로 옵션/플랜 수립, 진행도(0501) 및 가용성에 따라 재할당/스케줄링 지속.
+
+TRR 검증 포인트 (임무 로그/시연)
+1) 다중 무인기 가용성 반영: 0401 정상/고장/좌표결측/0802 강제 명령 시 availability 변화와 재계획 트리거 로그 확인.
+2) 집단 재계획: 0402 다중 표적 또는 0201/0202 다중 inputMissionID 입력 후 0902의 inputMissionIDList/optionList/ excludedAircraft 확인.
+3) 옵션/계획 저장: MissionPlanOptionInfo/*.json, DSS_Internal/replanInfo.json, targetInfo.json, VehicleStatus/status.json 생성/갱신 여부 확인.
+4) 스케줄링/할당 로그: monitoring_logic_part 로그의 “UAVx status/progress”와 0501 payload의 currentMissionPlanID/currentInputMissionID 변화로 집단 스케줄 조정 확인.
+5) ACL Level5 해석 반영: 다중 기체 협업(가용성 기반 선택, 집단 재계획), 전술적 집단 계획/지정(다중 옵션·입력미션 처리) 기능이 구현 범위임을 설계 문서와 함께 제시.

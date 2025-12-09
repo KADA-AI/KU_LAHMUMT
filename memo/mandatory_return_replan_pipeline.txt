@@ -1,0 +1,25 @@
+강제귀환(0802 mandatoryType=2) → replanReason "강제귀환으로 인한 재계획" 파이프라인
+---------------------------------------------------------------------
+1) 입력/수신
+- 0802 메시지 mandatoryType=2 수신 시 monitoring_logic_part._handle_mandatory_command에서 aircraftID 비가용 처리(_set_aircraft_availability False) 후 should_trigger_replan=True 설정.
+- SystemMode 3/4일 때 _trigger_replan_if_active → run_replan_procedure 실행.
+
+2) 재계획 판단/구성 (monitoring_ver2/logic/replan_actual_logic.py)
+- judge_replan_situation가 0802 이벤트를 ReplanSituations에 push.
+- manage_replan_triggers가 선택한 confirmed_request의 original_message_id=0802, detail.mandatoryType=2를 사용.
+- _derive_replan_situation → "강제 명령 재계획", _format_replan_reason → "강제귀환으로 인한 재계획".
+- _determine_replan_level: msg_id 0802 → replan_level=1 (운용자/강제 명령 계열은 1로 고정).
+- determine_level_and_send_request: 위 정보를 담아 0902 replanRequest push (optionList/inputMissionIDList 포함), final_replan_output 로직스토어 업데이트.
+
+3) 임무계획 모듈 반응 (mission_planning_gui.py)
+- 0902 수신 후 재계획 플랜 생성 → _schedule_plan_delivery 호출.
+- 현재 로직: replan_level==1 이거나 reason에 "초기임무" 텍스트 포함 시 force_direct_update=True로 간주.
+  · force_direct_update=True → _start_push_sequence에서 0901/0701 옵션 생략, 0301/0305와 함께 0903(수행임무 갱신)만 전송.
+  · 실행 모드(is_execution_mode)일 때만 0901 옵션 요청을 보냄; force_direct_update가 True이면 실행 모드여도 0901을 건너뜀.
+
+결과적으로 mandatoryType=2(강제귀환) → replan_level=1 → force_direct_update=True → 옵션 제공(0701) 없이 0903 수행임무 갱신으로 직행.
+
+분리/수정 아이디어
+- 필요 시 force_direct_update 조건을 재계획 레벨 4(긴급/직행)만 대상으로 완화하고, replan_level==1(강제/운용자 명령)도 0901/0701 옵션 경로를 태우도록 변경.
+  · 예: mission_planning_gui._schedule_plan_delivery에서 initial_replan=True 분기 삭제 또는 mandatory/강제귀환 케이스는 force_direct_update False 처리.
+- 실행 모드 여부와 무관하게 0901/0701을 요구한다면 force_direct_update 플래그 설정을 외부(detail 또는 설정)로 한정하고 기본은 옵션 경로로 유지.

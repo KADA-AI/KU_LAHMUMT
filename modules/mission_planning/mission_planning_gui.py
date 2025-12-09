@@ -2575,16 +2575,15 @@ class MainWindow(QMainWindow):
                 plan_state=self._plan_status,
             )
 
-            force_direct_update = False
+            # ?? ????? ??? ?? ?? ??(Level 4)? ?? ??
+            force_direct_update = bool(ctx.get("force_direct_update"))
             try:
                 replan_level_val = int(ctx.get("replan_level", 0))
             except Exception:
                 replan_level_val = 0
-            force_direct_update = (replan_level_val == 4)
-            # 초기임무재계획: 옵션 정보 없이 바로 0903 전달
-            initial_replan = (replan_level_val == 1) or ("초기임무" in str(reason))
-            if initial_replan:
+            if replan_level_val == 4:
                 force_direct_update = True
+
 
             self._schedule_plan_delivery(
                 generated_plan_ids,

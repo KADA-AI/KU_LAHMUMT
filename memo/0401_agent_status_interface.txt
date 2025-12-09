@@ -1,0 +1,36 @@
+0401 AgentStatus 인터페이스 정리 (TRR 참고)
+-------------------------------------------
+목적: 유무인기 상태정보(0401) 구조와 시스템 내 처리 흐름을 명확히 하여 TRR 검증 시 참고하도록 정리한다.
+
+1) 메시지 스펙 (modules/monitoring_ver2/data/message_models.py: AgentStatusModel)
+- 필드
+  · timestamp:int, source:str
+  · agentStateList: AgentStateModel[]
+    - aircraftID:int, isUnmanned:bool
+    - coordinate{latitude:float, longitude:float, altitude:int}
+    - velocity{speed:float, heading:float}
+    - fuel:float, health:int(1=정상, 기타=비정상)
+    - mannedInfo{weapons{type1/2/3:int}, datalinkStatus{isConnectedToUAV1/2/3:bool}}
+    - unmannedInfo{currentWaypointID:int, flightMode:int, loiterCoordinate{lat/lon/alt}, targetFollowing{targetID:int}, leaderAircraftID:int, sensorInfo{operationalMode:int, sensorType:int, fov:float, centerCoordinate{lat/lon/alt}}, payloadHealth:int, fuelWarning:int}
+
+2) 수신/파싱 (modules/monitoring_ver2/receive/message0401_receiver.py)
+- C# nFusion msg_0401 → Python AgentStatusModel 변환 후 ReceiveStorage().set_data("0401") 저장.
+- notify_to_manager("0401", python_data)로 MonitoringManager에 전달.
+
+3) 모듈 내 활용 (modules/monitoring_ver2/manager.py, logic/monitoring_logic_part.py)
+- manager.handle_message("0401", data): receive_store.set_data → logic_handler.monitoring_logic.handle_message.
+- monitoring_logic.execute (SystemMode=3일 때):
+  · agentStateList 검사 → _update_health_based_availability:
+    - health!=1, 좌표/연료 누락, 관측되지 않은 baseline 기체 → unhealthy로 집계 → availability_health_block 업데이트.
+    - mandatory override(0802) 및 baseline과 합산해 가용 기체 결정.
+  · run_monitoring_procedure에 data_401 전달 → 0501 본문 생성 시 현재 waypoint/진행도 계산에 coordinate/currentWaypointID 활용.
+  · 로그: 0401 timestamp와 각 UAV wp/health 출력, GUI MonitoringTab에 가용 여부 표시.
+
+4) 저장/연계
+- receive_storage에 최신 0401 유지(다른 로직/GUI 조회용).
+- VehicleStatus/status.json은 별도 가용성 스냅샷(write_vehicle_status)로 저장되며 0401 직접 저장 파일은 없음.
+
+5) TRR 검증 체크
+- 정상 케이스: health=1, 좌표/연료 유효 → 가용 표시, monitoring 루프가 0501 생성.
+- 고장/결측 케이스: health!=1 또는 좌표/연료 누락 → 비가용 반영, availability set 변경 로그 확인.
+- 위치 기반: currentWaypointID/coordinate 변동 시 0501 진행도/로그에서 wp와 progress 변동 확인.

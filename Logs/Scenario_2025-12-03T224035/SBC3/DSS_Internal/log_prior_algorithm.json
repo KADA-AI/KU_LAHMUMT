@@ -1,0 +1,52 @@
+[
+  {
+    "timestamp": 818084711280,
+    "status": "error",
+    "reason": "선행임무 : 좌표지향",
+    "priorMissionID": 1,
+    "missionType": 1,
+    "aircraftID": 4,
+    "sourceMissionPlanID": 700000007,
+    "planIDs": [
+      700000008
+    ],
+    "newMissionPlanID": null,
+    "newIndividualMissionPackageID": null,
+    "priorIndividualMissionID": null,
+    "resumeIndividualMissionID": null,
+    "priorPathID": null,
+    "resumePathID": null,
+    "removedWaypointID": null,
+    "insertedWaypointID": null,
+    "approachWaypointID": null,
+    "targetWaypointID": null,
+    "targetCoordinate": {
+      "latitude": 0.0,
+      "longitude": 0.0,
+      "altitude": 0
+    },
+    "logMessages": [
+      "[PRIOR] detail keys: ∅",
+      "[PRIOR] sourceMissionPlanID resolved from mission_progress (planID=700000007).",
+      "[PRIOR][STEP1] Loaded 0401 snapshot with 3 unmanned entries (saved_at=2025-12-03T13:45:09.970766+00:00).",
+      "[PRIOR][STEP1] UAV 4: currentWP=1, coord=(38.156891, 127.332298, alt=449.0)",
+      "[PRIOR][STEP1] UAV 5: currentWP=35, coord=(38.155190, 127.335335, alt=450.0)",
+      "[PRIOR][STEP1] UAV 6: currentWP=64, coord=(38.153774, 127.338150, alt=450.0)",
+      "[PRIOR][STEP2] Target coordinate 보강: PriorMissionInfo 최신 기록에서 좌표 복구.",
+      "[PRIOR][STEP2] CoordinateOrientation (PriorMissionInfo latest) altitude resolved via DEM (0m).",
+      "[PRIOR][STEP2] Target coordinate (0202) → (0.000000, 0.000000, alt=0.0)",
+      "[PRIOR][STEP3] Nearest UAV 4 selected based on 0401 snapshot (currentWP=1, distance≈13174393.4 m).",
+      "[PRIOR] Aircraft 4 not present in MissionPlan 700000007.",
+      "[PRIOR] Failed to resolve mission artifacts from MissionPlan/IMP data."
+    ],
+    "detailSummary": {},
+    "detailProvided": false,
+    "detailKeys": [],
+    "detailRawPreview": "{}",
+    "missingDetailFields": [],
+    "snapshotAgentCount": 3,
+    "selectedAgentID": 4,
+    "selectedAgentDistanceMeters": 13174393.351847423,
+    "error": null
+  }
+]
