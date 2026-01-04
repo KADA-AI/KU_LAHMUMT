@@ -1,0 +1,82 @@
+{
+  "timestamp": "2026-01-04T09:29:39.205743+00:00",
+  "status": "error",
+  "stopReason": "input_missing",
+  "reason": "초기임무재계획",
+  "replanLevel": 1,
+  "sessionId": "run-0001",
+  "context": {
+    "plan_ids": [
+      700000001
+    ],
+    "option_names": [
+      "시스템추천"
+    ],
+    "mission_ids": [
+      107,
+      108
+    ],
+    "reason": "초기임무재계획",
+    "replan_level": 1
+  },
+  "planIds": [
+    700000001
+  ],
+  "summary": {
+    "stop_reason": "input_missing",
+    "cmpk_path": null,
+    "mrpk_path": null
+  },
+  "steps": [
+    {
+      "step": "start",
+      "status": "info",
+      "detail": {
+        "reason": "초기임무재계획",
+        "plan_ids": [
+          700000001
+        ],
+        "replan_level": 1
+      }
+    },
+    {
+      "step": "input_missing",
+      "status": "error",
+      "message": "missing 0201/0203 input",
+      "detail": {
+        "cmpk_path": null,
+        "mrpk_path": null
+      }
+    }
+  ],
+  "issues": [
+    {
+      "code": "input_missing",
+      "message": "missing 0201/0203 input",
+      "detail": {
+        "cmpk_path": null,
+        "mrpk_path": null
+      }
+    }
+  ],
+  "messages": [
+    {
+      "ts": "2026-01-04T09:29:39.205743+00:00",
+      "text": "[STEP 0] Replan pipeline start (reason=초기임무재계획)"
+    },
+    {
+      "ts": "2026-01-04T09:29:39.253454+00:00",
+      "text": "[MODE] 슬라이더 변경 → 초기 임무 계획"
+    },
+    {
+      "ts": "2026-01-04T09:29:39.254130+00:00",
+      "text": "[0101/POLL] 모드 동기화 code=2"
+    },
+    {
+      "ts": "2026-01-04T09:29:41.576423+00:00",
+      "text": "[INFO] Latest input snapshot → 0201:ID=-,ts=-,src=-, 0203:ID=-,ts=-,src=-"
+    }
+  ],
+  "missionPlanID": 700000001,
+  "logPath": "C:\\Users\\LAHMUMT_2\\Desktop\\KU_LAHMUMT\\Logs\\Scenario_2026-01-04T182931\\SBC3\\DSS_Internal\\missionPlan_700000001.json"
+}

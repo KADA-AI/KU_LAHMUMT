@@ -7,6 +7,17 @@ import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+try:
+    from modules.mission_planning.attack_assignment_state import (
+        get_last_assigned_manned_id,
+        set_last_assigned_manned_id,
+    )
+except ModuleNotFoundError:
+    from attack_assignment_state import (
+        get_last_assigned_manned_id,
+        set_last_assigned_manned_id,
+    )
+
 LogEmitter = Optional[Callable[[str], None]]
 
 
@@ -213,11 +224,16 @@ def apply_attack_customizations(
             f"[WARN] 공격 옵션(variant={variant_no})에 target 좌표 정보가 없어 기본 임무를 유지합니다.",
         )
         return
-    manned_missions = [im for im in missions if int(im.get("aircraftID", 0)) in (1, 2)]
+    manned_missions = [im for im in missions if int(im.get("aircraftID", 0)) in (2, 3)]
     if not manned_missions:
         _safe_emit(log_cb, f"[WARN] 공격 옵션(variant={variant_no}) 대상 유인기 임무를 찾지 못했습니다.")
         return
     manned_missions.sort(key=lambda im: int(im.get("individualMissionID") or 0))
+    last_assigned = get_last_assigned_manned_id()
+    if last_assigned is not None:
+        filtered = [im for im in manned_missions if int(im.get("aircraftID", 0)) != last_assigned]
+        if filtered:
+            manned_missions = filtered
     primary_mission = manned_missions[0]
     mission_info = primary_mission.get("individualMissionInfo") or {}
     coord_list = mission_info.get("coordinateList") or []
@@ -310,3 +326,4 @@ def apply_attack_customizations(
             log_cb,
             f"[variant {variant_no}] 공격 임무 설정 완료 (aircraft={attack_aircraft_id}, targetID={target_id_int})",
         )
+        set_last_assigned_manned_id(attack_aircraft_id)

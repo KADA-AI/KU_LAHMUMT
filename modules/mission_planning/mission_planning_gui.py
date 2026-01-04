@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys, os, threading, json, re, time, shutil, socket, copy
+import concurrent.futures
 os.environ["KU_ROLE"] = "mission"  # MMR
 from pathlib import Path
 from typing import Any, Dict, Optional, Set, List
@@ -2323,6 +2324,7 @@ class MainWindow(QMainWindow):
                 iter_out_root.mkdir(parents=True, exist_ok=True)
 
                 variant_start = time.perf_counter()
+                step_t0 = time.perf_counter()
                 self.log_sig.emit(f"[STEP 1.{variant_no}] Divide & Pattern start")
                 imp_paths = run_divide_and_pattern(
                     str(cmpk_source_path),
@@ -2337,15 +2339,25 @@ class MainWindow(QMainWindow):
                     self._plan_status = "임무계획 실패"
                     self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
                     return
+                step_ms = (time.perf_counter() - step_t0) * 1000.0
+                self.log_sig.emit(
+                    f"[TIME] divide_and_pattern (variant={variant_no}): {step_ms:.1f} ms"
+                )
                 self.log_sig.emit(f"[OK] IMP generated: {len(imp_paths)} file(s) (variant={variant_no})")
 
+                step_t0 = time.perf_counter()
                 mp_tmp = iter_out_root / f"MissionPlan_{int(time.time()*1000)}.json"
                 build_mission_plan_0301(str(cmpk_source_path), str(mrpk_path), imp_paths, str(mp_tmp))
                 with mp_tmp.open(encoding='utf-8') as f:
                     mp_json = json.load(f)
                 imp_id_map = {a.get('aircraftID'): a.get('individualMissionPackageID') for a in mp_json.get('aircraftList', [])}
+                step_ms = (time.perf_counter() - step_t0) * 1000.0
+                self.log_sig.emit(
+                    f"[TIME] build_0301+load (variant={variant_no}): {step_ms:.1f} ms"
+                )
                 self.log_sig.emit(f"[OK] MissionPlan built: {mp_tmp.name} (variant={variant_no})")
 
+                step_t0 = time.perf_counter()
                 missions = []
                 for imp_path in imp_paths:
                     with open(imp_path, encoding='utf-8') as f:
@@ -2357,7 +2369,12 @@ class MainWindow(QMainWindow):
                         if 'individualMissionPlanPackageID' not in im_copy and imp_id_map:
                             im_copy['individualMissionPlanPackageID'] = imp_id_map.get(aid)
                         missions.append(im_copy)
+                step_ms = (time.perf_counter() - step_t0) * 1000.0
+                self.log_sig.emit(
+                    f"[TIME] collect_missions (variant={variant_no}): {step_ms:.1f} ms, count={len(missions)}"
+                )
 
+                step_t0 = time.perf_counter()
                 pid_map = {}
                 for im in missions:
                     aid = int(im.get('aircraftID', 0))
@@ -2374,13 +2391,78 @@ class MainWindow(QMainWindow):
                             im['pathID'] = pid_val
                             pid_map[(aid, mid)] = pid_val
                             generated_path_ids.add(pid_val)
+                step_ms = (time.perf_counter() - step_t0) * 1000.0
+                self.log_sig.emit(
+                    f"[TIME] pathID_mapping (variant={variant_no}): {step_ms:.1f} ms"
+                )
                 self.log_sig.emit(f"[INFO] pathID mapping done for 0302/0303/0304 (variant={variant_no})")
 
                 manned = [im for im in missions if int(im.get('aircraftID', 0)) in (1, 2, 3)]
                 unmanned = [im for im in missions if int(im.get('aircraftID', 0)) in (4, 5, 6)]
                 wp_alloc = d0303._WPAllocator()
-                flight_plans_0303 = d0303.build_flight_plans(unmanned, wp_alloc, 40.0, turn_step_deg=15.0) if unmanned else []
-                flight_plans_0304 = d0304.build_lah_flight_plans_fixed(manned, cruise_speed=40.0, wp_alloc=wp_alloc) if manned else []
+
+                def _build_0303():
+                    start = time.perf_counter()
+                    plans = d0303.build_flight_plans(unmanned, wp_alloc, 40.0, turn_step_deg=15.0)
+                    return plans, (time.perf_counter() - start) * 1000.0
+
+                def _build_0304():
+                    start = time.perf_counter()
+                    plans = d0304.build_lah_flight_plans_fixed(manned, cruise_speed=40.0, wp_alloc=wp_alloc)
+                    return plans, (time.perf_counter() - start) * 1000.0
+
+                flight_plans_0303: list[dict] = []
+                flight_plans_0304: list[dict] = []
+                elapsed_0303_ms = 0.0
+                elapsed_0304_ms = 0.0
+
+                if unmanned and manned:
+                    self.log_sig.emit(f"[INFO] FlightPath build mode: parallel (variant={variant_no})")
+                    parallel_start = time.perf_counter()
+                    # Build 0303/0304 in parallel to reduce wall time when both are present.
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="PlanFP") as executor:
+                        futures = {
+                            executor.submit(_build_0303): "0303",
+                            executor.submit(_build_0304): "0304",
+                        }
+                        for future in concurrent.futures.as_completed(futures):
+                            label = futures[future]
+                            try:
+                                plans, elapsed_ms = future.result()
+                            except Exception as exc:
+                                self.log_sig.emit(f"[ERR] FlightPath build failed ({label}): {exc}")
+                                raise
+                            if label == "0303":
+                                flight_plans_0303 = plans
+                                elapsed_0303_ms = elapsed_ms
+                            else:
+                                flight_plans_0304 = plans
+                                elapsed_0304_ms = elapsed_ms
+                    parallel_ms = (time.perf_counter() - parallel_start) * 1000.0
+                    self.log_sig.emit(
+                        "[INFO] FlightPath build time (parallel): "
+                        f"0303={elapsed_0303_ms:.1f} ms, 0304={elapsed_0304_ms:.1f} ms, wall={parallel_ms:.1f} ms"
+                    )
+                else:
+                    if unmanned or manned:
+                        self.log_sig.emit(f"[INFO] FlightPath build mode: sequential (variant={variant_no})")
+                    if unmanned:
+                        flight_plans_0303, elapsed_0303_ms = _build_0303()
+                    if manned:
+                        flight_plans_0304, elapsed_0304_ms = _build_0304()
+                    if unmanned or manned:
+                        parts = []
+                        if unmanned:
+                            parts.append(f"0303={elapsed_0303_ms:.1f} ms")
+                        if manned:
+                            parts.append(f"0304={elapsed_0304_ms:.1f} ms")
+                        self.log_sig.emit(
+                            "[INFO] FlightPath build time (sequential): " + ", ".join(parts)
+                        )
+
+                custom_t0 = None
+                if variant_attack_context or variant_prior_context:
+                    custom_t0 = time.perf_counter()
 
                 if variant_attack_context:
                     self._apply_attack_customizations(
@@ -2398,6 +2480,11 @@ class MainWindow(QMainWindow):
                         variant_no,
                         pid_map,
                         generated_path_ids,
+                    )
+                if custom_t0 is not None:
+                    custom_ms = (time.perf_counter() - custom_t0) * 1000.0
+                    self.log_sig.emit(
+                        f"[TIME] customizations (variant={variant_no}): {custom_ms:.1f} ms"
                     )
 
                 for fp in (flight_plans_0303 or []) + (flight_plans_0304 or []):
@@ -2486,7 +2573,13 @@ class MainWindow(QMainWindow):
                         }
                     )
 
+                step_t0 = time.perf_counter()
                 imp_pkgs = d0302.build_mission_packages(missions, cmpk_id=cmpk_id, plan_pkg_map=imp_id_map)
+                step_ms = (time.perf_counter() - step_t0) * 1000.0
+                self.log_sig.emit(
+                    f"[TIME] build_0302 (variant={variant_no}): {step_ms:.1f} ms, packages={len(imp_pkgs)}"
+                )
+                step_t0 = time.perf_counter()
                 for pkg in imp_pkgs:
                     imp_id = pkg.get('individualMissionPackageID') or pkg.get('individualMissionPlanPackageID')
                     if imp_id is None:
@@ -2497,6 +2590,10 @@ class MainWindow(QMainWindow):
                         pass
                     (dir_imp / f"{int(imp_id)}.json").write_text(json.dumps(pkg, indent=2, ensure_ascii=False), encoding='utf-8')
                 total_imp_files += len(imp_pkgs)
+                step_ms = (time.perf_counter() - step_t0) * 1000.0
+                self.log_sig.emit(
+                    f"[TIME] write_0302 (variant={variant_no}): {step_ms:.1f} ms, files={len(imp_pkgs)}"
+                )
 
                 def _dump_fp(target_dir, fps):
                     count = 0
@@ -2512,14 +2609,28 @@ class MainWindow(QMainWindow):
                         count += 1
                     return count
 
+                step_t0 = time.perf_counter()
                 fp_count_0303 = _dump_fp(dir_fp, flight_plans_0303)
                 fp_count_0304 = _dump_fp(dir_fp, flight_plans_0304)
                 total_fp_files += fp_count_0303 + fp_count_0304
+                step_ms = (time.perf_counter() - step_t0) * 1000.0
+                self.log_sig.emit(
+                    f"[TIME] write_FlightPath (variant={variant_no}): {step_ms:.1f} ms, files={fp_count_0303 + fp_count_0304}"
+                )
 
+                step_t0 = time.perf_counter()
                 mp_json["planningTime"] = float((time.perf_counter() - variant_start) * 1000.0)
                 (dir_mp / f"{plan_id}.json").write_text(json.dumps(mp_json, indent=2, ensure_ascii=False), encoding='utf-8')
+                step_ms = (time.perf_counter() - step_t0) * 1000.0
+                self.log_sig.emit(
+                    f"[TIME] write_0301 (variant={variant_no}): {step_ms:.1f} ms"
+                )
 
                 self.log_sig.emit(f"[OK] Stored variant {variant_no}: MissionPlanID={plan_id}, IMP={len(imp_pkgs)}, FlightPath={fp_count_0303 + fp_count_0304}")
+                total_ms = (time.perf_counter() - variant_start) * 1000.0
+                self.log_sig.emit(
+                    f"[TIME] variant_total (variant={variant_no}): {total_ms:.1f} ms"
+                )
 
                 generated_plan_ids.append(plan_id)
                 option_codes_out.append(int(option_code))

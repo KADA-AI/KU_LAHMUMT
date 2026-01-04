@@ -17,12 +17,12 @@ except ImportError:
     except ImportError:
         from modules.mission_planning.MissionPlanner.config import DEFAULT_SWEEP_SEPARATION_M  # type: ignore
 from UAV_missionPlanning import UAVMissionPlanner
+from . import route_planner_algorithms as route_algos
 from .coord_transform import llh_to_xy, xy_to_llh
 try:
     from ....common.eta import _order_by_next_chain, _time_from_prev_to_curr_s
 except ImportError:
     from modules.common.eta import _order_by_next_chain, _time_from_prev_to_curr_s
-
 
 
 def _sw_code(default: str = "MMR") -> str:
@@ -39,11 +39,24 @@ Point = Tuple[float, float]
 Line  = Tuple[Point, Point]
 
 # ── 고정 상수 ───────────────────────────────────────────
-FOV_DEG         = 15
+FOV_DEG         = 10
 SWEEP_ENTRY_OFFSET_M = 1500.0
 SWEEP_MERGE_HEADING_DEG = 5
 SWEEP_LINE_INTERP_POINTS = 3  # >=2; controls how many sample points are emitted per sweep line
-Altitude = 700
+Altitude = 610
+DEFAULT_SEARCH_SPEED_MULTIPLIER = 16.0
+POINT_FOV_DEG = 66.638654
+MIN_SWEEP_LEN_M = 3.0
+MIN_ROUTE_SPACING_M = 200.0
+SWEEP_MERGE_MODE = "heading"
+ENTRY_HOLD_FOV_DEG = 10.0
+ENTRY_HOLD_GIMBAL_PITCH = -90.0
+ENTRY_HOLD_GIMBAL_YAW = 0.0
+LOITER_RADIUS_M = 800
+LOITER_DIRECTION = 1
+LOITER_TIME_S = 30
+LOITER_SPEED_MPS = 30
+ROUTE_PLANNER_NAME = "dtatrim"
 
 
 def _normalize_altitude(value: Optional[float], default: int = Altitude) -> int:
@@ -62,15 +75,42 @@ class SweepConfig:
     separation_m: float
     fov_deg: float
 
-
 SWEEP_GEOMETRY = SweepConfig(
     separation_m=DEFAULT_SWEEP_SEPARATION_M,
     fov_deg=FOV_DEG,
 )
 
-
 def _active_sweep_geometry() -> SweepConfig:
     return SWEEP_GEOMETRY
+
+
+def set_route_planner(name: str) -> None:
+    """Select route planner for type-7 missions."""
+    global ROUTE_PLANNER_NAME, SWEEP_MERGE_MODE
+    planner = str(name or "").strip().lower() or "dtatrim"
+    ROUTE_PLANNER_NAME = planner
+    if planner in ("linear", "algo2"):
+        SWEEP_MERGE_MODE = "all"
+    elif planner in ("algo3",):
+        SWEEP_MERGE_MODE = "curve"
+    else:
+        SWEEP_MERGE_MODE = "heading"
+
+
+def _plan_route_points(
+    base: list[tuple[float, float]],
+    *,
+    cruise_speed: float,
+    heading_tol_deg: float,
+) -> list[dict]:
+    planner = (ROUTE_PLANNER_NAME or "dtatrim").strip().lower()
+    if planner in ("linear", "algo2"):
+        return route_algos.plan_route_linear(base, cruise_speed=cruise_speed)
+    return route_algos.plan_route_dtatrim(
+        base,
+        cruise_speed=cruise_speed,
+        heading_tol_deg=heading_tol_deg,
+    )
 
 
 def _sweep_spacing_m(*, separation_m: float, fov_deg: float) -> float:
@@ -482,18 +522,25 @@ def build_flight_plans(
 
     # ── 상수 ───────────────────────────────────────────────
     SENSOR, OPMODE = 1, 2
-    DEFAULT_SEARCH_SPEED = round(cruise_speed * 5, 2)
+    DEFAULT_SEARCH_SPEED = round(cruise_speed * DEFAULT_SEARCH_SPEED_MULTIPLIER, 2)
     geom = _active_sweep_geometry()
     ALT_M = geom.separation_m
     geom_fov_deg = geom.fov_deg
     sweep_spacing_m = _sweep_spacing_m(separation_m=ALT_M, fov_deg=geom_fov_deg)
+    add_end_loiter = SWEEP_MERGE_MODE in ("heading", "curve")
+    use_agl = ROUTE_PLANNER_NAME in ("linear", "algo2")
+    def _wp_alt(lat: float, lon: float, fallback: float | int | None = None) -> int:
+        if use_agl:
+            return int(round(_dem_alt(lat, lon) + float(Altitude)))
+        base = fallback if fallback is not None else Altitude
+        return _normalize_altitude(base)
     DEG_M = 111_132
     # ── 마지막점용 POINT 촬영 블록 생성기 ─────────────────
     def _mk_point_filming_for_coord(coord: dict) -> OrderedDict:
         lat = float(coord.get("latitude", 0.0))
         lon = float(coord.get("longitude", 0.0))
         return OrderedDict([
-            ("fieldOfView", 66.638654),
+            ("fieldOfView", POINT_FOV_DEG),
             ("sensorType", SENSOR_EO_IR),
             ("operationMode", OPMODE_POINT),
             ("coordinateOrientation", OrderedDict([
@@ -516,6 +563,9 @@ def build_flight_plans(
         info = miss["individualMissionInfo"]
         mtype = info.get("individualMissionType")
         wplist: list[OrderedDict] = []
+        full_sweep_coords: list[dict] | None = None
+        full_sweep_speed: float | None = None
+        full_sweep_interp_points: int | None = None
 
         # 1-A. 통로정찰 / 영역수색 (type 3·4·6)
         if mtype in (3, 4, 6):
@@ -540,8 +590,8 @@ def build_flight_plans(
 
                 prev_pt = miss.get("prevPoint", pts[0])
 
-                strip_spacing = sweep_spacing_m
-                _debug_sweep("AREA", separation=ALT_M, fov=geom_fov_deg, spacing=strip_spacing)
+                strip_spacing = ALT_M
+                _debug_sweep("AREA", separation=ALT_M, fov=geom_fov_deg, spacing=spacing_line)
                 coord_list = _poly_sweeps_general(
                     poly_llh=pts,
                     anchor_llh=prev_pt,
@@ -557,7 +607,7 @@ def build_flight_plans(
                     continue
 
                 # 짧은 스윕 필터
-                MIN_SWEEP_LEN = 3.0
+                MIN_SWEEP_LEN = MIN_SWEEP_LEN_M
                 filtered = []
                 lat0, lon0 = lines[0][0]["latitude"], lines[0][0]["longitude"]
                 for ln in lines:
@@ -588,7 +638,7 @@ def build_flight_plans(
                     sweep_width = _avg_sweep_width_m(sweep)
                     sweep_speed = spacing_based_search_speed(
                         sweep_len_m=sweep_width,
-                        spacing_m=strip_spacing,
+                        spacing_m=spacing_line,
                         cruise_speed_mps=cruise_speed,
                     )
                     if sweep_speed is None:
@@ -596,7 +646,7 @@ def build_flight_plans(
 
                     wplist.append(OrderedDict([
                         ("waypointID", 0),
-                        ("coordinate", {"latitude": off_lat, "longitude": off_lon, "altitude": Altitude}),
+                        ("coordinate", {"latitude": off_lat, "longitude": off_lon, "altitude": _wp_alt(off_lat, off_lon, Altitude)}),
                         ("speed", cruise_speed),
                         ("eta", 2500),
                         ("ecf", 0.0),
@@ -613,7 +663,7 @@ def build_flight_plans(
                     ]))
 
                 # ➌ 종료 WP (Loiter + POINT 촬영)
-                if len(wplist) >= 2:
+                if add_end_loiter and len(wplist) >= 2:
                     last_wp = wplist[-1]["coordinate"]
                     prev_wp = wplist[-2]["coordinate"]
                     last_xy = llh_to_xy(last_wp["latitude"], last_wp["longitude"], lat0, lon0)
@@ -623,7 +673,7 @@ def build_flight_plans(
                     ux_end, uy_end = vx / vlen, vy / vlen
                     end_xy = (last_xy[0] + ux_end * 200.0, last_xy[1] + uy_end * 200.0)
                     end_lat, end_lon = xy_to_llh(*end_xy, lat0, lon0)
-                    end_coord = {"latitude": end_lat, "longitude": end_lon, "altitude": Altitude}
+                    end_coord = {"latitude": end_lat, "longitude": end_lon, "altitude": _wp_alt(end_lat, end_lon, Altitude)}
 
                     wplist.append(OrderedDict([
                         ("waypointID", 0),
@@ -635,10 +685,10 @@ def build_flight_plans(
                         ("waypointPassType", PASS_LOITER),
                         ("filmingProperty", _mk_point_filming_for_coord(end_coord)),
                     ]))
-                elif len(wplist) == 1 and last_off_xy is not None:
+                elif add_end_loiter and len(wplist) == 1 and last_off_xy is not None:
                     end_xy = (last_off_xy[0] + ux_b * strip_spacing, last_off_xy[1] + uy_b * strip_spacing)
                     end_lat, end_lon = xy_to_llh(*end_xy, lat0, lon0)
-                    end_coord = {"latitude": end_lat, "longitude": end_lon, "altitude": Altitude}
+                    end_coord = {"latitude": end_lat, "longitude": end_lon, "altitude": _wp_alt(end_lat, end_lon, Altitude)}
 
                     wplist.append(OrderedDict([
                         ("waypointID", 0),
@@ -657,10 +707,99 @@ def build_flight_plans(
                     base, corridor_width=width, separation=ALT_M,
                     fov_deg=geom_fov_deg, cruise_speed=cruise_speed, crs="lla",
                 )
+                use_centerline = ROUTE_PLANNER_NAME in ("linear", "algo2")
+                if use_centerline:
+                    base_xy: list[tuple[float, float]] = []
+                    proj_fwd = getattr(planner, "_proj_fwd", None)
+                    if proj_fwd is not None:
+                        for lat, lon in base:
+                            x, y = proj_fwd(lon, lat)
+                            base_xy.append((x, y))
+                    else:
+                        lat0, lon0 = base[0]
+                        base_xy = [llh_to_xy(lat, lon, lat0, lon0) for lat, lon in base]
+
+                    sweep_mid_xy: list[tuple[float, float]] = []
+                    for sw in planner.sweeps:
+                        sweep_mid_xy.append(((sw[0][0] + sw[1][0]) / 2, (sw[0][1] + sw[1][1]) / 2))
+
+                    def _select_sweep_indices(
+                        points_xy: list[tuple[float, float]],
+                        sweep_midpoints: list[tuple[float, float]],
+                    ) -> list[int]:
+                        if not points_xy or not sweep_midpoints:
+                            return []
+                        total_pts = len(points_xy)
+                        total_sweeps = len(sweep_midpoints)
+                        if total_sweeps <= total_pts:
+                            return list(range(total_sweeps))
+                        selected: list[int] = []
+                        start_idx = 0
+                        for pos, pt in enumerate(points_xy):
+                            remaining = total_pts - pos - 1
+                            max_idx = total_sweeps - 1 - remaining
+                            if max_idx < start_idx:
+                                max_idx = start_idx
+                            best_idx = start_idx
+                            best_dist = None
+                            for idx in range(start_idx, max_idx + 1):
+                                dx = sweep_midpoints[idx][0] - pt[0]
+                                dy = sweep_midpoints[idx][1] - pt[1]
+                                dist = dx * dx + dy * dy
+                                if best_dist is None or dist < best_dist:
+                                    best_dist = dist
+                                    best_idx = idx
+                            selected.append(best_idx)
+                            start_idx = best_idx + 1
+                        return selected
+
+                    sweep_indices = _select_sweep_indices(base_xy, sweep_mid_xy)
+                    if not sweep_indices:
+                        sweep_indices = list(range(len(planner.sweeps)))
+                    anchor_list = planner.offset_wps
+
+                    merged_coords: list[dict] = []
+                    for sw_idx, sw in enumerate(planner.sweeps):
+                        s_xy, e_xy = sw
+                        if sw_idx % 2:
+                            s_xy, e_xy = e_xy, s_xy
+                        s_lat, s_lon = planner._proj_back(s_xy[0], s_xy[1])[::-1]
+                        e_lat, e_lon = planner._proj_back(e_xy[0], e_xy[1])[::-1]
+                        merged_coords.append({
+                            "latitude": s_lat,
+                            "longitude": s_lon,
+                            "altitude": _dem_alt(s_lat, s_lon),
+                        })
+                        merged_coords.append({
+                            "latitude": e_lat,
+                            "longitude": e_lon,
+                            "altitude": _dem_alt(e_lat, e_lon),
+                        })
+                    if merged_coords:
+                        full_sweep_coords = merged_coords
+                        full_sweep_interp_points = SWEEP_LINE_INTERP_POINTS
+                        merged_width = _avg_sweep_width_m(
+                            merged_coords,
+                            points_per_line=2,
+                        )
+                        full_sweep_speed = spacing_based_search_speed(
+                            sweep_len_m=merged_width,
+                            spacing_m=spacing_line,
+                            cruise_speed_mps=cruise_speed,
+                        )
+                        if full_sweep_speed is None:
+                            full_sweep_speed = DEFAULT_SEARCH_SPEED
+                else:
+                    sweep_indices = list(range(len(planner.sweeps)))
+                    anchor_list = planner.orange_pts
 
                 last_anchor_xy: tuple[float, float] | None = None
                 last_first_xy: tuple[float, float] | None = None
-                for idx, (anchor_xy, sw) in enumerate(zip(planner.orange_pts, planner.sweeps)):
+                for idx in sweep_indices:
+                    if idx >= len(planner.sweeps) or idx >= len(anchor_list):
+                        continue
+                    anchor_xy = anchor_list[idx]
+                    sw = planner.sweeps[idx]
                     w_lat, w_lon = planner._proj_back(anchor_xy[0], anchor_xy[1])[::-1]
 
                     s_xy, e_xy = sw
@@ -685,7 +824,7 @@ def build_flight_plans(
 
                     wplist.append(OrderedDict([
                         ("waypointID", 0),
-                        ("coordinate", {"latitude": w_lat, "longitude": w_lon, "altitude": Altitude}),
+                        ("coordinate", {"latitude": w_lat, "longitude": w_lon, "altitude": _wp_alt(w_lat, w_lon, Altitude)}),
                         ("speed", cruise_speed),
                         ("eta", 2500),
                         ("ecf", 0.0),
@@ -704,13 +843,13 @@ def build_flight_plans(
                     last_anchor_xy = anchor_xy
                     last_first_xy = s_xy
 
-                if last_anchor_xy and last_first_xy:
+                if add_end_loiter and last_anchor_xy and last_first_xy:
                     vx, vy = last_first_xy[0] - last_anchor_xy[0], last_first_xy[1] - last_anchor_xy[1]
                     vlen = math.hypot(vx, vy) or 1.0
                     ux_c, uy_c = vx / vlen, vy / vlen
                     end_xy = (last_anchor_xy[0] + ux_c * 300.0, last_anchor_xy[1] + uy_c * 300.0)
                     end_lat, end_lon = planner._proj_back(end_xy[0], end_xy[1])[::-1]
-                    end_coord = {"latitude": end_lat, "longitude": end_lon, "altitude": Altitude}
+                    end_coord = {"latitude": end_lat, "longitude": end_lon, "altitude": _wp_alt(end_lat, end_lon, Altitude)}
 
                     wplist.append(OrderedDict([
                         ("waypointID", 0),
@@ -722,6 +861,7 @@ def build_flight_plans(
                         ("waypointPassType", PASS_LOITER),
                         ("filmingProperty", _mk_point_filming_for_coord(end_coord)),
                     ]))
+
 
         # 1-B. 이동 미션 (type 7)
         elif mtype == 7:
@@ -735,16 +875,18 @@ def build_flight_plans(
                 lat, lon = base[0]
                 wplist.append(OrderedDict([
                     ("waypointID", 0),
-                    ("coordinate", {"latitude": lat, "longitude": lon, "altitude": Altitude}),
+                    ("coordinate", {"latitude": lat, "longitude": lon, "altitude": _wp_alt(lat, lon, Altitude)}),
                     ("speed", cruise_speed), ("eta", 0), ("ecf", 1.0),
                     ("nextWaypointID", 0), ("waypointPassType", 1),
                     ("filmingProperty", {}),
                 ]))
             elif len(base) >= 2:
-                raw_pts = UAVMissionPlanner.plan_route_only(
-                    base, cruise_speed, heading_tol_deg=turn_step_deg, store=False
+                raw_pts = _plan_route_points(
+                    base,
+                    cruise_speed=cruise_speed,
+                    heading_tol_deg=turn_step_deg,
                 )
-                MIN_SPACING_M = 200.0
+                MIN_SPACING_M = MIN_ROUTE_SPACING_M
                 simp: list[dict] = [raw_pts[0]]
                 for p in raw_pts[1:]:
                     d = math.hypot(
@@ -758,7 +900,7 @@ def build_flight_plans(
                 for p in simp:
                     wplist.append(OrderedDict([
                         ("waypointID", 0),
-                        ("coordinate", {"latitude": p["lat"], "longitude": p["lon"], "altitude": Altitude}),
+                        ("coordinate", {"latitude": p["lat"], "longitude": p["lon"], "altitude": _wp_alt(p["lat"], p["lon"], Altitude)}),
                         ("speed", cruise_speed),
                         ("eta", p["eta_ms"]),
                         ("ecf", 0.0),
@@ -772,11 +914,16 @@ def build_flight_plans(
 
         # 1-C. 패킷 저장
         if wplist:
-            packets.append({
+            packet = {
                 "pathID": miss["pathID"],
                 "aircraftID": aid,
                 "wplist": wplist,
-            })
+            }
+            if full_sweep_coords:
+                packet["fullSweepCoords"] = full_sweep_coords
+                packet["fullSweepSearchSpeed"] = full_sweep_speed
+                packet["fullSweepInterpPoints"] = full_sweep_interp_points
+            packets.append(packet)
 
     # ────────────────────────── 3) WP ID · 링크 · ECF ────────────────
     prev_tail_by_aircraft: Dict[int, dict] = {}
@@ -809,7 +956,7 @@ def build_flight_plans(
                 entry_coord = OrderedDict([
                     ("latitude", round(entry_lat, 6)),
                     ("longitude", round(entry_lon, 6)),
-                    ("altitude", first_coord.get("altitude", Altitude)),
+                    ("altitude", _wp_alt(entry_lat, entry_lon, first_coord.get("altitude", Altitude))),
                 ])
                 entry_wp = OrderedDict([
                     ("waypointID", 0),
@@ -821,10 +968,10 @@ def build_flight_plans(
                     ("waypointPassType", PASS_FLYBY),
                     ("filmingProperty", _mk_filming(
                         operation_mode=OPMODE_HOLD,
-                        fov=10.0,
+                        fov=ENTRY_HOLD_FOV_DEG,
                         sensor=SENSOR_EO_IR,
-                        gimbal_pitch=-90.0,
-                        gimbal_yaw=0.0,
+                        gimbal_pitch=ENTRY_HOLD_GIMBAL_PITCH,
+                        gimbal_yaw=ENTRY_HOLD_GIMBAL_YAW,
                     )),
                 ])
 
@@ -894,66 +1041,133 @@ def build_flight_plans(
                     lon_b = float(coord_to.get("longitude", lon_a))
                     return llh_to_xy(lat_b, lon_b, lat_a, lon_a)
 
-                groups: list[list[int]] = []
-                current_group: list[int] = [0]
-                for pos in range(1, len(records)):
-                    prev_vec = _vector_between(records[pos - 2]["coord"], records[pos - 1]["coord"]) if pos >= 2 else None
-                    curr_vec = _vector_between(records[pos - 1]["coord"], records[pos]["coord"])
-                    angle = 0.0 if prev_vec is None else _angle_between(prev_vec, curr_vec)
-                    if angle <= SWEEP_MERGE_HEADING_DEG:
-                        current_group.append(pos)
-                    else:
-                        groups.append(current_group)
-                        current_group = [pos]
-                groups.append(current_group)
+                if SWEEP_MERGE_MODE == "all":
+                    full_coords = pkt.get("fullSweepCoords") or []
+                    full_speed = pkt.get("fullSweepSearchSpeed")
+                    interp_points = pkt.get("fullSweepInterpPoints") or SWEEP_LINE_INTERP_POINTS
+                    width_points = 2
+                    if not full_coords:
+                        full_coords = deepcopy(first_coords)
+                        for record in records:
+                            full_coords.extend(deepcopy(record["coords"]))
+                    if full_speed is None:
+                        full_width = _avg_sweep_width_m(full_coords, points_per_line=width_points)
+                        full_speed = spacing_based_search_speed(
+                            sweep_len_m=full_width,
+                            spacing_m=sweep_spacing_m,
+                            cruise_speed_mps=cruise_speed,
+                        )
+                    if full_speed is None:
+                        full_speed = first_search_speed
+                    if full_speed is None:
+                        full_speed = DEFAULT_SEARCH_SPEED
 
-                to_remove: list[int] = []
-                for g_idx, group in enumerate(groups):
-                    rep_pos = group[-1]
-                    rep = records[rep_pos]
+                    rep = records[0]
                     rep_fp = rep["fp"]
-                    merged_coords: list[dict] = []
-                    merged_spans: list[float] = []
-                    if g_idx == 0:
-                        merged_coords.extend(deepcopy(first_coords))
-                        merged_spans.extend(_collect_sweep_spans(first_coords, first_interp_points))
-                    for pos in group:
-                        coords_copy = deepcopy(records[pos]["coords"])
-                        merged_coords.extend(coords_copy)
-                        merged_spans.extend(_collect_sweep_spans(
-                            records[pos]["coords"],
-                            records[pos].get("interp_points"),
-                        ))
-                    merged_width = None
-                    if merged_spans:
-                        merged_width = round(sum(merged_spans) / len(merged_spans), 2)
-                    rep_speed = spacing_based_search_speed(
-                        sweep_len_m=merged_width,
-                        spacing_m=sweep_spacing_m,
-                        cruise_speed_mps=cruise_speed,
-                    )
-                    if rep_speed is None:
-                        rep_speed = rep["search_speed"]
-                    if rep_speed is None:
-                        rep_speed = first_search_speed
                     rep_fp["fieldOfView"] = rep["fov"]
                     rep_fp["sensorType"] = SENSOR_EO_IR
                     rep_fp["operationMode"] = OPMODE_LINE
                     interpolated_coords = _interpolate_line_coords(
-                        merged_coords,
-                        SWEEP_LINE_INTERP_POINTS,
+                        full_coords,
+                        interp_points,
                     )
                     rep_fp["lineSearch"] = OrderedDict([
                         ("coordinateList", interpolated_coords),
-                        ("searchSpeed", rep_speed),
-                        ("interpolationPoints", SWEEP_LINE_INTERP_POINTS),
+                        ("searchSpeed", full_speed),
+                        ("interpolationPoints", interp_points),
                     ])
-                    for pos in group:
-                        if pos != rep_pos:
-                            to_remove.append(records[pos]["idx"])
+                    for record in records[1:]:
+                        record["wp"]["filmingProperty"] = {}
+                else:
+                    groups: list[list[int]] = []
+                    if SWEEP_MERGE_MODE == "heading":
+                        current_group: list[int] = [0]
+                        for pos in range(1, len(records)):
+                            prev_vec = _vector_between(records[pos - 2]["coord"], records[pos - 1]["coord"]) if pos >= 2 else None
+                            curr_vec = _vector_between(records[pos - 1]["coord"], records[pos]["coord"])
+                            angle = 0.0 if prev_vec is None else _angle_between(prev_vec, curr_vec)
+                            if angle <= SWEEP_MERGE_HEADING_DEG:
+                                current_group.append(pos)
+                            else:
+                                groups.append(current_group)
+                                current_group = [pos]
+                        groups.append(current_group)
+                    elif SWEEP_MERGE_MODE == "curve":
+                        coords_chain = [first_coord] + [record["coord"] for record in records]
+                        signs = [0] * len(coords_chain)
+                        for idx in range(1, len(coords_chain) - 1):
+                            v1 = _vector_between(coords_chain[idx - 1], coords_chain[idx])
+                            v2 = _vector_between(coords_chain[idx], coords_chain[idx + 1])
+                            angle = _angle_between(v1, v2)
+                            if angle <= SWEEP_MERGE_HEADING_DEG:
+                                signs[idx] = 0
+                            else:
+                                cross = (v1[0] * v2[1]) - (v1[1] * v2[0])
+                                signs[idx] = 1 if cross >= 0 else -1
+                        for idx in range(1, len(signs) - 1):
+                            if signs[idx] == 0 and signs[idx - 1] == signs[idx + 1] != 0:
+                                signs[idx] = signs[idx - 1]
+                        current_group = [0]
+                        current_sign = signs[1] if len(signs) > 1 else 0
+                        for pos in range(1, len(records)):
+                            sign = signs[pos + 1]
+                            if sign == current_sign:
+                                current_group.append(pos)
+                            else:
+                                groups.append(current_group)
+                                current_group = [pos]
+                                current_sign = sign
+                        groups.append(current_group)
+                    else:
+                        groups = [[idx] for idx in range(len(records))]
 
-                for idx in sorted(to_remove, reverse=True):
-                    del wps[idx]
+                    to_remove: list[int] = []
+                    for g_idx, group in enumerate(groups):
+                        rep_pos = group[-1]
+                        rep = records[rep_pos]
+                        rep_fp = rep["fp"]
+                        merged_coords: list[dict] = []
+                        merged_spans: list[float] = []
+                        if g_idx == 0:
+                            merged_coords.extend(deepcopy(first_coords))
+                            merged_spans.extend(_collect_sweep_spans(first_coords, first_interp_points))
+                        for pos in group:
+                            coords_copy = deepcopy(records[pos]["coords"])
+                            merged_coords.extend(coords_copy)
+                            merged_spans.extend(_collect_sweep_spans(
+                                records[pos]["coords"],
+                                records[pos].get("interp_points"),
+                            ))
+                        merged_width = None
+                        if merged_spans:
+                            merged_width = round(sum(merged_spans) / len(merged_spans), 2)
+                        rep_speed = spacing_based_search_speed(
+                            sweep_len_m=merged_width,
+                            spacing_m=sweep_spacing_m,
+                            cruise_speed_mps=cruise_speed,
+                        )
+                        if rep_speed is None:
+                            rep_speed = rep["search_speed"]
+                        if rep_speed is None:
+                            rep_speed = first_search_speed
+                        rep_fp["fieldOfView"] = rep["fov"]
+                        rep_fp["sensorType"] = SENSOR_EO_IR
+                        rep_fp["operationMode"] = OPMODE_LINE
+                        interpolated_coords = _interpolate_line_coords(
+                            merged_coords,
+                            SWEEP_LINE_INTERP_POINTS,
+                        )
+                        rep_fp["lineSearch"] = OrderedDict([
+                            ("coordinateList", interpolated_coords),
+                            ("searchSpeed", rep_speed),
+                            ("interpolationPoints", SWEEP_LINE_INTERP_POINTS),
+                        ])
+                        for pos in group:
+                            if pos != rep_pos:
+                                to_remove.append(records[pos]["idx"])
+
+                    for idx in sorted(to_remove, reverse=True):
+                        del wps[idx]
 
             if entry_wp is not None:
                 wps.insert(0, entry_wp)
@@ -970,10 +1184,10 @@ def build_flight_plans(
                 if not wp.get("filmingProperty"):
                     wp["filmingProperty"] = _mk_point_filming_for_coord(wp.get("coordinate") or {})
                 wp["loiterProperty"] = OrderedDict([
-                    ("radius", 800),
-                    ("direction", 1),
-                    ("time", 30),
-                    ("speed", 30),
+                    ("radius", LOITER_RADIUS_M),
+                    ("direction", LOITER_DIRECTION),
+                    ("time", LOITER_TIME_S),
+                    ("speed", LOITER_SPEED_MPS),
                 ])
 
         _annotate_eta_ms_inplace(wps, default_speed_mps=cruise_speed)
@@ -1003,7 +1217,6 @@ def build_flight_plans(
             ("waypointList", pkt["wplist"]),
         ]))
     return result
-
 
 
 

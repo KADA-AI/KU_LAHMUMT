@@ -1,0 +1,604 @@
+2026-01-04T10:17:59.923250Z [LOG] Mission planning log started: C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\Logs\Scenario_2026-01-04T183726\SBC3\DSS_Internal\mission_planning_gui_20260104T101759_922251Z.log
+2026-01-04T10:17:59.924250Z CTRL UDP 수신 대기 시작 (127.0.0.1:45981)
+2026-01-04T10:17:59.925250Z [0101] 모드 수신 리스너 등록 완료
+2026-01-04T10:18:00.166838Z [CTRL] MODE change request: 초기화 모드
+2026-01-04T10:18:00.306034Z [BUS] NodeMessenger 초기화 완료
+2026-01-04T10:18:08.957062Z [MODE] 슬라이더 변경 → 대기모드
+2026-01-04T10:18:08.957964Z [0101/POLL] 모드 동기화 code=1
+2026-01-04T10:18:14.297792Z [INFO] Latest 0203 ID updated → 1
+2026-01-04T10:18:14.921957Z [INFO] Latest 0201 ID updated → 1
+2026-01-04T10:18:15.950420Z [AUTO] 0902 received (planIds=700000001)
+2026-01-04T10:18:15.951033Z [AUTO] replan pipeline scheduled after 0.1s delay
+2026-01-04T10:18:16.012909Z [MODE] 슬라이더 변경 → 초기 임무 계획
+2026-01-04T10:18:16.015409Z [0101/POLL] 모드 동기화 code=2
+2026-01-04T10:18:16.076177Z [0305] status=1, reason=초기임무재계획 전송
+2026-01-04T10:18:16.079177Z [INFO] Using latest 0201 ID 1 for inputMissionPackageID (fallback)
+2026-01-04T10:18:16.079177Z [INFO] Using latest 0203 ID 1 for missionReferencePackageID (fallback)
+2026-01-04T10:18:16.079177Z [STEP 0] Replan pipeline start (reason=초기임무재계획)
+2026-01-04T10:18:18.294023Z [INFO] Latest input snapshot → 0201:ID=1,ts=816922549226,src=-, 0203:ID=1,ts=820837094297,src=-
+2026-01-04T10:18:18.294023Z [STEP 0] Using latest 0201 ID 1 (1.json)
+2026-01-04T10:18:18.294023Z [STEP 0] Using latest 0203 ID 1 (1.json)
+2026-01-04T10:18:18.294023Z [STEP 1.1] Divide & Pattern start
+2026-01-04T10:18:18.294023Z [variant 1] [1] CMPK 로드
+2026-01-04T10:18:18.294023Z [variant 1]     ▸ VehicleStatus 적용: 사용 가능한 기체 [1, 2, 3, 4, 5, 6]
+2026-01-04T10:18:18.294023Z [variant 1]     MRPK 로드
+2026-01-04T10:18:18.294023Z [variant 1]     ▸ 로드 완료  (소요 0.01s)
+2026-01-04T10:18:18.294023Z [variant 1] [2] LAH 임무 저장 시작
+2026-01-04T10:18:18.512588Z [variant 1] [LAH1] LAH 임무파일 저장 → C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\Logs\Scenario_2026-01-04T191808\SBC3\mission_output\variant_01\IndividualMissionPlan_LAH001.json
+2026-01-04T10:18:18.512588Z [variant 1] [LAH2] LAH 임무파일 저장 → C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\Logs\Scenario_2026-01-04T191808\SBC3\mission_output\variant_01\IndividualMissionPlan_LAH002.json
+2026-01-04T10:18:18.512588Z [variant 1] [LAH3] LAH 임무파일 저장 → C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\Logs\Scenario_2026-01-04T191808\SBC3\mission_output\variant_01\IndividualMissionPlan_LAH003.json
+2026-01-04T10:18:18.512588Z [variant 1] [TIME] LAH save: 0.22s
+2026-01-04T10:18:18.512588Z [variant 1]     ▸ LAH 3개 파일 저장
+2026-01-04T10:18:18.512588Z [variant 1] [3] InputMission 분할
+2026-01-04T10:18:18.512588Z [variant 1] [3] InputMission 분할
+2026-01-04T10:18:18.512588Z [variant 1]     ▸ (1/11) inputMissionID=1 type=1
+2026-01-04T10:18:18.512588Z [variant 1]        └─ sub-area 3개 추가 (누적 3)
+2026-01-04T10:18:18.512588Z [variant 1]     ▸ (2/11) inputMissionID=2 type=1
+2026-01-04T10:18:18.528694Z [variant 1]        └─ sub-area 3개 추가 (누적 6)
+2026-01-04T10:18:18.528694Z [variant 1]     ▸ (3/11) inputMissionID=3 type=2
+2026-01-04T10:18:18.528694Z [variant 1]        └─ sub-area 3개 추가 (누적 9)
+2026-01-04T10:18:18.528694Z [variant 1]     ▸ (4/11) inputMissionID=4 type=1
+2026-01-04T10:18:18.528694Z [variant 1]        └─ sub-area 3개 추가 (누적 12)
+2026-01-04T10:18:18.528694Z [variant 1]     ▸ (5/11) inputMissionID=5 type=2
+2026-01-04T10:18:18.528694Z [variant 1]        └─ sub-area 3개 추가 (누적 15)
+2026-01-04T10:18:18.528694Z [variant 1]     ▸ (6/11) inputMissionID=6 type=1
+2026-01-04T10:18:18.528694Z [variant 1]        └─ sub-area 3개 추가 (누적 18)
+2026-01-04T10:18:18.528694Z [variant 1]     ▸ (7/11) inputMissionID=7 type=2
+2026-01-04T10:18:18.528694Z [variant 1]        └─ sub-area 3개 추가 (누적 21)
+2026-01-04T10:18:18.528694Z [variant 1]     ▸ (8/11) inputMissionID=8 type=1
+2026-01-04T10:18:18.528694Z [variant 1]        └─ sub-area 3개 추가 (누적 24)
+2026-01-04T10:18:18.528694Z [variant 1]     ▸ (9/11) inputMissionID=9 type=2
+2026-01-04T10:18:18.528694Z [variant 1]        └─ sub-area 3개 추가 (누적 27)
+2026-01-04T10:18:18.528694Z [variant 1]     ▸ (10/11) inputMissionID=10 type=1
+2026-01-04T10:18:18.528694Z [variant 1]        └─ sub-area 3개 추가 (누적 30)
+2026-01-04T10:18:18.528694Z [variant 1]     ▸ (11/11) inputMissionID=11 type=1
+2026-01-04T10:18:18.528694Z [variant 1]        └─ sub-area 3개 추가 (누적 33)
+2026-01-04T10:18:18.528694Z [variant 1]     ▸ 분할 완료: 33개 sub-area
+2026-01-04T10:18:18.528694Z [variant 1] [TIME] InputMission split: 0.01s
+2026-01-04T10:18:18.528694Z [variant 1] [4] RL 예상시간 계산
+2026-01-04T10:18:18.528694Z [variant 1]        RL 진행    1/33  (소요  0.0s)
+2026-01-04T10:18:18.528694Z [variant 1]        RL 진행    2/33  (소요  0.0s)
+2026-01-04T10:18:18.528694Z [variant 1]        RL 진행    4/33  (소요  0.0s)
+2026-01-04T10:18:18.528694Z [variant 1]        RL 진행    6/33  (소요  0.0s)
+2026-01-04T10:18:18.528694Z [variant 1]        RL 진행    8/33  (소요  0.0s)
+2026-01-04T10:18:18.528694Z [variant 1]        RL 진행   10/33  (소요  0.0s)
+2026-01-04T10:18:18.528694Z [variant 1]        RL 진행   12/33  (소요  0.0s)
+2026-01-04T10:18:18.528694Z [variant 1]        RL 진행   14/33  (소요  0.0s)
+2026-01-04T10:18:18.528694Z [variant 1]        RL 진행   16/33  (소요  0.0s)
+2026-01-04T10:18:18.528694Z [variant 1]        RL 진행   18/33  (소요  0.0s)
+2026-01-04T10:18:18.528694Z [variant 1]        RL 진행   20/33  (소요  0.0s)
+2026-01-04T10:18:18.528694Z [variant 1]        RL 진행   22/33  (소요  0.0s)
+2026-01-04T10:18:18.528694Z [variant 1]        RL 진행   24/33  (소요  0.0s)
+2026-01-04T10:18:18.528694Z [variant 1]        RL 진행   26/33  (소요  0.0s)
+2026-01-04T10:18:18.528694Z [variant 1]        RL 진행   28/33  (소요  0.0s)
+2026-01-04T10:18:18.528694Z [variant 1]        RL 진행   30/33  (소요  0.0s)
+2026-01-04T10:18:18.528694Z [variant 1]        RL 진행   32/33  (소요  0.0s)
+2026-01-04T10:18:18.528694Z [variant 1]        RL 진행   33/33  (소요  0.0s)
+2026-01-04T10:18:18.528694Z [variant 1]        ┌─ RL 세부 소요(ms) ─────────────
+2026-01-04T10:18:18.528694Z [variant 1]        │ predict :    0.0  / p95    0.0
+2026-01-04T10:18:18.528694Z [variant 1]        │ env.step:    0.0  / p95    0.0
+2026-01-04T10:18:18.528694Z [variant 1]        │ distance:    0.0  / p95    0.0
+2026-01-04T10:18:18.528694Z [variant 1]        └───────────────────────────────
+2026-01-04T10:18:18.528694Z [variant 1] [TIME] RL total: 0.00s
+2026-01-04T10:18:18.543794Z [variant 1] [5] PuLP 균등 스케줄링
+2026-01-04T10:18:18.543794Z [variant 1] [PuLP] 입력 IMP 로드 → _flat.json
+2026-01-04T10:18:18.543794Z [variant 1] [PuLP] 임무 33개 → 11개 그룹 (그룹당 ≤3개)
+2026-01-04T10:18:18.686769Z [variant 1] [PuLP] Status = Optimal
+2026-01-04T10:18:18.686769Z [variant 1] [PuLP] 최적 편차 = 24664.00 s
+2026-01-04T10:18:18.686769Z [variant 1] [PuLP] 저장 완료 → C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\Logs\Scenario_2026-01-04T191808\SBC3\mission_output\variant_01\_flat_sched.json
+2026-01-04T10:18:18.686769Z [variant 1] [TIME] PuLP scheduling: 0.16s
+2026-01-04T10:18:18.702863Z [variant 1] [6] UAV IMP 생성‧저장
+2026-01-04T10:18:19.035862Z [variant 1]     ▸ IMP 저장: C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\Logs\Scenario_2026-01-04T191808\SBC3\mission_output\variant_01\IndividualMissionPlan_UAV004.json
+2026-01-04T10:18:19.035862Z [variant 1]     ▸ IMP 저장: C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\Logs\Scenario_2026-01-04T191808\SBC3\mission_output\variant_01\IndividualMissionPlan_UAV005.json
+2026-01-04T10:18:19.035862Z [variant 1]     ▸ IMP 저장: C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\Logs\Scenario_2026-01-04T191808\SBC3\mission_output\variant_01\IndividualMissionPlan_UAV006.json
+2026-01-04T10:18:19.035862Z [variant 1] [✔] divide_and_pattern 끝 (총 0.7s 경과)
+2026-01-04T10:18:19.035862Z [variant 1] [TIME] UAV IMP build: 0.34s, files=3
+2026-01-04T10:18:19.035862Z [TIME] divide_and_pattern (variant=1): 740.8 ms
+2026-01-04T10:18:19.035862Z [OK] IMP generated: 6 file(s) (variant=1)
+2026-01-04T10:18:19.067653Z [TIME] build_0301+load (variant=1): 30.2 ms
+2026-01-04T10:18:19.067653Z [OK] MissionPlan built: MissionPlan_1767521899035.json (variant=1)
+2026-01-04T10:18:19.067653Z [TIME] collect_missions (variant=1): 1.0 ms, count=66
+2026-01-04T10:18:19.273676Z [TIME] pathID_mapping (variant=1): 210.9 ms
+2026-01-04T10:18:19.273676Z [INFO] pathID mapping done for 0302/0303/0304 (variant=1)
+2026-01-04T10:18:19.273676Z [INFO] FlightPath build mode: parallel (variant=1)
+2026-01-04T10:18:19.903521Z [INFO] FlightPath build time (parallel): 0303=623.4 ms, 0304=336.7 ms, wall=624.3 ms
+2026-01-04T10:18:19.903521Z [OK] FlightPath counts (variant=1): 0303=33 / 0304=33
+2026-01-04T10:18:20.075249Z [TIME] build_0302 (variant=1): 181.9 ms, packages=6
+2026-01-04T10:18:20.090995Z [TIME] write_0302 (variant=1): 3.7 ms, files=6
+2026-01-04T10:18:20.122025Z [TIME] write_FlightPath (variant=1): 31.2 ms, files=66
+2026-01-04T10:18:20.122025Z [TIME] write_0301 (variant=1): 0.3 ms
+2026-01-04T10:18:20.122025Z [OK] Stored variant 1: MissionPlanID=700000001, IMP=6, FlightPath=66
+2026-01-04T10:18:20.122025Z [TIME] variant_total (variant=1): 1824.7 ms
+2026-01-04T10:18:20.122025Z [INFO] Option mapping #1: planID=700000001, optionCode=1(시스템추천)
+2026-01-04T10:18:20.122025Z [OK] Stored mission data: MissionPlan=1, IndividualMission=6, FlightPath=66
+2026-01-04T10:18:20.122025Z [STEP 4] 0301 push queued (planIds=700000001)
+2026-01-04T10:18:20.131203Z [0301] missionPlanID=700000001 전송
+2026-01-04T10:18:20.132204Z [PUSH] 0301 button click()
+2026-01-04T10:18:20.730022Z [0305] status=2, reason=초기임무재계획 전송
+2026-01-04T10:18:21.033706Z [0903] request sent (missionPlanID=700000001)
+2026-01-04T10:18:21.502320Z [MODE] 슬라이더 변경 → 임무 수행
+2026-01-04T10:18:21.506025Z [0101/POLL] 모드 동기화 code=3
+2026-01-04T10:19:34.467425Z [AUTO] 0902 received (planIds=700000002, 700000003)
+2026-01-04T10:19:34.467425Z [AUTO] replan pipeline scheduled after 0.1s delay
+2026-01-04T10:19:34.582833Z [0305] status=1, reason=무인기 - 전차(ID-7) 발견으로 인한 재계획 전송
+2026-01-04T10:19:34.582833Z [INFO] Using latest 0201 ID 1 for inputMissionPackageID (fallback)
+2026-01-04T10:19:34.582833Z [INFO] Using latest 0203 ID 1 for missionReferencePackageID (fallback)
+2026-01-04T10:19:34.582833Z [STEP 0] Replan pipeline start (reason=무인기 - 전차(ID-7) 발견으로 인한 재계획)
+2026-01-04T10:19:34.582833Z [ATTACK] 공격 특화 재계획 요청 감지 → 전용 파이프라인 실행
+2026-01-04T10:19:34.582833Z [ATTACK] STEP1 Selected manned aircraft: aircraft 2 (fuel=1.2999999523162842, coord=(38.125816345214844, 127.30183410644531, alt=296))
+2026-01-04T10:19:34.582833Z [ATTACK] STEP2 UAV tracking summary: watcher None?’target 7, watcher 4?’target unknown-1
+2026-01-04T10:19:36.994252Z [ATTACK] STEP3 Attack plan completed: lat=38.131029, lon=127.293834, alt=503m
+2026-01-04T10:19:36.996255Z [ATTACK] [ATTACK] Mission override skipped (aircraft IDs missing).
+2026-01-04T10:19:36.996255Z [ATTACK] 분석 로그 저장: C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\Logs\Scenario_2026-01-04T191808\SBC3\DSS_Internal\log_attack_algorithm_20260104T101936_996255.json
+2026-01-04T10:19:36.996255Z [INFO] Latest input snapshot → 0201:ID=1,ts=816922549226,src=-, 0203:ID=1,ts=820837094297,src=-
+2026-01-04T10:19:36.996255Z [STEP 0] Using latest 0201 ID 1 (1.json)
+2026-01-04T10:19:36.996255Z [STEP 0] Using latest 0203 ID 1 (1.json)
+2026-01-04T10:19:36.996255Z [INFO] Filtered completed input missions (removed=1, converted=-, widthAdjusted=-)
+2026-01-04T10:19:36.996255Z [WARN] 공격 옵션이 있으나 활용 가능한 대상 정보가 없어 기본 임무를 유지합니다.
+2026-01-04T10:19:36.996255Z [STEP 1.1] Divide & Pattern start
+2026-01-04T10:19:36.996255Z [variant 1] [1] CMPK 로드
+2026-01-04T10:19:37.003426Z [variant 1]     ▸ VehicleStatus 적용: 사용 가능한 기체 [1, 2, 3, 4, 5, 6]
+2026-01-04T10:19:37.003426Z [variant 1]     MRPK 로드
+2026-01-04T10:19:37.003426Z [variant 1]     ▸ 로드 완료  (소요 0.01s)
+2026-01-04T10:19:37.003426Z [variant 1] [2] LAH 임무 저장 시작
+2026-01-04T10:19:37.272456Z [variant 1] [LAH1] LAH 임무파일 저장 → C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\Logs\Scenario_2026-01-04T191808\SBC3\mission_output\variant_01\IndividualMissionPlan_LAH001.json
+2026-01-04T10:19:37.272456Z [variant 1] [LAH2] LAH 임무파일 저장 → C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\Logs\Scenario_2026-01-04T191808\SBC3\mission_output\variant_01\IndividualMissionPlan_LAH002.json
+2026-01-04T10:19:37.272456Z [variant 1] [LAH3] LAH 임무파일 저장 → C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\Logs\Scenario_2026-01-04T191808\SBC3\mission_output\variant_01\IndividualMissionPlan_LAH003.json
+2026-01-04T10:19:37.272456Z [variant 1] [TIME] LAH save: 0.28s
+2026-01-04T10:19:37.288451Z [variant 1]     ▸ LAH 3개 파일 저장
+2026-01-04T10:19:37.288451Z [variant 1] [3] InputMission 분할
+2026-01-04T10:19:37.288451Z [variant 1] [3] InputMission 분할
+2026-01-04T10:19:37.288451Z [variant 1]     ▸ (1/10) inputMissionID=2 type=1
+2026-01-04T10:19:37.288451Z [variant 1]        └─ sub-area 3개 추가 (누적 3)
+2026-01-04T10:19:37.288451Z [variant 1]     ▸ (2/10) inputMissionID=3 type=2
+2026-01-04T10:19:37.288451Z [variant 1]        └─ sub-area 3개 추가 (누적 6)
+2026-01-04T10:19:37.288451Z [variant 1]     ▸ (3/10) inputMissionID=4 type=1
+2026-01-04T10:19:37.288451Z [variant 1]        └─ sub-area 3개 추가 (누적 9)
+2026-01-04T10:19:37.288451Z [variant 1]     ▸ (4/10) inputMissionID=5 type=2
+2026-01-04T10:19:37.288451Z [variant 1]        └─ sub-area 3개 추가 (누적 12)
+2026-01-04T10:19:37.288451Z [variant 1]     ▸ (5/10) inputMissionID=6 type=1
+2026-01-04T10:19:37.293996Z [variant 1]        └─ sub-area 3개 추가 (누적 15)
+2026-01-04T10:19:37.293996Z [variant 1]     ▸ (6/10) inputMissionID=7 type=2
+2026-01-04T10:19:37.293996Z [variant 1]        └─ sub-area 3개 추가 (누적 18)
+2026-01-04T10:19:37.293996Z [variant 1]     ▸ (7/10) inputMissionID=8 type=1
+2026-01-04T10:19:37.293996Z [variant 1]        └─ sub-area 3개 추가 (누적 21)
+2026-01-04T10:19:37.293996Z [variant 1]     ▸ (8/10) inputMissionID=9 type=2
+2026-01-04T10:19:37.293996Z [variant 1]        └─ sub-area 3개 추가 (누적 24)
+2026-01-04T10:19:37.293996Z [variant 1]     ▸ (9/10) inputMissionID=10 type=1
+2026-01-04T10:19:37.293996Z [variant 1]        └─ sub-area 3개 추가 (누적 27)
+2026-01-04T10:19:37.293996Z [variant 1]     ▸ (10/10) inputMissionID=11 type=1
+2026-01-04T10:19:37.293996Z [variant 1]        └─ sub-area 3개 추가 (누적 30)
+2026-01-04T10:19:37.293996Z [variant 1]     ▸ 분할 완료: 30개 sub-area
+2026-01-04T10:19:37.293996Z [variant 1] [TIME] InputMission split: 0.01s
+2026-01-04T10:19:37.293996Z [variant 1] [4] RL 예상시간 계산
+2026-01-04T10:19:37.293996Z [variant 1]        RL 진행    1/30  (소요  0.0s)
+2026-01-04T10:19:37.293996Z [variant 1]        RL 진행    2/30  (소요  0.0s)
+2026-01-04T10:19:37.293996Z [variant 1]        RL 진행    4/30  (소요  0.0s)
+2026-01-04T10:19:37.293996Z [variant 1]        RL 진행    6/30  (소요  0.0s)
+2026-01-04T10:19:37.293996Z [variant 1]        RL 진행    8/30  (소요  0.0s)
+2026-01-04T10:19:37.293996Z [variant 1]        RL 진행   10/30  (소요  0.0s)
+2026-01-04T10:19:37.293996Z [variant 1]        RL 진행   12/30  (소요  0.0s)
+2026-01-04T10:19:37.293996Z [variant 1]        RL 진행   14/30  (소요  0.0s)
+2026-01-04T10:19:37.293996Z [variant 1]        RL 진행   16/30  (소요  0.0s)
+2026-01-04T10:19:37.293996Z [variant 1]        RL 진행   18/30  (소요  0.0s)
+2026-01-04T10:19:37.293996Z [variant 1]        RL 진행   20/30  (소요  0.0s)
+2026-01-04T10:19:37.293996Z [variant 1]        RL 진행   22/30  (소요  0.0s)
+2026-01-04T10:19:37.293996Z [variant 1]        RL 진행   24/30  (소요  0.0s)
+2026-01-04T10:19:37.293996Z [variant 1]        RL 진행   26/30  (소요  0.0s)
+2026-01-04T10:19:37.293996Z [variant 1]        RL 진행   28/30  (소요  0.0s)
+2026-01-04T10:19:37.293996Z [variant 1]        RL 진행   30/30  (소요  0.0s)
+2026-01-04T10:19:37.293996Z [variant 1]        ┌─ RL 세부 소요(ms) ─────────────
+2026-01-04T10:19:37.293996Z [variant 1]        │ predict :    0.0  / p95    0.0
+2026-01-04T10:19:37.293996Z [variant 1]        │ env.step:    0.0  / p95    0.0
+2026-01-04T10:19:37.293996Z [variant 1]        │ distance:    0.0  / p95    0.0
+2026-01-04T10:19:37.293996Z [variant 1]        └───────────────────────────────
+2026-01-04T10:19:37.293996Z [variant 1] [TIME] RL total: 0.00s
+2026-01-04T10:19:37.293996Z [variant 1] [5] PuLP 균등 스케줄링
+2026-01-04T10:19:37.293996Z [variant 1] [PuLP] 입력 IMP 로드 → _flat.json
+2026-01-04T10:19:37.304237Z [variant 1] [PuLP] 임무 30개 → 10개 그룹 (그룹당 ≤3개)
+2026-01-04T10:19:37.462271Z [variant 1] [PuLP] Status = Optimal
+2026-01-04T10:19:37.462271Z [variant 1] [PuLP] 최적 편차 = 24664.00 s
+2026-01-04T10:19:37.462271Z [variant 1] [PuLP] 저장 완료 → C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\Logs\Scenario_2026-01-04T191808\SBC3\mission_output\variant_01\_flat_sched.json
+2026-01-04T10:19:37.462271Z [variant 1] [TIME] PuLP scheduling: 0.17s
+2026-01-04T10:19:37.462271Z [variant 1] [6] UAV IMP 생성‧저장
+2026-01-04T10:19:37.923961Z [variant 1]     ▸ IMP 저장: C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\Logs\Scenario_2026-01-04T191808\SBC3\mission_output\variant_01\IndividualMissionPlan_UAV004.json
+2026-01-04T10:19:37.923961Z [variant 1]     ▸ IMP 저장: C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\Logs\Scenario_2026-01-04T191808\SBC3\mission_output\variant_01\IndividualMissionPlan_UAV005.json
+2026-01-04T10:19:37.923961Z [variant 1]     ▸ IMP 저장: C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\Logs\Scenario_2026-01-04T191808\SBC3\mission_output\variant_01\IndividualMissionPlan_UAV006.json
+2026-01-04T10:19:37.923961Z [variant 1] [✔] divide_and_pattern 끝 (총 0.9s 경과)
+2026-01-04T10:19:37.923961Z [variant 1] [TIME] UAV IMP build: 0.46s, files=3
+2026-01-04T10:19:37.923961Z [TIME] divide_and_pattern (variant=1): 934.1 ms
+2026-01-04T10:19:37.923961Z [OK] IMP generated: 6 file(s) (variant=1)
+2026-01-04T10:19:37.973118Z [TIME] build_0301+load (variant=1): 42.9 ms
+2026-01-04T10:19:37.973118Z [OK] MissionPlan built: MissionPlan_1767521977923.json (variant=1)
+2026-01-04T10:19:37.973118Z [TIME] collect_missions (variant=1): 0.9 ms, count=60
+2026-01-04T10:19:38.301181Z [TIME] pathID_mapping (variant=1): 335.1 ms
+2026-01-04T10:19:38.301181Z [INFO] pathID mapping done for 0302/0303/0304 (variant=1)
+2026-01-04T10:19:38.316829Z [INFO] FlightPath build mode: parallel (variant=1)
+2026-01-04T10:19:38.731686Z [INFO] FlightPath build time (parallel): 0303=418.6 ms, 0304=339.2 ms, wall=419.4 ms
+2026-01-04T10:19:38.731686Z [OK] FlightPath counts (variant=1): 0303=30 / 0304=30
+2026-01-04T10:19:39.018441Z [TIME] build_0302 (variant=1): 293.2 ms, packages=6
+2026-01-04T10:19:39.018441Z [TIME] write_0302 (variant=1): 3.5 ms, files=6
+2026-01-04T10:19:39.062142Z [TIME] write_FlightPath (variant=1): 31.8 ms, files=60
+2026-01-04T10:19:39.062142Z [TIME] write_0301 (variant=1): 0.3 ms
+2026-01-04T10:19:39.062142Z [OK] Stored variant 1: MissionPlanID=700000002, IMP=6, FlightPath=60
+2026-01-04T10:19:39.063142Z [TIME] variant_total (variant=1): 2061.8 ms
+2026-01-04T10:19:39.063142Z [INFO] Option mapping #1: planID=700000002, optionCode=2(공격특화)
+2026-01-04T10:19:39.063142Z [STEP 1.2] Divide & Pattern start
+2026-01-04T10:19:39.063142Z [variant 2] [1] CMPK 로드
+2026-01-04T10:19:39.064144Z [variant 2]     ▸ VehicleStatus 적용: 사용 가능한 기체 [1, 2, 3, 4, 5, 6]
+2026-01-04T10:19:39.064144Z [variant 2]     MRPK 로드
+2026-01-04T10:19:39.064144Z [variant 2]     ▸ 로드 완료  (소요 0.00s)
+2026-01-04T10:19:39.065144Z [variant 2] [2] LAH 임무 저장 시작
+2026-01-04T10:19:39.325425Z [variant 2] [LAH1] LAH 임무파일 저장 → C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\Logs\Scenario_2026-01-04T191808\SBC3\mission_output\variant_02\IndividualMissionPlan_LAH001.json
+2026-01-04T10:19:39.325425Z [variant 2] [LAH2] LAH 임무파일 저장 → C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\Logs\Scenario_2026-01-04T191808\SBC3\mission_output\variant_02\IndividualMissionPlan_LAH002.json
+2026-01-04T10:19:39.328593Z [variant 2] [LAH3] LAH 임무파일 저장 → C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\Logs\Scenario_2026-01-04T191808\SBC3\mission_output\variant_02\IndividualMissionPlan_LAH003.json
+2026-01-04T10:19:39.328593Z [variant 2] [TIME] LAH save: 0.26s
+2026-01-04T10:19:39.328593Z [variant 2]     ▸ LAH 3개 파일 저장
+2026-01-04T10:19:39.328593Z [variant 2] [3] InputMission 분할
+2026-01-04T10:19:39.328593Z [variant 2] [3] InputMission 분할
+2026-01-04T10:19:39.328593Z [variant 2]     ▸ (1/10) inputMissionID=2 type=1
+2026-01-04T10:19:39.328593Z [variant 2]        └─ sub-area 3개 추가 (누적 3)
+2026-01-04T10:19:39.328593Z [variant 2]     ▸ (2/10) inputMissionID=3 type=2
+2026-01-04T10:19:39.328593Z [variant 2]        └─ sub-area 3개 추가 (누적 6)
+2026-01-04T10:19:39.328593Z [variant 2]     ▸ (3/10) inputMissionID=4 type=1
+2026-01-04T10:19:39.328593Z [variant 2]        └─ sub-area 3개 추가 (누적 9)
+2026-01-04T10:19:39.328593Z [variant 2]     ▸ (4/10) inputMissionID=5 type=2
+2026-01-04T10:19:39.328593Z [variant 2]        └─ sub-area 3개 추가 (누적 12)
+2026-01-04T10:19:39.328593Z [variant 2]     ▸ (5/10) inputMissionID=6 type=1
+2026-01-04T10:19:39.328593Z [variant 2]        └─ sub-area 3개 추가 (누적 15)
+2026-01-04T10:19:39.328593Z [variant 2]     ▸ (6/10) inputMissionID=7 type=2
+2026-01-04T10:19:39.328593Z [variant 2]        └─ sub-area 3개 추가 (누적 18)
+2026-01-04T10:19:39.328593Z [variant 2]     ▸ (7/10) inputMissionID=8 type=1
+2026-01-04T10:19:39.328593Z [variant 2]        └─ sub-area 3개 추가 (누적 21)
+2026-01-04T10:19:39.328593Z [variant 2]     ▸ (8/10) inputMissionID=9 type=2
+2026-01-04T10:19:39.328593Z [variant 2]        └─ sub-area 3개 추가 (누적 24)
+2026-01-04T10:19:39.328593Z [variant 2]     ▸ (9/10) inputMissionID=10 type=1
+2026-01-04T10:19:39.328593Z [variant 2]        └─ sub-area 3개 추가 (누적 27)
+2026-01-04T10:19:39.328593Z [variant 2]     ▸ (10/10) inputMissionID=11 type=1
+2026-01-04T10:19:39.328593Z [variant 2]        └─ sub-area 3개 추가 (누적 30)
+2026-01-04T10:19:39.328593Z [variant 2]     ▸ 분할 완료: 30개 sub-area
+2026-01-04T10:19:39.328593Z [variant 2] [TIME] InputMission split: 0.01s
+2026-01-04T10:19:39.328593Z [variant 2] [4] RL 예상시간 계산
+2026-01-04T10:19:39.328593Z [variant 2]        RL 진행    1/30  (소요  0.0s)
+2026-01-04T10:19:39.328593Z [variant 2]        RL 진행    2/30  (소요  0.0s)
+2026-01-04T10:19:39.328593Z [variant 2]        RL 진행    4/30  (소요  0.0s)
+2026-01-04T10:19:39.328593Z [variant 2]        RL 진행    6/30  (소요  0.0s)
+2026-01-04T10:19:39.328593Z [variant 2]        RL 진행    8/30  (소요  0.0s)
+2026-01-04T10:19:39.328593Z [variant 2]        RL 진행   10/30  (소요  0.0s)
+2026-01-04T10:19:39.328593Z [variant 2]        RL 진행   12/30  (소요  0.0s)
+2026-01-04T10:19:39.328593Z [variant 2]        RL 진행   14/30  (소요  0.0s)
+2026-01-04T10:19:39.328593Z [variant 2]        RL 진행   16/30  (소요  0.0s)
+2026-01-04T10:19:39.341582Z [variant 2]        RL 진행   18/30  (소요  0.0s)
+2026-01-04T10:19:39.341582Z [variant 2]        RL 진행   20/30  (소요  0.0s)
+2026-01-04T10:19:39.341582Z [variant 2]        RL 진행   22/30  (소요  0.0s)
+2026-01-04T10:19:39.341582Z [variant 2]        RL 진행   24/30  (소요  0.0s)
+2026-01-04T10:19:39.341582Z [variant 2]        RL 진행   26/30  (소요  0.0s)
+2026-01-04T10:19:39.341582Z [variant 2]        RL 진행   28/30  (소요  0.0s)
+2026-01-04T10:19:39.341582Z [variant 2]        RL 진행   30/30  (소요  0.0s)
+2026-01-04T10:19:39.341582Z [variant 2]        ┌─ RL 세부 소요(ms) ─────────────
+2026-01-04T10:19:39.341582Z [variant 2]        │ predict :    0.0  / p95    0.0
+2026-01-04T10:19:39.341582Z [variant 2]        │ env.step:    0.0  / p95    0.0
+2026-01-04T10:19:39.344429Z [variant 2]        │ distance:    0.0  / p95    0.0
+2026-01-04T10:19:39.344429Z [variant 2]        └───────────────────────────────
+2026-01-04T10:19:39.344429Z [variant 2] [TIME] RL total: 0.00s
+2026-01-04T10:19:39.344429Z [variant 2] [5] PuLP 균등 스케줄링
+2026-01-04T10:19:39.344429Z [variant 2] [PuLP] 입력 IMP 로드 → _flat.json
+2026-01-04T10:19:39.344429Z [variant 2] [PuLP] 임무 30개 → 10개 그룹 (그룹당 ≤3개)
+2026-01-04T10:19:39.502366Z [variant 2] [PuLP] Status = Optimal
+2026-01-04T10:19:39.502366Z [variant 2] [PuLP] 최적 편차 = 24664.00 s
+2026-01-04T10:19:39.502366Z [variant 2] [PuLP] 저장 완료 → C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\Logs\Scenario_2026-01-04T191808\SBC3\mission_output\variant_02\_flat_sched.json
+2026-01-04T10:19:39.502366Z [variant 2] [TIME] PuLP scheduling: 0.17s
+2026-01-04T10:19:39.518185Z [variant 2] [6] UAV IMP 생성‧저장
+2026-01-04T10:19:39.945233Z [variant 2]     ▸ IMP 저장: C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\Logs\Scenario_2026-01-04T191808\SBC3\mission_output\variant_02\IndividualMissionPlan_UAV004.json
+2026-01-04T10:19:39.945233Z [variant 2]     ▸ IMP 저장: C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\Logs\Scenario_2026-01-04T191808\SBC3\mission_output\variant_02\IndividualMissionPlan_UAV005.json
+2026-01-04T10:19:39.945233Z [variant 2]     ▸ IMP 저장: C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\Logs\Scenario_2026-01-04T191808\SBC3\mission_output\variant_02\IndividualMissionPlan_UAV006.json
+2026-01-04T10:19:39.945233Z [variant 2] [✔] divide_and_pattern 끝 (총 0.9s 경과)
+2026-01-04T10:19:39.945233Z [variant 2] [TIME] UAV IMP build: 0.43s, files=3
+2026-01-04T10:19:39.950270Z [TIME] divide_and_pattern (variant=2): 886.1 ms
+2026-01-04T10:19:39.950270Z [OK] IMP generated: 6 file(s) (variant=2)
+2026-01-04T10:19:39.976705Z [TIME] build_0301+load (variant=2): 31.2 ms
+2026-01-04T10:19:39.981297Z [OK] MissionPlan built: MissionPlan_1767521979945.json (variant=2)
+2026-01-04T10:19:39.981297Z [TIME] collect_missions (variant=2): 1.0 ms, count=60
+2026-01-04T10:19:40.233573Z [TIME] pathID_mapping (variant=2): 260.6 ms
+2026-01-04T10:19:40.233573Z [INFO] pathID mapping done for 0302/0303/0304 (variant=2)
+2026-01-04T10:19:40.245247Z [INFO] FlightPath build mode: parallel (variant=2)
+2026-01-04T10:19:40.655617Z [INFO] FlightPath build time (parallel): 0303=412.5 ms, 0304=326.7 ms, wall=413.4 ms
+2026-01-04T10:19:40.655617Z [OK] FlightPath counts (variant=2): 0303=30 / 0304=30
+2026-01-04T10:19:40.935595Z [TIME] build_0302 (variant=2): 280.9 ms, packages=6
+2026-01-04T10:19:40.940185Z [TIME] write_0302 (variant=2): 4.9 ms, files=6
+2026-01-04T10:19:40.955918Z [TIME] write_FlightPath (variant=2): 28.4 ms, files=60
+2026-01-04T10:19:40.955918Z [TIME] write_0301 (variant=2): 0.4 ms
+2026-01-04T10:19:40.955918Z [OK] Stored variant 2: MissionPlanID=700000003, IMP=6, FlightPath=60
+2026-01-04T10:19:40.971548Z [TIME] variant_total (variant=2): 1907.3 ms
+2026-01-04T10:19:40.971548Z [INFO] Option mapping #2: planID=700000003, optionCode=4(정찰특화)
+2026-01-04T10:19:40.971548Z [OK] Stored mission data: MissionPlan=2, IndividualMission=12, FlightPath=120
+2026-01-04T10:19:40.971548Z [STEP 4] 0301 push queued (planIds=700000002, 700000003)
+2026-01-04T10:19:40.973530Z [INFO] Execution mode -> sending 0901 instead of 0903
+2026-01-04T10:19:40.975533Z [0301] missionPlanID=700000002 전송
+2026-01-04T10:19:40.976534Z [0301] missionPlanID=700000003 전송
+2026-01-04T10:19:40.977534Z [PUSH] 0301 button click()
+2026-01-04T10:19:41.576207Z [0305] status=2, reason=무인기 - 전차(ID-7) 발견으로 인한 재계획 전송
+2026-01-04T10:19:41.878429Z [0901] option request sent (count=2, codes=2(공격특화), 4(정찰특화))
+2026-01-04T10:36:14.487694Z [AUTO] 0902 received (planIds=700000004, 700000005, 700000006)
+2026-01-04T10:36:14.487694Z [AUTO] replan pipeline scheduled after 0.1s delay
+2026-01-04T10:36:14.617102Z [0305] status=1, reason=무인기 1번 ROI 지속 감시 (count=1) 전송
+2026-01-04T10:36:14.627105Z [INFO] Using latest 0201 ID 1 for inputMissionPackageID (fallback)
+2026-01-04T10:36:14.628106Z [INFO] Using latest 0203 ID 1 for missionReferencePackageID (fallback)
+2026-01-04T10:36:14.629106Z [STEP 0] Replan pipeline start (reason=무인기 1번 ROI 지속 감시 (count=1))
+2026-01-04T10:36:14.629106Z [INFO] Latest input snapshot → 0201:ID=1,ts=816922549226,src=-, 0203:ID=1,ts=820837094297,src=-
+2026-01-04T10:36:14.630107Z [STEP 0] Using latest 0201 ID 1 (1.json)
+2026-01-04T10:36:14.631107Z [STEP 0] Using latest 0203 ID 1 (1.json)
+2026-01-04T10:36:14.631107Z [INFO] Filtered completed input missions (removed=1, converted=-, widthAdjusted=-)
+2026-01-04T10:36:14.632106Z [STEP 1.1] Divide & Pattern start
+2026-01-04T10:36:14.633106Z [variant 1] [1] CMPK 로드
+2026-01-04T10:36:14.634106Z [variant 1]     ▸ VehicleStatus 적용: 사용 가능한 기체 [1, 2, 3, 4, 5, 6]
+2026-01-04T10:36:14.634106Z [variant 1]     MRPK 로드
+2026-01-04T10:36:14.634106Z [variant 1]     ▸ 로드 완료  (소요 0.00s)
+2026-01-04T10:36:14.635107Z [variant 1] [2] LAH 임무 저장 시작
+2026-01-04T10:36:14.940314Z [variant 1] [LAH1] LAH 임무파일 저장 → C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\Logs\Scenario_2026-01-04T191808\SBC3\mission_output\variant_01\IndividualMissionPlan_LAH001.json
+2026-01-04T10:36:14.940314Z [variant 1] [LAH2] LAH 임무파일 저장 → C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\Logs\Scenario_2026-01-04T191808\SBC3\mission_output\variant_01\IndividualMissionPlan_LAH002.json
+2026-01-04T10:36:14.940314Z [variant 1] [LAH3] LAH 임무파일 저장 → C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\Logs\Scenario_2026-01-04T191808\SBC3\mission_output\variant_01\IndividualMissionPlan_LAH003.json
+2026-01-04T10:36:14.940314Z [variant 1] [TIME] LAH save: 0.31s
+2026-01-04T10:36:14.940314Z [variant 1]     ▸ LAH 3개 파일 저장
+2026-01-04T10:36:14.940314Z [variant 1] [3] InputMission 분할
+2026-01-04T10:36:14.940314Z [variant 1] [3] InputMission 분할
+2026-01-04T10:36:14.950225Z [variant 1]     ▸ (1/10) inputMissionID=2 type=1
+2026-01-04T10:36:14.950225Z [variant 1]        └─ sub-area 3개 추가 (누적 3)
+2026-01-04T10:36:14.950225Z [variant 1]     ▸ (2/10) inputMissionID=3 type=2
+2026-01-04T10:36:14.950225Z [variant 1]        └─ sub-area 3개 추가 (누적 6)
+2026-01-04T10:36:14.950225Z [variant 1]     ▸ (3/10) inputMissionID=4 type=1
+2026-01-04T10:36:14.950225Z [variant 1]        └─ sub-area 3개 추가 (누적 9)
+2026-01-04T10:36:14.950225Z [variant 1]     ▸ (4/10) inputMissionID=5 type=2
+2026-01-04T10:36:14.950225Z [variant 1]        └─ sub-area 3개 추가 (누적 12)
+2026-01-04T10:36:14.950225Z [variant 1]     ▸ (5/10) inputMissionID=6 type=1
+2026-01-04T10:36:14.950225Z [variant 1]        └─ sub-area 3개 추가 (누적 15)
+2026-01-04T10:36:14.956157Z [variant 1]     ▸ (6/10) inputMissionID=7 type=2
+2026-01-04T10:36:14.956157Z [variant 1]        └─ sub-area 3개 추가 (누적 18)
+2026-01-04T10:36:14.956157Z [variant 1]     ▸ (7/10) inputMissionID=8 type=1
+2026-01-04T10:36:14.956157Z [variant 1]        └─ sub-area 3개 추가 (누적 21)
+2026-01-04T10:36:14.956157Z [variant 1]     ▸ (8/10) inputMissionID=9 type=2
+2026-01-04T10:36:14.956157Z [variant 1]        └─ sub-area 3개 추가 (누적 24)
+2026-01-04T10:36:14.956157Z [variant 1]     ▸ (9/10) inputMissionID=10 type=1
+2026-01-04T10:36:14.956157Z [variant 1]        └─ sub-area 3개 추가 (누적 27)
+2026-01-04T10:36:14.956157Z [variant 1]     ▸ (10/10) inputMissionID=11 type=1
+2026-01-04T10:36:14.956157Z [variant 1]        └─ sub-area 3개 추가 (누적 30)
+2026-01-04T10:36:14.956157Z [variant 1]     ▸ 분할 완료: 30개 sub-area
+2026-01-04T10:36:14.956157Z [variant 1] [TIME] InputMission split: 0.01s
+2026-01-04T10:36:14.956157Z [variant 1] [4] RL 예상시간 계산
+2026-01-04T10:36:14.956157Z [variant 1]        RL 진행    1/30  (소요  0.0s)
+2026-01-04T10:36:14.956157Z [variant 1]        RL 진행    2/30  (소요  0.0s)
+2026-01-04T10:36:14.956157Z [variant 1]        RL 진행    4/30  (소요  0.0s)
+2026-01-04T10:36:14.956157Z [variant 1]        RL 진행    6/30  (소요  0.0s)
+2026-01-04T10:36:14.956157Z [variant 1]        RL 진행    8/30  (소요  0.0s)
+2026-01-04T10:36:14.956157Z [variant 1]        RL 진행   10/30  (소요  0.0s)
+2026-01-04T10:36:14.956157Z [variant 1]        RL 진행   12/30  (소요  0.0s)
+2026-01-04T10:36:14.956157Z [variant 1]        RL 진행   14/30  (소요  0.0s)
+2026-01-04T10:36:14.956157Z [variant 1]        RL 진행   16/30  (소요  0.0s)
+2026-01-04T10:36:14.956157Z [variant 1]        RL 진행   18/30  (소요  0.0s)
+2026-01-04T10:36:14.956157Z [variant 1]        RL 진행   20/30  (소요  0.0s)
+2026-01-04T10:36:14.956157Z [variant 1]        RL 진행   22/30  (소요  0.0s)
+2026-01-04T10:36:14.956157Z [variant 1]        RL 진행   24/30  (소요  0.0s)
+2026-01-04T10:36:14.956157Z [variant 1]        RL 진행   26/30  (소요  0.0s)
+2026-01-04T10:36:14.971962Z [variant 1]        RL 진행   28/30  (소요  0.0s)
+2026-01-04T10:36:14.971962Z [variant 1]        RL 진행   30/30  (소요  0.0s)
+2026-01-04T10:36:14.971962Z [variant 1]        ┌─ RL 세부 소요(ms) ─────────────
+2026-01-04T10:36:14.971962Z [variant 1]        │ predict :    0.0  / p95    0.0
+2026-01-04T10:36:14.971962Z [variant 1]        │ env.step:    0.0  / p95    0.1
+2026-01-04T10:36:14.971962Z [variant 1]        │ distance:    0.0  / p95    0.0
+2026-01-04T10:36:14.971962Z [variant 1]        └───────────────────────────────
+2026-01-04T10:36:14.971962Z [variant 1] [TIME] RL total: 0.00s
+2026-01-04T10:36:14.971962Z [variant 1] [5] PuLP 균등 스케줄링
+2026-01-04T10:36:14.971962Z [variant 1] [PuLP] 입력 IMP 로드 → _flat.json
+2026-01-04T10:36:14.971962Z [variant 1] [PuLP] 임무 30개 → 10개 그룹 (그룹당 ≤3개)
+2026-01-04T10:36:15.217570Z [variant 1] [PuLP] Status = Optimal
+2026-01-04T10:36:15.217570Z [variant 1] [PuLP] 최적 편차 = 24664.00 s
+2026-01-04T10:36:15.217570Z [variant 1] [PuLP] 저장 완료 → C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\Logs\Scenario_2026-01-04T191808\SBC3\mission_output\variant_01\_flat_sched.json
+2026-01-04T10:36:15.217570Z [variant 1] [TIME] PuLP scheduling: 0.26s
+2026-01-04T10:36:15.229652Z [variant 1] [6] UAV IMP 생성‧저장
+2026-01-04T10:36:15.797504Z [variant 1]     ▸ IMP 저장: C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\Logs\Scenario_2026-01-04T191808\SBC3\mission_output\variant_01\IndividualMissionPlan_UAV004.json
+2026-01-04T10:36:15.797504Z [variant 1]     ▸ IMP 저장: C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\Logs\Scenario_2026-01-04T191808\SBC3\mission_output\variant_01\IndividualMissionPlan_UAV005.json
+2026-01-04T10:36:15.797504Z [variant 1]     ▸ IMP 저장: C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\Logs\Scenario_2026-01-04T191808\SBC3\mission_output\variant_01\IndividualMissionPlan_UAV006.json
+2026-01-04T10:36:15.797504Z [variant 1] [✔] divide_and_pattern 끝 (총 1.2s 경과)
+2026-01-04T10:36:15.797504Z [variant 1] [TIME] UAV IMP build: 0.58s, files=3
+2026-01-04T10:36:15.797504Z [TIME] divide_and_pattern (variant=1): 1178.2 ms
+2026-01-04T10:36:15.797504Z [OK] IMP generated: 6 file(s) (variant=1)
+2026-01-04T10:36:15.848281Z [TIME] build_0301+load (variant=1): 38.5 ms
+2026-01-04T10:36:15.848281Z [OK] MissionPlan built: MissionPlan_1767522975797.json (variant=1)
+2026-01-04T10:36:15.850696Z [TIME] collect_missions (variant=1): 2.4 ms, count=60
+2026-01-04T10:36:16.205344Z [TIME] pathID_mapping (variant=1): 355.1 ms
+2026-01-04T10:36:16.205344Z [INFO] pathID mapping done for 0302/0303/0304 (variant=1)
+2026-01-04T10:36:16.205344Z [INFO] FlightPath build mode: parallel (variant=1)
+2026-01-04T10:36:17.003384Z [INFO] FlightPath build time (parallel): 0303=795.2 ms, 0304=586.3 ms, wall=797.0 ms
+2026-01-04T10:36:17.003384Z [OK] FlightPath counts (variant=1): 0303=30 / 0304=30
+2026-01-04T10:36:17.299011Z [TIME] build_0302 (variant=1): 309.7 ms, packages=6
+2026-01-04T10:36:17.314700Z [TIME] write_0302 (variant=1): 4.7 ms, files=6
+2026-01-04T10:36:17.366800Z [TIME] write_FlightPath (variant=1): 48.6 ms, files=60
+2026-01-04T10:36:17.367800Z [TIME] write_0301 (variant=1): 0.7 ms
+2026-01-04T10:36:17.367800Z [OK] Stored variant 1: MissionPlanID=700000004, IMP=6, FlightPath=60
+2026-01-04T10:36:17.367800Z [TIME] variant_total (variant=1): 2736.4 ms
+2026-01-04T10:36:17.368800Z [INFO] Option mapping #1: planID=700000004, optionCode=1(시스템추천)
+2026-01-04T10:36:17.369801Z [STEP 1.2] Divide & Pattern start
+2026-01-04T10:36:17.370800Z [variant 2] [1] CMPK 로드
+2026-01-04T10:36:17.370800Z [variant 2]     ▸ VehicleStatus 적용: 사용 가능한 기체 [1, 2, 3, 4, 5, 6]
+2026-01-04T10:36:17.371800Z [variant 2]     MRPK 로드
+2026-01-04T10:36:17.371800Z [variant 2]     ▸ 로드 완료  (소요 0.00s)
+2026-01-04T10:36:17.372800Z [variant 2] [2] LAH 임무 저장 시작
+2026-01-04T10:36:17.656693Z [variant 2] [LAH1] LAH 임무파일 저장 → C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\Logs\Scenario_2026-01-04T191808\SBC3\mission_output\variant_02\IndividualMissionPlan_LAH001.json
+2026-01-04T10:36:17.656693Z [variant 2] [LAH2] LAH 임무파일 저장 → C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\Logs\Scenario_2026-01-04T191808\SBC3\mission_output\variant_02\IndividualMissionPlan_LAH002.json
+2026-01-04T10:36:17.656693Z [variant 2] [LAH3] LAH 임무파일 저장 → C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\Logs\Scenario_2026-01-04T191808\SBC3\mission_output\variant_02\IndividualMissionPlan_LAH003.json
+2026-01-04T10:36:17.656693Z [variant 2] [TIME] LAH save: 0.30s
+2026-01-04T10:36:17.656693Z [variant 2]     ▸ LAH 3개 파일 저장
+2026-01-04T10:36:17.656693Z [variant 2] [3] InputMission 분할
+2026-01-04T10:36:17.656693Z [variant 2] [3] InputMission 분할
+2026-01-04T10:36:17.656693Z [variant 2]     ▸ (1/10) inputMissionID=2 type=1
+2026-01-04T10:36:17.669001Z [variant 2]        └─ sub-area 3개 추가 (누적 3)
+2026-01-04T10:36:17.669001Z [variant 2]     ▸ (2/10) inputMissionID=3 type=2
+2026-01-04T10:36:17.669001Z [variant 2]        └─ sub-area 3개 추가 (누적 6)
+2026-01-04T10:36:17.669001Z [variant 2]     ▸ (3/10) inputMissionID=4 type=1
+2026-01-04T10:36:17.669001Z [variant 2]        └─ sub-area 3개 추가 (누적 9)
+2026-01-04T10:36:17.669001Z [variant 2]     ▸ (4/10) inputMissionID=5 type=2
+2026-01-04T10:36:17.669001Z [variant 2]        └─ sub-area 3개 추가 (누적 12)
+2026-01-04T10:36:17.669001Z [variant 2]     ▸ (5/10) inputMissionID=6 type=1
+2026-01-04T10:36:17.669001Z [variant 2]        └─ sub-area 3개 추가 (누적 15)
+2026-01-04T10:36:17.669001Z [variant 2]     ▸ (6/10) inputMissionID=7 type=2
+2026-01-04T10:36:17.669001Z [variant 2]        └─ sub-area 3개 추가 (누적 18)
+2026-01-04T10:36:17.669001Z [variant 2]     ▸ (7/10) inputMissionID=8 type=1
+2026-01-04T10:36:17.669001Z [variant 2]        └─ sub-area 3개 추가 (누적 21)
+2026-01-04T10:36:17.669001Z [variant 2]     ▸ (8/10) inputMissionID=9 type=2
+2026-01-04T10:36:17.669001Z [variant 2]        └─ sub-area 3개 추가 (누적 24)
+2026-01-04T10:36:17.669001Z [variant 2]     ▸ (9/10) inputMissionID=10 type=1
+2026-01-04T10:36:17.669001Z [variant 2]        └─ sub-area 3개 추가 (누적 27)
+2026-01-04T10:36:17.684718Z [variant 2]     ▸ (10/10) inputMissionID=11 type=1
+2026-01-04T10:36:17.684718Z [variant 2]        └─ sub-area 3개 추가 (누적 30)
+2026-01-04T10:36:17.684718Z [variant 2]     ▸ 분할 완료: 30개 sub-area
+2026-01-04T10:36:17.684718Z [variant 2] [TIME] InputMission split: 0.01s
+2026-01-04T10:36:17.684718Z [variant 2] [4] RL 예상시간 계산
+2026-01-04T10:36:17.691490Z [variant 2]        RL 진행    1/30  (소요  0.0s)
+2026-01-04T10:36:17.691490Z [variant 2]        RL 진행    2/30  (소요  0.0s)
+2026-01-04T10:36:17.691490Z [variant 2]        RL 진행    4/30  (소요  0.0s)
+2026-01-04T10:36:17.691490Z [variant 2]        RL 진행    6/30  (소요  0.0s)
+2026-01-04T10:36:17.691490Z [variant 2]        RL 진행    8/30  (소요  0.0s)
+2026-01-04T10:36:17.693996Z [variant 2]        RL 진행   10/30  (소요  0.0s)
+2026-01-04T10:36:17.693996Z [variant 2]        RL 진행   12/30  (소요  0.0s)
+2026-01-04T10:36:17.693996Z [variant 2]        RL 진행   14/30  (소요  0.0s)
+2026-01-04T10:36:17.693996Z [variant 2]        RL 진행   16/30  (소요  0.0s)
+2026-01-04T10:36:17.693996Z [variant 2]        RL 진행   18/30  (소요  0.0s)
+2026-01-04T10:36:17.693996Z [variant 2]        RL 진행   20/30  (소요  0.0s)
+2026-01-04T10:36:17.693996Z [variant 2]        RL 진행   22/30  (소요  0.0s)
+2026-01-04T10:36:17.700031Z [variant 2]        RL 진행   24/30  (소요  0.0s)
+2026-01-04T10:36:17.700031Z [variant 2]        RL 진행   26/30  (소요  0.0s)
+2026-01-04T10:36:17.700031Z [variant 2]        RL 진행   28/30  (소요  0.0s)
+2026-01-04T10:36:17.700031Z [variant 2]        RL 진행   30/30  (소요  0.0s)
+2026-01-04T10:36:17.700031Z [variant 2]        ┌─ RL 세부 소요(ms) ─────────────
+2026-01-04T10:36:17.700031Z [variant 2]        │ predict :    0.0  / p95    0.0
+2026-01-04T10:36:17.700031Z [variant 2]        │ env.step:    0.1  / p95    0.4
+2026-01-04T10:36:17.700031Z [variant 2]        │ distance:    0.0  / p95    0.0
+2026-01-04T10:36:17.700031Z [variant 2]        └───────────────────────────────
+2026-01-04T10:36:17.700031Z [variant 2] [TIME] RL total: 0.01s
+2026-01-04T10:36:17.700031Z [variant 2] [5] PuLP 균등 스케줄링
+2026-01-04T10:36:17.700031Z [variant 2] [PuLP] 입력 IMP 로드 → _flat.json
+2026-01-04T10:36:17.700031Z [variant 2] [PuLP] 임무 30개 → 10개 그룹 (그룹당 ≤3개)
+2026-01-04T10:36:17.950082Z [variant 2] [PuLP] Status = Optimal
+2026-01-04T10:36:17.950082Z [variant 2] [PuLP] 최적 편차 = 24664.00 s
+2026-01-04T10:36:17.950082Z [variant 2] [PuLP] 저장 완료 → C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\Logs\Scenario_2026-01-04T191808\SBC3\mission_output\variant_02\_flat_sched.json
+2026-01-04T10:36:17.950082Z [variant 2] [TIME] PuLP scheduling: 0.27s
+2026-01-04T10:36:17.957409Z [variant 2] [6] UAV IMP 생성‧저장
+2026-01-04T10:36:18.481373Z [variant 2]     ▸ IMP 저장: C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\Logs\Scenario_2026-01-04T191808\SBC3\mission_output\variant_02\IndividualMissionPlan_UAV004.json
+2026-01-04T10:36:18.481877Z [variant 2]     ▸ IMP 저장: C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\Logs\Scenario_2026-01-04T191808\SBC3\mission_output\variant_02\IndividualMissionPlan_UAV005.json
+2026-01-04T10:36:18.482879Z [variant 2]     ▸ IMP 저장: C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\Logs\Scenario_2026-01-04T191808\SBC3\mission_output\variant_02\IndividualMissionPlan_UAV006.json
+2026-01-04T10:36:18.482879Z [variant 2] [✔] divide_and_pattern 끝 (총 1.1s 경과)
+2026-01-04T10:36:18.483880Z [variant 2] [TIME] UAV IMP build: 0.52s, files=3
+2026-01-04T10:36:18.483880Z [TIME] divide_and_pattern (variant=2): 1113.3 ms
+2026-01-04T10:36:18.484880Z [OK] IMP generated: 6 file(s) (variant=2)
+2026-01-04T10:36:18.512881Z [TIME] build_0301+load (variant=2): 30.3 ms
+2026-01-04T10:36:18.512881Z [OK] MissionPlan built: MissionPlan_1767522978482.json (variant=2)
+2026-01-04T10:36:18.512881Z [TIME] collect_missions (variant=2): 2.8 ms, count=60
+2026-01-04T10:36:18.841379Z [TIME] pathID_mapping (variant=2): 329.7 ms
+2026-01-04T10:36:18.841379Z [INFO] pathID mapping done for 0302/0303/0304 (variant=2)
+2026-01-04T10:36:18.856763Z [INFO] FlightPath build mode: parallel (variant=2)
+2026-01-04T10:36:19.667531Z [INFO] FlightPath build time (parallel): 0303=816.0 ms, 0304=611.9 ms, wall=818.7 ms
+2026-01-04T10:36:19.667531Z [OK] FlightPath counts (variant=2): 0303=30 / 0304=30
+2026-01-04T10:36:20.045774Z [TIME] build_0302 (variant=2): 382.7 ms, packages=6
+2026-01-04T10:36:20.045774Z [TIME] write_0302 (variant=2): 3.6 ms, files=6
+2026-01-04T10:36:20.093118Z [TIME] write_FlightPath (variant=2): 49.0 ms, files=60
+2026-01-04T10:36:20.093118Z [TIME] write_0301 (variant=2): 0.5 ms
+2026-01-04T10:36:20.093118Z [OK] Stored variant 2: MissionPlanID=700000005, IMP=6, FlightPath=60
+2026-01-04T10:36:20.093118Z [TIME] variant_total (variant=2): 2731.5 ms
+2026-01-04T10:36:20.093118Z [INFO] Option mapping #2: planID=700000005, optionCode=4(정찰특화)
+2026-01-04T10:36:20.093118Z [STEP 1.3] Divide & Pattern start
+2026-01-04T10:36:20.093118Z [variant 3] [1] CMPK 로드
+2026-01-04T10:36:20.093118Z [variant 3]     ▸ VehicleStatus 적용: 사용 가능한 기체 [1, 2, 3, 4, 5, 6]
+2026-01-04T10:36:20.093118Z [variant 3]     MRPK 로드
+2026-01-04T10:36:20.093118Z [variant 3]     ▸ 로드 완료  (소요 0.00s)
+2026-01-04T10:36:20.106421Z [variant 3] [2] LAH 임무 저장 시작
+2026-01-04T10:36:20.411944Z [variant 3] [LAH1] LAH 임무파일 저장 → C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\Logs\Scenario_2026-01-04T191808\SBC3\mission_output\variant_03\IndividualMissionPlan_LAH001.json
+2026-01-04T10:36:20.412944Z [variant 3] [LAH2] LAH 임무파일 저장 → C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\Logs\Scenario_2026-01-04T191808\SBC3\mission_output\variant_03\IndividualMissionPlan_LAH002.json
+2026-01-04T10:36:20.415816Z [variant 3] [LAH3] LAH 임무파일 저장 → C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\Logs\Scenario_2026-01-04T191808\SBC3\mission_output\variant_03\IndividualMissionPlan_LAH003.json
+2026-01-04T10:36:20.416819Z [variant 3] [TIME] LAH save: 0.31s
+2026-01-04T10:36:20.418818Z [variant 3]     ▸ LAH 3개 파일 저장
+2026-01-04T10:36:20.418818Z [variant 3] [3] InputMission 분할
+2026-01-04T10:36:20.419866Z [variant 3] [3] InputMission 분할
+2026-01-04T10:36:20.421985Z [variant 3]     ▸ (1/10) inputMissionID=2 type=1
+2026-01-04T10:36:20.423985Z [variant 3]        └─ sub-area 3개 추가 (누적 3)
+2026-01-04T10:36:20.427985Z [variant 3]     ▸ (2/10) inputMissionID=3 type=2
+2026-01-04T10:36:20.429985Z [variant 3]        └─ sub-area 3개 추가 (누적 6)
+2026-01-04T10:36:20.430985Z [variant 3]     ▸ (3/10) inputMissionID=4 type=1
+2026-01-04T10:36:20.430985Z [variant 3]        └─ sub-area 3개 추가 (누적 9)
+2026-01-04T10:36:20.431985Z [variant 3]     ▸ (4/10) inputMissionID=5 type=2
+2026-01-04T10:36:20.431985Z [variant 3]        └─ sub-area 3개 추가 (누적 12)
+2026-01-04T10:36:20.433985Z [variant 3]     ▸ (5/10) inputMissionID=6 type=1
+2026-01-04T10:36:20.434987Z [variant 3]        └─ sub-area 3개 추가 (누적 15)
+2026-01-04T10:36:20.434987Z [variant 3]     ▸ (6/10) inputMissionID=7 type=2
+2026-01-04T10:36:20.434987Z [variant 3]        └─ sub-area 3개 추가 (누적 18)
+2026-01-04T10:36:20.435990Z [variant 3]     ▸ (7/10) inputMissionID=8 type=1
+2026-01-04T10:36:20.435990Z [variant 3]        └─ sub-area 3개 추가 (누적 21)
+2026-01-04T10:36:20.435990Z [variant 3]     ▸ (8/10) inputMissionID=9 type=2
+2026-01-04T10:36:20.436989Z [variant 3]        └─ sub-area 3개 추가 (누적 24)
+2026-01-04T10:36:20.436989Z [variant 3]     ▸ (9/10) inputMissionID=10 type=1
+2026-01-04T10:36:20.437990Z [variant 3]        └─ sub-area 3개 추가 (누적 27)
+2026-01-04T10:36:20.437990Z [variant 3]     ▸ (10/10) inputMissionID=11 type=1
+2026-01-04T10:36:20.438989Z [variant 3]        └─ sub-area 3개 추가 (누적 30)
+2026-01-04T10:36:20.438989Z [variant 3]     ▸ 분할 완료: 30개 sub-area
+2026-01-04T10:36:20.438989Z [variant 3] [TIME] InputMission split: 0.01s
+2026-01-04T10:36:20.439990Z [variant 3] [4] RL 예상시간 계산
+2026-01-04T10:36:20.439990Z [variant 3]        RL 진행    1/30  (소요  0.0s)
+2026-01-04T10:36:20.439990Z [variant 3]        RL 진행    2/30  (소요  0.0s)
+2026-01-04T10:36:20.440989Z [variant 3]        RL 진행    4/30  (소요  0.0s)
+2026-01-04T10:36:20.440989Z [variant 3]        RL 진행    6/30  (소요  0.0s)
+2026-01-04T10:36:20.441989Z [variant 3]        RL 진행    8/30  (소요  0.0s)
+2026-01-04T10:36:20.441989Z [variant 3]        RL 진행   10/30  (소요  0.0s)
+2026-01-04T10:36:20.441989Z [variant 3]        RL 진행   12/30  (소요  0.0s)
+2026-01-04T10:36:20.442989Z [variant 3]        RL 진행   14/30  (소요  0.0s)
+2026-01-04T10:36:20.442989Z [variant 3]        RL 진행   16/30  (소요  0.0s)
+2026-01-04T10:36:20.444989Z [variant 3]        RL 진행   18/30  (소요  0.0s)
+2026-01-04T10:36:20.445989Z [variant 3]        RL 진행   20/30  (소요  0.0s)
+2026-01-04T10:36:20.446989Z [variant 3]        RL 진행   22/30  (소요  0.0s)
+2026-01-04T10:36:20.446989Z [variant 3]        RL 진행   24/30  (소요  0.0s)
+2026-01-04T10:36:20.447989Z [variant 3]        RL 진행   26/30  (소요  0.0s)
+2026-01-04T10:36:20.447989Z [variant 3]        RL 진행   28/30  (소요  0.0s)
+2026-01-04T10:36:20.448989Z [variant 3]        RL 진행   30/30  (소요  0.0s)
+2026-01-04T10:36:20.448989Z [variant 3]        ┌─ RL 세부 소요(ms) ─────────────
+2026-01-04T10:36:20.448989Z [variant 3]        │ predict :    0.0  / p95    0.0
+2026-01-04T10:36:20.449990Z [variant 3]        │ env.step:    0.0  / p95    0.1
+2026-01-04T10:36:20.450492Z [variant 3]        │ distance:    0.0  / p95    0.0
+2026-01-04T10:36:20.450492Z [variant 3]        └───────────────────────────────
+2026-01-04T10:36:20.451494Z [variant 3] [TIME] RL total: 0.00s
+2026-01-04T10:36:20.451494Z [variant 3] [5] PuLP 균등 스케줄링
+2026-01-04T10:36:20.451494Z [variant 3] [PuLP] 입력 IMP 로드 → _flat.json
+2026-01-04T10:36:20.451494Z [variant 3] [PuLP] 임무 30개 → 10개 그룹 (그룹당 ≤3개)
+2026-01-04T10:36:20.700412Z [variant 3] [PuLP] Status = Optimal
+2026-01-04T10:36:20.700412Z [variant 3] [PuLP] 최적 편차 = 24664.00 s
+2026-01-04T10:36:20.705256Z [variant 3] [PuLP] 저장 완료 → C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\Logs\Scenario_2026-01-04T191808\SBC3\mission_output\variant_03\_flat_sched.json
+2026-01-04T10:36:20.705256Z [variant 3] [TIME] PuLP scheduling: 0.27s
+2026-01-04T10:36:20.705256Z [variant 3] [6] UAV IMP 생성‧저장
+2026-01-04T10:36:21.262867Z [variant 3]     ▸ IMP 저장: C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\Logs\Scenario_2026-01-04T191808\SBC3\mission_output\variant_03\IndividualMissionPlan_UAV004.json
+2026-01-04T10:36:21.262867Z [variant 3]     ▸ IMP 저장: C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\Logs\Scenario_2026-01-04T191808\SBC3\mission_output\variant_03\IndividualMissionPlan_UAV005.json
+2026-01-04T10:36:21.278809Z [variant 3]     ▸ IMP 저장: C:\Users\LAHMUMT_2\Desktop\KU_LAHMUMT\Logs\Scenario_2026-01-04T191808\SBC3\mission_output\variant_03\IndividualMissionPlan_UAV006.json
+2026-01-04T10:36:21.278809Z [variant 3] [✔] divide_and_pattern 끝 (총 1.2s 경과)
+2026-01-04T10:36:21.278809Z [variant 3] [TIME] UAV IMP build: 0.57s, files=3
+2026-01-04T10:36:21.278809Z [TIME] divide_and_pattern (variant=3): 1176.9 ms
+2026-01-04T10:36:21.278809Z [OK] IMP generated: 6 file(s) (variant=3)
+2026-01-04T10:36:21.310991Z [TIME] build_0301+load (variant=3): 32.6 ms
+2026-01-04T10:36:21.310991Z [OK] MissionPlan built: MissionPlan_1767522981278.json (variant=3)
+2026-01-04T10:36:21.310991Z [TIME] collect_missions (variant=3): 1.6 ms, count=60
+2026-01-04T10:36:21.674068Z [TIME] pathID_mapping (variant=3): 360.1 ms
+2026-01-04T10:36:21.674068Z [INFO] pathID mapping done for 0302/0303/0304 (variant=3)
+2026-01-04T10:36:21.674068Z [INFO] FlightPath build mode: parallel (variant=3)
+2026-01-04T10:36:22.436505Z [INFO] FlightPath build time (parallel): 0303=770.7 ms, 0304=597.3 ms, wall=771.8 ms
+2026-01-04T10:36:22.436505Z [OK] FlightPath counts (variant=3): 0303=30 / 0304=30
+2026-01-04T10:36:22.763999Z [TIME] build_0302 (variant=3): 328.4 ms, packages=6
+2026-01-04T10:36:22.779732Z [TIME] write_0302 (variant=3): 7.3 ms, files=6
+2026-01-04T10:36:22.827211Z [TIME] write_FlightPath (variant=3): 51.3 ms, files=60
+2026-01-04T10:36:22.827211Z [TIME] write_0301 (variant=3): 1.0 ms
+2026-01-04T10:36:22.827211Z [OK] Stored variant 3: MissionPlanID=700000006, IMP=6, FlightPath=60
+2026-01-04T10:36:22.827211Z [TIME] variant_total (variant=3): 2732.6 ms
+2026-01-04T10:36:22.827211Z [INFO] Option mapping #3: planID=700000006, optionCode=5(최소시간)
+2026-01-04T10:36:22.827211Z [OK] Stored mission data: MissionPlan=3, IndividualMission=18, FlightPath=180
+2026-01-04T10:36:22.827211Z [STEP 4] 0301 push queued (planIds=700000004, 700000005, 700000006)
+2026-01-04T10:36:22.827211Z [INFO] Execution mode -> sending 0901 instead of 0903
+2026-01-04T10:36:22.845531Z [0301] missionPlanID=700000004 전송
+2026-01-04T10:36:22.845531Z [0301] missionPlanID=700000005 전송
+2026-01-04T10:36:22.845531Z [0301] missionPlanID=700000006 전송
+2026-01-04T10:36:22.856609Z [PUSH] 0301 button click()
+2026-01-04T10:36:23.434568Z [0305] status=2, reason=무인기 1번 ROI 지속 감시 (count=1) 전송
+2026-01-04T10:36:23.734572Z [0901] option request sent (count=3, codes=1(시스템추천), 4(정찰특화), 5(최소시간))

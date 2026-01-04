@@ -9,6 +9,10 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import sys
 
 from modules.common import agent_status_snapshot, db_paths
+from modules.mission_planning.attack_assignment_state import (
+    get_last_assigned_manned_id,
+    set_last_assigned_manned_id,
+)
 
 _ATTACK_ROOT = Path(__file__).resolve().parent
 _MP_DIR = _ATTACK_ROOT / "MissionPlanner"
@@ -35,6 +39,7 @@ LogCallback = Callable[[str], None]
 
 LOG_FILENAME = "log_attack_algorithm.json"
 ATTACK_ENTRY_OFFSET_METERS = 100.0
+ATTACK_MANNED_CANDIDATES = (2, 3)
 
 
 def run_attack_plan_pipeline(
@@ -185,6 +190,9 @@ def run_attack_plan_pipeline(
         )
         if mission_updates:
             attack_log["result"]["missionUpdates"] = mission_updates
+            manned_id = _extract_assigned_manned_id(mission_updates)
+            if manned_id is not None:
+                set_last_assigned_manned_id(manned_id)
     else:
         _emit(f"STEP3 Attack plan failed: {attack_error}")
         attack_log["steps"].append(
@@ -205,7 +213,7 @@ def _select_preferred_manned_aircraft(agent_states: List[Any]) -> Tuple[Optional
             (state.get("aircraftID") if isinstance(state, dict) else None)
             or (state.get("aircraftId") if isinstance(state, dict) else None)
         )
-        if aircraft_id not in (2, 3):
+        if aircraft_id not in ATTACK_MANNED_CANDIDATES:
             continue
         is_unmanned = _to_bool(state.get("isUnmanned")) if isinstance(state, dict) else None
         if is_unmanned:
@@ -228,6 +236,11 @@ def _select_preferred_manned_aircraft(agent_states: List[Any]) -> Tuple[Optional
         ),
         reverse=True,
     )
+    last_assigned = get_last_assigned_manned_id()
+    if last_assigned is not None:
+        for candidate in candidates:
+            if candidate["aircraft_id"] != last_assigned:
+                return candidate, candidates
     return candidates[0], candidates
 
 
@@ -470,6 +483,19 @@ def _to_bool(value: Any) -> Optional[bool]:
             return True
         if lowered in {"false", "0", "n", "no"}:
             return False
+    return None
+
+
+def _extract_assigned_manned_id(mission_updates: Dict[str, Any]) -> Optional[int]:
+    aircraft_entries = mission_updates.get("aircraft") if isinstance(mission_updates, dict) else None
+    if not isinstance(aircraft_entries, list):
+        return None
+    for entry in aircraft_entries:
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("role") or "") != "manned":
+            continue
+        return _to_int(entry.get("aircraft_id"))
     return None
 
 

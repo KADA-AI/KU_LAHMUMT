@@ -8,7 +8,7 @@ from pathlib import Path
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QLineEdit, QPushButton, QTextEdit, QTabWidget, QFrame,
-    QComboBox, QDialog, QPlainTextEdit, QFileDialog, QMessageBox, QLabel
+    QComboBox, QDialog, QPlainTextEdit, QFileDialog, QMessageBox, QLabel, QCheckBox
 )
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 from PyQt5.QtCore import QUrl
@@ -34,9 +34,11 @@ from data_def import (
     mission_helpers as mh,
     d0301, d0302, d0303,
     d0304,          # ← 100 m 분할
+    search_speed,
 )
 from data_def.mission_helpers import now_ms_since_2000
 from data_def.mission_helpers import terrain_elev
+import config as mp_config
 
 import corridor_planner as cp    # 기존 사용 코드가 있으면 그대로 유지
 from data_def.id_allocator import next_path_id
@@ -44,6 +46,7 @@ from data_def.id_allocator import next_path_id
 from AnS import (
     run_divide_and_pattern,     # 0201+0203 → IMP(.json) 리스트
     build_mission_plan_0301,    # CMPK+MRPK+IMP → 0301 MissionPlan
+    get_last_divide_and_pattern_metrics,
 )
 
 
@@ -110,6 +113,11 @@ class MainGUI(QWidget):
         self._btn_0201: QPushButton | None = None
         self._btn_0203: QPushButton | None = None
 
+        self._last_compute_ms_0302 = 0.0
+        self._last_compute_ms_0303 = 0.0
+        self._last_compute_ms_0304 = 0.0
+        self._uav_turn_step_deg = 15.0
+
 
         # ── 레이아웃 ────────────────────────────────────────────
         root = QHBoxLayout(self)
@@ -123,6 +131,7 @@ class MainGUI(QWidget):
         # 탭 영역 --------------------------------------------------
         self.tabs = QTabWidget()
         root.addWidget(self.tabs, 1)
+        self._build_tab_uav_manager()
         self._build_tab_initial()
         self._build_tab_0301()
         self._build_tab_0302()
@@ -848,6 +857,198 @@ class MainGUI(QWidget):
         self._refresh_0301()
         self._refresh_air_combo()
 
+    def _get_uav_param_values(self) -> dict:
+        return {
+            "cruise_speed_mps": float(self.CRUISE_SP),
+            "turn_step_deg": float(self._uav_turn_step_deg),
+            "default_sweep_separation_m": float(mp_config.DEFAULT_SWEEP_SEPARATION_M),
+            "search_speed_weight": float(mp_config.SEARCH_SPEED_WEIGHT),
+            "fov_deg": float(d0303.FOV_DEG),
+            "altitude_m": float(d0303.Altitude),
+            "sweep_entry_offset_m": float(d0303.SWEEP_ENTRY_OFFSET_M),
+            "sweep_merge_heading_deg": float(d0303.SWEEP_MERGE_HEADING_DEG),
+            "sweep_line_interp_points": int(d0303.SWEEP_LINE_INTERP_POINTS),
+            "min_sweep_len_m": float(d0303.MIN_SWEEP_LEN_M),
+            "min_route_spacing_m": float(d0303.MIN_ROUTE_SPACING_M),
+            "default_search_speed_multiplier": float(d0303.DEFAULT_SEARCH_SPEED_MULTIPLIER),
+            "point_fov_deg": float(d0303.POINT_FOV_DEG),
+            "entry_hold_fov_deg": float(d0303.ENTRY_HOLD_FOV_DEG),
+            "entry_hold_gimbal_pitch": float(d0303.ENTRY_HOLD_GIMBAL_PITCH),
+            "entry_hold_gimbal_yaw": float(d0303.ENTRY_HOLD_GIMBAL_YAW),
+            "loiter_radius_m": float(d0303.LOITER_RADIUS_M),
+            "loiter_direction": int(d0303.LOITER_DIRECTION),
+            "loiter_time_s": float(d0303.LOITER_TIME_S),
+            "loiter_speed_mps": float(d0303.LOITER_SPEED_MPS),
+        }
+
+    def _on_uav_algo_toggled(self, key: str, checked: bool) -> None:
+        if not checked:
+            return
+        for other_key, cb in self._uav_algo_checks.items():
+            if other_key != key and cb.isChecked():
+                cb.setChecked(False)
+
+    def _load_uav_params_into_form(self, values: dict) -> None:
+        for spec in self._uav_param_specs:
+            key = spec["key"]
+            widget = self._uav_param_inputs.get(key)
+            if widget is None:
+                continue
+            if key in values:
+                widget.setText(str(values[key]))
+
+    def _read_uav_params_from_form(self) -> dict | None:
+        values: dict[str, float | int] = {}
+        for spec in self._uav_param_specs:
+            key = spec["key"]
+            widget = self._uav_param_inputs.get(key)
+            if widget is None:
+                continue
+            raw = widget.text().strip()
+            if raw == "":
+                QMessageBox.warning(self, "UAV Mission Manager", f"Missing value: {spec['label']}")
+                return None
+            try:
+                if spec["type"] is int:
+                    value = int(float(raw))
+                else:
+                    value = float(raw)
+            except Exception:
+                QMessageBox.warning(self, "UAV Mission Manager", f"Invalid value: {spec['label']}")
+                return None
+            min_value = spec.get("min")
+            max_value = spec.get("max")
+            if min_value is not None and value < min_value:
+                QMessageBox.warning(self, "UAV Mission Manager", f"Value too small: {spec['label']}")
+                return None
+            if max_value is not None and value > max_value:
+                QMessageBox.warning(self, "UAV Mission Manager", f"Value too large: {spec['label']}")
+                return None
+            values[key] = value
+        return values
+
+    def _apply_uav_params(self) -> None:
+        algo_keys = [key for key, cb in self._uav_algo_checks.items() if cb.isChecked()]
+        if len(algo_keys) != 1:
+            QMessageBox.warning(self, "UAV Mission Manager", "Select exactly one algorithm.")
+            return
+        algo_key = algo_keys[0]
+        if algo_key == "dtatrim":
+            algo_name = "dtatrim"
+        elif algo_key == "algo2":
+            algo_name = "linear"
+        else:
+            algo_name = "algo3"
+
+        values = self._read_uav_params_from_form()
+        if values is None:
+            return
+
+        self.CRUISE_SP = float(values["cruise_speed_mps"])
+        self._uav_turn_step_deg = float(values["turn_step_deg"])
+
+        mp_config.DEFAULT_SWEEP_SEPARATION_M = float(values["default_sweep_separation_m"])
+        mp_config.SEARCH_SPEED_WEIGHT = float(values["search_speed_weight"])
+        search_speed._CFG_WEIGHT = float(values["search_speed_weight"])
+
+        d0303.FOV_DEG = float(values["fov_deg"])
+        d0303.Altitude = int(round(values["altitude_m"]))
+        d0303.SWEEP_ENTRY_OFFSET_M = float(values["sweep_entry_offset_m"])
+        d0303.SWEEP_MERGE_HEADING_DEG = float(values["sweep_merge_heading_deg"])
+        d0303.SWEEP_LINE_INTERP_POINTS = int(values["sweep_line_interp_points"])
+        d0303.MIN_SWEEP_LEN_M = float(values["min_sweep_len_m"])
+        d0303.MIN_ROUTE_SPACING_M = float(values["min_route_spacing_m"])
+        d0303.DEFAULT_SEARCH_SPEED_MULTIPLIER = float(values["default_search_speed_multiplier"])
+        d0303.POINT_FOV_DEG = float(values["point_fov_deg"])
+        d0303.ENTRY_HOLD_FOV_DEG = float(values["entry_hold_fov_deg"])
+        d0303.ENTRY_HOLD_GIMBAL_PITCH = float(values["entry_hold_gimbal_pitch"])
+        d0303.ENTRY_HOLD_GIMBAL_YAW = float(values["entry_hold_gimbal_yaw"])
+        d0303.LOITER_RADIUS_M = float(values["loiter_radius_m"])
+        d0303.LOITER_DIRECTION = int(values["loiter_direction"])
+        d0303.LOITER_TIME_S = float(values["loiter_time_s"])
+        d0303.LOITER_SPEED_MPS = float(values["loiter_speed_mps"])
+        d0303.SWEEP_GEOMETRY = d0303.SweepConfig(
+            separation_m=float(values["default_sweep_separation_m"]),
+            fov_deg=float(values["fov_deg"]),
+        )
+        d0303.set_route_planner(algo_name)
+
+        self._load_uav_params_into_form(self._get_uav_param_values())
+
+    def _reset_uav_params(self) -> None:
+        if not hasattr(self, "_uav_param_defaults"):
+            return
+        if hasattr(self, "_uav_algo_checks"):
+            default_key = getattr(self, "_uav_algo_default", "dtatrim")
+            for key, cb in self._uav_algo_checks.items():
+                cb.setChecked(key == default_key)
+        self._load_uav_params_into_form(self._uav_param_defaults)
+        self._apply_uav_params()
+
+    def _build_tab_uav_manager(self):
+        tab = QWidget()
+        form = QFormLayout(tab)
+
+        algo_row = QHBoxLayout()
+        algo_row_widget = QWidget()
+        algo_row_widget.setLayout(algo_row)
+        self._uav_algo_checks = {}
+        for key, label in (
+            ("dtatrim", "DTAutoTrim"),
+            ("algo2", "Algorithm-2"),
+            ("algo3", "Algorithm-3"),
+        ):
+            cb = QCheckBox(label)
+            cb.setChecked(key == "dtatrim")
+            cb.toggled.connect(lambda checked, k=key: self._on_uav_algo_toggled(k, checked))
+            self._uav_algo_checks[key] = cb
+            algo_row.addWidget(cb)
+        self._uav_algo_default = "dtatrim"
+        form.addRow("Algorithm", algo_row_widget)
+
+        self._uav_param_specs = [
+            {"key": "cruise_speed_mps", "label": "Cruise speed (m/s)", "type": float, "min": 0.1},
+            {"key": "turn_step_deg", "label": "Turn step (deg)", "type": float, "min": 0.1},
+            {"key": "default_sweep_separation_m", "label": "Sweep separation (m)", "type": float, "min": 0.1},
+            {"key": "search_speed_weight", "label": "Search speed weight", "type": float, "min": 0.0},
+            {"key": "fov_deg", "label": "Sweep FOV (deg)", "type": float, "min": 0.1},
+            {"key": "altitude_m", "label": "Default altitude (m)", "type": float, "min": 0.0},
+            {"key": "sweep_entry_offset_m", "label": "Sweep entry offset (m)", "type": float, "min": 0.0},
+            {"key": "sweep_merge_heading_deg", "label": "Sweep merge heading (deg)", "type": float, "min": 0.0},
+            {"key": "sweep_line_interp_points", "label": "Sweep line interp points", "type": int, "min": 2},
+            {"key": "min_sweep_len_m", "label": "Min sweep length (m)", "type": float, "min": 0.0},
+            {"key": "min_route_spacing_m", "label": "Min route spacing (m)", "type": float, "min": 0.0},
+            {"key": "default_search_speed_multiplier", "label": "Default search speed multiplier", "type": float, "min": 0.0},
+            {"key": "point_fov_deg", "label": "Point FOV (deg)", "type": float, "min": 0.0},
+            {"key": "entry_hold_fov_deg", "label": "Entry hold FOV (deg)", "type": float, "min": 0.0},
+            {"key": "entry_hold_gimbal_pitch", "label": "Entry hold gimbal pitch (deg)", "type": float},
+            {"key": "entry_hold_gimbal_yaw", "label": "Entry hold gimbal yaw (deg)", "type": float},
+            {"key": "loiter_radius_m", "label": "Loiter radius (m)", "type": float, "min": 0.0},
+            {"key": "loiter_direction", "label": "Loiter direction (0=None,1=CW,2=CCW)", "type": int, "min": 0, "max": 2},
+            {"key": "loiter_time_s", "label": "Loiter time (s)", "type": float, "min": 0.0},
+            {"key": "loiter_speed_mps", "label": "Loiter speed (m/s)", "type": float, "min": 0.0},
+        ]
+
+        self._uav_param_inputs = {}
+        for spec in self._uav_param_specs:
+            le = QLineEdit()
+            self._uav_param_inputs[spec["key"]] = le
+            form.addRow(spec["label"], le)
+
+        btn_apply = QPushButton("Apply")
+        btn_apply.clicked.connect(self._apply_uav_params)
+        btn_reset = QPushButton("Reset")
+        btn_reset.clicked.connect(self._reset_uav_params)
+        btn_row = QHBoxLayout()
+        btn_row.addWidget(btn_apply)
+        btn_row.addWidget(btn_reset)
+        form.addRow(btn_row)
+
+        self._uav_param_defaults = self._get_uav_param_values()
+        self._load_uav_params_into_form(self._uav_param_defaults)
+
+        self.tabs.insertTab(0, tab, "UAV Mission Manager")
+
 # ─────────────────────────── 초기임무계획 탭 ───────────────────────────
     def _build_tab_initial(self):
         """
@@ -918,7 +1119,7 @@ class MainGUI(QWidget):
         form.addRow(self.log_init)
 
         # 탭 0 (맨 왼쪽)에 삽입
-        self.tabs.insertTab(0, tab, "초기임무계획")
+        self.tabs.insertTab(1, tab, "초기임무계획")
 
     # ─────────────────── 가시성 토글 핸들러 ────────────────────
     def _toggle_aircraft(self, aid: int, state: bool):
@@ -948,6 +1149,7 @@ class MainGUI(QWidget):
 
         self.log_init.appendPlainText("=== Pipeline 시작 ===")
         plan_start = time.perf_counter()
+        compute_ms = 0.0
 
         # ── 1. 0201+0203 → IMP(0302) ---------------------------------
         try:
@@ -961,6 +1163,19 @@ class MainGUI(QWidget):
                 raise RuntimeError("IMP 생성 결과가 없습니다.")
             self.log_init.appendPlainText(
                 f"[OK] IMP {len(imp_paths)} 개 생성 완료")
+            metrics = get_last_divide_and_pattern_metrics()
+            if metrics:
+                dp_total_s = float(metrics.get('total_s', 0.0) or 0.0)
+                dp_excluded_s = float(metrics.get('load_s', 0.0) or 0.0)
+                dp_excluded_s += float(metrics.get('lah_save_s', 0.0) or 0.0)
+                dp_excluded_s += float(metrics.get('uav_imp_s', 0.0) or 0.0)
+                dp_compute_s = max(0.0, dp_total_s - dp_excluded_s)
+                dp_compute_ms = dp_compute_s * 1000.0
+                compute_ms += dp_compute_ms
+                self.log_init.appendPlainText(
+                    '[INFO] compute-only divide_and_pattern: '
+                    f'{dp_compute_ms:.1f} ms (total={dp_total_s:.2f}s, excluded={dp_excluded_s:.2f}s)'
+                )
         except Exception as e:
             self.log_init.appendPlainText(f"[ERR] divide/pattern 실패: {e}")
             return
@@ -968,9 +1183,13 @@ class MainGUI(QWidget):
         # ── 2. MissionPlan 0301 --------------------------------------
         mp_path = out_root / f"MissionPlan_{int(time.time()*1000)}.json"
         try:
+            build_t0 = time.perf_counter()
             build_mission_plan_0301(
                 self._cmpk_path, self._mrpk_path, imp_paths, str(mp_path)
             )
+            build_ms = (time.perf_counter() - build_t0) * 1000.0
+            compute_ms += build_ms
+            self.log_init.appendPlainText(f"[TIME] 0301 build: {build_ms:.1f} ms")
 
             # ▼ 0301 MissionPlan 에서 aircraftID → individualMissionPackageID 매핑 추출
             with open(mp_path, encoding="utf-8") as f:
@@ -1006,16 +1225,26 @@ class MainGUI(QWidget):
         # ── 4. 0303 / 0304 자동 생성(기존 버튼 로직 재사용) ------------
         self._refresh_0303()
         self._refresh_0304()
+        compute_ms += (self._last_compute_ms_0302 + self._last_compute_ms_0303 + self._last_compute_ms_0304)
+        total_030x_ms = (self._last_compute_ms_0302 + self._last_compute_ms_0303 + self._last_compute_ms_0304)
+        self.log_init.appendPlainText(
+            f"[INFO] compute-only 0302/0303/0304: {total_030x_ms:.1f} ms "
+            f"(0302={self._last_compute_ms_0302:.1f}, 0303={self._last_compute_ms_0303:.1f}, 0304={self._last_compute_ms_0304:.1f})"
+        )
 
         # ── 4-1. planningTime을 전체 파이프라인 경과(ms)로 갱신 ---------
         try:
             elapsed_ms = (time.perf_counter() - plan_start) * 1000.0
+            if compute_ms <= 0.0:
+                compute_ms = elapsed_ms
             mp_data = json.loads(mp_path.read_text(encoding="utf-8"))
-            mp_data["planningTime"] = float(elapsed_ms)
+            mp_data["planningTime"] = float(compute_ms)
             mp_path.write_text(json.dumps(mp_data, ensure_ascii=False, indent=2), encoding="utf-8")
-            self.log_init.appendPlainText(f"[INFO] planningTime 업데이트: {elapsed_ms:.1f} ms")
+            self.log_init.appendPlainText(
+                f"[INFO] planningTime(ComputeOnly) ????: {compute_ms:.1f} ms (total={elapsed_ms:.1f} ms)"
+            )
         except Exception as e:
-            self.log_init.appendPlainText(f"[WARN] planningTime 업데이트 실패: {e}")
+            self.log_init.appendPlainText(f"[WARN] planningTime update failed: {e}")
 
         # ── 5. 결과 로그 & 0301 텍스트 창 갱신 ------------------------
         self.log_init.appendPlainText(f"[OK] 0301 MissionPlan 저장 → {mp_path}")
@@ -1230,11 +1459,13 @@ class MainGUI(QWidget):
         self.missions.clear(); self.next_im = 1; self._refresh_0302(); self._rebuild_map()
 
     def _refresh_0302(self):
+        t0 = time.perf_counter()
         pkg_list = d0302.build_mission_packages(
             self.missions,                 # IM 원본 리스트
             cmpk_id      = self.pkg0201_id,  # 0201 파일명 숫자
             plan_pkg_map = self.imp_id_map,  # aircraftID → IMP ID
         )
+        self._last_compute_ms_0302 = (time.perf_counter() - t0) * 1000.0
         self.log0302.setText(json.dumps(pkg_list, indent=2, ensure_ascii=False))
         self._rebuild_map()
 
@@ -1248,7 +1479,14 @@ class MainGUI(QWidget):
         lay.addWidget(gen); lay.addWidget(self.log0303); self.tabs.addTab(tab, "0303")
 
     def _refresh_0303(self):
-        fp = d0303.build_flight_plans(self.missions, self.wp_alloc, self.CRUISE_SP, turn_step_deg=15.0)
+        t0 = time.perf_counter()
+        fp = d0303.build_flight_plans(
+            self.missions,
+            self.wp_alloc,
+            self.CRUISE_SP,
+            turn_step_deg=self._uav_turn_step_deg,
+        )
+        self._last_compute_ms_0303 = (time.perf_counter() - t0) * 1000.0
         self.flight_plans = fp.copy()
         self.log0303.setPlainText(json.dumps(fp, indent=2, ensure_ascii=False))
         self._rebuild_map()
@@ -1501,11 +1739,13 @@ class MainGUI(QWidget):
             QMessageBox.information(self, "Check Missions", "All checks passed!")
 
     def _refresh_0304(self):
+        t0 = time.perf_counter()
         fp = d0304.build_lah_flight_plans_fixed(
             self.missions,
             cruise_speed = self.CRUISE_SP,
             wp_alloc     = self.wp_alloc,
         )
+        self._last_compute_ms_0304 = (time.perf_counter() - t0) * 1000.0
 
         self.flight_plans_0304 = fp
         self.log0304.setPlainText(json.dumps(fp, indent=2, ensure_ascii=False))

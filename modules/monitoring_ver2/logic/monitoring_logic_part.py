@@ -98,6 +98,7 @@ FORCED_HOLD_STATE_KEY = "forced_hold_state_map"
 TARGET_REPLAN_SITUATION_LABEL = "0402 표적 탐지 재계획"
 ROI_REPLAN_SITUATION_LABEL = "0402 ROI 지속 재계획"
 ROI_CAUTION_TIMEOUT_SECONDS = 1000.0
+ROI_REPLAN_ENABLED = False  # Disable ROI-based replanning until implementation is finalized.
 TARGET_TYPE_LABELS = {
     None: "표적",
     0: "표적",
@@ -1831,9 +1832,15 @@ class MonitoringLogic:
             "INFO",
             "0402 ROI caution 10초 지속 → 재계획 트리거",
         )
+        if not ROI_REPLAN_ENABLED:
+            self.manager._log("MON_LOGIC", "INFO", "0402 ROI 재계획 비활성화: 트리거 건너뜀")
+            return
         self._trigger_roi_timeout_replan(roi_entries)
 
     def _trigger_roi_timeout_replan(self, roi_entries: List[Dict[str, Any]]) -> None:
+        if not ROI_REPLAN_ENABLED:
+            self.manager._log("MON_LOGIC", "INFO", "0402 ROI 재계획 비활성화: payload 생성 스킵")
+            return
         payload = self._build_roi_replan_payload(roi_entries)
         if not payload:
             return

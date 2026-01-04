@@ -26,6 +26,13 @@ from shapely.affinity import translate
 
 from modules.common import db_paths
 
+# Last run timing metrics for divide_and_pattern (seconds).
+_LAST_DIVIDE_AND_PATTERN_METRICS: dict[str, float] = {}
+
+
+def get_last_divide_and_pattern_metrics() -> dict[str, float]:
+    return dict(_LAST_DIVIDE_AND_PATTERN_METRICS)
+
 # ==== 외부 의존 모듈 경로 맞춰 주세요 ====
 from .env_patternselection import UnifiedMissionEnvironment
 from .task_patterns_ver2 import mission_patterns
@@ -1072,7 +1079,8 @@ def run_pulp_scheduling(
     uav_id_list: Optional[List[str]] = None,
     log: Callable[[str], None] = print,
 ) -> bool:
-    t0 = time.time()
+    t_start = time.perf_counter()
+    t_load = time.perf_counter()
     log(f"[PuLP] 입력 IMP 로드 → {os.path.basename(imp_path_in)}")
     # ── 1) 파일 로드 ─────────────────────────────────────────
     if not os.path.exists(imp_path_in):
@@ -1201,7 +1209,8 @@ def run_divide_and_pattern(
         out_dir: str,
         log: Callable[[str], None] = print
 ) -> List[str]:
-    t0 = time.time()
+    t_start = time.perf_counter()
+    t_load = time.perf_counter()
     log("[1] CMPK 로드")
     with open(cmpk_path, "r", encoding="utf-8") as f:
         cmpk = json.load(f)
@@ -1211,7 +1220,8 @@ def run_divide_and_pattern(
     log("    MRPK 로드")
     with open(ref_path, "r", encoding="utf-8") as f:
         mrpk = json.load(f)
-    log(f"    ▸ 로드 완료  (소요 {time.time()-t0:.2f}s)")
+    load_s = time.perf_counter() - t_load
+    log(f"    ▸ 로드 완료  (소요 {load_s:.2f}s)")
 
     # ──────────────────────────────────────────────────────────
     # 0-A. 집결점(centroid) 계산  ▶ bearing 산출에 사용
@@ -1231,7 +1241,10 @@ def run_divide_and_pattern(
     # 1. LAH 전용 IMP 저장 (변경 없음)
     # ──────────────────────────────────────────────────────────
     log("[2] LAH 임무 저장 시작")
+    lah_t0 = time.perf_counter()
     lah_paths = save_lah_tasks(cmpk, out_dir, log) or []   # ← 항상 list
+    lah_save_s = time.perf_counter() - lah_t0
+    log(f"[TIME] LAH save: {lah_save_s:.2f}s")
     log(f"    ▸ LAH {len(lah_paths)}개 파일 저장")
 
     log("[3] InputMission 분할")
@@ -1268,6 +1281,7 @@ def run_divide_and_pattern(
     prev_pt = take_over_cent                     # 첫 bearing 기준점
     areas: list[dict] = []
 
+    split_t0 = time.perf_counter()
     for im_idx, im in enumerate(cmpk.get("inputMissionList", []), 1):
         log(f"    ▸ ({im_idx}/{total_im}) "
             f"inputMissionID={im['inputMissionID']} type={im['inputMissionType']}")
@@ -1288,6 +1302,8 @@ def run_divide_and_pattern(
     # ──────────────────────────────────────────────────────────
     # 4. RL 패턴 선택 + 예상시간 계산  ―  GUI 실시간 로그 지원
     # ──────────────────────────────────────────────────────────
+    split_s = time.perf_counter() - split_t0
+    log(f"[TIME] InputMission split: {split_s:.2f}s")
     log("[4] RL 예상시간 계산")
     env = UnifiedMissionEnvironment(areas)
     env.flight_weight = env.imaging_weight = 0.5
@@ -1314,16 +1330,16 @@ def run_divide_and_pattern(
     t_start_all = time.perf_counter()                ### NEW
 
     while not done:
-        t0 = time.perf_counter()
+        t_step0 = time.perf_counter()
 
         # A) 정책 추론 -------------------------------------------------
         pat_key, _ = model.predict(obs)              # pattern key
         pat_idx    = list(mission_patterns).index(pat_key)
-        t1 = time.perf_counter()
+        t_pred1 = time.perf_counter()
 
         # B) 환경 진행 -------------------------------------------------
         obs, _, done, _ = env.step(pat_idx)
-        t2 = time.perf_counter()
+        t_env2 = time.perf_counter()
 
         # C) 비행거리 → 예상시간 --------------------------------------
         cur_idx  = env.current_mission_index         # 1-based
@@ -1339,11 +1355,11 @@ def run_divide_and_pattern(
             "MissionPattern":       pat_info,
             "patternType":          pat_key,
         })
-        t3 = time.perf_counter()
+        t_dist3 = time.perf_counter()
 
         # ── 진행 로그 ──────────────────────────────────────────
         if cur_idx == 1 or cur_idx % LOG_EVERY == 0 or done:   ### CHG
-            elapsed = t3 - t_start_all
+            elapsed = t_dist3 - t_start_all
             log(f"       RL 진행 {cur_idx:>4}/{total_sub}  (소요 {elapsed:4.1f}s)")
             # Qt GUI : 즉시 화면 반영
             try:
@@ -1353,9 +1369,9 @@ def run_divide_and_pattern(
                 pass
 
         # ── 소요시간 누적 ─────────────────────────────────────
-        t_predict.append(t1 - t0)
-        t_step.append   (t2 - t1)
-        t_dist.append   (t3 - t2)
+        t_predict.append(t_pred1 - t_step0)
+        t_step.append   (t_env2 - t_pred1)
+        t_dist.append   (t_dist3 - t_env2)
 
     # ── (4) 요약 통계 출력 ───────────────────────────────────
     def _ms(arr): return [x*1000 for x in arr]
@@ -1369,6 +1385,9 @@ def run_divide_and_pattern(
     # ──────────────────────────────────────────────────────────
     # 5. 예상시간 기반 PuLP 스케줄링 (변경 없음)
     # ──────────────────────────────────────────────────────────
+    rl_total = time.perf_counter() - t_start_all
+    rl_s = rl_total
+    log(f"[TIME] RL total: {rl_total:.2f}s")
     log("[5] PuLP 균등 스케줄링")
     flat_in  = os.path.join(out_dir, "_flat.json")
     flat_out = os.path.join(out_dir, "_flat_sched.json")
@@ -1380,7 +1399,10 @@ def run_divide_and_pattern(
             for i, a in enumerate(env.processed_missions)
         ]
     })
+    pulp_t0 = time.perf_counter()
     run_pulp_scheduling(flat_in, flat_out, uavs, log)
+    pulp_s = time.perf_counter() - pulp_t0
+    log(f"[TIME] PuLP scheduling: {pulp_s:.2f}s")
 
     with open(flat_out, "r", encoding="utf-8") as f:
         sched = json.load(f)["individualMissionList"]
@@ -1388,6 +1410,7 @@ def run_divide_and_pattern(
     # ──────────────────────────────────────────────────────────
     # 6. UAV IMP(0302) 생성 및 저장  (변경 없음)
     # ──────────────────────────────────────────────────────────
+    uav_imp_t0 = time.perf_counter()
     log("[6] UAV IMP 생성‧저장")
     imp_paths, imp_objs = [], []
     uav_map: dict[str, dict] = {}
@@ -1447,7 +1470,20 @@ def run_divide_and_pattern(
         except Exception:
             pass
 
-    log(f"[✔] divide_and_pattern 끝 (총 {time.time()-t0:.1f}s 경과)")
+    total_s = time.perf_counter() - t_start
+    log(f"[✔] divide_and_pattern 끝 (총 {total_s:.1f}s 경과)")
+    uav_imp_s = time.perf_counter() - uav_imp_t0
+    log(f"[TIME] UAV IMP build: {uav_imp_s:.2f}s, files={len(imp_paths)}")
+    global _LAST_DIVIDE_AND_PATTERN_METRICS
+    _LAST_DIVIDE_AND_PATTERN_METRICS = {
+        "load_s": load_s,
+        "lah_save_s": lah_save_s,
+        "split_s": split_s,
+        "rl_s": rl_s,
+        "pulp_s": pulp_s,
+        "uav_imp_s": uav_imp_s,
+        "total_s": total_s,
+    }
     return lah_paths + imp_paths
 
 
