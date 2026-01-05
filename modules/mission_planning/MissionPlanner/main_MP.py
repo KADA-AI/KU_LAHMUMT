@@ -979,7 +979,7 @@ class MainGUI(QWidget):
         if not hasattr(self, "_uav_param_defaults"):
             return
         if hasattr(self, "_uav_algo_checks"):
-            default_key = getattr(self, "_uav_algo_default", "dtatrim")
+            default_key = getattr(self, "_uav_algo_default", "algo2")
             for key, cb in self._uav_algo_checks.items():
                 cb.setChecked(key == default_key)
         self._load_uav_params_into_form(self._uav_param_defaults)
@@ -999,11 +999,11 @@ class MainGUI(QWidget):
             ("algo3", "Algorithm-3"),
         ):
             cb = QCheckBox(label)
-            cb.setChecked(key == "dtatrim")
+            cb.setChecked(key == "algo2")
             cb.toggled.connect(lambda checked, k=key: self._on_uav_algo_toggled(k, checked))
             self._uav_algo_checks[key] = cb
             algo_row.addWidget(cb)
-        self._uav_algo_default = "dtatrim"
+        self._uav_algo_default = "algo2"
         form.addRow("Algorithm", algo_row_widget)
 
         self._uav_param_specs = [
@@ -1485,6 +1485,7 @@ class MainGUI(QWidget):
             self.wp_alloc,
             self.CRUISE_SP,
             turn_step_deg=self._uav_turn_step_deg,
+            ref0203=self._mrpk_data,
         )
         self._last_compute_ms_0303 = (time.perf_counter() - t0) * 1000.0
         self.flight_plans = fp.copy()

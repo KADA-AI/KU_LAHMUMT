@@ -606,7 +606,7 @@ def divide_search_area_clip(
     lat0, lon0 = area_poly[0]["latitude"], area_poly[0]["longitude"]
     alt0 = area_poly[0].get("altitude", 0)
     try:
-        print(f"[AREA_SPLIT] split_bearing_deg={bearing_deg:.2f}°")
+        print(f"[AREA_DIVIDE] bearing_deg={bearing_deg:.2f}deg, uav_cnt={uav_cnt}")
     except Exception:
         pass
 

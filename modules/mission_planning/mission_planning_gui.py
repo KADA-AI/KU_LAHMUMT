@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys, os, threading, json, re, time, shutil, socket, copy
 import concurrent.futures
+import folium
 os.environ["KU_ROLE"] = "mission"  # MMR
 from pathlib import Path
 from typing import Any, Dict, Optional, Set, List
@@ -32,13 +33,17 @@ from modules.common.qt_env import ensure_qt_platform
 ensure_qt_platform()
 
 from PyQt5.QtCore import (
-    qInstallMessageHandler, QtMsgType, pyqtSignal, QTimer, Qt, QEvent, QObject
+    qInstallMessageHandler, QtMsgType, pyqtSignal, QTimer, Qt, QEvent, QObject, QUrl
 )
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QTabWidget, QShortcut,
-    QWidget, QLabel, QHBoxLayout, QVBoxLayout, QSlider, QPushButton
+    QWidget, QLabel, QHBoxLayout, QVBoxLayout, QSlider, QPushButton, QCheckBox
 )
 from PyQt5.QtGui import QKeySequence
+try:
+    from PyQt5.QtWebEngineWidgets import QWebEngineView
+except Exception:
+    QWebEngineView = None
 
 # ───────── Qt 경고 필터 ─────────
 def _qt_silent_handler(mode: QtMsgType, context, message: str):
@@ -84,6 +89,332 @@ from Tabs.assignment_planning_tab import AssignmentPlanningTab
 from datetime import datetime, timezone
 
 
+class MissionVisualizationTab(QWidget):
+    def __init__(self, plan_id_provider, db_root_provider, log_cb, parent=None):
+        super().__init__(parent)
+        self._plan_id_provider = plan_id_provider
+        self._db_root_provider = db_root_provider
+        self._log = log_cb or (lambda _: None)
+        self._map_view_state: dict | None = None
+        self._map_html_path = PROJECT_ROOT / "mission_planning_map.html"
+        self._show_waypoints = True
+        self._show_geometry = True
+        self._map_view: QWebEngineView | None = None
+
+        layout = QVBoxLayout(self)
+        row = QHBoxLayout()
+        self._info_label = QLabel("plan_ids: -")
+        self._btn_refresh = QPushButton("Refresh")
+        self._btn_refresh.clicked.connect(self.refresh)
+        self._chk_wps = QCheckBox("Show WPs")
+        self._chk_wps.setChecked(True)
+        self._chk_wps.toggled.connect(self._on_toggle_options)
+        self._chk_geo = QCheckBox("Show Mission Geometry")
+        self._chk_geo.setChecked(True)
+        self._chk_geo.toggled.connect(self._on_toggle_options)
+        row.addWidget(self._btn_refresh)
+        row.addWidget(self._chk_wps)
+        row.addWidget(self._chk_geo)
+        row.addStretch(1)
+        row.addWidget(self._info_label)
+        layout.addLayout(row)
+
+        if QWebEngineView is None:
+            layout.addWidget(QLabel("QtWebEngine not available."))
+        else:
+            self._map_view = QWebEngineView()
+            self._map_view.loadFinished.connect(self._on_map_load_finished)
+            layout.addWidget(self._map_view)
+            self._build_map()
+
+    def _log_line(self, msg: str) -> None:
+        try:
+            self._log(f"[VIS] {msg}")
+        except Exception:
+            pass
+
+    def _on_toggle_options(self, checked: bool) -> None:
+        self._show_waypoints = bool(self._chk_wps.isChecked())
+        self._show_geometry = bool(self._chk_geo.isChecked())
+        self.refresh()
+
+    def refresh(self) -> None:
+        if not self._map_view:
+            return
+        self._capture_map_view_state(self._reload_map_content)
+
+    def _build_map(self) -> None:
+        if not self._map_view:
+            return
+        self._write_map_html()
+        self._map_view.setUrl(QUrl.fromLocalFile(str(self._map_html_path)))
+
+    def _reload_map_content(self) -> None:
+        self._write_map_html()
+        try:
+            if self._map_view:
+                self._map_view.reload()
+        except Exception:
+            pass
+
+    def _capture_map_view_state(self, callback=None) -> None:
+        if not self._map_view:
+            if callback:
+                callback()
+            return
+        script = """
+            (function() {
+                var map = null;
+                for (var k in window) {
+                    if (window[k] instanceof L.Map) { map = window[k]; break; }
+                }
+                if (!map) { return null; }
+                var c = map.getCenter();
+                return {lat: c.lat, lng: c.lng, zoom: map.getZoom()};
+            })();
+        """
+        def _store_view(result):
+            if isinstance(result, dict) and "lat" in result and "lng" in result:
+                self._map_view_state = result
+            if callback:
+                callback()
+        try:
+            self._map_view.page().runJavaScript(script, _store_view)
+        except Exception:
+            if callback:
+                callback()
+
+    def _on_map_load_finished(self, ok: bool) -> None:
+        if not ok or not self._map_view_state:
+            return
+        lat = float(self._map_view_state.get("lat", 0.0))
+        lng = float(self._map_view_state.get("lng", 0.0))
+        zoom = int(self._map_view_state.get("zoom", 14))
+        script = f"""
+            (function() {{
+                var map = null;
+                for (var k in window) {{
+                    if (window[k] instanceof L.Map) {{ map = window[k]; break; }}
+                }}
+                if (map) {{
+                    map.setView([{lat}, {lng}], {zoom});
+                }}
+            }})();
+        """
+        try:
+            if self._map_view:
+                self._map_view.page().runJavaScript(script)
+        except Exception:
+            pass
+
+    def _resolve_plan_ids(self, db_root: Path) -> list[int]:
+        raw = []
+        try:
+            raw = list(self._plan_id_provider() or [])
+        except Exception:
+            raw = []
+        plan_ids: list[int] = []
+        for val in raw:
+            try:
+                plan_ids.append(int(val))
+            except Exception:
+                continue
+        if plan_ids:
+            return plan_ids
+        dir_mp = db_root / "MissionPlan"
+        if not dir_mp.exists():
+            return []
+        candidates = sorted(dir_mp.glob("*.json"), key=lambda p: p.stat().st_mtime)
+        if not candidates:
+            return []
+        latest = candidates[-1]
+        try:
+            with latest.open(encoding="utf-8") as fh:
+                data = json.load(fh)
+            val = data.get("missionPlanID")
+            if val is not None:
+                return [int(val)]
+        except Exception:
+            pass
+        if latest.stem.isdigit():
+            return [int(latest.stem)]
+        return []
+
+    def _coords_from_list(self, items) -> list[tuple[float, float]]:
+        coords = []
+        for item in items or []:
+            lat = item.get("latitude")
+            lon = item.get("longitude")
+            if lat is None or lon is None:
+                continue
+            coords.append((float(lat), float(lon)))
+        return coords
+
+    def _collect_plan_data(self, plan_ids: list[int], db_root: Path) -> dict:
+        dir_mp = db_root / "MissionPlan"
+        dir_imp = db_root / "IndividualMissionPlan"
+        dir_fp = db_root / "FlightPath"
+        path_meta: dict[int, dict] = {}
+        line_geoms: list[dict] = []
+        area_geoms: list[dict] = []
+        points: list[tuple[float, float]] = []
+
+        for plan_id in plan_ids:
+            mp_path = dir_mp / f"{int(plan_id)}.json"
+            if not mp_path.exists():
+                continue
+            try:
+                mp_json = json.loads(mp_path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            for entry in mp_json.get("aircraftList", []):
+                aid = entry.get("aircraftID")
+                imp_id = entry.get("individualMissionPackageID") or entry.get("individualMissionPlanPackageID")
+                if imp_id is None:
+                    continue
+                imp_path = dir_imp / f"{int(imp_id)}.json"
+                if not imp_path.exists():
+                    continue
+                try:
+                    imp_json = json.loads(imp_path.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                aircraft_id = imp_json.get("aircraftID", aid)
+                for im in imp_json.get("individualMissionList", []):
+                    path_id = im.get("pathID")
+                    if path_id is not None:
+                        try:
+                            path_meta[int(path_id)] = {
+                                "aircraftID": aircraft_id,
+                                "missionID": im.get("individualMissionID"),
+                                "missionType": im.get("individualMissionInfo", {}).get("individualMissionType"),
+                            }
+                        except Exception:
+                            pass
+                    info = im.get("individualMissionInfo", {}) or {}
+                    for line in info.get("lineList", []) or []:
+                        coords = self._coords_from_list(line.get("coordinateList"))
+                        if len(coords) >= 2:
+                            line_geoms.append(
+                                {
+                                    "coords": coords,
+                                    "aircraftID": aircraft_id,
+                                    "missionID": im.get("individualMissionID"),
+                                    "pathID": path_id,
+                                }
+                            )
+                            points.extend(coords)
+                    for area in info.get("areaList", []) or []:
+                        coords = self._coords_from_list(area.get("coordinateList"))
+                        if len(coords) >= 3:
+                            area_geoms.append(
+                                {
+                                    "coords": coords,
+                                    "aircraftID": aircraft_id,
+                                    "missionID": im.get("individualMissionID"),
+                                    "pathID": path_id,
+                                }
+                            )
+                            points.extend(coords)
+
+        paths: list[dict] = []
+        for path_id, meta in path_meta.items():
+            fp_path = dir_fp / f"{int(path_id)}.json"
+            if not fp_path.exists():
+                continue
+            try:
+                fp_json = json.loads(fp_path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            waypoints = fp_json.get("waypointList") or fp_json.get("lahWaypointList") or []
+            coords = []
+            for wp in waypoints:
+                coord = (wp or {}).get("coordinate") or {}
+                lat = coord.get("latitude")
+                lon = coord.get("longitude")
+                if lat is None or lon is None:
+                    continue
+                coords.append((float(lat), float(lon)))
+            if len(coords) >= 2:
+                paths.append(
+                    {
+                        "pathID": path_id,
+                        "aircraftID": fp_json.get("aircraftID", meta.get("aircraftID")),
+                        "missionID": meta.get("missionID"),
+                        "coords": coords,
+                        "waypoints": waypoints,
+                    }
+                )
+                points.extend(coords)
+
+        return {
+            "paths": paths,
+            "lines": line_geoms,
+            "areas": area_geoms,
+            "points": points,
+        }
+
+    def _write_map_html(self) -> None:
+        db_root = self._db_root_provider()
+        plan_ids = self._resolve_plan_ids(db_root)
+        label = ", ".join(str(pid) for pid in plan_ids) if plan_ids else "-"
+        self._info_label.setText(f"plan_ids: {label}")
+
+        data = self._collect_plan_data(plan_ids, db_root)
+        points = data.get("points") or []
+        state = self._map_view_state or {}
+        if points:
+            avg_lat = sum(p[0] for p in points) / len(points)
+            avg_lon = sum(p[1] for p in points) / len(points)
+        else:
+            avg_lat = float(state.get("lat", 38.128774))
+            avg_lon = float(state.get("lng", 127.318005))
+        zoom = int(state.get("zoom", 13))
+
+        fmap = folium.Map(location=[avg_lat, avg_lon], zoom_start=zoom)
+        color_map = {1: "green", 2: "orange", 3: "purple", 4: "red", 5: "blue", 6: "brown"}
+
+        if self._show_geometry:
+            for line in data.get("lines", []):
+                coords = line["coords"]
+                aid = line.get("aircraftID")
+                color = color_map.get(aid, "gray")
+                label = f"A{aid} M{line.get('missionID')} P{line.get('pathID')}"
+                folium.PolyLine(coords, color=color, weight=2, dash_array="6,6", tooltip=label).add_to(fmap)
+            for area in data.get("areas", []):
+                coords = area["coords"]
+                aid = area.get("aircraftID")
+                color = color_map.get(aid, "gray")
+                label = f"A{aid} M{area.get('missionID')} P{area.get('pathID')}"
+                folium.Polygon(coords, color=color, weight=2, fill=True, fill_opacity=0.2, tooltip=label).add_to(fmap)
+
+        for path in data.get("paths", []):
+            aid = path.get("aircraftID")
+            color = color_map.get(aid, "gray")
+            label = f"A{aid} M{path.get('missionID')} P{path.get('pathID')}"
+            folium.PolyLine(path["coords"], color=color, weight=3, tooltip=label).add_to(fmap)
+            if self._show_waypoints:
+                for idx, wp in enumerate(path.get("waypoints") or []):
+                    coord = (wp or {}).get("coordinate") or {}
+                    lat = coord.get("latitude")
+                    lon = coord.get("longitude")
+                    if lat is None or lon is None:
+                        continue
+                    folium.CircleMarker(
+                        [float(lat), float(lon)],
+                        radius=2,
+                        color=color,
+                        fill=True,
+                        fill_opacity=1.0,
+                        tooltip=f"WP {idx + 1}",
+                    ).add_to(fmap)
+
+        try:
+            fmap.save(str(self._map_html_path))
+        except Exception as exc:
+            self._log_line(f"map save failed: {exc}")
+
+
 # ───────── 메인 윈도우 ─────────
 class MainWindow(QMainWindow):
     # 백그라운드 → UI 스레드용 신호
@@ -91,6 +422,7 @@ class MainWindow(QMainWindow):
     log_sig        = pyqtSignal(str)    # 로그
     pipeline_log_sig = pyqtSignal(dict) # pipeline log fan-out
     start_push_seq = pyqtSignal()       # 0301/0305/0901 순차 푸시 트리거
+    visual_refresh = pyqtSignal()
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -139,6 +471,13 @@ class MainWindow(QMainWindow):
         tabs.addTab(self._tab, "임무 할당·계획수립 CSC")
         self._log_tab = MissionPlanningLogTab()
         tabs.addTab(self._log_tab, "임무계획 Log")
+        self._visual_tab = MissionVisualizationTab(
+            plan_id_provider=lambda: getattr(self, "_last_mission_plan_ids", []) or [],
+            db_root_provider=db_paths.get_active_db_root,
+            log_cb=self.log_sig.emit,
+            parent=self,
+        )
+        tabs.addTab(self._visual_tab, "임무 시각화")
         self._pipeline_logger = PipelineLogManager(
             emit_callback=self.pipeline_log_sig.emit,
             log_tab_provider=lambda: getattr(self, "_log_tab", None),
@@ -183,6 +522,7 @@ class MainWindow(QMainWindow):
         self.log_sig.connect(self._append_log_line)
         self.pipeline_log_sig.connect(self._pipeline_logger.handle_event)
         self.start_push_seq.connect(self._start_push_sequence)
+        self.visual_refresh.connect(self._refresh_visual_tab)
         if self._log_file_path:
             self._append_log_line(f"[LOG] Mission planning log started: {self._log_file_path}")
 
@@ -206,6 +546,15 @@ class MainWindow(QMainWindow):
         # ★★★ 0101 수신 → 모드 반영 리스너 + 폴백 폴링 설치
         self._install_0101_mode_listener()
         self._start_0101_rx_poller()
+
+    def _refresh_visual_tab(self) -> None:
+        tab = getattr(self, "_visual_tab", None)
+        if tab is None:
+            return
+        try:
+            tab.refresh()
+        except Exception:
+            pass
 
     # ───────── 0101 모드 수신 리스너 ─────────
     def _install_0101_mode_listener(self):
@@ -2655,6 +3004,7 @@ class MainWindow(QMainWindow):
 
             self._last_mission_plan_ids = generated_plan_ids
             self._last_mission_plan_id = generated_plan_ids[0] if generated_plan_ids else None
+            self.visual_refresh.emit()
             ctx['plan_ids'] = generated_plan_ids
             ctx['option_names'] = option_codes_out
             ctx["_option_meta"] = dict(plan_meta_map)
@@ -2833,6 +3183,7 @@ class MainWindow(QMainWindow):
         self._active_plan_context = ctx
         self._last_mission_plan_ids = plan_ids
         self._last_mission_plan_id = plan_ids[0] if plan_ids else None
+        self.visual_refresh.emit()
 
         def _safe_int(value):
             try:
@@ -2993,6 +3344,7 @@ class MainWindow(QMainWindow):
         self._active_plan_context = ctx
         self._last_mission_plan_ids = generated_plan_ids
         self._last_mission_plan_id = generated_plan_ids[0] if generated_plan_ids else None
+        self.visual_refresh.emit()
 
         try:
             input_pkg_id_int = int(ctx.get("inputMissionPackageID"))
