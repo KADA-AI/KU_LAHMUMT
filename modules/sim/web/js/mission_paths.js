@@ -5,11 +5,17 @@ const HIT_LAYER_ID = "mission-paths-hit";
 
 const AGENTS = ["LAH1", "LAH2", "LAH3", "UAV1", "UAV2", "UAV3"];
 
-const DEFAULT_ALPHA = 1.0;
-const SELECT_ALPHA = 1.0;
-const DIM_ALPHA = 0.15;
+const DEFAULT_ALPHA = 0.8;
+const SELECT_ALPHA = 0.8;
+const DIM_ALPHA = 0.12;
 
 const PATH_WIDTH_PX = 2.5;
+const WAYPOINT_SIZE_PX = 10;
+const WAYPOINT_ALPHA = 0.9;
+const WAYPOINT_DIM_ALPHA = 0.25;
+const WAYPOINT_Z_OFFSET_M = 4.0;
+const WAYPOINT_LABEL_Z_OFFSET_M = 14.0;
+const WAYPOINT_LABEL_FONT_SIZE = 12;
 const ALT_OFFSET_M = 5;
 const DASH_ON_PX = 6;
 const DASH_OFF_PX = 6;
@@ -99,6 +105,24 @@ const getProjectionMatrix = (argsOrMatrix) => {
     }
   }
   return null;
+};
+
+const projectToScreen = (matrix, x, y, z, width, height) => {
+  const mx = matrix[0] * x + matrix[4] * y + matrix[8] * z + matrix[12];
+  const my = matrix[1] * x + matrix[5] * y + matrix[9] * z + matrix[13];
+  const mw = matrix[3] * x + matrix[7] * y + matrix[11] * z + matrix[15];
+  if (!Number.isFinite(mw) || mw <= 0) {
+    return null;
+  }
+  const nx = mx / mw;
+  const ny = my / mw;
+  if (nx < -1.2 || nx > 1.2 || ny < -1.2 || ny > 1.2) {
+    return null;
+  }
+  return {
+    x: (nx * 0.5 + 0.5) * width,
+    y: (1 - (ny * 0.5 + 0.5)) * height,
+  };
 };
 
 const toRad = (value) => (value * Math.PI) / 180;
@@ -327,6 +351,202 @@ const createLineLayer3d = (id, color, drawModeName, lineWidth) => {
   return layer;
 };
 
+const createPointLayer3d = (id, color, pointSize) => {
+  const layer = {
+    id,
+    type: "custom",
+    renderingMode: "3d",
+    _color: color,
+    _alpha: DEFAULT_ALPHA,
+    _pointSize: pointSize,
+    _visible: true,
+    _useDepth: false,
+    _pointCount: 0,
+    _pendingPositions: null,
+    setAlpha(nextAlpha) {
+      const value = Number(nextAlpha);
+      if (!Number.isFinite(value)) {
+        return;
+      }
+      this._alpha = Math.max(0, Math.min(1, value));
+    },
+    setColor(nextColor) {
+      if (typeof nextColor !== "string" || !nextColor.trim()) {
+        return;
+      }
+      this._color = nextColor.trim();
+    },
+    setSize(nextSize) {
+      const value = Number(nextSize);
+      if (!Number.isFinite(value) || value <= 0) {
+        return;
+      }
+      this._pointSize = value;
+    },
+    setVisible(nextVisible) {
+      this._visible = Boolean(nextVisible);
+    },
+    updatePositions(positions) {
+      this._pendingPositions = positions;
+      if (!this._gl || !this._pointBuffer) {
+        return;
+      }
+      const gl = this._gl;
+      const data = new Float32Array(positions);
+      gl.bindBuffer(gl.ARRAY_BUFFER, this._pointBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
+      this._pointCount = data.length / 3;
+      this._pendingPositions = null;
+    },
+    onAdd(_map, gl) {
+      this._gl = gl;
+      const isWebGL2 =
+        typeof WebGL2RenderingContext !== "undefined" &&
+        gl instanceof WebGL2RenderingContext;
+      const vertexSource = isWebGL2
+        ? `#version 300 es
+          in vec3 a_pos;
+          uniform mat4 u_matrix;
+          uniform float u_size;
+          void main() {
+            gl_Position = u_matrix * vec4(a_pos, 1.0);
+            gl_PointSize = u_size;
+          }`
+        : `
+          attribute vec3 a_pos;
+          uniform mat4 u_matrix;
+          uniform float u_size;
+          void main() {
+            gl_Position = u_matrix * vec4(a_pos, 1.0);
+            gl_PointSize = u_size;
+          }`;
+      const fragmentSource = isWebGL2
+        ? `#version 300 es
+          precision mediump float;
+          uniform vec4 u_color;
+          out vec4 fragColor;
+          void main() {
+            vec2 uv = gl_PointCoord - 0.5;
+            float r = length(uv);
+            if (r > 0.5) {
+              discard;
+            }
+            float edge = smoothstep(0.48, 0.5, r);
+            vec4 color = u_color;
+            color.a *= (1.0 - edge);
+            fragColor = color;
+          }`
+        : `
+          precision mediump float;
+          uniform vec4 u_color;
+          void main() {
+            vec2 uv = gl_PointCoord - 0.5;
+            float r = length(uv);
+            if (r > 0.5) {
+              discard;
+            }
+            float edge = smoothstep(0.48, 0.5, r);
+            vec4 color = u_color;
+            color.a *= (1.0 - edge);
+            gl_FragColor = color;
+          }`;
+      const compile = (type, source) => {
+        const shader = gl.createShader(type);
+        gl.shaderSource(shader, source);
+        gl.compileShader(shader);
+        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+          const log = gl.getShaderInfoLog(shader) || "shader compile failed";
+          gl.deleteShader(shader);
+          throw new Error(log);
+        }
+        return shader;
+      };
+      const linkProgram = (vs, fs) => {
+        const program = gl.createProgram();
+        gl.attachShader(program, vs);
+        gl.attachShader(program, fs);
+        gl.linkProgram(program);
+        gl.deleteShader(vs);
+        gl.deleteShader(fs);
+        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+          const log = gl.getProgramInfoLog(program) || "program link failed";
+          gl.deleteProgram(program);
+          throw new Error(log);
+        }
+        return program;
+      };
+      try {
+        const vertexShader = compile(gl.VERTEX_SHADER, vertexSource);
+        const fragmentShader = compile(gl.FRAGMENT_SHADER, fragmentSource);
+        this._program = linkProgram(vertexShader, fragmentShader);
+      } catch (err) {
+        console.error(`[${id}] shader/program error:`, err);
+        this._program = null;
+        this._visible = false;
+        return;
+      }
+      const program = this._program;
+      this._aPos = gl.getAttribLocation(program, "a_pos");
+      this._uMatrix = gl.getUniformLocation(program, "u_matrix");
+      this._uColor = gl.getUniformLocation(program, "u_color");
+      this._uSize = gl.getUniformLocation(program, "u_size");
+      this._pointBuffer = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, this._pointBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([]), gl.DYNAMIC_DRAW);
+      this._pointCount = 0;
+      if (this._pendingPositions) {
+        this.updatePositions(this._pendingPositions);
+      }
+    },
+    render(gl, argsOrMatrix) {
+      const mat = getProjectionMatrix(argsOrMatrix);
+      if (typeof this._renderHook === "function" && mat && mat.length === 16) {
+        this._renderHook(mat);
+      }
+      if (!this._program || !this._visible || !this._pointCount) {
+        return;
+      }
+      if (!mat || mat.length !== 16) {
+        return;
+      }
+      const depthWasEnabled = gl.isEnabled(gl.DEPTH_TEST);
+      const cullWasEnabled = gl.isEnabled(gl.CULL_FACE);
+      if (!this._useDepth) {
+        gl.disable(gl.DEPTH_TEST);
+      }
+      if (cullWasEnabled) {
+        gl.disable(gl.CULL_FACE);
+      }
+      gl.useProgram(this._program);
+      gl.uniformMatrix4fv(this._uMatrix, false, mat);
+      gl.uniform4fv(this._uColor, hexToRgba(this._color, this._alpha));
+      gl.uniform1f(this._uSize, this._pointSize);
+      if (typeof gl.PROGRAM_POINT_SIZE !== "undefined") {
+        gl.enable(gl.PROGRAM_POINT_SIZE);
+      }
+      gl.bindBuffer(gl.ARRAY_BUFFER, this._pointBuffer);
+      gl.enableVertexAttribArray(this._aPos);
+      gl.vertexAttribPointer(this._aPos, 3, gl.FLOAT, false, 0, 0);
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      gl.drawArrays(gl.POINTS, 0, this._pointCount);
+      if (typeof this._renderHook === "function") {
+        this._renderHook(mat);
+      }
+      if (typeof gl.PROGRAM_POINT_SIZE !== "undefined") {
+        gl.disable(gl.PROGRAM_POINT_SIZE);
+      }
+      if (cullWasEnabled) {
+        gl.enable(gl.CULL_FACE);
+      }
+      if (!this._useDepth && depthWasEnabled) {
+        gl.enable(gl.DEPTH_TEST);
+      }
+    },
+  };
+  return layer;
+};
+
 export const initMissionPaths = (map) => {
   let pendingData = null;
   let selectedAgent = null;
@@ -341,6 +561,11 @@ export const initMissionPaths = (map) => {
   const legendItems = Array.from(document.querySelectorAll(".mission-legend-item"));
   const colors = getAgentColors();
   const agentLayers = new Map();
+  const waypointLayers = new Map();
+  let labelContainer = null;
+  const labelElements = new Map();
+  let waypointLabelEntries = [];
+  let labelHookLayer = null;
 
   const setLegendVisibility = (visible) => {
     if (!legend) {
@@ -360,6 +585,118 @@ export const initMissionPaths = (map) => {
       item.classList.toggle("is-disabled", !available);
       item.classList.toggle("is-active", selectedAgent === agent);
       item.setAttribute("aria-disabled", available ? "false" : "true");
+    });
+  };
+
+  const ensureLabelContainer = () => {
+    if (labelContainer) {
+      return;
+    }
+    labelContainer = document.createElement("div");
+    labelContainer.style.position = "absolute";
+    labelContainer.style.left = "0";
+    labelContainer.style.top = "0";
+    labelContainer.style.width = "100%";
+    labelContainer.style.height = "100%";
+    labelContainer.style.pointerEvents = "none";
+    labelContainer.style.zIndex = "2";
+    map.getContainer().appendChild(labelContainer);
+  };
+
+  const ensureWaypointLabel = (entry, color) => {
+    ensureLabelContainer();
+    const key = entry.key;
+    const agent = entry.agent;
+    const idx = entry.idx;
+    let el = labelElements.get(key);
+    if (!el) {
+      el = document.createElement("div");
+      el.dataset.agent = agent;
+      el.dataset.wp = String(idx);
+      el.style.position = "absolute";
+      el.style.transform = "translate(-50%, -120%)";
+      el.style.fontSize = `${WAYPOINT_LABEL_FONT_SIZE}px`;
+      el.style.fontWeight = "700";
+      el.style.padding = "2px 6px";
+      el.style.borderRadius = "8px";
+      el.style.background = "rgba(0, 0, 0, 0.45)";
+      el.style.whiteSpace = "nowrap";
+      el.style.pointerEvents = "none";
+      el.style.textShadow = "0 1px 2px rgba(0,0,0,0.45)";
+      labelContainer.appendChild(el);
+      labelElements.set(key, el);
+    }
+    el.textContent = entry.label || `WP${idx}`;
+    el.style.color = color || "#e7eddc";
+    return el;
+  };
+
+  const clearWaypointLabels = () => {
+    labelElements.forEach((el) => el.remove());
+    labelElements.clear();
+    waypointLabelEntries = [];
+  };
+
+  const rebuildWaypointLabels = (entries) => {
+    const colorsNow = getAgentColors();
+    const keep = new Set();
+    entries.forEach((entry) => {
+      keep.add(entry.key);
+      ensureWaypointLabel(entry, colorsNow[entry.agent] || "#e7eddc");
+    });
+    labelElements.forEach((el, key) => {
+      if (!keep.has(key)) {
+        el.remove();
+        labelElements.delete(key);
+      }
+    });
+    waypointLabelEntries = entries;
+    updateWaypointLabelVisibility();
+  };
+
+  const updateWaypointLabelVisibility = () => {
+    const hasSelection = Boolean(selectedAgent);
+    labelElements.forEach((el) => {
+      const agent = el.dataset.agent || "";
+      const alpha = hasSelection
+        ? agent === selectedAgent
+          ? WAYPOINT_ALPHA
+          : WAYPOINT_DIM_ALPHA
+        : WAYPOINT_ALPHA;
+      el.style.opacity = String(alpha);
+    });
+  };
+
+  const updateWaypointLabelPositions = (matrix) => {
+    if (!labelContainer || !matrix) {
+      return;
+    }
+    const canvas = map.getCanvas();
+    const dpr = window.devicePixelRatio || 1;
+    const width = canvas.width / dpr;
+    const height = canvas.height / dpr;
+    labelElements.forEach((el) => {
+      el.style.display = "none";
+    });
+    waypointLabelEntries.forEach((entry) => {
+      const point = projectToScreen(
+        matrix,
+        entry.coord.x,
+        entry.coord.y,
+        entry.coord.z,
+        width,
+        height,
+      );
+      if (!point) {
+        return;
+      }
+      const el = labelElements.get(entry.key);
+      if (!el) {
+        return;
+      }
+      el.style.left = `${point.x}px`;
+      el.style.top = `${point.y}px`;
+      el.style.display = "block";
     });
   };
 
@@ -545,6 +882,20 @@ export const initMissionPaths = (map) => {
       map.addLayer(layer);
       agentLayers.set(agent, layer);
     });
+    const waypointSize = WAYPOINT_SIZE_PX * (window.devicePixelRatio || 1);
+    AGENTS.forEach((agent) => {
+      const layerId = `mission-waypoints-3d-${agent.toLowerCase()}`;
+      if (map.getLayer(layerId)) {
+        return;
+      }
+      const layer = createPointLayer3d(layerId, colors[agent] || "#e7eddc", waypointSize);
+      map.addLayer(layer);
+      waypointLayers.set(agent, layer);
+      if (!labelHookLayer) {
+        layer._renderHook = updateWaypointLabelPositions;
+        labelHookLayer = layer;
+      }
+    });
   };
 
   const updateHitSource = () => {
@@ -562,11 +913,47 @@ export const initMissionPaths = (map) => {
   const update3dPositions = () => {
     if (!features.length) {
       agentLayers.forEach((layer) => layer.updatePositions([]));
+      waypointLayers.forEach((layer) => layer.updatePositions([]));
+      clearWaypointLabels();
       logStatus("", { key: "mission-debug" });
       return;
     }
     const positionsByAgent = new Map();
+    const waypointPositionsByAgent = new Map();
+    const labelEntries = [];
     AGENTS.forEach((agent) => positionsByAgent.set(agent, []));
+    AGENTS.forEach((agent) => waypointPositionsByAgent.set(agent, []));
+    const getTerrainElevation = (lon, lat) => {
+      if (typeof map.queryTerrainElevation !== "function") {
+        return 0;
+      }
+      const elev = map.queryTerrainElevation({ lng: lon, lat: lat }, { exaggerated: false });
+      return Number.isFinite(elev) ? elev : 0;
+    };
+    const buildWaypointPositions = (coords, alts) => {
+      if (!Array.isArray(coords) || coords.length < 1) {
+        return [];
+      }
+      const positions = [];
+      coords.forEach((coord, idx) => {
+        if (!Array.isArray(coord)) {
+          return;
+        }
+        const lon = Number(coord[0]);
+        const lat = Number(coord[1]);
+        if (!Number.isFinite(lon) || !Number.isFinite(lat)) {
+          return;
+        }
+        const alt = Array.isArray(alts) ? Number(alts[idx]) : Number(alts);
+        const terrain = getTerrainElevation(lon, lat);
+        const altitude = Number.isFinite(alt)
+          ? alt + ALT_OFFSET_M + WAYPOINT_Z_OFFSET_M
+          : terrain + ALT_OFFSET_M + WAYPOINT_Z_OFFSET_M;
+        const merc = maplibregl.MercatorCoordinate.fromLngLat([lon, lat], altitude);
+        positions.push(merc.x, merc.y, merc.z);
+      });
+      return positions;
+    };
     features.forEach((feature) => {
       const target = positionsByAgent.get(feature.agent);
       if (!target) {
@@ -575,6 +962,43 @@ export const initMissionPaths = (map) => {
       const segmentPositions = buildLinePositions(feature.coords, feature.alts);
       if (segmentPositions.length) {
         target.push(...segmentPositions);
+      }
+      const waypointTarget = waypointPositionsByAgent.get(feature.agent);
+      if (waypointTarget) {
+        const waypointPositions = buildWaypointPositions(feature.coords, feature.alts);
+        if (waypointPositions.length) {
+          waypointTarget.push(...waypointPositions);
+        }
+      }
+      if (Array.isArray(feature.coords)) {
+        const wpIds = Array.isArray(feature.wpIds) ? feature.wpIds : [];
+        feature.coords.forEach((coord, idx) => {
+          if (!Array.isArray(coord)) {
+            return;
+          }
+          const lon = Number(coord[0]);
+          const lat = Number(coord[1]);
+          if (!Number.isFinite(lon) || !Number.isFinite(lat)) {
+            return;
+          }
+          const alt = Array.isArray(feature.alts) ? Number(feature.alts[idx]) : Number(feature.alts);
+          const terrain = getTerrainElevation(lon, lat);
+          const altitude = Number.isFinite(alt)
+            ? alt + ALT_OFFSET_M + WAYPOINT_LABEL_Z_OFFSET_M
+            : terrain + ALT_OFFSET_M + WAYPOINT_LABEL_Z_OFFSET_M;
+          const merc = maplibregl.MercatorCoordinate.fromLngLat([lon, lat], altitude);
+          const pathKey =
+            feature.pathId ?? feature.id ?? feature.aircraftId ?? feature.agent ?? "path";
+          const wpId = Number(wpIds[idx]);
+          const labelId = Number.isFinite(wpId) ? wpId : idx + 1;
+          labelEntries.push({
+            key: `${feature.agent}-${pathKey}-${idx + 1}`,
+            agent: feature.agent,
+            idx: labelId,
+            label: `WP${labelId}`,
+            coord: merc,
+          });
+        });
       }
     });
     let totalPositions = 0;
@@ -591,6 +1015,20 @@ export const initMissionPaths = (map) => {
         totalLineCount += layer._lineCount;
       }
     });
+    const waypointSize = WAYPOINT_SIZE_PX * (window.devicePixelRatio || 1);
+    waypointPositionsByAgent.forEach((positions, agent) => {
+      const layer = waypointLayers.get(agent);
+      if (!layer) {
+        return;
+      }
+      if (typeof layer.setColor === "function") {
+        layer.setColor(colors[agent] || "#e7eddc");
+      }
+      layer.setVisible(Boolean(positions.length));
+      layer.setSize(waypointSize);
+      layer.updatePositions(positions);
+    });
+    rebuildWaypointLabels(labelEntries);
     const msg =
       totalPositions === 0
         ? "3D path positions empty."
@@ -620,6 +1058,15 @@ export const initMissionPaths = (map) => {
         : DEFAULT_ALPHA;
       layer.setAlpha(alpha);
     });
+    waypointLayers.forEach((layer, agent) => {
+      const alpha = hasSelection
+        ? agent === selectedAgent
+          ? WAYPOINT_ALPHA
+          : WAYPOINT_DIM_ALPHA
+        : WAYPOINT_ALPHA;
+      layer.setAlpha(alpha);
+    });
+    updateWaypointLabelVisibility();
     map.triggerRepaint();
   };
 

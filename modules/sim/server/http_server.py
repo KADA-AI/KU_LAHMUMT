@@ -62,6 +62,10 @@ class MapServer:
                 self.dem_provider = provider
         self.integration = IntegrationService()
         self.sim = SimulationService()
+        try:
+            self.sim.set_integration(self.integration)
+        except Exception:
+            pass
         self._server = MapHTTPServer(
             (host, port),
             self.mbtiles,
@@ -253,8 +257,17 @@ class MapRequestHandler(BaseHTTPRequestHandler):
         if sim is None:
             self._send_json({"ok": False, "error": "Simulation unavailable"}, HTTPStatus.SERVICE_UNAVAILABLE)
             return
-        if path == "/api/sim/state":
-            self._send_json(sim.build_snapshot())
+        parsed = urlparse(self.path)
+        if parsed.path == "/api/sim/state":
+            query = parse_qs(parsed.query or "")
+            since_val = (query.get("since") or [None])[0]
+            since = None
+            if since_val is not None:
+                try:
+                    since = int(float(since_val))
+                except Exception:
+                    since = None
+            self._send_json(sim.build_snapshot(since_step=since))
             return
         if path == "/api/sim/ping":
             self._send_json({"ok": True})
@@ -269,6 +282,14 @@ class MapRequestHandler(BaseHTTPRequestHandler):
         body = self._read_json()
         if path == "/api/sim/mission":
             result = sim.load_mission(body or {})
+            self._send_json(result)
+            return
+        if path == "/api/sim/targets/add":
+            result = sim.add_target(body or {})
+            self._send_json(result)
+            return
+        if path == "/api/sim/targets/clear":
+            result = sim.clear_targets()
             self._send_json(result)
             return
         if path == "/api/sim/next_mission":

@@ -48,6 +48,8 @@ export const initScenarioPanel = (map) => {
   const overlayDot = overlay ? overlay.querySelector("[data-scn-dot]") : null;
   const overlayTooltip = overlay ? overlay.querySelector("[data-scn-tooltip]") : null;
   const overlayCoord = overlay ? overlay.querySelector("[data-scn-coord]") : null;
+  const overlayTitle = overlay ? overlay.querySelector("[data-scn-title]") : null;
+  const overlayHint = overlay ? overlay.querySelector("[data-scn-hint]") : null;
 
   const source0202 = document.getElementById("scn-0202-source");
   const missionId0202 = document.getElementById("scn-0202-mission-id");
@@ -77,9 +79,34 @@ export const initScenarioPanel = (map) => {
   const send0803Next = document.getElementById("scn-0803-next");
   const send0803Repeat = document.getElementById("scn-0803-repeat");
 
+  const enemyPick = document.getElementById("scn-enemy-pick");
+  const enemyClear = document.getElementById("scn-enemy-clear");
+  const enemyHint = document.getElementById("scn-enemy-hint");
+  const enemyPicker = document.getElementById("enemy-picker");
+  const enemyButtons = enemyPicker
+    ? Array.from(enemyPicker.querySelectorAll("[data-enemy-type]"))
+    : [];
+
   let picking = false;
+  let enemyPicking = false;
   let pending = false;
   let lastHover = null;
+  let enemyHover = null;
+  let enemyMenuActive = false;
+  let enemySelection = null;
+  let overlayMode = null;
+  let overlayAlt = null;
+
+  const overlayTexts = {
+    prior: {
+      title: "0202 선행임무 정보",
+      hint: "맵 클릭: 전송 · 우클릭: 취소",
+    },
+    enemy: {
+      title: "적 배치",
+      hint: "맵 클릭 후 번호 선택 · 우클릭: 취소",
+    },
+  };
 
   const setOpen = (open) => {
     const next = Boolean(open);
@@ -89,15 +116,52 @@ export const initScenarioPanel = (map) => {
     toggle.classList.toggle("is-active", next);
     if (!next) {
       setPicking(false);
+      setEnemyPicking(false);
+    }
+    if (next && typeof window.setMissionPanelOpen === "function") {
+      window.setMissionPanelOpen(false);
+    }
+  };
+
+  window.setScenarioPanelOpen = setOpen;
+
+  const applyOverlayMode = (mode) => {
+    overlayMode = mode;
+    if (!overlayTitle || !overlayHint) {
+      return;
+    }
+    const text = overlayTexts[mode] || {};
+    if (text.title) {
+      overlayTitle.textContent = text.title;
+    }
+    if (text.hint) {
+      overlayHint.textContent = text.hint;
+    }
+  };
+
+  const updateOverlayState = () => {
+    if (!overlay) {
+      return;
+    }
+    const active = picking || enemyPicking;
+    overlay.classList.toggle("is-active", active);
+    overlay.setAttribute("aria-hidden", active ? "false" : "true");
+    if (!active) {
+      overlayMode = null;
     }
   };
 
   const setPicking = (next) => {
     picking = Boolean(next);
-    if (overlay) {
-      overlay.classList.toggle("is-active", picking);
-      overlay.setAttribute("aria-hidden", picking ? "false" : "true");
+    if (picking) {
+      enemyPicking = false;
+      enemyMenuActive = false;
+      enemySelection = null;
+      hideEnemyPicker();
     }
+    overlayAlt = enemyPicking ? 0 : null;
+    applyOverlayMode(picking ? "prior" : enemyPicking ? "enemy" : null);
+    updateOverlayState();
     if (pick0202) {
       pick0202.classList.toggle("is-active", picking);
     }
@@ -108,11 +172,47 @@ export const initScenarioPanel = (map) => {
     }
     const canvas = map.getCanvas();
     if (canvas) {
-      canvas.style.cursor = picking ? "crosshair" : "";
+      canvas.style.cursor = picking || enemyPicking ? "crosshair" : "";
     }
     if (picking && type0202) {
       type0202.value = "coord";
       syncType();
+    }
+  };
+
+  const hideEnemyPicker = () => {
+    if (!enemyPicker) {
+      return;
+    }
+    enemyPicker.classList.remove("is-active");
+    enemyPicker.setAttribute("aria-hidden", "true");
+    enemyMenuActive = false;
+  };
+
+  const setEnemyPicking = (next) => {
+    enemyPicking = Boolean(next);
+    if (enemyPicking) {
+      setPicking(false);
+      overlayAlt = 0;
+      applyOverlayMode("enemy");
+    } else if (!picking) {
+      overlayAlt = null;
+      applyOverlayMode(null);
+    }
+    hideEnemyPicker();
+    enemySelection = null;
+    updateOverlayState();
+    if (enemyPick) {
+      enemyPick.classList.toggle("is-active", enemyPicking);
+    }
+    if (enemyHint) {
+      enemyHint.textContent = enemyPicking
+        ? "맵에서 좌표를 선택한 뒤 번호를 클릭하세요."
+        : "Map Input Mode를 누르면 적 배치 모드가 시작됩니다.";
+    }
+    const canvas = map.getCanvas();
+    if (canvas) {
+      canvas.style.cursor = enemyPicking || picking ? "crosshair" : "";
     }
   };
 
@@ -129,7 +229,7 @@ export const initScenarioPanel = (map) => {
     }
   };
 
-  const updateOverlay = (lngLat, point) => {
+  const updateOverlay = (lngLat, point, altOverride) => {
     if (!overlay || !overlayCoord) {
       return;
     }
@@ -145,7 +245,12 @@ export const initScenarioPanel = (map) => {
       overlayTooltip.style.left = `${x}px`;
       overlayTooltip.style.top = `${y}px`;
     }
-    const alt = num(alt0202?.value, 0) ?? 0;
+    const alt =
+      Number.isFinite(altOverride)
+        ? altOverride
+        : overlayAlt !== null
+          ? overlayAlt
+          : num(alt0202?.value, 0) ?? 0;
     overlayCoord.textContent = `Lat ${lngLat.lat.toFixed(6)} / Lon ${lngLat.lng.toFixed(6)} / Alt ${Math.round(alt)}`;
   };
 
@@ -155,6 +260,66 @@ export const initScenarioPanel = (map) => {
     }
     lat0202.value = lngLat.lat.toFixed(6);
     lon0202.value = lngLat.lng.toFixed(6);
+  };
+
+  const layoutEnemyPicker = () => {
+    if (!enemyButtons.length) {
+      return;
+    }
+    const radius = 64;
+    const count = enemyButtons.length;
+    enemyButtons.forEach((btn, idx) => {
+      const angle = (idx / count) * Math.PI * 2 - Math.PI / 2;
+      const dx = Math.cos(angle) * radius;
+      const dy = Math.sin(angle) * radius;
+      btn.style.transform = `translate(-50%, -50%) translate(${dx.toFixed(1)}px, ${dy.toFixed(1)}px)`;
+    });
+  };
+
+  const showEnemyPicker = (point) => {
+    if (!enemyPicker) {
+      return;
+    }
+    enemyPicker.style.setProperty("--picker-x", `${Math.round(point.x)}px`);
+    enemyPicker.style.setProperty("--picker-y", `${Math.round(point.y)}px`);
+    enemyPicker.classList.add("is-active");
+    enemyPicker.setAttribute("aria-hidden", "false");
+    enemyMenuActive = true;
+  };
+
+  const placeEnemy = async (typeId) => {
+    if (!enemySelection || !enemySelection.lngLat) {
+      return;
+    }
+    if (typeId === 0) {
+      hideEnemyPicker();
+      return;
+    }
+    const sim = window.simClient;
+    if (!sim || typeof sim.addTarget !== "function") {
+      logStatus("SIM target API unavailable", { level: "warn" });
+      hideEnemyPicker();
+      return;
+    }
+    const payload = {
+      type: typeId,
+      lat: enemySelection.lngLat.lat,
+      lon: enemySelection.lngLat.lng,
+      alt: 0,
+    };
+    const result = await sim.addTarget(payload);
+    if (result && result.ok) {
+      const name = result?.target?.name;
+      if (result.queued) {
+        logStatus(
+          name ? `${name} 임시 저장됨 (임무 로드 후 적용)` : "적 배치 임시 저장됨",
+          { level: "info", ttlMs: 4000 },
+        );
+      } else {
+        logStatus(name ? `${name} 배치 완료` : "적 배치 완료", { level: "success", ttlMs: 3500 });
+      }
+    }
+    hideEnemyPicker();
   };
 
   const build0202Body = (overrideCoord) => {
@@ -270,9 +435,15 @@ export const initScenarioPanel = (map) => {
   });
 
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && picking) {
-      setPicking(false);
-      logStatus("좌표 선택 취소", { level: "info" });
+    if (event.key === "Escape" && (picking || enemyPicking)) {
+      if (picking) {
+        setPicking(false);
+        logStatus("좌표 선택 취소", { level: "info" });
+      }
+      if (enemyPicking) {
+        setEnemyPicking(false);
+        logStatus("적 배치 취소", { level: "info" });
+      }
     }
   });
 
@@ -284,6 +455,30 @@ export const initScenarioPanel = (map) => {
   if (pick0202) {
     pick0202.addEventListener("click", () => {
       setPicking(!picking);
+    });
+  }
+
+  if (enemyPick) {
+    enemyPick.addEventListener("click", () => {
+      setEnemyPicking(!enemyPicking);
+    });
+  }
+
+  if (enemyClear) {
+    enemyClear.addEventListener("click", async () => {
+      const sim = window.simClient;
+      if (!sim || typeof sim.clearTargets !== "function") {
+        logStatus("SIM target API unavailable", { level: "warn" });
+        return;
+      }
+      const result = await sim.clearTargets();
+      if (result && result.ok) {
+        if (typeof window.missionTargetLoader === "function") {
+          window.missionTargetLoader({ ok: true, targets: [] });
+        }
+        logStatus("적 배치 초기화 완료", { level: "success", ttlMs: 3500 });
+      }
+      hideEnemyPicker();
     });
   }
 
@@ -318,15 +513,42 @@ export const initScenarioPanel = (map) => {
     });
   }
 
+  if (enemyButtons.length) {
+    layoutEnemyPicker();
+    enemyButtons.forEach((btn) => {
+      btn.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const typeId = Math.trunc(num(btn.dataset.enemyType, 0) || 0);
+        placeEnemy(typeId);
+      });
+    });
+  }
+
   map.on("mousemove", (event) => {
-    if (!picking) {
+    if (picking) {
+      lastHover = event;
+      updateOverlay(event.lngLat, event.point);
       return;
     }
-    lastHover = event;
-    updateOverlay(event.lngLat, event.point);
+    if (enemyPicking) {
+      enemyHover = event;
+      updateOverlay(event.lngLat, event.point, 0);
+    }
   });
 
   map.on("click", async (event) => {
+    if (enemyPicking) {
+      if (event.originalEvent) {
+        event.originalEvent.preventDefault();
+        event.originalEvent.stopPropagation();
+      }
+      enemySelection = { lngLat: event.lngLat, point: event.point };
+      enemyHover = enemySelection;
+      updateOverlay(event.lngLat, event.point, 0);
+      showEnemyPicker(event.point);
+      return;
+    }
     if (!picking || pending) {
       return;
     }
@@ -346,6 +568,15 @@ export const initScenarioPanel = (map) => {
   });
 
   map.on("contextmenu", (event) => {
+    if (enemyPicking) {
+      if (event.originalEvent) {
+        event.originalEvent.preventDefault();
+        event.originalEvent.stopPropagation();
+      }
+      setEnemyPicking(false);
+      logStatus("적 배치 취소", { level: "info" });
+      return;
+    }
     if (!picking) {
       return;
     }

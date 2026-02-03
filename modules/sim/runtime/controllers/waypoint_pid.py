@@ -185,7 +185,7 @@ class WaypointPIDController:
         self.blocked_input_id: int | None = None
         self._blocked_idx: int | None = None
         self.input_ids: set[int] = set()
-        self.default_loiter_radius = 160.0
+        self.default_loiter_radius = 160.0 if self.allow_hover else 300.0
         self.force_hover = False
 
         self.yaw_int = 0.0

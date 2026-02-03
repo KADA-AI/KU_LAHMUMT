@@ -9,6 +9,8 @@ const CLEAR_ENDPOINT = "/api/sim/clear";
 const RESET_ENDPOINT = "/api/sim/reset";
 const SPEED_ENDPOINT = "/api/sim/speed";
 const NEXT_MISSION_ENDPOINT = "/api/sim/next_mission";
+const TARGET_ADD_ENDPOINT = "/api/sim/targets/add";
+const TARGET_CLEAR_ENDPOINT = "/api/sim/targets/clear";
 
 const fetchJson = async (url, options) => {
   const response = await fetch(url, options);
@@ -19,6 +21,9 @@ const fetchJson = async (url, options) => {
 export const initSimClient = () => {
   let pollTimer = null;
   let lastState = null;
+  let lastStep = null;
+  let frameQueue = [];
+  let draining = false;
   const subscribers = new Set();
 
   const notify = () => {
@@ -32,26 +37,110 @@ export const initSimClient = () => {
   };
 
   const updateMarkers = (state) => {
-    if (!state || !state.vehicles) {
+    if (!state) {
       return;
     }
     if (typeof window.missionVehicleLoader === "function") {
-      window.missionVehicleLoader({ ok: true, vehicles: state.vehicles });
+      window.missionVehicleLoader({
+        ok: true,
+        vehicles: state.vehicles || {},
+        step: state.step,
+      });
     }
+    if (typeof window.missionTargetLoader === "function") {
+      window.missionTargetLoader({
+        ok: true,
+        targets: state.targets || [],
+        step: state.step,
+      });
+    }
+    if (typeof window.missionProjectileLoader === "function") {
+      window.missionProjectileLoader({
+        ok: true,
+        projectiles: state.projectiles || [],
+        step: state.step,
+      });
+    }
+    if (typeof window.missionEffectLoader === "function") {
+      window.missionEffectLoader({
+        ok: true,
+        effects: state.effects || [],
+        step: state.step,
+      });
+    }
+  };
+
+  const enqueueFrames = (frames) => {
+    if (!Array.isArray(frames) || frames.length === 0) {
+      return;
+    }
+    frameQueue.push(...frames);
+    if (!draining) {
+      draining = true;
+      requestAnimationFrame(drainQueue);
+    }
+  };
+
+  const drainQueue = () => {
+    if (!frameQueue.length) {
+      draining = false;
+      return;
+    }
+    const size = frameQueue.length;
+    const batch = size > 600 ? 6 : size > 300 ? 4 : size > 120 ? 2 : 1;
+    for (let i = 0; i < batch && frameQueue.length; i += 1) {
+      const frame = frameQueue.shift();
+      updateMarkers(frame);
+    }
+    requestAnimationFrame(drainQueue);
   };
 
   const poll = async () => {
     try {
-      const state = await fetchJson(STATE_ENDPOINT, { method: "GET" });
+      const query = Number.isFinite(lastStep) ? `?since=${lastStep}` : "";
+      const state = await fetchJson(`${STATE_ENDPOINT}${query}`, { method: "GET" });
+      if (state && Array.isArray(state.history)) {
+        if (state.history.length) {
+          enqueueFrames(state.history.map((frame) => ({ ok: true, ...frame })));
+          const last = state.history[state.history.length - 1];
+          if (Number.isFinite(last?.step)) {
+            lastStep = last.step;
+          }
+        }
+        if (state.latest) {
+          lastState = state.latest;
+          const vehiclesEmpty =
+            !state.latest.vehicles || Object.keys(state.latest.vehicles).length === 0;
+          if (vehiclesEmpty) {
+            frameQueue = [];
+            lastStep = null;
+          }
+          if (Number.isFinite(state.latest.step)) {
+            if (Number.isFinite(lastStep) && state.latest.step < lastStep) {
+              lastStep = state.latest.step;
+            } else {
+              lastStep = state.latest.step;
+            }
+          }
+          if (!state.history.length) {
+            updateMarkers(state.latest);
+          }
+        }
+        notify();
+        return;
+      }
       lastState = state;
       updateMarkers(state);
+      if (Number.isFinite(state?.step)) {
+        lastStep = state.step;
+      }
       notify();
     } catch (err) {
       logStatus("SIM state fetch failed", { level: "warn", ttlMs: 4000 });
     }
   };
 
-  const startPolling = (intervalMs = 200) => {
+  const startPolling = (intervalMs = 80) => {
     if (pollTimer) {
       return;
     }
@@ -168,6 +257,32 @@ export const initSimClient = () => {
     }
   };
 
+  const addTarget = async (payload) => {
+    try {
+      const result = await fetchJson(TARGET_ADD_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload || {}),
+      });
+      if (!result.ok) {
+        throw new Error(result.error || "target add failed");
+      }
+      return result;
+    } catch (err) {
+      logStatus(`SIM target failed: ${err.message}`, { level: "error", ttlMs: 5000 });
+      return { ok: false, error: err.message };
+    }
+  };
+
+  const clearTargets = async () => {
+    try {
+      return await fetchJson(TARGET_CLEAR_ENDPOINT, { method: "POST" });
+    } catch (err) {
+      logStatus(`SIM target clear failed: ${err.message}`, { level: "error", ttlMs: 5000 });
+      return { ok: false, error: err.message };
+    }
+  };
+
   const subscribe = (cb) => {
     if (typeof cb !== "function") {
       return () => {};
@@ -187,6 +302,8 @@ export const initSimClient = () => {
     reset,
     setSpeed,
     nextMission,
+    addTarget,
+    clearTargets,
     subscribe,
     getState: () => lastState,
   };

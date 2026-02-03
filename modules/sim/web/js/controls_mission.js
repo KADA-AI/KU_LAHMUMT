@@ -39,7 +39,12 @@ export const initMissionPanel = () => {
     panel.setAttribute("aria-hidden", next ? "false" : "true");
     toggle.setAttribute("aria-expanded", next ? "true" : "false");
     toggle.classList.toggle("is-active", next);
+    if (next && typeof window.setScenarioPanelOpen === "function") {
+      window.setScenarioPanelOpen(false);
+    }
   };
+
+  window.setMissionPanelOpen = setOpen;
 
   toggle.addEventListener("click", (event) => {
     event.stopPropagation();
@@ -181,10 +186,14 @@ export const initMissionPanel = () => {
       flightPaths.push(data);
       const coords = [];
       const alts = [];
+      const wpIds = [];
       for (const wp of waypoints) {
         const coord = getCoord(wp || {});
         if (!coord) continue;
+        const wid = wp?.waypointID ?? wp?.WaypointID ?? null;
+        const widNum = Number(wid);
         coords.push([coord.lon, coord.lat]);
+        wpIds.push(Number.isFinite(widNum) ? widNum : null);
         if (coord.alt !== null && !Number.isNaN(coord.alt)) {
           alts.push(coord.alt);
         } else {
@@ -206,6 +215,7 @@ export const initMissionPanel = () => {
         points: coords.length,
         coords,
         alts,
+        wpIds,
         altMin: alts.some((v) => v !== null)
           ? Math.min(...alts.filter((v) => v !== null))
           : null,

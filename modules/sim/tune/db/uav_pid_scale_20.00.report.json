@@ -1,0 +1,57 @@
+{
+  "timestamp": "2026-02-03T22:10:51",
+  "best_score": 31998.76214198274,
+  "best_stage": "final",
+  "best_params": {
+    "yaw": 1.9841691461113642,
+    "yaw_i": 0.0,
+    "pitch_rate": 4.2,
+    "pitch_damp": 0.2,
+    "alt_pitch": 0.12,
+    "alt_i": 0.25322500000000003,
+    "throttle": 0.02,
+    "throttle_alt": 0.0044790558005415,
+    "throttle_i": 0.02515400392100302,
+    "lookahead_m": 135.275,
+    "freeze_yaw_dist": 44.49087329604216
+  },
+  "speed_target": 90.0,
+  "pos_tol": 30.0,
+  "n_global": 2400,
+  "keep_top": 128,
+  "n_restarts": 36,
+  "local_iters": 512,
+  "dt_coarse": 0.2,
+  "T_coarse": 1400.0,
+  "dt_fine": 0.2,
+  "T_fine": 1900.0,
+  "suite_size": 5,
+  "start_cases": [
+    [
+      [
+        -300.0,
+        -300.0
+      ],
+      0.0,
+      81.0
+    ],
+    [
+      [
+        -520.0,
+        180.0
+      ],
+      90.0,
+      72.0
+    ],
+    [
+      [
+        220.0,
+        -520.0
+      ],
+      180.0,
+      90.0
+    ]
+  ],
+  "seed": 0,
+  "tight": true
+}

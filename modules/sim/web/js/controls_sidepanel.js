@@ -14,6 +14,10 @@
     toggle.textContent = next ? "▼" : "▲";
   };
 
+  window.set0401PanelOpen = setOpen;
+  window.open0401Panel = () => setOpen(true);
+  window.close0401Panel = () => setOpen(false);
+
   toggle.addEventListener("click", (event) => {
     event.stopPropagation();
     setOpen(!panel.classList.contains("is-open"));

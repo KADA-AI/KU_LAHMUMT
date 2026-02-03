@@ -138,6 +138,14 @@ body {
   color: #c8d4b8;
 }
 
+.toolbar-time {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  font-weight: 600;
+  color: #e3ecd6;
+  opacity: 0.9;
+}
+
 .toggle {
   border: 1px solid var(--panel-border);
   background: transparent;
@@ -753,6 +761,58 @@ body {
   margin-top: 2px;
 }
 
+.enemy-picker {
+  position: absolute;
+  left: var(--picker-x, 50%);
+  top: var(--picker-y, 50%);
+  transform: translate(-50%, -50%);
+  width: 0;
+  height: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+  z-index: 4;
+}
+
+.enemy-picker.is-active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.enemy-picker-center {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #dbecc2;
+  border: 2px solid #2c3f1e;
+  transform: translate(-50%, -50%);
+}
+
+.enemy-picker-item {
+  position: absolute;
+  left: 0;
+  top: 0;
+  min-width: 62px;
+  height: 32px;
+  padding: 0 6px;
+  border-radius: 16px;
+  border: 1px solid rgba(12, 18, 10, 0.6);
+  background: rgba(27, 40, 24, 0.92);
+  color: #f1f5e6;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.25);
+  transform: translate(-50%, -50%);
+}
+
+.enemy-picker-item:hover {
+  background: rgba(41, 58, 36, 0.95);
+}
+
 .mission-panel-header {
   padding: 10px 12px;
   border-bottom: 1px solid #e4e4e4;
@@ -763,6 +823,7 @@ body {
   font-weight: 700;
   letter-spacing: 0.08em;
   color: #3f3f3f;
+  text-transform: uppercase;
 }
 
 .mission-panel-body {

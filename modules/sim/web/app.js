@@ -14,6 +14,9 @@ import { initRightSidePanel } from "./js/controls_sidepanel_right.js";
 import { initIntegrationPanel } from "./js/integration_panel.js";
 import { initMissionPaths } from "./js/mission_paths.js";
 import { initVehicleMarkers } from "./js/vehicle_markers.js";
+import { initTargetMarkers } from "./js/target_markers.js";
+import { initProjectileMarkers } from "./js/projectile_markers.js";
+import { initImpactEffects } from "./js/impact_effects.js";
 import { getAgentCoordinate } from "./js/agent_store.js";
 import { logStatus } from "./js/status_log.js";
 import { initSimClient } from "./js/sim_client.js";
@@ -123,6 +126,12 @@ import { initSimClient } from "./js/sim_client.js";
   const vehicleMarkers = initVehicleMarkers(map);
   window.missionVehicleLoader = vehicleMarkers.loadFromReference;
   window.getAgentPosition = vehicleMarkers.getPosition;
+  const targetMarkers = initTargetMarkers(map);
+  window.missionTargetLoader = targetMarkers.loadFromReference;
+  const projectileMarkers = initProjectileMarkers(map);
+  window.missionProjectileLoader = projectileMarkers.loadFromReference;
+  const impactEffects = initImpactEffects(map);
+  window.missionEffectLoader = impactEffects.loadFromReference;
   window.clearMissionData = () => {
     if (typeof window.missionPathLoader === "function") {
       window.missionPathLoader({
@@ -135,6 +144,15 @@ import { initSimClient } from "./js/sim_client.js";
     }
     if (typeof window.missionVehicleLoader === "function") {
       window.missionVehicleLoader({ ok: true, vehicles: {} });
+    }
+    if (typeof window.missionTargetLoader === "function") {
+      window.missionTargetLoader({ ok: true, targets: [] });
+    }
+    if (typeof window.missionProjectileLoader === "function") {
+      window.missionProjectileLoader({ ok: true, projectiles: [] });
+    }
+    if (typeof window.missionEffectLoader === "function") {
+      window.missionEffectLoader({ ok: true, effects: [] });
     }
     if (typeof window.setSelectedAgentPath === "function") {
       window.setSelectedAgentPath(null);
@@ -173,4 +191,29 @@ import { initSimClient } from "./js/sim_client.js";
   map.once("idle", () => {
     captureInitialView();
   });
+
+  const simTimeEl = document.getElementById("sim-time");
+  if (simTimeEl && typeof simClient.subscribe === "function") {
+    let lastSec = null;
+    const pad = (value) => String(value).padStart(2, "0");
+    const formatTime = (secs) => {
+      const s = Math.max(0, Math.floor(secs));
+      const h = Math.floor(s / 3600);
+      const m = Math.floor((s % 3600) / 60);
+      const ss = s % 60;
+      return `T+${pad(h)}:${pad(m)}:${pad(ss)}`;
+    };
+    simClient.subscribe((state) => {
+      const simTime = Number(state?.simTime);
+      if (!Number.isFinite(simTime)) {
+        return;
+      }
+      const sec = Math.floor(simTime);
+      if (sec === lastSec) {
+        return;
+      }
+      lastSec = sec;
+      simTimeEl.textContent = formatTime(sec);
+    });
+  }
 })();

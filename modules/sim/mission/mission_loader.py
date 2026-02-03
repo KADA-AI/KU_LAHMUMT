@@ -118,6 +118,7 @@ def load_flight_paths(base_path: str, *, project_root: Path) -> Dict[str, Any]:
         coords: List[List[float]] = []
         altitudes: List[float] = []
         alts: List[Optional[float]] = []
+        wp_ids: List[Optional[int]] = []
         for wp in _extract_waypoints(data):
             if not isinstance(wp, dict):
                 continue
@@ -125,7 +126,13 @@ def load_flight_paths(base_path: str, *, project_root: Path) -> Dict[str, Any]:
             if coord is None:
                 continue
             lat, lon, alt = coord
+            wp_id_raw = wp.get("waypointID") if "waypointID" in wp else wp.get("WaypointID")
+            try:
+                wp_id = int(wp_id_raw) if wp_id_raw is not None else None
+            except Exception:
+                wp_id = None
             coords.append([lon, lat])
+            wp_ids.append(wp_id)
             if alt is not None:
                 altitudes.append(alt)
                 alts.append(alt)
@@ -143,6 +150,7 @@ def load_flight_paths(base_path: str, *, project_root: Path) -> Dict[str, Any]:
             "points": len(coords),
             "coords": coords,
             "alts": alts,
+            "wpIds": wp_ids,
             "altMin": min(altitudes) if altitudes else None,
             "altMax": max(altitudes) if altitudes else None,
         }

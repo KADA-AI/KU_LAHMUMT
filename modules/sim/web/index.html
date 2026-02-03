@@ -27,13 +27,24 @@
         <div id="scenario-overlay" class="scenario-overlay" aria-hidden="true">
       <div class="scenario-overlay-dot" data-scn-dot></div>
       <div class="scenario-overlay-tooltip" data-scn-tooltip>
-        <div class="scenario-overlay-title">0202 선행임무 정보</div>
+        <div class="scenario-overlay-title" data-scn-title>0202 선행임무 정보</div>
         <div class="scenario-overlay-coord" data-scn-coord>Lat -- / Lon -- / Alt --</div>
-        <div class="scenario-overlay-hint">클릭: 전송 · 우클릭: 취소</div>
+        <div class="scenario-overlay-hint" data-scn-hint>클릭: 전송 · 우클릭: 취소</div>
       </div>
+    </div>
+    <div id="enemy-picker" class="enemy-picker" aria-hidden="true">
+      <div class="enemy-picker-center"></div>
+      <button type="button" class="enemy-picker-item" data-enemy-type="0" title="없음">없음</button>
+      <button type="button" class="enemy-picker-item" data-enemy-type="1" title="전차">전차</button>
+      <button type="button" class="enemy-picker-item" data-enemy-type="2" title="장갑차">장갑차</button>
+      <button type="button" class="enemy-picker-item" data-enemy-type="3" title="방사포">방사포</button>
+      <button type="button" class="enemy-picker-item" data-enemy-type="4" title="곡사포">곡사포</button>
+      <button type="button" class="enemy-picker-item" data-enemy-type="5" title="고정고사포">고정고사포</button>
+      <button type="button" class="enemy-picker-item" data-enemy-type="6" title="군인">군인</button>
     </div>
     <div class="toolbar">
       <div class="toolbar-title">SIM MAP</div>
+      <div class="toolbar-time" id="sim-time">T+00:00:00</div>
       <button id="toggle-buildings" class="toggle">3D Buildings</button>
     </div>
     <div id="mission-legend" class="mission-legend" aria-hidden="true">
@@ -368,6 +379,20 @@
             <button id="scn-0803-repeat" type="button" class="scenario-btn scenario-btn-primary">
               Repeat (execute=2)
             </button>
+          </div>
+        </section>
+        <section class="scenario-card">
+          <div class="scenario-card-title">적 배치</div>
+          <div class="scenario-row scenario-row-actions">
+            <button id="scn-enemy-pick" type="button" class="scenario-btn scenario-btn-ghost">
+              Map Input Mode
+            </button>
+            <button id="scn-enemy-clear" type="button" class="scenario-btn scenario-btn-primary">
+              Clear Enemies
+            </button>
+          </div>
+          <div class="scenario-hint" id="scn-enemy-hint">
+            Map Input Mode → 맵 클릭 → 유형 선택 (없음/전차/장갑차/방사포/곡사포/고정고사포/군인)
           </div>
         </section>
       </div>

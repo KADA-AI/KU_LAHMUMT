@@ -1,0 +1,85 @@
+{
+  "timestamp": "2026-02-03T22:26:21",
+  "best_score": 41472.632172134145,
+  "best_stage": "final",
+  "best_params": {
+    "yaw": 3.5,
+    "yaw_i": 0.0,
+    "pitch_rate": 4.4,
+    "pitch_damp": 0.21794774687995405,
+    "alt_pitch": 0.07767560484776691,
+    "alt_i": 0.15262948730497936,
+    "throttle": 0.02,
+    "throttle_alt": 0.007000000000000003,
+    "throttle_i": 0.03567820051195817,
+    "lookahead_m": 88.87507724772135,
+    "freeze_yaw_dist": 110.0
+  },
+  "speed_target": 60.0,
+  "pos_tol": 30.0,
+  "n_global": 2400,
+  "keep_top": 128,
+  "n_restarts": 36,
+  "local_iters": 512,
+  "dt_coarse": 0.2,
+  "T_coarse": 1400.0,
+  "dt_fine": 0.2,
+  "T_fine": 1900.0,
+  "suite_size": 5,
+  "start_cases": [
+    [
+      [
+        -300.0,
+        -300.0
+      ],
+      0.0,
+      54.0
+    ],
+    [
+      [
+        -520.0,
+        180.0
+      ],
+      90.0,
+      48.0
+    ],
+    [
+      [
+        220.0,
+        -520.0
+      ],
+      180.0,
+      60.0
+    ]
+  ],
+  "seed": 0,
+  "dt_comp": {
+    "ref": 0.01,
+    "min_scale": 0.35,
+    "max_scale": 2.5,
+    "alphas": {
+      "yaw_p": 0.25,
+      "yaw_i": 0.18,
+      "yaw_d_freeze": 0.35,
+      "pitch_p": 0.25,
+      "pitch_d": 0.45,
+      "roll_p": 0.25,
+      "alt_pitch_outer": 0.1,
+      "alt_i": 0.12,
+      "thr_p": 0.2,
+      "thr_i": 0.15,
+      "thr_alt": 0.15,
+      "lookahead_up": 0.35,
+      "freeze_dist_up": 0.25
+    },
+    "lookahead_scale_clamp": [
+      0.6,
+      2.5
+    ],
+    "freeze_scale_clamp": [
+      0.6,
+      2.5
+    ]
+  },
+  "tight": true
+}

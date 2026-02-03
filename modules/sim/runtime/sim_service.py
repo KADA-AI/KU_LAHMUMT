@@ -1,18 +1,42 @@
 from __future__ import annotations
 
 import math
+import random
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from ..config import SIM_BASE_DT, SIM_POS_TOL, SIM_SPEED_LAH, SIM_SPEED_UAV, SIM_TIME_SCALE
+from ..config import (
+    SIM_BASE_DT,
+    SIM_0402_HISTORY_MAX,
+    SIM_HISTORY_MAX,
+    SIM_POS_TOL,
+    SIM_PROJECTILE_HIT_RADIUS_GUN,
+    SIM_PROJECTILE_HIT_RADIUS_MISSILE,
+    SIM_PROJECTILE_MAX,
+    SIM_PROJECTILE_SPEED_GUN,
+    SIM_PROJECTILE_SPEED_MISSILE,
+    SIM_LAH_AUTO_ATTACK,
+    SIM_SPEED_LAH,
+    SIM_SPEED_UAV,
+    SIM_TIME_SCALE,
+    SIM_AUTO_TRACK_ALWAYS,
+    SIM_TRACK_ALT_BUFFER_M,
+    SIM_TRACK_LOITER_RADIUS_M,
+    SIM_TRACK_LOITER_SPEED_MPS,
+    SIM_TRACK_LOST_TIMEOUT_S,
+    SIM_UAV_DETECT_RANGE_M,
+)
 from .geo import GeoConverter
 from .lah import LAH, LAHParams
 from .uav import UAV, UAVParams
 from .controllers.waypoint_pid import WaypointPIDController, WaypointTarget, load_pid_gains_for_time_scale
 from .operation_mode import OperationContext, OperationMode, build_operation_mode
+from .targets import AirDefenseThreat, GroundTarget, RadarParams, WeaponParams, WeaponType
 
 
 def _agent_label(aircraft_id: int) -> str:
@@ -29,6 +53,13 @@ def _airframe_type(aircraft_id: int) -> str:
     if 4 <= aircraft_id <= 6:
         return "uav"
     return "uav"
+
+
+_EPOCH_2000 = datetime(2000, 1, 1, tzinfo=timezone.utc)
+
+
+def _now_ms_2000() -> int:
+    return int((datetime.now(timezone.utc) - _EPOCH_2000).total_seconds() * 1000)
 
 
 def _extract_waypoints(data: Dict[str, Any]) -> list[Dict[str, Any]]:
@@ -175,6 +206,76 @@ def _extract_loiter(item: Dict[str, Any]) -> Optional[dict]:
     return None
 
 
+_MAX_THREAT_RANGE_M = 5000.0
+_TARGET_TYPE_CONFIG: dict[int, dict[str, Any]] = {
+    1: {
+        "label": "\uC804\uCC28",
+        "moving": True,
+        "speed": (3.0, 8.0),
+        "roam": 220.0,
+        "weapon": WeaponParams(a_range=1200.0, omega=0.12, weapon_type=WeaponType.GUN),
+    },
+    2: {
+        "label": "\uC7A5\uAC11\uCC28",
+        "moving": True,
+        "speed": (4.0, 10.0),
+        "roam": 240.0,
+        "weapon": WeaponParams(a_range=1400.0, omega=0.15, weapon_type=WeaponType.GUN),
+    },
+    3: {
+        "label": "\uBC29\uC0AC\uD3EC",
+        "moving": True,
+        "speed": (3.0, 7.0),
+        "roam": 200.0,
+        "weapon": WeaponParams(a_range=1600.0, omega=0.18, weapon_type=WeaponType.GUN),
+    },
+    4: {
+        "label": "\uACE1\uC0AC\uD3EC",
+        "moving": False,
+        "speed": (0.0, 0.0),
+        "roam": 0.0,
+        "weapon": WeaponParams(a_range=1800.0, omega=0.16, weapon_type=WeaponType.GUN),
+    },
+    5: {
+        "label": "\uACE0\uC815\uACE0\uC0AC\uD3EC",
+        "moving": False,
+        "speed": (0.0, 0.0),
+        "roam": 0.0,
+        "weapon": WeaponParams(a_range=2600.0, omega=0.35, weapon_type=WeaponType.MISSILE, t_fire=4.0),
+    },
+    6: {
+        "label": "\uAD70\uC778",
+        "moving": True,
+        "speed": (1.0, 3.0),
+        "roam": 140.0,
+        "weapon": WeaponParams(a_range=600.0, omega=0.05, weapon_type=WeaponType.GUN),
+    },
+}
+
+_FRIENDLY_WEAPON_CONFIG: dict[str, dict[str, float | str]] = {
+    "lah": {
+        "range": 2400.0,
+        "reload": 4.0,
+        "speed": SIM_PROJECTILE_SPEED_MISSILE,
+        "hit_radius": SIM_PROJECTILE_HIT_RADIUS_MISSILE,
+        "kind": "missile",
+    },
+}
+
+_PROJECTILE_KIND_BY_WEAPON = {
+    WeaponType.GUN: "gun",
+    WeaponType.MISSILE: "missile",
+}
+
+_IMPACT_CONFIG: dict[str, dict[str, float]] = {
+    "gun": {"ttl": 0.55, "radius": 45.0, "flash": 22.0},
+    "missile": {"ttl": 1.1, "radius": 140.0, "flash": 70.0},
+    "default": {"ttl": 0.6, "radius": 60.0, "flash": 30.0},
+}
+
+_FOOTPRINT_ASPECT = 16.0 / 9.0
+
+
 @dataclass
 class PathDefinition:
     label: str
@@ -192,6 +293,57 @@ class SimVehicle:
     vehicle: object
     controller: WaypointPIDController
     path_id: int | None
+    alive: bool = True
+    crashed: bool = False
+
+
+@dataclass
+class Projectile:
+    id: int
+    side: str
+    kind: str
+    source_kind: str
+    source_id: object
+    target_kind: str
+    target_id: object
+    x: float
+    y: float
+    z: float
+    vx: float
+    vy: float
+    vz: float
+    speed: float
+    ttl: float
+    hit_radius: float
+    p_hit: float | None
+
+
+@dataclass
+class ImpactEffect:
+    id: int
+    side: str
+    kind: str
+    x: float
+    y: float
+    z: float
+    age: float
+    ttl: float
+    radius_m: float
+    flash_m: float
+
+
+@dataclass
+class TrackingState:
+    target_id: int
+    target: GroundTarget
+    saved_controller: WaypointPIDController
+    tracking_controller: WaypointPIDController
+    loiter_wp: WaypointTarget
+    fov_deg: float
+    stage: int
+    start_step: int
+    last_seen: float
+    filming_prop: dict | None
 
 
 class SimulationService:
@@ -210,6 +362,13 @@ class SimulationService:
         self.pos_tol = float(pos_tol)
         self.speed_uav = float(speed_uav)
         self.speed_lah = float(speed_lah)
+        self.uav_detection_range_m = float(SIM_UAV_DETECT_RANGE_M)
+        self.track_loiter_radius_m = float(SIM_TRACK_LOITER_RADIUS_M)
+        self.track_loiter_speed_mps = float(SIM_TRACK_LOITER_SPEED_MPS)
+        self.track_alt_buffer_m = float(SIM_TRACK_ALT_BUFFER_M)
+        self.track_lost_timeout_s = float(SIM_TRACK_LOST_TIMEOUT_S)
+        self.auto_track_always = bool(SIM_AUTO_TRACK_ALWAYS)
+        self.lah_auto_attack = bool(SIM_LAH_AUTO_ATTACK)
 
         self._lock = threading.RLock()
         self._shutdown = threading.Event()
@@ -233,8 +392,28 @@ class SimulationService:
         self._filming_wp_ids: dict[str, int | None] = {}
         self._line_search_state: dict[str, object | None] = {}
         self._line_search_debug: dict[str, object | None] = {}
+        self._tracking_state: dict[str, TrackingState] = {}
+        self._tracking_target_owner: dict[int, str] = {}
+        self._history = deque(maxlen=int(SIM_HISTORY_MAX))
+        self._events_0402 = deque(maxlen=int(SIM_0402_HISTORY_MAX))
+        self._reported_0402_roi: set[tuple[int, int]] = set()
+        self._reported_0402_list: set[tuple[int, int]] = set()
+        self._target_id_map_0402: dict[int, int] = {}
+        self._target_id_seq_0402 = 7
         self.input_mission_order_by_aircraft: dict[int, list[int]] = {}
         self.current_input_mission_idx_by_aircraft: dict[int, int] = {}
+        self.targets: list[GroundTarget] = []
+        self._target_counts: dict[int, int] = {}
+        self._target_id_seq = 1
+        self._pending_targets: list[dict[str, Any]] = []
+        self._projectiles: list[Projectile] = []
+        self._projectile_id_seq = 1
+        self._last_enemy_fire: dict[int, float] = {}
+        self._last_vehicle_fire: dict[str, float] = {}
+        self._effects: list[ImpactEffect] = []
+        self._effect_id_seq = 1
+        self.integration = None
+        self._last_0401_sim_time: float | None = None
 
     def _ensure_thread(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -246,6 +425,9 @@ class SimulationService:
         self._shutdown.set()
         if self._thread:
             self._thread.join(timeout=2.0)
+
+    def set_integration(self, integration) -> None:
+        self.integration = integration
 
     def set_speed_factor(self, value: float) -> float:
         try:
@@ -297,6 +479,21 @@ class SimulationService:
             self._filming_wp_ids = {}
             self._line_search_state = {}
             self._line_search_debug = {}
+            self._history.clear()
+            self._reset_0402_state()
+            self.targets = []
+            self._target_counts = {}
+            self._target_id_seq = 1
+            pending = list(self._pending_targets)
+            self._pending_targets = []
+            self._pending_targets = []
+            self._projectiles = []
+            self._projectile_id_seq = 1
+            self._last_enemy_fire = {}
+            self._last_vehicle_fire = {}
+            self._effects = []
+            self._effect_id_seq = 1
+            self._last_0401_sim_time = None
         return {"ok": True}
 
     def reset(self) -> dict:
@@ -305,7 +502,29 @@ class SimulationService:
             self.step_count = 0
             if self._paths:
                 self._build_vehicles(self._paths)
+            for tgt in self.targets:
+                try:
+                    tgt.reset()
+                except Exception:
+                    continue
+            self._history.clear()
+            self._reset_0402_state()
+            self._projectiles = []
+            self._projectile_id_seq = 1
+            self._last_enemy_fire = {}
+            self._last_vehicle_fire = {}
+            self._effects = []
+            self._effect_id_seq = 1
+            self._last_0401_sim_time = None
         return {"ok": True}
+
+    def _reset_0402_state(self) -> None:
+        self._events_0402.clear()
+        self._reported_0402_roi = set()
+        self._reported_0402_list = set()
+        self._target_id_map_0402 = {}
+        self._target_id_seq_0402 = 7
+        self._tracking_target_owner = {}
 
     def _current_input_mission_id_for(self, aircraft_id: int) -> Optional[int]:
         order = self.input_mission_order_by_aircraft.get(aircraft_id) or []
@@ -351,6 +570,226 @@ class SimulationService:
                 )
                 advanced += 1
         return advanced
+
+    def _build_target(
+        self,
+        *,
+        type_id: int,
+        x: float,
+        y: float,
+        z: float,
+        id_override: int | None = None,
+        name_override: str | None = None,
+    ) -> GroundTarget:
+        cfg = _TARGET_TYPE_CONFIG.get(type_id)
+        if cfg is None:
+            raise ValueError("invalid target type")
+        label = cfg.get("label") or f"T{type_id}"
+        count = self._target_counts.get(type_id, 0) + 1
+        self._target_counts[type_id] = count
+        name = str(name_override) if name_override else f"{label}_{count}"
+        if id_override is None:
+            target_id = int(self._target_id_seq)
+            self._target_id_seq += 1
+        else:
+            target_id = int(id_override)
+            if target_id >= self._target_id_seq:
+                self._target_id_seq = target_id + 1
+        weapon_proto = cfg.get("weapon")
+        weapon = WeaponParams(**vars(weapon_proto)) if isinstance(weapon_proto, WeaponParams) else WeaponParams()
+        radar = RadarParams()
+        threat = AirDefenseThreat(radar=radar, weapon=weapon)
+        moving = bool(cfg.get("moving", False))
+        speed = cfg.get("speed") or (0.0, 0.0)
+        try:
+            vmin, vmax = float(speed[0]), float(speed[1])
+        except Exception:
+            vmin, vmax = 0.0, 0.0
+        roam = float(cfg.get("roam") or 0.0)
+        roam_center = (x, y) if moving and roam > 0 else None
+        roam_radius = roam if moving and roam > 0 else None
+        target = GroundTarget(
+            id=target_id,
+            type_id=int(type_id),
+            name=str(name),
+            x=float(x),
+            y=float(y),
+            z=float(z),
+            moving=moving,
+            vmin=vmin,
+            vmax=vmax,
+            roam_center=roam_center,
+            roam_radius=roam_radius,
+            threat=threat,
+            spawn_x=float(x),
+            spawn_y=float(y),
+            spawn_z=float(z),
+        )
+        return target
+
+    def _weapon_projectile_speed(self, weapon: WeaponParams) -> float:
+        if weapon.weapon_type is WeaponType.MISSILE:
+            return float(SIM_PROJECTILE_SPEED_MISSILE)
+        return float(SIM_PROJECTILE_SPEED_GUN)
+
+    def _weapon_hit_radius(self, weapon: WeaponParams) -> float:
+        if weapon.weapon_type is WeaponType.MISSILE:
+            return float(SIM_PROJECTILE_HIT_RADIUS_MISSILE)
+        return float(SIM_PROJECTILE_HIT_RADIUS_GUN)
+
+    def _spawn_projectile(
+        self,
+        *,
+        side: str,
+        kind: str,
+        source_kind: str,
+        source_id: object,
+        target_kind: str,
+        target_id: object,
+        start: tuple[float, float, float],
+        target: tuple[float, float, float],
+        speed: float,
+        hit_radius: float,
+        max_range: float,
+    ) -> None:
+        if len(self._projectiles) >= int(SIM_PROJECTILE_MAX):
+            return
+        sx, sy, sz = start
+        tx, ty, tz = target
+        dx = tx - sx
+        dy = ty - sy
+        dz = tz - sz
+        dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+        if dist <= 1e-6:
+            return
+        speed = max(1.0, float(speed))
+        p_hit = None
+        if kind == "missile" and max_range > 0:
+            ratio = max(0.0, min(1.0, dist / float(max_range)))
+            p_hit = 0.25 + 0.7 * (1.0 - ratio)
+            p_hit = max(0.1, min(0.95, p_hit))
+        vx = dx / dist * speed
+        vy = dy / dist * speed
+        vz = dz / dist * speed
+        ttl = max(0.5, float(max_range) / speed + 1.0)
+        proj = Projectile(
+            id=int(self._projectile_id_seq),
+            side=str(side),
+            kind=str(kind),
+            source_kind=str(source_kind),
+            source_id=source_id,
+            target_kind=str(target_kind),
+            target_id=target_id,
+            x=float(sx),
+            y=float(sy),
+            z=float(sz),
+            vx=float(vx),
+            vy=float(vy),
+            vz=float(vz),
+            speed=float(speed),
+            ttl=float(ttl),
+            hit_radius=float(hit_radius),
+            p_hit=p_hit,
+        )
+        self._projectile_id_seq += 1
+        self._projectiles.append(proj)
+
+    def _spawn_effect(self, *, side: str, kind: str, x: float, y: float, z: float) -> None:
+        cfg = _IMPACT_CONFIG.get(kind, _IMPACT_CONFIG["default"])
+        eff = ImpactEffect(
+            id=int(self._effect_id_seq),
+            side=str(side),
+            kind=str(kind),
+            x=float(x),
+            y=float(y),
+            z=float(z),
+            age=0.0,
+            ttl=float(cfg.get("ttl", 0.6)),
+            radius_m=float(cfg.get("radius", 60.0)),
+            flash_m=float(cfg.get("flash", 30.0)),
+        )
+        self._effect_id_seq += 1
+        self._effects.append(eff)
+
+    def _make_pending_target(self, *, type_id: int, lat: float, lon: float, alt: float) -> dict[str, Any]:
+        cfg = _TARGET_TYPE_CONFIG.get(type_id)
+        if cfg is None:
+            raise ValueError("invalid target type")
+        label = cfg.get("label") or f"T{type_id}"
+        count = self._target_counts.get(type_id, 0) + 1
+        self._target_counts[type_id] = count
+        name = f"{label}_{count}"
+        target_id = int(self._target_id_seq)
+        self._target_id_seq += 1
+        return {
+            "id": target_id,
+            "type": int(type_id),
+            "name": name,
+            "lat": float(lat),
+            "lon": float(lon),
+            "alt": float(alt),
+            "moving": bool(cfg.get("moving", False)),
+            "alive": True,
+        }
+
+    def _target_to_dict(self, target: GroundTarget, geo: GeoConverter) -> dict:
+        lon, lat = geo.xy_to_lonlat(target.x, target.y)
+        return {
+            "id": int(target.id),
+            "type": int(target.type_id),
+            "name": str(target.name),
+            "lat": float(lat),
+            "lon": float(lon),
+            "alt": float(target.z),
+            "moving": bool(target.moving),
+            "alive": bool(target.alive),
+        }
+
+    def add_target(self, payload: dict) -> dict:
+        try:
+            type_id = int((payload or {}).get("type") or (payload or {}).get("targetType") or 0)
+        except Exception:
+            type_id = 0
+        if type_id == 0:
+            return {"ok": True, "skipped": True}
+        lat = (payload or {}).get("lat")
+        lon = (payload or {}).get("lon")
+        if lon is None and "lng" in (payload or {}):
+            lon = (payload or {}).get("lng")
+        alt = (payload or {}).get("alt") or 0.0
+        try:
+            lat = float(lat)
+            lon = float(lon)
+            alt = float(alt) if alt is not None else 0.0
+        except Exception:
+            return {"ok": False, "error": "invalid coordinate"}
+        with self._lock:
+            if type_id not in _TARGET_TYPE_CONFIG:
+                return {"ok": False, "error": "invalid target type"}
+            if self.geo is None:
+                pending = self._make_pending_target(type_id=type_id, lat=lat, lon=lon, alt=alt)
+                self._pending_targets.append(pending)
+                return {"ok": True, "queued": True, "target": pending}
+            x, y = self.geo.lonlat_to_xy(lon, lat)
+            target = self._build_target(type_id=type_id, x=x, y=y, z=alt)
+            self.targets.append(target)
+            return {"ok": True, "target": self._target_to_dict(target, self.geo)}
+
+    def clear_targets(self) -> dict:
+        with self._lock:
+            self.targets = []
+            self._target_counts = {}
+            self._target_id_seq = 1
+            self._pending_targets = []
+            self._tracking_state = {}
+            self._reset_0402_state()
+            self._projectiles = []
+            self._projectile_id_seq = 1
+            self._last_enemy_fire = {}
+            self._effects = []
+            self._effect_id_seq = 1
+            self._last_0401_sim_time = None
+        return {"ok": True}
 
     def load_mission(self, payload: dict) -> dict:
         flight_paths = payload.get("flightPaths") or payload.get("paths") or payload.get("flightpaths")
@@ -806,6 +1245,8 @@ class SimulationService:
             spawn_latlon[aircraft_id] = (lat, lon, float(alt) if alt is not None else 0.0)
 
         with self._lock:
+            pending = list(self._pending_targets)
+            self._pending_targets = []
             self.geo = GeoConverter(lon_avg, lat_avg)
             geo = self.geo
             spawn_by_aircraft: dict[int, tuple[float, float, float]] = {}
@@ -825,11 +1266,40 @@ class SimulationService:
             self._spawn_by_aircraft = spawn_by_aircraft
             self._paths = paths
             self._build_vehicles(paths)
+            if pending and geo:
+                for item in pending:
+                    try:
+                        type_id = int(item.get("type", 0))
+                        lat = float(item.get("lat"))
+                        lon = float(item.get("lon"))
+                        alt = float(item.get("alt") or 0.0)
+                    except Exception:
+                        continue
+                    try:
+                        x, y = geo.lonlat_to_xy(lon, lat)
+                        tgt = self._build_target(
+                            type_id=type_id,
+                            x=x,
+                            y=y,
+                            z=alt,
+                            id_override=item.get("id"),
+                            name_override=item.get("name"),
+                        )
+                        self.targets.append(tgt)
+                    except Exception:
+                        continue
             self.running = False
             self.paused = True
             self.sim_time = 0.0
             self.step_count = 0
             self.last_error = None
+            self._projectiles = []
+            self._projectile_id_seq = 1
+            self._last_enemy_fire = {}
+            self._last_vehicle_fire = {}
+            self._effects = []
+            self._effect_id_seq = 1
+            self._last_0401_sim_time = None
             if not seq_by_aircraft:
                 self.input_mission_order_by_aircraft = {}
                 self.current_input_mission_idx_by_aircraft = {}
@@ -858,11 +1328,541 @@ class SimulationService:
         self._operation_handlers[mode_id] = handler
         return handler
 
+    def _resolve_tracking_fov(self, filming_prop: dict | None) -> float:
+        if not isinstance(filming_prop, dict):
+            return 60.0
+        value = filming_prop.get("fieldOfView") or filming_prop.get("fov")
+        try:
+            fov = float(value)
+        except Exception:
+            fov = 60.0
+        return max(5.0, min(160.0, fov))
+
+    def _footprint_polygon(
+        self, simv: SimVehicle, focus: tuple[float, float, float], fov_deg: float
+    ) -> list[tuple[float, float]] | None:
+        if fov_deg <= 0.0:
+            return None
+        fx, fy, fz = focus
+        s = simv.vehicle.s
+        ox = float(s.x - fx)
+        oy = float(s.y - fy)
+        oz = float(s.z - fz)
+        fwd_x = -ox
+        fwd_y = -oy
+        fwd_z = -oz
+        fwd_len = math.sqrt(fwd_x * fwd_x + fwd_y * fwd_y + fwd_z * fwd_z)
+        if fwd_len < 1e-6:
+            return None
+        fwd_x /= fwd_len
+        fwd_y /= fwd_len
+        fwd_z /= fwd_len
+        right_x = fwd_y
+        right_y = -fwd_x
+        right_z = 0.0
+        right_len = math.sqrt(right_x * right_x + right_y * right_y + right_z * right_z)
+        if right_len < 1e-6:
+            return None
+        right_x /= right_len
+        right_y /= right_len
+        right_z /= right_len
+        up_x = right_y * fwd_z - right_z * fwd_y
+        up_y = right_z * fwd_x - right_x * fwd_z
+        up_z = right_x * fwd_y - right_y * fwd_x
+        up_len = math.sqrt(up_x * up_x + up_y * up_y + up_z * up_z)
+        if up_len > 1e-6:
+            up_x /= up_len
+            up_y /= up_len
+            up_z /= up_len
+        fov_diag = math.radians(float(fov_deg))
+        if fov_diag <= 0.0:
+            return None
+        ar = float(_FOOTPRINT_ASPECT)
+        fov_h = 2.0 * math.atan((math.tan(fov_diag / 2.0) * ar) / math.sqrt(1.0 + ar * ar))
+        fov_v = 2.0 * math.atan((math.tan(fov_diag / 2.0)) / math.sqrt(1.0 + ar * ar))
+        tan_h = math.tan(fov_h / 2.0)
+        tan_v = math.tan(fov_v / 2.0)
+        corners: list[tuple[float, float]] = []
+        for sx in (-1.0, 1.0):
+            for sy in (-1.0, 1.0):
+                dir_x = fwd_x + sx * tan_h * right_x + sy * tan_v * up_x
+                dir_y = fwd_y + sx * tan_h * right_y + sy * tan_v * up_y
+                dir_z = fwd_z + sx * tan_h * right_z + sy * tan_v * up_z
+                dir_len = math.sqrt(dir_x * dir_x + dir_y * dir_y + dir_z * dir_z)
+                if dir_len < 1e-6:
+                    return None
+                dir_x /= dir_len
+                dir_y /= dir_len
+                dir_z /= dir_len
+                if abs(dir_z) < 1e-6:
+                    return None
+                t = (-oz) / dir_z
+                if t <= 0.0:
+                    return None
+                px = ox + dir_x * t
+                py = oy + dir_y * t
+                corners.append((px, py))
+        if len(corners) != 4:
+            return None
+        cx = sum(p[0] for p in corners) / 4.0
+        cy = sum(p[1] for p in corners) / 4.0
+        corners.sort(key=lambda p: math.atan2(p[1] - cy, p[0] - cx))
+        return corners
+
+    def _point_in_poly(self, x: float, y: float, poly: list[tuple[float, float]]) -> bool:
+        inside = False
+        n = len(poly)
+        if n < 3:
+            return False
+        j = n - 1
+        for i in range(n):
+            xi, yi = poly[i]
+            xj, yj = poly[j]
+            intersect = (yi > y) != (yj > y)
+            if intersect:
+                x_at_y = (xj - xi) * (y - yi) / (yj - yi + 1e-9) + xi
+                if x < x_at_y:
+                    inside = not inside
+            j = i
+        return inside
+
+    def _footprint_contains(self, simv: SimVehicle, target: GroundTarget, fov_deg: float) -> bool:
+        focus = self._filming_targets.get(simv.label)
+        if focus is None:
+            focus = self._default_downward_target(simv.vehicle)
+        poly = self._footprint_polygon(simv, focus, fov_deg)
+        if not poly:
+            return False
+        fx, fy, _fz = focus
+        tx = float(target.x - fx)
+        ty = float(target.y - fy)
+        return self._point_in_poly(tx, ty, poly)
+
+    def _target_in_view(self, simv: SimVehicle, tgt: GroundTarget, fov_deg: float) -> bool:
+        s = simv.vehicle.s
+        dx = float(tgt.x - s.x)
+        dy = float(tgt.y - s.y)
+        dz = float(tgt.z - s.z)
+        dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+        if self.uav_detection_range_m > 0.0 and dist > self.uav_detection_range_m:
+            return False
+        if not self._check_los_flat(s.x, s.y, s.z, tgt.x, tgt.y, tgt.z):
+            return False
+        if fov_deg <= 0.0:
+            return True
+        return self._footprint_contains(simv, tgt, fov_deg)
+
+    def _find_detected_target(self, simv: SimVehicle, fov_deg: float) -> tuple[int, GroundTarget] | None:
+        if not self.targets:
+            return None
+        best = None
+        best_dist = float("inf")
+        s = simv.vehicle.s
+        for tgt in self.targets:
+            if not tgt.alive:
+                continue
+            owner = self._tracking_target_owner.get(int(tgt.id))
+            if owner and owner != simv.label:
+                continue
+            if not self._target_in_view(simv, tgt, fov_deg):
+                continue
+            dx = float(tgt.x - s.x)
+            dy = float(tgt.y - s.y)
+            dz = float(tgt.z - s.z)
+            dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+            if dist < best_dist:
+                best_dist = dist
+                best = tgt
+        if best is None:
+            return None
+        return int(best.id), best
+
+    def _assign_0402_target_id(self, target: GroundTarget) -> int:
+        try:
+            raw_id = int(getattr(target, "id", 0))
+        except Exception:
+            raw_id = 0
+        if raw_id <= 0:
+            try:
+                raw_id = self.targets.index(target) + 1
+            except Exception:
+                raw_id = 0
+        if raw_id <= 0:
+            return 0
+        if raw_id in self._target_id_map_0402:
+            return self._target_id_map_0402[raw_id]
+        assigned = int(self._target_id_seq_0402)
+        self._target_id_seq_0402 += 1
+        self._target_id_map_0402[raw_id] = assigned
+        return assigned
+
+    def _fuel_remaining(self) -> float:
+        full = 15.0
+        endurance = 3.0 * 3600.0
+        ratio = 1.0 - max(0.0, float(self.sim_time)) / endurance
+        return max(0.0, full * ratio)
+
+    def _flight_mode_for(self, simv: SimVehicle) -> int:
+        tracking = self._tracking_state.get(simv.label)
+        if tracking is not None and tracking.stage >= 1:
+            return 9
+        ctrl = simv.controller
+        if getattr(ctrl, "finished", False) or getattr(ctrl, "is_loitering", False):
+            return 8
+        return 7
+
+    def _build_agent_state_0401(self, simv: SimVehicle) -> dict | None:
+        geo = self.geo
+        if geo is None:
+            return None
+        s = simv.vehicle.s
+        lon, lat = geo.xy_to_lonlat(float(s.x), float(s.y))
+        fuel = self._fuel_remaining()
+        agent = {
+            "aircraftID": int(simv.aircraft_id),
+            "isUnmanned": simv.airframe == "uav",
+            "coordinate": {
+                "latitude": float(lat),
+                "longitude": float(lon),
+                "altitude": float(s.z),
+            },
+            "velocity": {
+                "speed": float(getattr(s, "u", 0.0)),
+                "heading": float(getattr(s, "yaw", 0.0)),
+            },
+            "fuel": float(fuel),
+            "health": 1 if simv.alive else 2,
+            "lastSignalTime": _now_ms_2000(),
+        }
+        if simv.airframe == "uav":
+            current_wp = 0
+            tgt = simv.controller.current_target()
+            if tgt is not None and tgt.wp_id is not None:
+                try:
+                    current_wp = int(tgt.wp_id)
+                except Exception:
+                    current_wp = 0
+            tracking = self._tracking_state.get(simv.label)
+            target_id = 0
+            if tracking is not None and tracking.stage >= 1 and tracking.target.alive:
+                target_id = self._assign_0402_target_id(tracking.target)
+            agent["unmannedInfo"] = {
+                "currentWaypointID": {"waypointID": int(current_wp)},
+                "flightMode": int(self._flight_mode_for(simv)),
+                "targetFollowing": {"targetID": int(target_id)},
+                "payloadHealth": 1,
+                "fuelWarning": 0,
+                "onMission": 1,
+            }
+        else:
+            agent["mannedInfo"] = {
+                "weapons": {"type1": 0, "type2": 0, "type3": 0},
+                "datalinkStatus": {
+                    "isConnectedToUAV1": True,
+                    "isConnectedToUAV2": True,
+                    "isConnectedToUAV3": True,
+                },
+            }
+        return agent
+
+    def _push_0401_once(self) -> None:
+        if not self.integration:
+            return
+        if not getattr(self.integration, "enabled", False):
+            return
+        if not self.vehicles:
+            return
+        agent_states = []
+        for simv in self.vehicles.values():
+            state = self._build_agent_state_0401(simv)
+            if state:
+                agent_states.append(state)
+        if not agent_states:
+            return
+        payload = {
+            "timestamp": _now_ms_2000(),
+            "source": "IDM",
+            "agentStateList": agent_states,
+        }
+        try:
+            self.integration.send_custom("0401", payload)
+        except Exception:
+            return
+
+    def _maybe_push_0401(self) -> None:
+        if not self.integration or not getattr(self.integration, "enabled", False):
+            return
+        interval = 0.2
+        if self._last_0401_sim_time is None:
+            self._last_0401_sim_time = float(self.sim_time)
+            self._push_0401_once()
+            return
+        if (self.sim_time - self._last_0401_sim_time) >= interval:
+            self._last_0401_sim_time = float(self.sim_time)
+            self._push_0401_once()
+
+    def _record_0402_roi(self, simv: SimVehicle, target: GroundTarget, fov_deg: float) -> None:
+        geo = self.geo
+        if geo is None:
+            return
+        try:
+            aircraft_id = int(simv.aircraft_id)
+        except Exception:
+            aircraft_id = 0
+        try:
+            raw_id = int(getattr(target, "id", 0))
+        except Exception:
+            raw_id = 0
+        if raw_id <= 0:
+            try:
+                raw_id = self.targets.index(target) + 1
+            except Exception:
+                raw_id = 0
+        key = (aircraft_id, raw_id)
+        if key in self._reported_0402_roi:
+            return
+        try:
+            lon, lat = geo.xy_to_lonlat(float(target.x), float(target.y))
+        except Exception:
+            return
+        coord = {"latitude": float(lat), "longitude": float(lon), "altitude": float(target.z)}
+        body = {
+            "timestamp": _now_ms_2000(),
+            "source": "SIM",
+            "roiInfo": {
+                "aircraftID": aircraft_id,
+                "coordinate": coord,
+                "fov": float(fov_deg),
+            },
+        }
+        self._events_0402.append(
+            {
+                "step": int(self.step_count),
+                "simTime": float(self.sim_time),
+                "aircraftID": aircraft_id,
+                "targetID": 0,
+                "body": body,
+            }
+        )
+        if self.integration and getattr(self.integration, "enabled", False):
+            try:
+                self.integration.send_custom("0402", body)
+            except Exception:
+                pass
+        self._reported_0402_roi.add(key)
+
+    def _record_0402_target_list(self, simv: SimVehicle, target: GroundTarget, fov_deg: float) -> None:
+        geo = self.geo
+        if geo is None:
+            return
+        try:
+            aircraft_id = int(simv.aircraft_id)
+        except Exception:
+            aircraft_id = 0
+        try:
+            raw_id = int(getattr(target, "id", 0))
+        except Exception:
+            raw_id = 0
+        if raw_id <= 0:
+            try:
+                raw_id = self.targets.index(target) + 1
+            except Exception:
+                raw_id = 0
+        key = (aircraft_id, raw_id)
+        if key in self._reported_0402_list:
+            return
+        try:
+            lon, lat = geo.xy_to_lonlat(float(target.x), float(target.y))
+        except Exception:
+            return
+        coord = {"latitude": float(lat), "longitude": float(lon), "altitude": float(target.z)}
+        try:
+            target_type = int(getattr(target, "type_id", 0) or 0)
+        except Exception:
+            target_type = 0
+        assigned_id = self._assign_0402_target_id(target)
+        body = {
+            "timestamp": _now_ms_2000(),
+            "source": "SIM",
+            "roiInfo": {
+                "aircraftID": aircraft_id,
+                "coordinate": coord,
+                "fov": float(fov_deg),
+            },
+            "targetList": [
+                {
+                    "targetID": assigned_id,
+                    "targetType": target_type,
+                    "coordinate": coord,
+                    "watcher": {"aircraftID": aircraft_id},
+                    "targetInFrame": 1,
+                    "isDestroyed": 0,
+                    "threat": 100.0,
+                }
+            ],
+        }
+        self._events_0402.append(
+            {
+                "step": int(self.step_count),
+                "simTime": float(self.sim_time),
+                "aircraftID": aircraft_id,
+                "targetID": assigned_id,
+                "body": body,
+            }
+        )
+        if self.integration and getattr(self.integration, "enabled", False):
+            try:
+                self.integration.send_custom("0402", body)
+            except Exception:
+                pass
+        self._reported_0402_list.add(key)
+
+    def _start_tracking(
+        self,
+        simv: SimVehicle,
+        target_id: int,
+        target: GroundTarget,
+        filming_prop: dict | None,
+        fov_deg: float,
+    ) -> None:
+        if simv.label in self._tracking_state:
+            return
+        owner = self._tracking_target_owner.get(int(target.id))
+        if owner and owner != simv.label:
+            return
+        tracking_film = filming_prop if isinstance(filming_prop, dict) else {}
+        tracking_film = dict(tracking_film)
+        tracking_film.setdefault("operationMode", 3)
+        tracking_film["fieldOfView"] = float(fov_deg)
+        saved_controller = simv.controller
+        radius = max(50.0, float(self.track_loiter_radius_m))
+        speed = float(self.track_loiter_speed_mps)
+        if speed <= 0.0:
+            speed = float(getattr(saved_controller, "speed_target", self.speed_uav))
+        alt = max(float(simv.vehicle.s.z), float(target.z) + float(self.track_alt_buffer_m))
+        loiter_prop = {"time": 1e9, "radius": radius, "speed": speed, "direction": 1}
+        loiter_wp = WaypointTarget(
+            pos=(float(target.x), float(target.y), float(alt)),
+            speed=float(speed),
+            loiter=loiter_prop,
+            filming=tracking_film,
+        )
+        tracking_controller = WaypointPIDController(
+            simv.vehicle,
+            [loiter_wp],
+            gains=saved_controller.gains,
+            speed_target=float(speed),
+            pos_tol=float(self.pos_tol),
+            name=f"{simv.label}-track",
+            allow_hover=False,
+        )
+        tracking_controller.is_loitering = True
+        tracking_controller.loiter_timer = math.inf
+        tracking_controller.loiter_center = (float(target.x), float(target.y), float(alt))
+        tracking_controller.loiter_radius = radius
+        tracking_controller.loiter_speed = float(speed)
+        tracking_controller.loiter_angle = math.atan2(simv.vehicle.s.y - target.y, simv.vehicle.s.x - target.x)
+        simv.controller = tracking_controller
+        self._tracking_state[simv.label] = TrackingState(
+            target_id=int(target_id),
+            target=target,
+            saved_controller=saved_controller,
+            tracking_controller=tracking_controller,
+            loiter_wp=loiter_wp,
+            fov_deg=float(fov_deg),
+            stage=0,
+            start_step=int(self.step_count),
+            last_seen=float(self.sim_time),
+            filming_prop=tracking_film,
+        )
+        self._tracking_target_owner[int(target.id)] = simv.label
+        self._record_0402_roi(simv, target, fov_deg)
+
+    def _stop_tracking(self, simv: SimVehicle) -> None:
+        state = self._tracking_state.pop(simv.label, None)
+        if state is None:
+            return
+        try:
+            owner = self._tracking_target_owner.get(int(state.target.id))
+            if owner == simv.label:
+                del self._tracking_target_owner[int(state.target.id)]
+        except Exception:
+            pass
+        simv.controller = state.saved_controller
+
+    def _update_tracking_center(self, state: TrackingState, simv: SimVehicle) -> None:
+        target = state.target
+        if not target.alive:
+            return
+        alt = max(float(simv.vehicle.s.z), float(target.z) + float(self.track_alt_buffer_m))
+        center = (float(target.x), float(target.y), float(alt))
+        state.loiter_wp.pos = center
+        ctrl = state.tracking_controller
+        ctrl.loiter_center = center
+        ctrl.loiter_radius = max(50.0, float(self.track_loiter_radius_m))
+        speed = float(self.track_loiter_speed_mps)
+        if speed <= 0.0:
+            speed = float(getattr(state.saved_controller, "speed_target", self.speed_uav))
+        ctrl.loiter_speed = speed
+
+    def _update_tracking(self, simv: SimVehicle, dt: float) -> None:
+        label = simv.label
+        state = self._tracking_state.get(label)
+        if state is not None:
+            if not state.target.alive:
+                self._stop_tracking(simv)
+                return
+            if self._target_in_view(simv, state.target, 360.0):
+                state.last_seen = float(self.sim_time)
+            elif self.track_lost_timeout_s > 0.0:
+                if (self.sim_time - state.last_seen) > self.track_lost_timeout_s:
+                    self._stop_tracking(simv)
+                    return
+            if state.stage == 0 and int(self.step_count) > int(state.start_step):
+                state.stage = 1
+                state.fov_deg = 2.0
+                new_prop = dict(state.filming_prop or {})
+                new_prop.setdefault("operationMode", 3)
+                new_prop["fieldOfView"] = float(state.fov_deg)
+                state.filming_prop = new_prop
+                try:
+                    state.loiter_wp.filming = new_prop
+                except Exception:
+                    pass
+                self._record_0402_target_list(simv, state.target, state.fov_deg)
+            self._update_tracking_center(state, simv)
+            return
+
+        if simv.airframe != "uav":
+            return
+        current = simv.controller.current_target()
+        filming_prop = current.filming if current else None
+        if not self.auto_track_always:
+            if not (isinstance(filming_prop, dict) and int(filming_prop.get("operationMode") or 0) == 3):
+                return
+        fov_deg = self._resolve_tracking_fov(filming_prop if isinstance(filming_prop, dict) else None)
+        found = self._find_detected_target(simv, fov_deg)
+        if found is None:
+            return
+        target_id, target = found
+        self._start_tracking(simv, target_id, target, filming_prop, fov_deg)
+
     def _update_filming_target(self, simv: SimVehicle, dt: float) -> None:
         geo = self.geo
         if geo is None:
             return
         label = simv.label
+        tracking = self._tracking_state.get(label)
+        if tracking is not None and tracking.target.alive:
+            self._line_search_state[label] = None
+            self._filming_props[label] = tracking.filming_prop
+            self._filming_wp_ids[label] = None
+            self._filming_targets[label] = (
+                float(tracking.target.x),
+                float(tracking.target.y),
+                float(tracking.target.z),
+            )
+            return
         controller = simv.controller
         tgt = controller.current_target()
         filming_prop = tgt.filming if tgt else None
@@ -912,10 +1912,20 @@ class SimulationService:
         if result.reset_debug or result.debug is not None:
             self._line_search_debug[label] = result.debug
 
+        tracking = self._tracking_state.get(label)
+        if tracking is not None:
+            tgt = tracking.target
+            alt = max(float(simv.vehicle.s.z), float(tgt.z) + float(self.track_alt_buffer_m))
+            self._filming_targets[label] = (float(tgt.x), float(tgt.y), float(alt))
+            if tracking.filming_prop is not None:
+                self._filming_props[label] = tracking.filming_prop
+
     def _build_vehicles(self, paths: list[PathDefinition]) -> None:
         geo = self.geo
         if geo is None:
             return
+        self._tracking_state = {}
+        self._reset_0402_state()
 
         uav_db = Path(__file__).resolve().parent / "controllers" / "uav_pid_db.json"
         lah_db = Path(__file__).resolve().parent / "controllers" / "lah_pid_db.json"
@@ -926,6 +1936,7 @@ class SimulationService:
         self._filming_wp_ids = {}
         self._line_search_state = {}
         self._line_search_debug = {}
+        self._history.clear()
         spawn_by_aircraft = self._spawn_by_aircraft or {}
         for path in paths:
             wp_targets: list[WaypointTarget] = []
@@ -1025,14 +2036,339 @@ class SimulationService:
         for simv in self.vehicles.values():
             self._update_filming_target(simv, 0.0)
 
+    def _apply_vehicle_hit(self, simv: SimVehicle) -> None:
+        if not simv.alive:
+            return
+        simv.alive = False
+        simv.crashed = True
+        simv.vehicle.cmd_throttle = -1.0
+        simv.vehicle.cmd_pitch_rate = -getattr(simv.vehicle.p, "max_pitch_rate_dps", 0.0)
+        simv.vehicle.cmd_roll_rate = 0.0
+        simv.vehicle.cmd_yaw_rate = 0.0
+
+    def _apply_crash(self, simv: SimVehicle, dt: float) -> None:
+        if simv.label in self._tracking_state:
+            self._tracking_state.pop(simv.label, None)
+        s = simv.vehicle.s
+        s.u = max(0.0, float(s.u) - 40.0 * dt)
+        s.z = max(0.0, float(s.z) - 30.0 * dt)
+
+    def _step_targets(self, dt: float) -> None:
+        for tgt in self.targets:
+            try:
+                tgt.step(dt)
+            except Exception:
+                continue
+
+    def _check_los_flat(self, sx: float, sy: float, sz: float, tx: float, ty: float, tz: float) -> bool:
+        return sz >= tz - 5.0
+
+    def _evaluate_vehicle_attacks(self, dt: float) -> None:
+        if not self.lah_auto_attack:
+            return
+        if not self.targets or not self.vehicles:
+            return
+        for simv in self.vehicles.values():
+            if not simv.alive:
+                continue
+            if simv.airframe != "lah":
+                continue
+            cfg = _FRIENDLY_WEAPON_CONFIG.get(simv.airframe)
+            if not cfg:
+                continue
+            last_fire = self._last_vehicle_fire.get(simv.label, -1e9)
+            reload_time = max(0.2, float(cfg.get("reload", 0.0) or 0.0))
+            if (self.sim_time - last_fire) < reload_time:
+                continue
+            s = simv.vehicle.s
+            best = None
+            best_dist = float("inf")
+            max_range = float(cfg.get("range", 0.0) or 0.0)
+            for tgt in self.targets:
+                if not tgt.alive:
+                    continue
+                dx = tgt.x - s.x
+                dy = tgt.y - s.y
+                dz = tgt.z - s.z
+                dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+                if dist <= 0.0 or dist > max_range:
+                    continue
+                if dist < best_dist:
+                    best_dist = dist
+                    best = tgt
+            if best is None:
+                continue
+            speed = float(cfg.get("speed", SIM_PROJECTILE_SPEED_GUN))
+            hit_radius = float(cfg.get("hit_radius", SIM_PROJECTILE_HIT_RADIUS_GUN))
+            kind = str(cfg.get("kind", "gun"))
+            self._spawn_projectile(
+                side="friendly",
+                kind=kind,
+                source_kind="vehicle",
+                source_id=simv.label,
+                target_kind="enemy",
+                target_id=int(best.id),
+                start=(float(s.x), float(s.y), float(s.z)),
+                target=(float(best.x), float(best.y), float(best.z)),
+                speed=speed,
+                hit_radius=hit_radius,
+                max_range=max_range,
+            )
+            self._last_vehicle_fire[simv.label] = float(self.sim_time)
+
+    def _evaluate_threats(self, dt: float) -> None:
+        if not self.targets or not self.vehicles:
+            return
+        for tgt in self.targets:
+            if not tgt.alive or tgt.threat is None:
+                continue
+            weapon = tgt.threat.weapon
+            if weapon is None:
+                continue
+            max_range = float(weapon.a_range or 0.0)
+            if max_range <= 0.0:
+                continue
+            last_fire = self._last_enemy_fire.get(int(tgt.id), -1e9)
+            reload_time = max(0.2, float(weapon.reload or 0.0))
+            if (self.sim_time - last_fire) < reload_time:
+                continue
+            best = None
+            best_dist = float("inf")
+            best_state = None
+            for simv in self.vehicles.values():
+                if not simv.alive:
+                    continue
+                s = simv.vehicle.s
+                dx = tgt.x - s.x
+                dy = tgt.y - s.y
+                dz = tgt.z - s.z
+                dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+                if dist <= 0.0 or dist > min(_MAX_THREAT_RANGE_M, max_range):
+                    continue
+                if dist < best_dist:
+                    best_dist = dist
+                    best = simv
+                    best_state = (s.x, s.y, s.z)
+            if best is None or best_state is None:
+                continue
+            los = self._check_los_flat(best_state[0], best_state[1], best_state[2], tgt.x, tgt.y, tgt.z)
+            tgt.threat.detection_prob(best_dist, los, dt)
+            if not tgt.threat.state.detected:
+                continue
+            if weapon.weapon_type is WeaponType.MISSILE and tgt.threat.state.t_exposed < weapon.t_fire:
+                continue
+            speed = self._weapon_projectile_speed(weapon)
+            hit_radius = self._weapon_hit_radius(weapon)
+            kind = _PROJECTILE_KIND_BY_WEAPON.get(weapon.weapon_type, "gun")
+            self._spawn_projectile(
+                side="enemy",
+                kind=kind,
+                source_kind="enemy",
+                source_id=int(tgt.id),
+                target_kind="vehicle",
+                target_id=best.label,
+                start=(float(tgt.x), float(tgt.y), float(tgt.z)),
+                target=(float(best_state[0]), float(best_state[1]), float(best_state[2])),
+                speed=speed,
+                hit_radius=hit_radius,
+                max_range=max_range,
+            )
+            self._last_enemy_fire[int(tgt.id)] = float(self.sim_time)
+
+    def _step_projectiles(self, dt: float) -> None:
+        if not self._projectiles:
+            return
+        target_by_id = {int(tgt.id): tgt for tgt in self.targets}
+        remaining: list[Projectile] = []
+        for proj in self._projectiles:
+            proj.ttl -= float(dt)
+            if proj.ttl <= 0.0:
+                continue
+            proj.x += proj.vx * float(dt)
+            proj.y += proj.vy * float(dt)
+            proj.z += proj.vz * float(dt)
+            if proj.target_kind == "vehicle":
+                simv = self.vehicles.get(str(proj.target_id))
+                if simv is None or not simv.alive:
+                    continue
+                s = simv.vehicle.s
+                dx = proj.x - s.x
+                dy = proj.y - s.y
+                dz = proj.z - s.z
+                dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+                if dist <= proj.hit_radius:
+                    if proj.p_hit is None or random.random() < proj.p_hit:
+                        self._apply_vehicle_hit(simv)
+                        self._spawn_effect(
+                            side=proj.side,
+                            kind=proj.kind,
+                            x=float(s.x),
+                            y=float(s.y),
+                            z=float(s.z),
+                        )
+                    continue
+            elif proj.target_kind == "enemy":
+                tgt = target_by_id.get(int(proj.target_id))
+                if tgt is None or not tgt.alive:
+                    continue
+                dx = proj.x - tgt.x
+                dy = proj.y - tgt.y
+                dz = proj.z - tgt.z
+                dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+                if dist <= proj.hit_radius:
+                    if proj.p_hit is None or random.random() < proj.p_hit:
+                        tgt.alive = False
+                        if tgt.threat is not None:
+                            tgt.threat.reset()
+                        self._spawn_effect(
+                            side=proj.side,
+                            kind=proj.kind,
+                            x=float(tgt.x),
+                            y=float(tgt.y),
+                            z=float(tgt.z),
+                        )
+                    continue
+            remaining.append(proj)
+        self._projectiles = remaining
+
+    def _step_effects(self, dt: float) -> None:
+        if not self._effects:
+            return
+        remaining: list[ImpactEffect] = []
+        for eff in self._effects:
+            eff.age += float(dt)
+            if eff.age <= eff.ttl:
+                remaining.append(eff)
+        self._effects = remaining
+
     def _step_once(self, dt: float) -> None:
         for simv in self.vehicles.values():
             try:
+                if not simv.alive:
+                    self._apply_crash(simv, dt)
+                    continue
+                self._update_tracking(simv, dt)
                 simv.controller.update(dt)
                 self._update_filming_target(simv, dt)
                 simv.vehicle.step(dt)
             except Exception:
                 continue
+        self._step_targets(dt)
+        self._evaluate_vehicle_attacks(dt)
+        self._evaluate_threats(dt)
+        self._step_projectiles(dt)
+        self._step_effects(dt)
+
+    def _build_frame(
+        self,
+        *,
+        geo: GeoConverter,
+        vehicles: list[SimVehicle],
+        targets: list[GroundTarget] | None = None,
+        projectiles: list[Projectile] | None = None,
+        effects: list[ImpactEffect] | None = None,
+        sim_time: float,
+        step_count: int,
+    ) -> dict:
+        frame: dict[str, Any] = {
+            "step": int(step_count),
+            "simTime": float(sim_time),
+            "vehicles": {},
+            "targets": [],
+            "projectiles": [],
+            "effects": [],
+        }
+        targets_list = targets if targets is not None else self.targets
+        for simv in vehicles:
+            s = simv.vehicle.s
+            lon, lat = geo.xy_to_lonlat(s.x, s.y)
+            entry: dict[str, Any] = {
+                "lat": float(lat),
+                "lon": float(lon),
+                "alt": float(s.z),
+                "speed": float(getattr(s, "u", 0.0)),
+                "heading": float(getattr(s, "yaw", 0.0)),
+                "alive": bool(simv.alive),
+            }
+            target = self._filming_targets.get(simv.label)
+            if target is not None:
+                t_lon, t_lat = geo.xy_to_lonlat(target[0], target[1])
+                entry["filmingTarget"] = {
+                    "lat": float(t_lat),
+                    "lon": float(t_lon),
+                    "alt": float(target[2]),
+                }
+            filming_prop = self._filming_props.get(simv.label)
+            if isinstance(filming_prop, dict):
+                entry["filmingMode"] = filming_prop.get("operationMode")
+                fov = filming_prop.get("fieldOfView")
+                if isinstance(fov, (int, float)):
+                    entry["filmingFov"] = float(fov)
+            if simv.label in self._filming_wp_ids:
+                entry["filmingWpId"] = self._filming_wp_ids.get(simv.label)
+            frame["vehicles"][simv.label] = entry
+        for tgt in targets_list:
+            try:
+                frame["targets"].append(self._target_to_dict(tgt, geo))
+            except Exception:
+                continue
+        projectiles_list = projectiles if projectiles is not None else self._projectiles
+        for proj in projectiles_list:
+            try:
+                lon, lat = geo.xy_to_lonlat(proj.x, proj.y)
+                frame["projectiles"].append(
+                    {
+                        "id": int(proj.id),
+                        "lat": float(lat),
+                        "lon": float(lon),
+                        "alt": float(proj.z),
+                        "vx": float(proj.vx),
+                        "vy": float(proj.vy),
+                        "vz": float(proj.vz),
+                        "speed": float(proj.speed),
+                        "side": proj.side,
+                        "kind": proj.kind,
+                        "target": proj.target_id,
+                    }
+                )
+            except Exception:
+                continue
+        effects_list = effects if effects is not None else self._effects
+        for eff in effects_list:
+            try:
+                lon, lat = geo.xy_to_lonlat(eff.x, eff.y)
+                frame["effects"].append(
+                    {
+                        "id": int(eff.id),
+                        "lat": float(lat),
+                        "lon": float(lon),
+                        "alt": float(eff.z),
+                        "age": float(eff.age),
+                        "ttl": float(eff.ttl),
+                        "radius": float(eff.radius_m),
+                        "flash": float(eff.flash_m),
+                        "side": eff.side,
+                        "kind": eff.kind,
+                    }
+                )
+            except Exception:
+                continue
+        return frame
+
+    def _record_history(self) -> None:
+        geo = self.geo
+        if geo is None:
+            return
+        vehicles = list(self.vehicles.values())
+        targets = list(self.targets)
+        frame = self._build_frame(
+            geo=geo,
+            vehicles=vehicles,
+            targets=targets,
+            sim_time=self.sim_time,
+            step_count=self.step_count,
+        )
+        self._history.append(frame)
 
     def _loop(self) -> None:
         last = time.perf_counter()
@@ -1064,16 +2400,20 @@ class SimulationService:
                     self._step_once(dt)
                     self.sim_time += dt
                     self.step_count += 1
+                    self._record_history()
+                    self._maybe_push_0401()
                 accum -= dt
                 advanced += 1
 
             if advanced == 0:
                 self._shutdown.wait(0.005)
 
-    def build_snapshot(self) -> dict:
+    def build_snapshot(self, *, since_step: int | None = None) -> dict:
         with self._lock:
             geo = self.geo
             vehicles = list(self.vehicles.values())
+            targets = list(self.targets)
+            pending_targets = list(self._pending_targets)
             running = self.running
             paused = self.paused
             speed = float(self.speed_factor)
@@ -1081,6 +2421,8 @@ class SimulationService:
             sim_time = float(self.sim_time)
             step_count = int(self.step_count)
             error = self.last_error
+            history = list(self._history)
+            events_0402 = list(self._events_0402)
 
         payload: dict[str, Any] = {
             "ok": True,
@@ -1091,38 +2433,40 @@ class SimulationService:
             "simTime": sim_time,
             "step": step_count,
             "vehicles": {},
+            "targets": [],
+            "projectiles": [],
+            "effects": [],
+            "events0402": events_0402,
         }
         if error:
             payload["error"] = error
 
         if geo is None:
+            if pending_targets:
+                payload["targets"] = pending_targets
             return payload
 
-        for simv in vehicles:
-            s = simv.vehicle.s
-            lon, lat = geo.xy_to_lonlat(s.x, s.y)
-            payload["vehicles"][simv.label] = {
-                "lat": float(lat),
-                "lon": float(lon),
-                "alt": float(s.z),
-                "speed": float(getattr(s, "u", 0.0)),
-                "heading": float(getattr(s, "yaw", 0.0)),
-            }
-            target = self._filming_targets.get(simv.label)
-            if target is not None:
-                t_lon, t_lat = geo.xy_to_lonlat(target[0], target[1])
-                payload["vehicles"][simv.label]["filmingTarget"] = {
-                    "lat": float(t_lat),
-                    "lon": float(t_lon),
-                    "alt": float(target[2]),
-                }
-            filming_prop = self._filming_props.get(simv.label)
-            if isinstance(filming_prop, dict):
-                payload["vehicles"][simv.label]["filmingMode"] = filming_prop.get("operationMode")
-                fov = filming_prop.get("fieldOfView")
-                if isinstance(fov, (int, float)):
-                    payload["vehicles"][simv.label]["filmingFov"] = float(fov)
-            if simv.label in self._filming_wp_ids:
-                payload["vehicles"][simv.label]["filmingWpId"] = self._filming_wp_ids.get(simv.label)
+        latest_frame = self._build_frame(
+            geo=geo,
+            vehicles=vehicles,
+            targets=targets,
+            sim_time=sim_time,
+            step_count=step_count,
+        )
+        payload["vehicles"] = latest_frame["vehicles"]
+        payload["targets"] = latest_frame.get("targets", [])
+        payload["projectiles"] = latest_frame.get("projectiles", [])
+        payload["effects"] = latest_frame.get("effects", [])
 
-        return payload
+        if since_step is None:
+            return payload
+
+        history_frames = [frame for frame in history if frame.get("step", -1) > since_step]
+        events_since = [event for event in events_0402 if event.get("step", -1) > since_step]
+        payload["events0402"] = events_since
+        return {
+            "ok": True,
+            "history": history_frames,
+            "latest": payload,
+            "events0402": events_since,
+        }

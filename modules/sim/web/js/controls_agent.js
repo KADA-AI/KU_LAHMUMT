@@ -361,6 +361,12 @@ export const initAgentPanel = () => {
     updateStatusDot(button, state, manned);
   };
 
+  const open0401Panel = () => {
+    if (typeof window.open0401Panel === "function") {
+      window.open0401Panel();
+    }
+  };
+
   const closeAgentPanel = () => {
     if (agentSwitchTimer) {
       clearTimeout(agentSwitchTimer);
@@ -395,7 +401,7 @@ export const initAgentPanel = () => {
 
   const switchAgentPanel = (button) => {
     if (activeAgentButton === button) {
-      closeAgentPanel();
+      openAgentPanel(button);
       return;
     }
     if (!agentPanel.classList.contains("is-open")) {
@@ -424,16 +430,32 @@ export const initAgentPanel = () => {
     }, 220);
   };
 
+  const selectAgent = (label, options = {}) => {
+    const nextLabel = String(label || "").trim();
+    if (!nextLabel) {
+      return;
+    }
+    const button = agentButtons.find((btn) => getLabel(btn) === nextLabel);
+    if (!button) {
+      return;
+    }
+    const { flyTo = true } = options || {};
+    if (flyTo && typeof window.flyToAgent === "function") {
+      window.flyToAgent(nextLabel);
+    }
+    switchAgentPanel(button);
+    open0401Panel();
+  };
+
+  window.selectAgent = selectAgent;
+
   agentButtons.forEach((button) => {
     const label = getLabel(button);
     const manned = isManned(label);
     updateStatusDot(button, getUiState(label), manned);
     button.addEventListener("click", (event) => {
       event.stopPropagation();
-      if (typeof window.flyToAgent === "function") {
-        window.flyToAgent(label);
-      }
-      switchAgentPanel(button);
+      selectAgent(label, { flyTo: true });
     });
   });
 
