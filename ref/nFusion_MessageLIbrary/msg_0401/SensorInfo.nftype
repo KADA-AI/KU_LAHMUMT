@@ -3,7 +3,7 @@ uint operationalMode:
  - min : 0
  - Max : 5
  - unit : N/A
- - 비고 : 센서 운용모드
+ - 비고 : 센서 운용모드, 0=None, 1=좌표지향모드, 2=구간탐색/구역감시모드, 3=자동추적모드, 4=기체고정모드, 5=자동주사모드
 
 uint sensorType:
  - 길이 : 4

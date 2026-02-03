@@ -7,6 +7,14 @@ uint flightMode:
  - 비고 : 무인기의 현재 비행모드
  - enum : 0=Not Used, 1=자동이륙, 2=자동착륙, 3=통제권이양지이동, 4=전술집결지이동, 5=RTB, 6=편대비행, 7=경로이동비행, 8=점항법비행, 9=표적추적비행
 
+uint onMission:
+ - 길이 : 4
+ - min : 0
+ - Max : 2
+ - unit : N/A
+ - 비고 : 임무수행 완료 여부
+ - enum : 0=Default, 1=수행중, 2=수행완료
+
 LoiterCoordinate loiterCoordinate
 TargetFollowing targetFollowing
 CommonType.LeaderAircraftID leaderAircraftID

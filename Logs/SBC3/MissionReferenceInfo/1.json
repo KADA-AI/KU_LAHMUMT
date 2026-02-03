@@ -1,0 +1,118 @@
+{
+  "timestamp": 822984907308,
+  "missionReferencePackageID": 1,
+  "inputTimestamp": 822984907308,
+  "takeOverInfoList": [
+    {
+      "aircraftID": 5,
+      "coordinate": {
+        "latitude": 37.924557,
+        "longitude": 128.18237,
+        "altitude": 1000
+      }
+    },
+    {
+      "aircraftID": 4,
+      "coordinate": {
+        "latitude": 37.924698,
+        "longitude": 128.18068,
+        "altitude": 1000
+      }
+    },
+    {
+      "aircraftID": 6,
+      "coordinate": {
+        "latitude": 37.924416,
+        "longitude": 128.18407,
+        "altitude": 1000
+      }
+    }
+  ],
+  "handOverInfoList": [
+    {
+      "aircraftID": 5,
+      "coordinate": {
+        "latitude": 37.921467,
+        "longitude": 128.19452,
+        "altitude": 1000
+      }
+    },
+    {
+      "aircraftID": 4,
+      "coordinate": {
+        "latitude": 37.920246,
+        "longitude": 128.19379,
+        "altitude": 1000
+      }
+    },
+    {
+      "aircraftID": 6,
+      "coordinate": {
+        "latitude": 37.922688,
+        "longitude": 128.19525,
+        "altitude": 1000
+      }
+    }
+  ],
+  "rtbCoordinateList": [
+    {
+      "latitude": 37.93705,
+      "longitude": 128.14487,
+      "altitude": 1000
+    }
+  ],
+  "flightAreaList": [
+    {
+      "flightAreaID": 1,
+      "areaLatLonList": [
+        {
+          "latitude": 37.958775,
+          "longitude": 128.08885
+        },
+        {
+          "latitude": 37.85286,
+          "longitude": 128.10019
+        },
+        {
+          "latitude": 37.866684,
+          "longitude": 128.31339
+        },
+        {
+          "latitude": 37.962025,
+          "longitude": 128.30995
+        }
+      ],
+      "altitudeLimits": {
+        "lowerLimit": 0,
+        "upperLimit": 5000
+      }
+    }
+  ],
+  "prohibitedAreaList": [
+    {
+      "prohibitedAreaID": 1,
+      "areaLatLonList": [
+        {
+          "latitude": 37.946796,
+          "longitude": 128.25577
+        },
+        {
+          "latitude": 37.928112,
+          "longitude": 128.25508
+        },
+        {
+          "latitude": 37.926216,
+          "longitude": 128.29044
+        },
+        {
+          "latitude": 37.948692,
+          "longitude": 128.28769
+        }
+      ],
+      "altitudeLimits": {
+        "lowerLimit": 0,
+        "upperLimit": 5000
+      }
+    }
+  ]
+}

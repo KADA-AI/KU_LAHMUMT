@@ -673,6 +673,8 @@ class SimulationService:
         vy = dy / dist * speed
         vz = dz / dist * speed
         ttl = max(0.5, float(max_range) / speed + 1.0)
+        if kind == "missile":
+            ttl = max(ttl, float(max_range) / speed + 4.0)
         proj = Projectile(
             id=int(self._projectile_id_seq),
             side=str(side),
@@ -2161,6 +2163,15 @@ class SimulationService:
             speed = self._weapon_projectile_speed(weapon)
             hit_radius = self._weapon_hit_radius(weapon)
             kind = _PROJECTILE_KIND_BY_WEAPON.get(weapon.weapon_type, "gun")
+            if weapon.weapon_type is WeaponType.GUN and random.random() < p_hit:
+                self._apply_vehicle_hit(best)
+                self._spawn_effect(
+                    side="enemy",
+                    kind=kind,
+                    x=float(best_state[0]),
+                    y=float(best_state[1]),
+                    z=float(best_state[2]),
+                )
             self._spawn_projectile(
                 side="enemy",
                 kind=kind,
@@ -2186,6 +2197,27 @@ class SimulationService:
             proj.ttl -= float(dt)
             if proj.ttl <= 0.0:
                 continue
+            if proj.kind == "missile":
+                tx = ty = tz = None
+                if proj.target_kind == "vehicle":
+                    simv = self.vehicles.get(str(proj.target_id))
+                    if simv is not None and simv.alive:
+                        s = simv.vehicle.s
+                        tx, ty, tz = float(s.x), float(s.y), float(s.z)
+                elif proj.target_kind == "enemy":
+                    tgt = target_by_id.get(int(proj.target_id))
+                    if tgt is not None and tgt.alive:
+                        tx, ty, tz = float(tgt.x), float(tgt.y), float(tgt.z)
+                if tx is not None:
+                    dx = tx - proj.x
+                    dy = ty - proj.y
+                    dz = tz - proj.z
+                    dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+                    if dist > 1e-6:
+                        speed = max(1.0, float(proj.speed))
+                        proj.vx = dx / dist * speed
+                        proj.vy = dy / dist * speed
+                        proj.vz = dz / dist * speed
             proj.x += proj.vx * float(dt)
             proj.y += proj.vy * float(dt)
             proj.z += proj.vz * float(dt)

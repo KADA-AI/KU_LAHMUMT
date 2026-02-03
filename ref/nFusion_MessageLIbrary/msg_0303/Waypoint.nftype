@@ -41,7 +41,7 @@ uint waypointPassType:
  - Max : 2
  - unit : N/A
  - 비고 : 경로점 통과 속성
- - enum : 0=None, 1=Fly-by, 2=Loiter
+ - enum : 0=None, 1=Fly-by, 2=Loiter, 3=Fly-Over
 
 LoiterProperty loiterProperty:
  - 비고 : WaypointPassType가 2일때 사용

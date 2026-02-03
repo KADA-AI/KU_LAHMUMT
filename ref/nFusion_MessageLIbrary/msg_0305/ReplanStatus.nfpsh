@@ -16,7 +16,7 @@ uint missionPlanningStatus:
  - Max : 2
  - unit : N/A
  - 비고 : 임무 재계획 수행 상태 정보
- - enum : 0=Unknown, 1=재계획 수행 중이지 않음, 2=재계획 수행 중
+ - enum : 0=Unknown, 1=재계획 수행 중이지 않음, 2=재계획 수행 중, 3=재계획 실패
 
 string replanReason:
  - 길이 : Variable

@@ -1,0 +1,97 @@
+{
+  "timestamp": 823428843929,
+  "Source": "MMR",
+  "pathID": 400000004,
+  "aircraftID": 4,
+  "isFormationFlight": false,
+  "waypointList": [
+    {
+      "waypointID": 33,
+      "coordinate": {
+        "latitude": 38.030481,
+        "longitude": 127.271114,
+        "altitude": 770
+      },
+      "speed": 40.0,
+      "eta": 0,
+      "ecf": 0.0,
+      "nextWaypointID": 34,
+      "waypointPassType": 1,
+      "filmingProperty": {
+        "fieldOfView": 10,
+        "sensorType": 1,
+        "operationMode": 4,
+        "aircraftFixed": {
+          "gimbalPitch": -90.0,
+          "gimbalYaw": 0.0
+        }
+      }
+    },
+    {
+      "waypointID": 34,
+      "coordinate": {
+        "latitude": 38.040687,
+        "longitude": 127.285461,
+        "altitude": 953
+      },
+      "speed": 40.0,
+      "eta": 42,
+      "ecf": 0.16,
+      "nextWaypointID": 36,
+      "waypointPassType": 1,
+      "filmingProperty": {
+        "fieldOfView": 10,
+        "sensorType": 1,
+        "operationMode": 4,
+        "aircraftFixed": {
+          "gimbalPitch": -90.0,
+          "gimbalYaw": 0.0
+        }
+      }
+    },
+    {
+      "waypointID": 36,
+      "coordinate": {
+        "latitude": 38.055608,
+        "longitude": 127.298693,
+        "altitude": 1032
+      },
+      "speed": 40.0,
+      "eta": 93,
+      "ecf": 0.52,
+      "nextWaypointID": 38,
+      "waypointPassType": 1,
+      "filmingProperty": {
+        "fieldOfView": 10,
+        "sensorType": 1,
+        "operationMode": 4,
+        "aircraftFixed": {
+          "gimbalPitch": -90.0,
+          "gimbalYaw": 0.0
+        }
+      }
+    },
+    {
+      "waypointID": 38,
+      "coordinate": {
+        "latitude": 38.065134,
+        "longitude": 127.292585,
+        "altitude": 830
+      },
+      "speed": 40.0,
+      "eta": 123,
+      "ecf": 1.0,
+      "nextWaypointID": 0,
+      "waypointPassType": 1,
+      "filmingProperty": {
+        "fieldOfView": 10,
+        "sensorType": 1,
+        "operationMode": 4,
+        "aircraftFixed": {
+          "gimbalPitch": -90.0,
+          "gimbalYaw": 0.0
+        }
+      }
+    }
+  ]
+}

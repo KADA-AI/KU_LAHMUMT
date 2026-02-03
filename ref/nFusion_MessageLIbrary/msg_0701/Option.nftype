@@ -3,11 +3,16 @@ uint optionID:
  - unit : N/A
  - 비고 : 옵션 ID
 
+bool recommend:
+ - 길이 : 1
+ - unit : N/A
+ - 비고 : 해당 옵션이 추천인지 여부
+
 uint optionName:
  - 길이 : 4
  - unit : N/A
  - 비고 : 옵션 명(시스템 추천, 위험최소화, 최적 연료소모 등)
- - enum : 1=시스템 추천, 2=공격특화, 3=공격배제, 4=정찰특화, 5=최소시간
+ - enum : 2=공격특화, 3=공격배제, 4=정찰특화, 5=최소시간, 6=정찰/시간 균형
 
 uint missionPlanID:
  - 길이 : 4
