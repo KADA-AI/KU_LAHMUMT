@@ -652,6 +652,7 @@ export const initVehicleMarkers = (map) => {
   const footprintHistory = new Map();
   const trailHistory = new Map();
   let lastStep = null;
+  let lastProjectionMatrix = null;
 
   const buildBuffers = (colors) => {
     const zoom = typeof map.getZoom === "function" ? map.getZoom() : 12;
@@ -838,6 +839,7 @@ export const initVehicleMarkers = (map) => {
     if (!labelContainer) {
       return;
     }
+    lastProjectionMatrix = matrix || null;
     const canvas = map.getCanvas();
     const dpr = window.devicePixelRatio || 1;
     const width = canvas.width / dpr;
@@ -856,6 +858,67 @@ export const initVehicleMarkers = (map) => {
       el.style.top = `${point.y}px`;
       el.style.display = "block";
     });
+  };
+
+  const isSelectionBlocked = () => {
+    const overlay = document.getElementById("scenario-overlay");
+    if (overlay && overlay.classList.contains("is-active")) {
+      return true;
+    }
+    const enemyPicker = document.getElementById("enemy-picker");
+    if (enemyPicker && enemyPicker.classList.contains("is-active")) {
+      return true;
+    }
+    return false;
+  };
+
+  const getPickRadius = (agent) => {
+    const zoom = typeof map.getZoom === "function" ? map.getZoom() : 12;
+    const scale = Math.min(2.2, Math.max(0.9, 0.7 + (zoom - 11) * 0.12));
+    const base =
+      BASE_SIZE * scale * (LAH_IDS.has(agent) ? LAH_POINT_SCALE : UAV_POINT_SCALE);
+    return Math.max(10, base * 0.6 + 6);
+  };
+
+  const pickAgentAtPoint = (point) => {
+    if (!point || mercatorByAgent.size === 0) {
+      return null;
+    }
+    const canvas = map.getCanvas();
+    if (!canvas) {
+      return null;
+    }
+    const dpr = window.devicePixelRatio || 1;
+    const width = canvas.width / dpr;
+    const height = canvas.height / dpr;
+    const matrix = lastProjectionMatrix;
+    let best = null;
+    let bestDist = Infinity;
+    mercatorByAgent.forEach((coord, agent) => {
+      let screen = null;
+      if (matrix) {
+        screen = projectToScreen(matrix, coord.x, coord.y, coord.z, width, height);
+      }
+      if (!screen) {
+        const entry = currentPositions[agent];
+        if (entry && Number.isFinite(entry.lon) && Number.isFinite(entry.lat)) {
+          const projected = map.project([entry.lon, entry.lat]);
+          screen = { x: projected.x, y: projected.y };
+        }
+      }
+      if (!screen) {
+        return;
+      }
+      const dx = screen.x - point.x;
+      const dy = screen.y - point.y;
+      const dist = Math.hypot(dx, dy);
+      const radius = getPickRadius(agent);
+      if (dist <= radius && dist < bestDist) {
+        bestDist = dist;
+        best = agent;
+      }
+    });
+    return best;
   };
 
   const ensureLayer = () => {
@@ -1045,6 +1108,31 @@ export const initVehicleMarkers = (map) => {
 
   map.on("resize", () => {
     updateLayers();
+  });
+
+  map.on("click", (event) => {
+    if (!event || !event.point) {
+      return;
+    }
+    const original = event.originalEvent;
+    if (original && (original.defaultPrevented || original.cancelBubble)) {
+      return;
+    }
+    if (isSelectionBlocked()) {
+      return;
+    }
+    const label = pickAgentAtPoint(event.point);
+    if (!label) {
+      return;
+    }
+    if (typeof window.selectAgent === "function") {
+      window.selectAgent(label, { flyTo: true, source: "map" });
+      return;
+    }
+    const button = document.querySelector(`.ui-btn-text[data-agent="${label}"]`);
+    if (button) {
+      button.click();
+    }
   });
 
   const getPosition = (label) => currentPositions[label] || null;

@@ -323,8 +323,10 @@ export const initAgentPanel = () => {
   const agentPanelClose = document.getElementById("agent-panel-close");
   const agentPanelBody = agentPanel ? agentPanel.querySelector(".agent-panel-body") : null;
   let activeAgentButton = null;
+  let lastSelectedLabel = null;
   let agentSwitchTimer = null;
   let agentSwitchEndTimer = null;
+  let ignoreOutsideClick = false;
 
   if (!agentPanel || !agentPanelBody || agentButtons.length === 0) {
     return;
@@ -361,9 +363,9 @@ export const initAgentPanel = () => {
     updateStatusDot(button, state, manned);
   };
 
-  const open0401Panel = () => {
+  const open0401Panel = (options) => {
     if (typeof window.open0401Panel === "function") {
-      window.open0401Panel();
+      window.open0401Panel(options);
     }
   };
 
@@ -435,6 +437,7 @@ export const initAgentPanel = () => {
     if (!nextLabel) {
       return;
     }
+    lastSelectedLabel = nextLabel;
     const button = agentButtons.find((btn) => getLabel(btn) === nextLabel);
     if (!button) {
       return;
@@ -443,11 +446,25 @@ export const initAgentPanel = () => {
     if (flyTo && typeof window.flyToAgent === "function") {
       window.flyToAgent(nextLabel);
     }
+    if (options && options.source === "map") {
+      ignoreOutsideClick = true;
+    }
     switchAgentPanel(button);
-    open0401Panel();
+    open0401Panel(options);
   };
 
   window.selectAgent = selectAgent;
+  window.openAgentPanel = (label) => {
+    const nextLabel = String(label || lastSelectedLabel || "").trim();
+    if (!nextLabel) {
+      return;
+    }
+    const button = agentButtons.find((btn) => getLabel(btn) === nextLabel);
+    if (!button) {
+      return;
+    }
+    switchAgentPanel(button);
+  };
 
   agentButtons.forEach((button) => {
     const label = getLabel(button);
@@ -469,6 +486,10 @@ export const initAgentPanel = () => {
   document.addEventListener("click", (event) => {
     const target = event.target;
     if (!agentPanel.classList.contains("is-open")) {
+      return;
+    }
+    if (ignoreOutsideClick) {
+      ignoreOutsideClick = false;
       return;
     }
     const clickedButton = agentButtons.some((btn) => btn.contains(target));

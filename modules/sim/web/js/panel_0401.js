@@ -38,6 +38,37 @@ const FLIGHT_MODE_LABELS = {
   9: "표적추적비행",
 };
 
+const applySimState = (status, simEntry) => {
+  if (!status || !simEntry) {
+    return status;
+  }
+  const agent = status.agentStateList?.[0];
+  if (!agent) {
+    return status;
+  }
+  const lat = Number(simEntry.lat);
+  const lon = Number(simEntry.lon);
+  const alt = Number(simEntry.alt);
+  if (Number.isFinite(lat)) {
+    agent.coordinate.latitude = lat;
+  }
+  if (Number.isFinite(lon)) {
+    agent.coordinate.longitude = lon;
+  }
+  if (Number.isFinite(alt)) {
+    agent.coordinate.altitude = alt;
+  }
+  const speed = Number(simEntry.speed);
+  const heading = Number(simEntry.heading);
+  if (Number.isFinite(speed)) {
+    agent.velocity.speed = speed;
+  }
+  if (Number.isFinite(heading)) {
+    agent.velocity.heading = heading;
+  }
+  return status;
+};
+
 const formatNumber = (value, digits = 2) => {
   if (value === null || value === undefined || Number.isNaN(value)) {
     return "-";
@@ -181,7 +212,7 @@ const buildUnmannedSystemCard = (agent) => {
   `;
 };
 
-const buildPanelContent = (label) => {
+const buildPanelContent = (label, simState) => {
   if (!label) {
     return `
       <div class="data-empty">
@@ -190,7 +221,8 @@ const buildPanelContent = (label) => {
       </div>
     `;
   }
-  const status = buildAgentStatus(label);
+  const simEntry = simState?.vehicles?.[label] || null;
+  const status = applySimState(buildAgentStatus(label), simEntry);
   const agent = status.agentStateList[0];
   const manned = !agent.isUnmanned;
 
@@ -214,17 +246,32 @@ export const init0401Panel = () => {
     return;
   }
 
+  let simState = null;
+
   const render = () => {
     const label = getActiveAgent();
     if (title) {
       title.textContent = label ? `0401 DATA · ${label}` : "0401 DATA";
     }
-    body.innerHTML = buildPanelContent(label);
+    body.innerHTML = buildPanelContent(label, simState);
   };
 
   subscribe(() => {
     render();
   });
+
+  if (window.simClient && typeof window.simClient.subscribe === "function") {
+    window.simClient.subscribe((state) => {
+      simState = state || null;
+      render();
+    });
+  }
+
+  window.setInterval(() => {
+    if (panel.classList.contains("is-open")) {
+      render();
+    }
+  }, 200);
 
   render();
 };

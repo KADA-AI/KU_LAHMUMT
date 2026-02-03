@@ -4,6 +4,7 @@
   if (!toggle || !panel) {
     return;
   }
+  let ignoreOutsideClick = false;
 
   const setOpen = (open) => {
     const next = Boolean(open);
@@ -12,10 +13,20 @@
     toggle.setAttribute("aria-expanded", next ? "true" : "false");
     toggle.classList.toggle("is-open", next);
     toggle.textContent = next ? "▼" : "▲";
+    if (next && typeof window.openAgentPanel === "function") {
+      window.openAgentPanel();
+    }
+  };
+
+  const openPanel = (options = {}) => {
+    if (options && options.source === "map") {
+      ignoreOutsideClick = true;
+    }
+    setOpen(true);
   };
 
   window.set0401PanelOpen = setOpen;
-  window.open0401Panel = () => setOpen(true);
+  window.open0401Panel = openPanel;
   window.close0401Panel = () => setOpen(false);
 
   toggle.addEventListener("click", (event) => {
@@ -29,6 +40,10 @@
 
   document.addEventListener("click", (event) => {
     const target = event.target;
+    if (ignoreOutsideClick) {
+      ignoreOutsideClick = false;
+      return;
+    }
     const keepOpen =
       Boolean(target.closest("#agent-panel")) ||
       Boolean(target.closest("#left-controls")) ||

@@ -1812,12 +1812,8 @@ class SimulationService:
             if not state.target.alive:
                 self._stop_tracking(simv)
                 return
-            if self._target_in_view(simv, state.target, 360.0):
-                state.last_seen = float(self.sim_time)
-            elif self.track_lost_timeout_s > 0.0:
-                if (self.sim_time - state.last_seen) > self.track_lost_timeout_s:
-                    self._stop_tracking(simv)
-                    return
+            # Keep tracking once acquired; do not drop due to transient FOV/range loss.
+            state.last_seen = float(self.sim_time)
             if state.stage == 0 and int(self.step_count) > int(state.start_step):
                 state.stage = 1
                 state.fov_deg = 2.0
