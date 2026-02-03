@@ -1,2 +1,12 @@
-uint targetID
-uint weaponType
+uint targetID:
+ - 길이 : 4
+ - unit : N/A
+ - 비고 : 타겟 ID
+
+uint weaponType:
+ - 길이 : 4
+ - min : 0
+ - Max : 3
+ - unit : N/A
+ - 비고 : 무장 유형
+ - enum : 0=Unknown, 1=Type1, 2=Type2, 3=Type3

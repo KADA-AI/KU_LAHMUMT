@@ -1,9 +1,32 @@
 # MessageID 0201 협업기저임무 계획
 
-ulong timestamp
-uint inputMissionPackageID
-uint inputMissionPackageType
-uint mainSensor
+ulong timestamp:
+ - 길이 : 8
+ - min : 0
+ - Max : 2^64-1
+ - unit : ms
+ - 비고 : 2000년 1월 1일부터 ms
+
+uint inputMissionPackageID:
+ - 길이 : 4
+ - unit : N/A
+ - 비고 : 협업기저임무 패키지 ID
+
+uint inputMissionPackageType:
+ - 길이 : 4
+ - min : 0
+ - Max : 7
+ - unit : N/A
+ - 비고 : 임무/작전명에 의한 임무 타입 구분을 위한 정보
+ - enum : 1=대기갑항공타격작전, 2=지상작전부대 기동여건 보장 작전, 3=공중강습작전부대 엄호 작전, 4=항공지원작전-중요시설 방호, 5=도시지역작전
+
+uint mainSensor:
+ - 길이 : 4
+ - min : 0
+ - Max : 2
+ - unit : N/A
+ - 비고 : 센서 모드
+ - enum : 0=Not used, 1=EO, 2=IR
 
 # List
 List<AvailableAircraft> availableAircraftList

@@ -11,6 +11,8 @@ import sys
 from modules.common import agent_status_snapshot, db_paths
 from modules.mission_planning.attack_assignment_state import (
     get_last_assigned_manned_id,
+    get_used_manned_ids,
+    mark_manned_used,
     set_last_assigned_manned_id,
 )
 
@@ -76,9 +78,17 @@ def run_attack_plan_pipeline(
             log_callback(f"[ATTACK] {message}")
 
     # Step 1) Select the manned aircraft (aircraft 2 or 3) with the greatest fuel.
+    input_pkg_id = _to_int(
+        ctx.get("inputMissionPackageID")
+        or ctx.get("inputMissionPackageId")
+        or ctx.get("input_mission_package_id")
+    )
     agent_snapshot = agent_status_snapshot.load_agent_status_snapshot() or {}
     agent_states = agent_snapshot.get("agent_states") or []
-    best_aircraft, candidates = _select_preferred_manned_aircraft(agent_states)
+    best_aircraft, candidates = _select_preferred_manned_aircraft(
+        agent_states,
+        input_package_id=input_pkg_id,
+    )
     attack_log["result"]["manned_candidates"] = candidates
     attack_log["result"]["selected_aircraft"] = best_aircraft
     if best_aircraft:
@@ -97,12 +107,20 @@ def run_attack_plan_pipeline(
             }
         )
     else:
-        _emit("STEP1 Manned-aircraft selection failed: latest_0401_agent_status.json unavailable")
+        if candidates and input_pkg_id is not None:
+            message = (
+                "all candidates already used "
+                f"(inputMissionPackageID={input_pkg_id})"
+            )
+            _emit(f"STEP1 Manned-aircraft selection failed: {message}")
+        else:
+            message = "latest_0401_agent_status.json unavailable"
+            _emit(f"STEP1 Manned-aircraft selection failed: {message}")
         attack_log["steps"].append(
             {
                 "name": "select_manned_aircraft",
                 "status": "error",
-                "message": "latest_0401_agent_status.json unavailable or malformed",
+                "message": message,
                 "candidates": candidates,
             }
         )
@@ -135,7 +153,15 @@ def run_attack_plan_pipeline(
 
     # Step 3) Attempt to build an attack mission snapshot using lah_attack_assistance.
     friendly_coord = (best_aircraft or {}).get("coordinate")
-    primary_target = _pick_primary_target(target_entries)
+    detail_override = _build_primary_target_from_detail(ctx.get("replan_detail"), target_entries)
+    if detail_override:
+        primary_target = detail_override
+        _emit(
+            "STEP2.5 Using 0402 target override: "
+            f"target={primary_target.get('target_id')} watcher={primary_target.get('watcher_id')}"
+        )
+    else:
+        primary_target = _pick_primary_target(target_entries)
     attack_log["result"]["primary_target"] = primary_target
     if not friendly_coord:
         attack_log["steps"].append(
@@ -193,6 +219,7 @@ def run_attack_plan_pipeline(
             manned_id = _extract_assigned_manned_id(mission_updates)
             if manned_id is not None:
                 set_last_assigned_manned_id(manned_id)
+                mark_manned_used(input_pkg_id, manned_id)
     else:
         _emit(f"STEP3 Attack plan failed: {attack_error}")
         attack_log["steps"].append(
@@ -206,7 +233,11 @@ def run_attack_plan_pipeline(
     return _persist_attack_log(attack_log)
 
 
-def _select_preferred_manned_aircraft(agent_states: List[Any]) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
+def _select_preferred_manned_aircraft(
+    agent_states: List[Any],
+    *,
+    input_package_id: Optional[int] = None,
+) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
     candidates: List[Dict[str, Any]] = []
     for state in agent_states:
         aircraft_id = _to_int(
@@ -236,6 +267,13 @@ def _select_preferred_manned_aircraft(agent_states: List[Any]) -> Tuple[Optional
         ),
         reverse=True,
     )
+    used = get_used_manned_ids(input_package_id)
+    if used:
+        unused = [c for c in candidates if c["aircraft_id"] not in used]
+        if not unused:
+            return None, candidates
+        candidates = unused
+
     last_assigned = get_last_assigned_manned_id()
     if last_assigned is not None:
         for candidate in candidates:
@@ -295,6 +333,60 @@ def _load_target_entries() -> Tuple[List[Dict[str, Any]], Optional[str]]:
         reverse=True,
     )
     return target_entries, None
+
+
+def _normalize_replan_detail(detail: Any) -> Optional[Dict[str, Any]]:
+    if isinstance(detail, dict):
+        return detail
+    if isinstance(detail, (bytes, bytearray)):
+        try:
+            detail = detail.decode("utf-8", "ignore")
+        except Exception:
+            return None
+    if isinstance(detail, str):
+        try:
+            parsed = json.loads(detail)
+        except Exception:
+            return None
+        return parsed if isinstance(parsed, dict) else None
+    return None
+
+
+def _build_primary_target_from_detail(
+    detail: Any,
+    target_entries: List[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    detail = _normalize_replan_detail(detail)
+    if not detail:
+        return None
+    trigger = detail.get("trigger")
+    has_watcher = detail.get("watcherID") is not None or detail.get("watcherId") is not None
+    has_target = detail.get("targetID") is not None or detail.get("targetId") is not None
+    has_coord = detail.get("coordinate") is not None or detail.get("targetCoordinate") is not None
+    if not (isinstance(trigger, str) and trigger.strip() == "0402") and not (has_watcher and (has_target or has_coord)):
+        return None
+    target_id = _to_int(detail.get("targetID") or detail.get("targetId"))
+    watcher_id = _to_int(detail.get("watcherID") or detail.get("watcherId"))
+    coord = _normalize_coordinate(detail.get("coordinate") or detail.get("targetCoordinate"))
+    if coord is None and target_id is not None:
+        for entry in target_entries:
+            if entry.get("target_id") == target_id:
+                coord = entry.get("coordinate")
+                if watcher_id is None:
+                    watcher_id = entry.get("watcher_id")
+                break
+    if target_id is None and coord is None and watcher_id is None:
+        return None
+    return {
+        "key": detail.get("targetKey") or detail.get("targetID"),
+        "target_id": target_id,
+        "watcher_id": watcher_id,
+        "coordinate": coord,
+        "is_destroyed": False,
+        "is_used": 0,
+        "target_in_frame": True,
+        "raw": detail,
+    }
 
 
 def _pick_primary_target(target_entries: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -442,6 +534,23 @@ def _extract_watcher_from_key(key: str) -> Optional[int]:
         return None
 
 
+def _haversine_distance_m(a: Dict[str, Any], b: Dict[str, Any]) -> Optional[float]:
+    lat1 = _to_float(a.get("latitude"))
+    lon1 = _to_float(a.get("longitude"))
+    lat2 = _to_float(b.get("latitude"))
+    lon2 = _to_float(b.get("longitude"))
+    if None in (lat1, lon1, lat2, lon2):
+        return None
+    r = 6_371_000.0
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a_val = math.sin(dphi / 2.0) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2.0) ** 2
+    c = 2.0 * math.atan2(math.sqrt(a_val), math.sqrt(1.0 - a_val))
+    return r * c
+
+
 def _json_safe(value: Any) -> Any:
     try:
         json.dumps(value, ensure_ascii=False)
@@ -528,6 +637,42 @@ def _apply_attack_plan_overrides(
     if not uav_state or not uav_state.get("current_waypoint_id"):
         emit(f"[ATTACK] Current waypoint unavailable for UAV {watcher_id}.")
         return None
+
+    detail = _normalize_replan_detail(ctx.get("replan_detail")) or {}
+    trigger = str(detail.get("trigger") or "").strip()
+    has_watcher = detail.get("watcherID") is not None or detail.get("watcherId") is not None
+    has_target = detail.get("targetID") is not None or detail.get("targetId") is not None
+    has_coord = detail.get("coordinate") is not None or detail.get("targetCoordinate") is not None
+    use_detection_tracking = bool(trigger == "0402" or (has_watcher and (has_target or has_coord)))
+    if not use_detection_tracking:
+        replan_level = _to_int(ctx.get("replan_level") or ctx.get("replanLevel"))
+        watcher_fallback = _to_int(primary_target.get("watcher_id")) if isinstance(primary_target, dict) else None
+        if replan_level == 2 and watcher_fallback is not None:
+            use_detection_tracking = True
+            emit(
+                f"[ATTACK][ETA] Using detection fallback (replan_level=2, watcher={watcher_fallback})."
+            )
+
+    tracking_eta_s: Optional[int] = None
+    if use_detection_tracking:
+        manned_coord = manned_state.get("coordinate") if isinstance(manned_state, dict) else None
+        if manned_coord and attack_point:
+            distance_m = _haversine_distance_m(manned_coord, attack_point)
+            speed_mps = _to_float(manned_state.get("speed")) if isinstance(manned_state, dict) else None
+            if speed_mps is None or speed_mps <= 0:
+                speed_mps = 40.0
+                emit("[ATTACK][ETA] Manned speed missing; using default 40 m/s.")
+            if distance_m is not None:
+                tracking_eta_s = int(round(distance_m / speed_mps + 30.0))
+                emit(
+                    f"[ATTACK][ETA] Tracking ETA computed (dist={distance_m:.1f}m, speed={speed_mps:.1f}m/s, +30s) -> {tracking_eta_s}s"
+                )
+            else:
+                emit("[ATTACK][ETA] Distance calc failed; using default 30s.")
+                tracking_eta_s = 30
+        else:
+            emit("[ATTACK][ETA] Manned/attack coordinate missing; using default 30s.")
+            tracking_eta_s = 30
 
     source_plan_id = _load_latest_mission_progress_plan_id() or _scan_latest_source_plan_id()
     if source_plan_id is None:
@@ -668,6 +813,8 @@ def _apply_attack_plan_overrides(
             artifacts=artifacts,
             emit=emit,
             now_ms=now_ms,
+            force_start_at_current=use_detection_tracking,
+            tracking_eta_s=tracking_eta_s,
         )
         if update:
             aircraft_updates.append(update)
@@ -723,6 +870,7 @@ def _index_agent_states(agent_states: List[Any]) -> Dict[int, Dict[str, Any]]:
         current_wp = _to_int(wp_block.get("waypointID"))
         velocity = entry.get("velocity") or {}
         heading = _to_float(velocity.get("heading"))
+        speed = _to_float(velocity.get("speed"))
         if heading is not None:
             heading = heading % 360.0
         index[aircraft_id] = {
@@ -731,6 +879,7 @@ def _index_agent_states(agent_states: List[Any]) -> Dict[int, Dict[str, Any]]:
             "current_waypoint_id": current_wp,
             "is_unmanned": bool(entry.get("isUnmanned")),
             "heading": heading,
+            "speed": speed,
         }
     return index
 
@@ -802,6 +951,8 @@ def _build_uav_attack_tracking_package(
     artifacts: Any,
     emit: Callable[[str], None],
     now_ms: int,
+    force_start_at_current: bool = False,
+    tracking_eta_s: Optional[int] = None,
 ) -> Optional[Dict[str, Any]]:
     if target_index is None:
         emit("[ATTACK][UAV] Target mission index unavailable; skipping UAV override.")
@@ -818,24 +969,31 @@ def _build_uav_attack_tracking_package(
     if target_coord_norm.get("altitude") is None:
         target_coord_norm["altitude"] = _normalize_altitude_value(agent_coord.get("altitude")) or 700
 
-    heading = state.get("heading")
-    approach_coord = _project_coordinate(agent_coord, heading, ATTACK_ENTRY_OFFSET_METERS)
-    if approach_coord is None:
-        try:
-            bearing = _bearing_between(
-                agent_coord["latitude"],
-                agent_coord["longitude"],
-                target_coord_norm["latitude"],
-                target_coord_norm["longitude"],
-            )
-            approach_coord = _project_coordinate(agent_coord, bearing, ATTACK_ENTRY_OFFSET_METERS)
-        except Exception:
-            approach_coord = None
-    if approach_coord is None:
+    approach_coord = None
+    if force_start_at_current:
         approach_coord = {
             "latitude": agent_coord["latitude"],
             "longitude": agent_coord["longitude"],
         }
+    else:
+        heading = state.get("heading")
+        approach_coord = _project_coordinate(agent_coord, heading, ATTACK_ENTRY_OFFSET_METERS)
+        if approach_coord is None:
+            try:
+                bearing = _bearing_between(
+                    agent_coord["latitude"],
+                    agent_coord["longitude"],
+                    target_coord_norm["latitude"],
+                    target_coord_norm["longitude"],
+                )
+                approach_coord = _project_coordinate(agent_coord, bearing, ATTACK_ENTRY_OFFSET_METERS)
+            except Exception:
+                approach_coord = None
+        if approach_coord is None:
+            approach_coord = {
+                "latitude": agent_coord["latitude"],
+                "longitude": agent_coord["longitude"],
+            }
     approach_alt = _normalize_altitude_value(agent_coord.get("altitude"))
     if approach_alt is None:
         approach_alt = _normalize_altitude_value(target_coord_norm.get("altitude")) or 700
@@ -917,6 +1075,8 @@ def _build_uav_attack_tracking_package(
     resume_fp_data["aircraftID"] = descriptor["aircraft_id"]
     resume_fp_data["individualMissionID"] = resume_individual_id
 
+    approach_pass_type = 1 if force_start_at_current else 2
+    approach_loiter_time = 0 if force_start_at_current else 30
     approach_wp = {
         "waypointID": approach_wp_id,
         "coordinate": {
@@ -925,10 +1085,10 @@ def _build_uav_attack_tracking_package(
             "altitude": approach_coord["altitude"],
         },
         "speed": 35.0,
-        "eta": 25,
+        "eta": 0 if force_start_at_current else 25,
         "ecf": 0.0,
         "nextWaypointID": target_wp_id,
-        "waypointPassType": 2,
+        "waypointPassType": approach_pass_type,
         "filmingProperty": {
             "fieldOfView": 10.0,
             "sensorType": 1,
@@ -941,13 +1101,17 @@ def _build_uav_attack_tracking_package(
                 }
             },
         },
-        "loiterProperty": {
+    }
+    if approach_pass_type == 2 and approach_loiter_time > 0:
+        approach_wp["loiterProperty"] = {
             "radius": 200,
             "direction": 1,
-            "time": 30,
+            "time": approach_loiter_time,
             "speed": 30,
-        },
-    }
+        }
+
+    target_eta = int(tracking_eta_s) if isinstance(tracking_eta_s, int) and tracking_eta_s >= 0 else 30
+    target_loiter_time = target_eta if force_start_at_current else 300
 
     target_wp = {
         "waypointID": target_wp_id,
@@ -957,7 +1121,7 @@ def _build_uav_attack_tracking_package(
             "altitude": target_coord_norm["altitude"],
         },
         "speed": 30.0,
-        "eta": 30,
+        "eta": target_eta,
         "ecf": 0.0,
         "nextWaypointID": 0,
         "waypointPassType": 2,
@@ -973,13 +1137,14 @@ def _build_uav_attack_tracking_package(
                 }
             },
         },
-        "loiterProperty": {
+    }
+    if target_loiter_time > 0:
+        target_wp["loiterProperty"] = {
             "radius": 400,
             "direction": 1,
-            "time": 300,
+            "time": target_loiter_time,
             "speed": 30,
-        },
-    }
+        }
     if descriptor.get("target_id") is not None:
         filming = target_wp.get("filmingProperty") or {}
         filming["autoTracking"] = {"targetID": descriptor.get("target_id")}

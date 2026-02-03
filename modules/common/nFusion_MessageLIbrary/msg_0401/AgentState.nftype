@@ -1,8 +1,42 @@
-uint aircraftID
-bool isUnmanned
+uint aircraftID:
+ - 길이 : 4
+ - min : 0
+ - Max : 6
+ - unit : N/A
+ - 비고 : 유무인기 ID
+
+bool isUnmanned:
+ - 길이 : 1
+ - min : 0
+ - Max : 1
+ - unit : N/A
+ - 비고 : 유무인기 여부
+ - enum : 0=유인기, 1=무인기
+
 CommonType.Coordinate coordinate
 Velocity velocity
-float fuel
-uint health
+
+float fuel:
+ - 길이 : 4
+ - min : 0
+ - Max : 1000
+ - unit : Liter
+ - 비고 : 연료량
+
+uint health:
+ - 길이 : 4
+ - min : 0
+ - Max : 2
+ - unit : N/A
+ - 비고 : 유무인기 정상/비정상 여부
+ - enum : 0=알 수 없음, 1=정상, 2=비정상
+
+ulong lastSignalTime:
+ - 길이 : 8
+ - min : 0
+ - Max : 2^64-1
+ - unit : ms
+ - 비고 : 2000년 1월 1일부터 ms, 해당 유무인기로부터 SBC1이 수신한 마지막 시간
+
 MannedInfo mannedInfo
 UnmannedInfo unmannedInfo

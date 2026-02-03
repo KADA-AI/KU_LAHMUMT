@@ -1,9 +1,9 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 # modules/integration_module/integration_gui.py
 # Integration GUI – 연동 모듈 전용 GUI
 from __future__ import annotations
 
-import sys, os, threading, json, re, time
+import sys, os, threading, json, re, time, random
 from datetime import datetime, timezone
 os.environ["KU_ROLE"] = "integration"
 from pathlib import Path
@@ -17,14 +17,84 @@ for _p in (_ROOT, _ROOT / "modules", _ROOT / "modules" / "common"):
 from modules.common.qt_env import ensure_qt_platform
 ensure_qt_platform()
 
-from PyQt5.QtCore import qInstallMessageHandler, QtMsgType, pyqtSignal, QTimer, Qt, QEvent, QObject, QPointF
+from PyQt5.QtCore import qInstallMessageHandler, QtMsgType, pyqtSignal, QTimer, Qt, QEvent, QObject, QPointF, QRect
+from PyQt5.QtGui import QPainter, QColor, QPen, QFontMetrics, QFont
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QTabWidget, QWidget, QLabel,
     QHBoxLayout, QVBoxLayout, QSlider, QLineEdit, QPushButton, QFileDialog,
     QGroupBox, QMessageBox, QSizePolicy, QTableWidget, QHeaderView, QTableWidgetItem,
-    QCheckBox, QDialog, QFormLayout, QDialogButtonBox, QComboBox, QSpinBox, QDoubleSpinBox
+    QCheckBox, QDialog, QFormLayout, QDialogButtonBox, QComboBox, QSpinBox, QDoubleSpinBox,
+    QStyle, QStyleOptionSlider,
 )
-from PyQt5.QtGui import QPainter, QColor, QPen
+
+class ModeTickLabels(QWidget):
+    def __init__(self, slider, labels, parent=None):
+        super().__init__(parent)
+        self._slider = slider
+        self._labels = list(labels)
+        self._pad = 0
+        self._font = QFont("Malgun Gothic")
+        self._font.setPointSize(8)
+        metrics = QFontMetrics(self._font)
+        self.setFixedHeight(max(30, metrics.height() * 2 + 2))
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self._slider.installEventFilter(self)
+        self._sync_width()
+
+    def _calc_pad(self):
+        metrics = QFontMetrics(self._font)
+        max_width = 0
+        for label in self._labels:
+            lines = str(label).splitlines() or [""]
+            width = max(metrics.horizontalAdvance(line) for line in lines)
+            if width > max_width:
+                max_width = width
+        rect_width = max(max_width + 6, 24)
+        return int(rect_width / 2) + 2
+
+    def _sync_width(self):
+        self._pad = self._calc_pad()
+        self.setFixedWidth(self._slider.width() + self._pad * 2)
+        self.update()
+
+    def eventFilter(self, obj, event):
+        if obj is self._slider and event.type() == QEvent.Resize:
+            self._sync_width()
+        return super().eventFilter(obj, event)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.TextAntialiasing)
+        painter.setPen(QColor("#6b7280"))
+        painter.setFont(self._font)
+        metrics = QFontMetrics(self._font)
+        option = QStyleOptionSlider()
+        self._slider.initStyleOption(option)
+        style = self._slider.style()
+        groove = style.subControlRect(QStyle.CC_Slider, option, QStyle.SC_SliderGroove, self._slider)
+        handle = style.subControlRect(QStyle.CC_Slider, option, QStyle.SC_SliderHandle, self._slider)
+        min_val = self._slider.minimum()
+        max_val = self._slider.maximum()
+        count = len(self._labels)
+        if count < 2 or max_val == min_val:
+            return
+        step = (max_val - min_val) / (count - 1)
+        available = groove.width() - handle.width()
+        if available < 0:
+            available = 0
+        for idx, label in enumerate(self._labels):
+            val = min_val + int(round(step * idx))
+            pos = style.sliderPositionFromValue(min_val, max_val, val, available, option.upsideDown)
+            x = self._pad + groove.x() + (handle.width() // 2) + pos
+            lines = str(label).splitlines() or [""]
+            text_width = max(metrics.horizontalAdvance(line) for line in lines)
+            rect_width = max(text_width + 6, 24)
+            x0 = int(x - rect_width / 2)
+            rect = QRect(int(x0), 0, int(rect_width), self.height())
+            painter.drawText(rect, Qt.AlignHCenter | Qt.AlignTop, label)
+        painter.end()
+
+
 
 # ───────── Qt 경고 필터 ─────────
 def _qt_silent_handler(mode: QtMsgType, context, message: str):
@@ -108,7 +178,6 @@ from Tabs.integration_tab import IntegrationTab
 
 # 상태 OK(=0102) 헬퍼
 from modules.common.status_reporter import send_status_ok
-from modules.common.ctrl_listener import start_ctrl_listener, env_ctrl_port
 from modules.common.fusion_files import copy_file_with_retry
 
 from push_center import push_message
@@ -517,6 +586,9 @@ class _MissionSidePanel(QGroupBox):
         self.btn_0202 = QPushButton("0202 선행임무정보 보내기", self.grp_manual); manual_layout.addWidget(self.btn_0202)
         self.btn_0801 = QPushButton("0801 임무재계획 명령 보내기", self.grp_manual); manual_layout.addWidget(self.btn_0801)
         self.btn_0802 = QPushButton("0802 강제명령 보내기", self.grp_manual); manual_layout.addWidget(self.btn_0802)
+        self.btn_0803_next = QPushButton("0803 \uB2E4\uC74C \uD611\uC5C5\uAE30\uC800\uC784\uBB34 (execute=1)", self.grp_manual); manual_layout.addWidget(self.btn_0803_next)
+        self.btn_0803_repeat = QPushButton("0803 \uC7AC\uC218\uD589 (execute=2)", self.grp_manual); manual_layout.addWidget(self.btn_0803_repeat)
+        self.btn_onmission2_last_wp = QPushButton("현재 협업기저임무 onMission=2 (마지막 WP)", self.grp_manual); manual_layout.addWidget(self.btn_onmission2_last_wp)
         self.cmb_0702_option = QComboBox(self.grp_manual)
         self.cmb_0702_option.setEnabled(False)
         manual_layout.addWidget(self.cmb_0702_option)
@@ -668,6 +740,7 @@ class _MissionPlanWaypointOverlay:
         self._fuel = {}
         self._fuel_step = {}
         self._plan_key = None
+        self._input_package_id = None
         self._prepared = False
         self._mission_done = False
         self._current_mission_start_idx = 0
@@ -693,6 +766,7 @@ class _MissionPlanWaypointOverlay:
         self._fuel_step.clear()
         self._mission_done = False
         self._plan_key = None
+        self._input_package_id = None
 
     def prepare(self, *, force: bool = False) -> bool:
         mission_plan_path = self._find_latest_mission_plan()
@@ -752,6 +826,63 @@ class _MissionPlanWaypointOverlay:
             self._fuel_step.pop(aid, None)
         return self._current_input_id
 
+    def set_current_input_id(self, input_id: int | None, *, reset: bool = True) -> int | None:
+        if not self._prepared or input_id is None:
+            return None
+        try:
+            input_id_int = int(input_id)
+        except Exception:
+            return None
+        if input_id_int not in self._input_order:
+            return None
+        try:
+            idx = self._input_order.index(input_id_int)
+        except ValueError:
+            return None
+        self._current_input_index = int(idx)
+        self._current_input_id = int(input_id_int)
+        if reset:
+            seq_map = self._missions_by_input.get(self._current_input_id, {})
+            self._cursor = {aid: 0 for aid in seq_map}
+            self._ticks = {aid: 0 for aid in seq_map}
+            self._mission_done = False
+            for aid in seq_map:
+                self._fuel.pop(aid, None)
+                self._fuel_step.pop(aid, None)
+        return self._current_input_id
+
+    @staticmethod
+    def _select_next_pending_input_id(input_plan: dict) -> int | None:
+        if not isinstance(input_plan, dict):
+            return None
+        mission_list = input_plan.get("inputMissionList") or []
+        last_id: int | None = None
+        for item in mission_list:
+            if not isinstance(item, dict):
+                continue
+            try:
+                input_id = int(item.get("inputMissionID"))
+            except Exception:
+                continue
+            last_id = input_id
+            if not bool(item.get("isDone")):
+                return input_id
+        return last_id
+
+    def resolve_current_input_id_from_db(self, *, reset: bool = True) -> int | None:
+        if not self._prepared:
+            return None
+        pkg_id = self._input_package_id
+        if pkg_id is None:
+            return None
+        input_plan = self._read_input_plan(int(pkg_id))
+        if not input_plan:
+            return None
+        candidate = self._select_next_pending_input_id(input_plan)
+        if candidate is None:
+            return None
+        return self.set_current_input_id(int(candidate), reset=reset)
+
     def has_next_input(self) -> bool:
         return self._prepared and (self._current_input_index + 1) < len(self._input_order)
 
@@ -765,6 +896,20 @@ class _MissionPlanWaypointOverlay:
             self._fuel.pop(aid, None)
             self._fuel_step.pop(aid, None)
         self._mission_done = False
+
+    def last_waypoints_for_current(self) -> dict[int, int]:
+        if self._current_input_id is None:
+            return {}
+        seq_map = self._missions_by_input.get(self._current_input_id, {})
+        out: dict[int, int] = {}
+        for aid, seq in seq_map.items():
+            if not seq:
+                continue
+            try:
+                out[int(aid)] = int(seq[-1])
+            except Exception:
+                continue
+        return out
 
     def apply(self, body: dict) -> bool:
         if not self._prepared or self._current_input_id is None:
@@ -811,12 +956,19 @@ class _MissionPlanWaypointOverlay:
             self._ticks[aid] = tick
             if seq:
                 cur_idx = min(idx, len(seq) - 1)
-                info = self._ensure_unmanned_info(agent)
-                current = info.get("currentWaypointID")
-                if not isinstance(current, dict):
-                    current = {}
-                    info["currentWaypointID"] = current
-                current["waypointID"] = seq[cur_idx]
+                is_unmanned = self._get_int(agent, "isUnmanned")
+                if is_unmanned is None:
+                    is_unmanned = 1 if aid >= 4 else 0
+                on_mission = 1
+                if int(is_unmanned) == 1:
+                    info = self._ensure_unmanned_info(agent)
+                    current = info.get("currentWaypointID")
+                    if not isinstance(current, dict):
+                        current = {}
+                        info["currentWaypointID"] = current
+                    current["waypointID"] = seq[cur_idx]
+                    info["onMission"] = on_mission
+                agent["onMission"] = on_mission
             self._apply_fuel_decay(agent, aid)
 
         completed = True
@@ -860,6 +1012,7 @@ class _MissionPlanWaypointOverlay:
             self._log_info(f"[REPLAY] MissionPlan 로드 실패: {exc}")
             return False
 
+
         missions_by_input: dict[int, dict[int, list[int]]] = {}
         for entry in data.get("aircraftList", []):
             if not isinstance(entry, dict):
@@ -880,18 +1033,42 @@ class _MissionPlanWaypointOverlay:
                     continue
                 path_id = self._safe_int(mission.get("pathID"))
                 if path_id is None:
+                    missions_by_input.setdefault(input_id, {})
                     continue
                 seq = self._read_waypoint_ids(path_id)
                 if not seq:
+                    missions_by_input.setdefault(input_id, {})
                     continue
                 mapping = missions_by_input.setdefault(input_id, {})
                 mapping.setdefault(aid, [])
                 mapping[aid].extend(seq)
-        if not missions_by_input:
-            self._log_info("[REPLAY] MissionPlan에서 활용할 협업기저임무를 찾지 못했습니다.")
+
+        input_order: list[int] = []
+        input_pkg_id = self._safe_int(data.get("inputMissionPackageID") or data.get("InputMissionPackageID"))
+        self._input_package_id = input_pkg_id
+        if input_pkg_id is not None:
+            input_plan = self._read_input_plan(input_pkg_id)
+            if input_plan:
+                seen: set[int] = set()
+                for item in input_plan.get("inputMissionList") or []:
+                    if not isinstance(item, dict):
+                        continue
+                    input_id = self._safe_int(item.get("inputMissionID"))
+                    if input_id is None or input_id in seen:
+                        continue
+                    seen.add(input_id)
+                    input_order.append(input_id)
+                    missions_by_input.setdefault(input_id, {})
+
+        if not missions_by_input and not input_order:
+            self._log_info("[REPLAY] MissionPlan has no usable input missions.")
             return False
-        self._missions_by_input = {k: missions_by_input[k] for k in sorted(missions_by_input)}
-        self._input_order = list(self._missions_by_input.keys())
+        if input_order:
+            self._missions_by_input = {k: missions_by_input.get(k, {}) for k in input_order}
+            self._input_order = input_order
+        else:
+            self._missions_by_input = {k: missions_by_input[k] for k in sorted(missions_by_input)}
+            self._input_order = list(self._missions_by_input.keys())
         return True
 
     def _read_individual_plan(self, imp_id: int):
@@ -907,6 +1084,21 @@ class _MissionPlanWaypointOverlay:
             return json.loads(imp_path.read_text(encoding="utf-8"))
         except Exception as exc:
             self._log_info(f"[REPLAY] IndividualMissionPlan 로드 실패({imp_id}): {exc}")
+            return None
+
+    def _read_input_plan(self, package_id: int):
+        try:
+            plan_path = db_paths.get_db_subpath("InputMissionPlan", f"{package_id}.json")
+        except Exception:
+            return None
+        plan_path = Path(plan_path)
+        if not plan_path.exists():
+            self._log_info(f"[REPLAY] InputMissionPlan file not found: {package_id}")
+            return None
+        try:
+            return json.loads(plan_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            self._log_info(f"[REPLAY] InputMissionPlan load failed ({package_id}): {exc}")
             return None
 
     def _collect_waypoints(self, imp_id: int) -> list[int]:
@@ -937,8 +1129,16 @@ class _MissionPlanWaypointOverlay:
         except Exception as exc:
             self._log_info(f"[REPLAY] FlightPath 로드 실패({path_id}): {exc}")
             return []
+        waypoints = data.get("waypointList")
+        if waypoints is None:
+            lower_map = {str(k).lower(): k for k in data.keys()}
+            for key in ("waypointlist", "lahwaypointlist", "uavwaypointlist"):
+                actual = lower_map.get(key)
+                if actual is not None:
+                    waypoints = data.get(actual)
+                    break
         out: list[int] = []
-        for wp in data.get("waypointList", []):
+        for wp in waypoints or []:
             if not isinstance(wp, dict):
                 continue
             wid = self._safe_int(wp.get("waypointID") or wp.get("WaypointID"))
@@ -1020,6 +1220,12 @@ class _ReplayManager(QObject):
         self._current_mission_base_ts = 0.0
         self._anchor_ms: float | None = None
         self._t0_mono: float | None = None
+        self._completion_timer = None
+        self._completion_last_wp: dict[int, int] = {}
+        self._last_positions: dict[int, tuple[float, float, float]] = {}
+        self._completion_on_mission = 1
+        self._completion_ticks_left: int | None = None
+        self._completion_after = None
 
     def stop(self):
         for t in self._timers:
@@ -1042,6 +1248,7 @@ class _ReplayManager(QObject):
         self._overlay_active = False
         if callable(self._log):
             self._log("[REPLAY] 재생 중단")
+        self._stop_completion_sim()
 
     def _start_clock(self, anchor_ms: float):
         self._anchor_ms = float(anchor_ms)
@@ -1308,10 +1515,15 @@ class _ReplayManager(QObject):
             if self._side.force_wp_zero():
                 self._force_wp_zero(body)
             self._apply_uav_blocks(body)
+            now_ms = _now_ms_since_2000()
+            self._apply_current_timestamp(body, now_ms)
+            self._apply_last_signal_time(body, now_ms)
             try:
                 for aid, lat, lon, typ in self._iter_agent_states(body):
                     self._tracker._map.set_pos(aid, lat, lon, typ)
                     self._tracker._upsert_row(aid, lat, lon, None, None)
+                    self._last_positions[int(aid)] = (float(lat), float(lon), 0.0)
+
             except Exception:
                 pass
         try:
@@ -1325,6 +1537,155 @@ class _ReplayManager(QObject):
             if callable(self._log):
                 self._log(f"[REPLAY] {msg_id} push 실패: {exc}")
 
+
+    def send_current_onmission2_last_wp(self, *, ticks: int = 3) -> bool:
+        """현재 보고 있는 협업기저임무의 마지막 WP에 onMission=2를 송신한다."""
+        self._stop_completion_sim()
+
+        prepared = False
+        try:
+            prepared = bool(getattr(self._overlay, "_prepared", False))
+        except Exception:
+            prepared = False
+        if not prepared:
+            try:
+                if not self._overlay.prepare(force=True):
+                    if callable(self._log):
+                        self._log("[REPLAY] onMission=2 송신 실패: MissionPlan 준비 실패")
+                    return False
+            except Exception as exc:
+                if callable(self._log):
+                    self._log(f"[REPLAY] onMission=2 송신 실패: {exc}")
+                return False
+
+        current_id = None
+        try:
+            current_id = self._overlay.current_input_id()
+        except Exception:
+            current_id = None
+        if current_id is None or not self._overlay_active:
+            try:
+                resolved = self._overlay.resolve_current_input_id_from_db(reset=True)
+                if resolved is not None:
+                    current_id = int(resolved)
+            except Exception:
+                pass
+        if current_id is None:
+            if callable(self._log):
+                self._log("[REPLAY] onMission=2 send skipped: no current input mission")
+            return False
+
+        if current_id is None:
+            if callable(self._log):
+                self._log("[REPLAY] onMission=2 송신 실패: 현재 input mission이 없습니다")
+            return False
+
+        try:
+            last_wp = self._overlay.last_waypoints_for_current()
+        except Exception:
+            last_wp = {}
+        if not last_wp:
+            if callable(self._log):
+                self._log("[REPLAY] onMission=2 송신 실패: 마지막 WP를 찾지 못했습니다")
+            return False
+
+        try:
+            ticks_int = max(1, int(ticks))
+        except Exception:
+            ticks_int = 1
+
+        self._start_completion_sim(on_mission=2, ticks=ticks_int)
+        if callable(self._log):
+            try:
+                summary = ", ".join(f"{aid}:{wp}" for aid, wp in sorted(last_wp.items()))
+            except Exception:
+                summary = str(last_wp)
+            self._log(f"[REPLAY] onMission=2 송신 시작 (input={current_id}, lastWP={summary}, ticks={ticks_int})")
+        return True
+
+    def _start_completion_sim(
+        self,
+        *,
+        on_mission: int = 1,
+        ticks: int | None = None,
+        on_done=None,
+    ) -> None:
+        self._stop_completion_sim()
+        try:
+            self._completion_last_wp = self._overlay.last_waypoints_for_current()
+        except Exception:
+            self._completion_last_wp = {}
+        self._completion_on_mission = int(on_mission)
+        self._completion_ticks_left = int(ticks) if ticks is not None else None
+        self._completion_after = on_done
+        self._completion_timer = QTimer(self)
+        self._completion_timer.setInterval(200)
+        self._completion_timer.timeout.connect(self._send_completion_tick)
+        self._completion_timer.start()
+
+    def _stop_completion_sim(self) -> None:
+        if self._completion_timer is not None:
+            try:
+                self._completion_timer.stop()
+            except Exception:
+                pass
+        self._completion_timer = None
+        self._completion_last_wp = {}
+        self._completion_on_mission = 1
+        self._completion_ticks_left = None
+        self._completion_after = None
+
+    def _send_completion_tick(self) -> None:
+        body = self._build_completion_body()
+        row = self._row_of("0401")
+        self._emit_message("0401", body, row)
+        if self._completion_ticks_left is not None:
+            self._completion_ticks_left -= 1
+            if self._completion_ticks_left <= 0:
+                callback = self._completion_after
+                self._stop_completion_sim()
+                if callable(callback):
+                    callback()
+
+    def _build_completion_body(self) -> dict:
+        agent_list = []
+        for aid in range(1, 7):
+            is_unmanned = aid >= 4
+            lat, lon, alt = self._random_coord(aid, is_unmanned)
+            state = {
+                "aircraftID": int(aid),
+                "isUnmanned": 1 if is_unmanned else 0,
+                "health": 1,
+                "coordinate": {
+                    "latitude": lat,
+                    "longitude": lon,
+                    "altitude": alt,
+                },
+            }
+            on_mission = int(self._completion_on_mission)
+            if is_unmanned:
+                last_wp = self._completion_last_wp.get(aid, 0)
+                state["onMission"] = on_mission
+                state["unmannedInfo"] = {
+                    "currentWaypointID": {"waypointID": int(last_wp) if last_wp else 0},
+                    "onMission": on_mission,
+                }
+            elif on_mission == 1:
+                state["onMission"] = 1
+            agent_list.append(state)
+        return {"source": "INT", "agentStateList": agent_list}
+
+    def _random_coord(self, aid: int, is_unmanned: bool) -> tuple[float, float, float]:
+        base = self._last_positions.get(int(aid))
+        if base:
+            lat, lon, alt = base
+        else:
+            lat = 37.7 + random.uniform(-0.05, 0.05)
+            lon = 128.1 + random.uniform(-0.05, 0.05)
+            alt = 1000.0 if is_unmanned else 300.0
+        lat += random.uniform(-0.0005, 0.0005)
+        lon += random.uniform(-0.0005, 0.0005)
+        return round(lat, 6), round(lon, 6), float(alt)
     def _push_0803(self, execute: int) -> None:
         timestamp = int(
             (datetime.now(timezone.utc) - datetime(2000, 1, 1, tzinfo=timezone.utc)).total_seconds() * 1000
@@ -1334,13 +1695,19 @@ class _ReplayManager(QObject):
             "source": "CSP",
             "execute": int(execute),
         }
+        row = self._row_of("0803")
         try:
-            push_message("0803", self._msgr, body_dict=body_0803)
+            push_message(
+                "0803",
+                self._msgr,
+                on_done=(lambda mid, raw: self._tab._mark_single_sent(row, mid, raw)) if row >= 0 else None,
+                body_dict=body_0803,
+            )
             if callable(self._log):
-                self._log(f"[REPLAY] 0803 전송 (execute={execute})")
+                self._log(f"[REPLAY] 0803 send ok (execute={execute})")
         except Exception as exc:
             if callable(self._log):
-                self._log(f"[REPLAY] 0803 push 실패: {exc}")
+                self._log(f"[REPLAY] 0803 push failed: {exc}")
 
     def _match_key(self, container: dict, target: str):
         if not isinstance(container, dict):
@@ -1391,6 +1758,33 @@ class _ReplayManager(QObject):
         ]
 
         body[key_list] = filtered
+
+    def _apply_current_timestamp(self, body: dict, now_ms: int) -> None:
+        if not isinstance(body, dict):
+            return
+        key_ts, _ = self._match_key(body, "timestamp")
+        if key_ts is None:
+            body["timestamp"] = int(now_ms)
+        else:
+            body[key_ts] = int(now_ms)
+
+    def _apply_last_signal_time(self, body: dict, now_ms: int | None = None) -> None:
+        if not isinstance(body, dict):
+            return
+        key_list, agent_states = self._match_key(body, "agentStateList")
+        if key_list is None or not isinstance(agent_states, list):
+            return
+        if now_ms is None:
+            now_ms = _now_ms_since_2000()
+        last_signal = int(now_ms)
+        for agent in agent_states:
+            if not isinstance(agent, dict):
+                continue
+            key_ls, _ = self._match_key(agent, "lastSignalTime")
+            if key_ls is None:
+                agent["lastSignalTime"] = last_signal
+            else:
+                agent[key_ls] = last_signal
 
     def _is_agent_blocked(self, agent: dict, blocked: set[int]) -> bool:
         if not isinstance(agent, dict):
@@ -1472,20 +1866,24 @@ class _ReplayManager(QObject):
     def _prompt_next_input_mission(self):
         if not self._overlay_active:
             return
+        if self._awaiting_user:
+            return
         self._awaiting_user = True
         current_id = self._overlay.current_input_id()
         next_id = self._overlay.peek_next_input_id()
         if next_id is None:
             self._overlay_active = False
             self._awaiting_user = False
+            self._start_completion_sim()
             if callable(self._log):
-                self._log("[REPLAY] 모든 협업기저임무 재생 완료")
+                self._log("[REPLAY] Last input mission reached; start completion 0401 simulation")
             return
 
         box = QMessageBox(self._tab)
         box.setWindowTitle("Input Mission Complete")
         box.setText(f"Input mission {current_id} finished.\nProceed to the next mission?")
         next_button = box.addButton("Next mission (execute=1)", QMessageBox.AcceptRole)
+        complete_button = box.addButton("OnMission=2 then Next", QMessageBox.ActionRole)
         repeat_button = box.addButton("Repeat mission (execute=2)", QMessageBox.ActionRole)
         stop_button = box.addButton("Stop", QMessageBox.RejectRole)
         box.exec_()
@@ -1502,25 +1900,79 @@ class _ReplayManager(QObject):
             if callable(self._log):
                 self._log(f"[REPLAY] 협업기저임무 {new_id} 재생 시작")
             self._schedule_next_overlay_row(initial=True)
+        elif clicked == complete_button:
+            self._push_0803(1)
+            self._awaiting_user = False
+
+            def _advance():
+                new_id = self._overlay.advance_to_next_input()
+                if new_id is None:
+                    self._overlay_active = False
+                    if callable(self._log):
+                        self._log("[REPLAY] all input missions completed")
+                    return
+                if callable(self._log):
+                    self._log(f"[REPLAY] input mission {new_id} start")
+                self._schedule_next_overlay_row(initial=True)
+
+
+
+            self._start_completion_sim(on_mission=2, ticks=10, on_done=_advance)
+            return
+
         elif clicked == repeat_button:
             self._push_0803(2)
             self._awaiting_user = False
-            if callable(self._log):
-                self._log("[REPLAY] execute=2 선택 - 시뮬레이션 일시 정지")
-            if self._mission_timer is not None:
-                try: self._mission_timer.stop()
-                except Exception: pass
-                self._mission_timer = None
-            for timer in list(self._timers):
-                try: timer.stop()
-                except Exception: pass
-            self._timers.clear()
-            self._overlay_active = False
+            if not self.repeat_current_input():
+                if callable(self._log):
+                    self._log("[REPLAY] repeat unavailable; stopping replay")
+                self.stop()
             return
         else:
             if callable(self._log):
                 self._log("[REPLAY] 사용자 요청으로 재생을 중단합니다.")
             self.stop()
+
+    def repeat_current_input(self) -> bool:
+        self._stop_completion_sim()
+        if not self._overlay_active:
+            if self._overlay and self._overlay.current_input_id() is not None and self._overlay.has_inputs():
+                self._overlay_active = True
+            else:
+                if callable(self._log):
+                    self._log("[REPLAY] repeat ignored: overlay inactive")
+                return False
+        if self._overlay.current_input_id() is None:
+            if callable(self._log):
+                self._log("[REPLAY] repeat ignored: no current input")
+            return False
+        if not self._rows_0401:
+            if callable(self._log):
+                self._log("[REPLAY] repeat ignored: no 0401 rows")
+            return False
+        if self._current_mission_start_idx >= len(self._rows_0401):
+            if callable(self._log):
+                self._log("[REPLAY] repeat ignored: invalid start index")
+            return False
+
+        if self._mission_timer is not None:
+            try:
+                self._mission_timer.stop()
+            except Exception:
+                pass
+        self._awaiting_user = False
+        self._pending_target_ts = self._current_mission_base_ts
+        self._row_idx_0401 = max(0, int(self._current_mission_start_idx))
+        self._prev_sim_ts_0401 = float(self._current_mission_base_ts)
+        try:
+            self._overlay.reset_current_input()
+        except Exception:
+            pass
+        if callable(self._log):
+            self._log(f"[REPLAY] repeat input {self._overlay.current_input_id()} from row {self._row_idx_0401}")
+        self._schedule_next_overlay_row(initial=True)
+        return True
+
 class MainWindow(QMainWindow):
     ctrl_payload = pyqtSignal(dict)  # 백그라운드 → UI 스레드
 
@@ -1529,7 +1981,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle('통합모듈(INT)')
         self.resize(1380, 780)
 
-        self._power_on = False
+        self._power_on = True
         self._last_ctrl_ts = {}
 
         # ── 중앙 탭
@@ -1540,13 +1992,26 @@ class MainWindow(QMainWindow):
         # ── 상단 모드 슬라이더
         top = QWidget(); top_layout = QHBoxLayout(top)
         top_layout.setContentsMargins(8,4,8,4); top_layout.addStretch(1)
-        self.mode_slider = QSlider(Qt.Horizontal); self.mode_slider.setRange(0,4)
+        self.mode_slider = QSlider(Qt.Horizontal); self.mode_slider.setRange(0, 3)
         self.mode_slider.setSingleStep(1); self.mode_slider.setTickInterval(1)
         self.mode_slider.setTickPosition(QSlider.TicksBelow); self.mode_slider.setFixedWidth(420)
         self.mode_slider.valueChanged.connect(self._on_mode_slider_changed)
-        self.mode_now = QLabel("대기모드"); self.mode_now.setStyleSheet("font-weight:600; padding-left:8px;")
+        slider_wrap = QWidget()
+        slider_layout = QVBoxLayout(slider_wrap)
+        slider_layout.setContentsMargins(0, 0, 0, 0)
+        slider_layout.setSpacing(2)
+        slider_layout.addWidget(self.mode_slider, 0, Qt.AlignHCenter)
+        self.mode_hint = ModeTickLabels(
+            self.mode_slider,
+            ["0\n초기화", "1\n대기", "2\n초기임무계획", "3\n임무수행"],
+            slider_wrap,
+        )
+        slider_layout.addWidget(self.mode_hint, 0, Qt.AlignHCenter)
+        self.mode_now = QLabel("초기화 모드"); self.mode_now.setStyleSheet("font-weight:600; padding-left:8px;")
+        self.mode_now.setFixedWidth(140)
+        self.mode_now.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         lbl = QLabel("모드:"); lbl.setStyleSheet("color:#789; padding-right:6px;")
-        top_layout.addWidget(lbl); top_layout.addWidget(self.mode_slider); top_layout.addWidget(self.mode_now)
+        top_layout.addWidget(lbl); top_layout.addWidget(slider_wrap); top_layout.addWidget(self.mode_now)
 
         # ── 좌측 보조 패널
         self._side = _MissionSidePanel(on_log=self._append_log_line, parent=self)
@@ -1554,6 +2019,9 @@ class MainWindow(QMainWindow):
         self._side.btn_0202.clicked.connect(self._act_send_0202)
         self._side.btn_0801.clicked.connect(self._act_send_0801)
         self._side.btn_0802.clicked.connect(self._act_send_0802)
+        self._side.btn_0803_next.clicked.connect(self._act_send_0803_next)
+        self._side.btn_0803_repeat.clicked.connect(self._act_send_0803_repeat)
+        self._side.btn_onmission2_last_wp.clicked.connect(self._act_send_onmission2_last_wp)
         self._side.btn_0702.clicked.connect(self._act_send_0702)
         self._latest_decision_options: list[dict] = []
         self._last_selected_plan_id: int | None = None
@@ -1561,6 +2029,10 @@ class MainWindow(QMainWindow):
             register_listener("0701", self._on_receive_0701)
         except Exception:
             self._append_log_line("[WARN] register_listener(0701) 실패")
+        try:
+            register_listener("0503", self._on_receive_0503)
+        except Exception:
+            self._append_log_line("[WARN] register_listener(0503) failed")
 
         # (우측) 기존 상단/탭을 세로 배치
         right = QWidget(); v = QVBoxLayout(right); v.setContentsMargins(0,0,0,0)
@@ -1574,27 +2046,12 @@ class MainWindow(QMainWindow):
         # 리플레이 매니저
         self._replay = _ReplayManager(self._tab, NodeMessenger, self._append_log_line, self._side)
 
-        # 초기 OFF
-        self._set_mode_slider_by_text("전원 OFF")
+        # 초기 모드
+        self._set_mode_slider_by_text("초기화 모드")
         self._apply_power_state()
+        self._rx_ready = False
+        self._rx_setup()
 
-        # 버스 초기화 + CTRL 리스너 + UDP 제어 수신
-        self.ctrl_payload.connect(self._handle_ctrl_payload)
-        threading.Thread(target=self._rx_setup, daemon=True).start()
-        self._start_control_udp()
-
-        # GUI 표시 후 상태 OK 송신(모듈 코드: INT)
-        QTimer.singleShot(2000, lambda: send_status_ok("INT"))
-
-        # 외부 self_check=1 수신 시에도 상태 OK 송신
-        start_ctrl_listener(env_ctrl_port(45985), lambda payload: (
-            send_status_ok("INT") if (payload or {}).get("cmd") == "self_check" and int((payload or {}).get("status", 0)) == 1 else None
-        ))
-
-        # Power OFF 시 UI 입력 차단 가드 설치
-        self._install_power_gate_hooks()
-
-    # ───────── Power Gate ─────────
     def _install_power_gate_hooks(self):
         try:
             tab = self._tab
@@ -1653,69 +2110,84 @@ class MainWindow(QMainWindow):
 
     # ───────── 모드/슬라이더 ─────────
     def _on_mode_slider_changed(self, val: int):
-        labels = ["전원 OFF", "초기화 모드", "대기모드", "초기 임무 계획", "임무 수행"]
+        labels = ["초기화 모드", "대기모드", "초기 임무 계획", "임무 수행"]
         try: self.mode_now.setText(labels[int(val)])
         except Exception: pass
-        self._power_on = (int(val) != 0)
+        self._power_on = True
         self._apply_power_state()
 
     def _set_mode_slider_by_text(self, text: str):
-        labels = ["전원 OFF", "초기화 모드", "대기모드", "초기 임무 계획", "임무 수행"]
+        labels = ["초기화 모드", "대기모드", "초기 임무 계획", "임무 수행"]
         norm = re.sub(r"\s+", "", str(text)).lower()
         mapping = {
-            "전원off":0,"off":0,"poweroff":0,"0":0,
-            "전원on":1,"on":1,"poweron":1,"1":1,
-            "대기모드":2,"대기":2,"standby":2,"2":2,
-            "초기임무계획":3,"초기임무계획모드":3,"initplan":3,"initial":3,"3":3,
-            "임무수행":4,"execution":4,"4":4,
+            "전원off":0,"off":0,"poweroff":0,
+            "전원on":0,"on":0,"poweron":0,
+            "0":0,
+            "초기화":0,"초기화모드":0,"초기화mode":0,
+            "1":1,"대기모드":1,"대기":1,"standby":1,
+            "2":2,"초기임무계획":2,"초기임무계획모드":2,"initplan":2,"initial":2,
+            "3":3,"임무수행":3,"execution":3,
         }
-        val = mapping.get(norm, 2)
+        val = mapping.get(norm, 1)
         try:
             if getattr(self, "mode_slider", None):
                 if self.mode_slider.value() != val:
                     self.mode_slider.blockSignals(True); self.mode_slider.setValue(val); self.mode_slider.blockSignals(False)
             if getattr(self, "mode_now", None): self.mode_now.setText(labels[val])
         except Exception: pass
-        self._power_on = (int(val) != 0)
+        self._power_on = True
 
     # ───────── 버스 초기화 ─────────
     def _rx_setup(self):
+        if getattr(self, "_rx_ready", False):
+            return
         try:
             FusionNodeIoc.Configure()
             NodeMessenger.Initialize("INT_ReceiveNode")
             NodeMessenger.RegistAllConsumerFromFusionNodeIoc()
             NodeMessenger.InitAllSubscriberFromAssembly()
             NodeMessenger.RegistAllProviderFromFusionNodeIoc()
+            self._rx_ready = True
         except Exception as e:
             self._append_log_line(f"[BUS] init 실패: {e}")
+            self._rx_ready = False
 
-    # ───────── UDP 제어 수신 ─────────
-    def _start_control_udp(self):
-        import socket
-        if getattr(self, "_ctrl_udp_started", False): return
-        self._ctrl_udp_started = True
-
-        port = int(os.getenv("KU_CTRL_PORT", "45985"))
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    def _parse_payload_any(self, payload):
+        if payload is None:
+            return None
+        if isinstance(payload, dict):
+            return payload
+        if isinstance(payload, list) and payload:
+            payload = payload[-1]
+            if isinstance(payload, dict):
+                return payload
+        if isinstance(payload, bytes):
+            return self._parse_json_body(payload)
+        if isinstance(payload, str):
+            try:
+                return self._parse_json_body(payload.encode("utf-8", "ignore"))
+            except Exception:
+                return None
         try:
-            sock.bind(("127.0.0.1", port))
-            self._append_log_line(f"CTRL UDP 수신 대기 시작 (127.0.0.1:{port})")
-        except Exception as e:
-            self._append_log_line(f"CTRL UDP 바인드 실패: {e}")
+            return self._parse_json_body(bytes(payload))
+        except Exception:
+            return None
+
+    def _on_receive_0503(self, _msg_id: str, payload: object | None):
+        data = self._parse_payload_any(payload)
+        if not isinstance(data, dict):
             return
+        rec = data.get("systemRecommend") or data.get("SystemRecommend")
+        try:
+            rec_val = int(rec)
+        except Exception:
+            return
+        self._append_log_line(f"[0503] systemRecommend={rec_val}")
+        if rec_val == 3:
+            QTimer.singleShot(0, lambda: QMessageBox.information(self, "Mission Complete", "All input missions completed."))
+            return
+        QTimer.singleShot(0, self._replay._prompt_next_input_mission)
 
-        def loop():
-            while True:
-                try:
-                    data, _ = sock.recvfrom(8192)
-                    payload = json.loads(data.decode("utf-8", "ignore"))
-                    self.ctrl_payload.emit(payload)
-                except Exception:
-                    pass
-        threading.Thread(target=loop, daemon=True).start()
-
-    # ───────── CTRL 처리 ─────────
     def _handle_ctrl_payload(self, payload: dict):
         try: cmd = str(payload.get("cmd") or "")
         except Exception: return
@@ -1753,8 +2225,10 @@ class MainWindow(QMainWindow):
         except Exception:
             return
         if execute_val == 2:
-            self._append_log_line("[REPLAY] 0803 execute=2 received - stop simulation")
-            self._replay.stop()
+            self._append_log_line("[REPLAY] 0803 execute=2 received")
+            if not self._replay.repeat_current_input():
+                self._append_log_line("[REPLAY] repeat unavailable; stopping replay")
+                self._replay.stop()
 
     # ───────── 로깅 ─────────
     def _parse_json_body(self, raw: bytes | None):
@@ -1796,6 +2270,11 @@ class MainWindow(QMainWindow):
             return _now_ms_since_2000()
 
     def _send_and_mark(self, msg_id: str, body: dict):
+        if not getattr(self, "_rx_ready", False):
+            self._rx_setup()
+        if not getattr(self, "_rx_ready", False):
+            self._append_log_line(f"[SEND] {msg_id} 실패: NodeMessenger init failed")
+            return
         row = self._replay._row_of(msg_id)
         self._append_log_line(f"[SEND] : {msg_id}")
         try:
@@ -1831,6 +2310,27 @@ class MainWindow(QMainWindow):
             self._append_log_line(f"[0701] 옵션 {len(option_list)}건 수신: {plan_ids}")
         else:
             self._append_log_line("[0701] 옵션 정보가 비어 있어 버튼을 비활성화합니다.")
+
+    def _act_send_0803_next(self):
+        try:
+            self._replay._push_0803(1)
+        except Exception as exc:
+            self._append_log_line(f"[0803] send failed: {exc}")
+
+    def _act_send_0803_repeat(self):
+        try:
+            self._replay._push_0803(2)
+        except Exception as exc:
+            self._append_log_line(f"[0803] send failed: {exc}")
+
+    def _act_send_onmission2_last_wp(self):
+        try:
+            ok = bool(self._replay.send_current_onmission2_last_wp(ticks=3))
+        except Exception as exc:
+            self._append_log_line(f"[0401] onMission=2 send failed: {exc}")
+            return
+        if not ok:
+            self._append_log_line("[0401] onMission=2 send skipped (overlay/current mission unavailable)")
 
     def _act_send_0702(self):
         if not self._latest_decision_options:
@@ -1905,5 +2405,6 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     win = MainWindow(); win.show()
     sys.exit(app.exec_())
+
 
 

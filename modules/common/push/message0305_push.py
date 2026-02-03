@@ -8,6 +8,7 @@ from System import Activator
 
 _EPOCH_2000 = datetime(2000, 1, 1, tzinfo=timezone.utc)
 _now_ms = lambda: int((datetime.utcnow().replace(tzinfo=timezone.utc) - _EPOCH_2000).total_seconds() * 1000)
+from modules.common.source_utils import get_default_source_code, override_source_fields
 MSG_ID = "0305"
 
 def _try_set(obj, name: str, value) -> bool:
@@ -113,5 +114,6 @@ def make_and_push(body_dict: dict, node_messenger) -> bytes:
         return (err + "\n").encode("utf-8","ignore")
 
 def make_random_and_push(node_messenger) -> bytes:
+    source = get_default_source_code()
     body = {"timestamp": _now_ms(), "source": "MMR", "missionPlanningStatus": 2, "replanReason":"초기임무재계획"}
     return make_and_push(body, node_messenger)

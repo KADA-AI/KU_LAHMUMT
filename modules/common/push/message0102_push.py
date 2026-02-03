@@ -8,6 +8,7 @@ from nFusion.Model.msg_0102 import *    # C# 모델
 from nFusion.Model.CommonType import *  # 공통 타입
 from System import String, UInt32, UInt64
 
+from modules.common.source_utils import get_default_source_code, override_source_fields
 MSG_ID = "0102"
 _EPOCH_2000 = datetime(2000, 1, 1, tzinfo=timezone.utc)
 _now_ms = lambda: int((datetime.utcnow().replace(tzinfo=timezone.utc) - _EPOCH_2000).total_seconds() * 1000)
@@ -101,6 +102,7 @@ def make_and_push(body_dict: dict, node_messenger) -> bytes:
     return log_line.encode("utf-8", "ignore")
 
 def make_random_and_push(node_messenger) -> bytes:
+    source = get_default_source_code()
     """
     제너레이터가 비거나 누락해도 한 번 더 정규화하여
     BODY에 timestamp/status/source 3키가 표준 키로 찍히게 한다.
@@ -108,6 +110,7 @@ def make_random_and_push(node_messenger) -> bytes:
     try:
         from generator.message0102_generator import make_msg0102_body
         raw = make_msg0102_body()
+        override_source_fields(raw, source)
     except Exception:
         raw = {}
 
@@ -119,6 +122,6 @@ def make_random_and_push(node_messenger) -> bytes:
     if "status" not in raw and "Status" not in raw:
         raw["status"] = 1
     if all(k not in raw for k in ("source","Source","requestModuleName","RequestModuleName")):
-        raw["source"] = "DSC"
+        raw["source"] = source
 
     return make_and_push(raw, node_messenger)

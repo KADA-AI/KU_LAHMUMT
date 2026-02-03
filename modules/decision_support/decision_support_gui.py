@@ -17,13 +17,83 @@ from modules.common.qt_env import ensure_qt_platform
 ensure_qt_platform()
 
 from PyQt5.QtCore import (
-    qInstallMessageHandler, QtMsgType, pyqtSignal, QTimer, Qt, QEvent, QObject
+    qInstallMessageHandler, QtMsgType, pyqtSignal, QTimer, Qt, QEvent, QObject, QRect
 )
+from PyQt5.QtGui import QKeySequence, QPainter, QColor, QFontMetrics, QFont
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QTabWidget, QShortcut,
-    QWidget, QLabel, QHBoxLayout, QVBoxLayout, QSlider
+    QWidget, QLabel, QHBoxLayout, QVBoxLayout, QSlider,
+    QStyle, QStyleOptionSlider,
 )
-from PyQt5.QtGui import QKeySequence
+
+class ModeTickLabels(QWidget):
+    def __init__(self, slider, labels, parent=None):
+        super().__init__(parent)
+        self._slider = slider
+        self._labels = list(labels)
+        self._pad = 0
+        self._font = QFont("Malgun Gothic")
+        self._font.setPointSize(8)
+        metrics = QFontMetrics(self._font)
+        self.setFixedHeight(max(30, metrics.height() * 2 + 2))
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self._slider.installEventFilter(self)
+        self._sync_width()
+
+    def _calc_pad(self):
+        metrics = QFontMetrics(self._font)
+        max_width = 0
+        for label in self._labels:
+            lines = str(label).splitlines() or [""]
+            width = max(metrics.horizontalAdvance(line) for line in lines)
+            if width > max_width:
+                max_width = width
+        rect_width = max(max_width + 6, 24)
+        return int(rect_width / 2) + 2
+
+    def _sync_width(self):
+        self._pad = self._calc_pad()
+        self.setFixedWidth(self._slider.width() + self._pad * 2)
+        self.update()
+
+    def eventFilter(self, obj, event):
+        if obj is self._slider and event.type() == QEvent.Resize:
+            self._sync_width()
+        return super().eventFilter(obj, event)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.TextAntialiasing)
+        painter.setPen(QColor("#6b7280"))
+        painter.setFont(self._font)
+        metrics = QFontMetrics(self._font)
+        option = QStyleOptionSlider()
+        self._slider.initStyleOption(option)
+        style = self._slider.style()
+        groove = style.subControlRect(QStyle.CC_Slider, option, QStyle.SC_SliderGroove, self._slider)
+        handle = style.subControlRect(QStyle.CC_Slider, option, QStyle.SC_SliderHandle, self._slider)
+        min_val = self._slider.minimum()
+        max_val = self._slider.maximum()
+        count = len(self._labels)
+        if count < 2 or max_val == min_val:
+            return
+        step = (max_val - min_val) / (count - 1)
+        available = groove.width() - handle.width()
+        if available < 0:
+            available = 0
+        for idx, label in enumerate(self._labels):
+            val = min_val + int(round(step * idx))
+            pos = style.sliderPositionFromValue(min_val, max_val, val, available, option.upsideDown)
+            x = self._pad + groove.x() + (handle.width() // 2) + pos
+            lines = str(label).splitlines() or [""]
+            text_width = max(metrics.horizontalAdvance(line) for line in lines)
+            rect_width = max(text_width + 6, 24)
+            x0 = int(x - rect_width / 2)
+            rect = QRect(int(x0), 0, int(rect_width), self.height())
+            painter.drawText(rect, Qt.AlignHCenter | Qt.AlignTop, label)
+        painter.end()
+
+
 
 # ───────── Qt 경고 필터 ─────────
 def _qt_silent_handler(mode: QtMsgType, context, message: str):
@@ -48,7 +118,6 @@ def _bootstrap_paths():
 PROJECT_ROOT, COMMON_DIR = _bootstrap_paths()
 
 from modules.common.status_reporter import send_status_ok
-from modules.common.ctrl_listener import start_ctrl_listener, env_ctrl_port
 from modules.common import db_paths
 from modules.common.fusion_files import copy_file_with_retry
 from modules.common.option_codes import (
@@ -58,7 +127,6 @@ from modules.common.option_codes import (
 )
 from receive_center import register_listener
 from modules.decision_support.core import (
-    MonitorBroadcaster,
     OptionInfoMessenger,
     OptionPayloadBuilder,
     OptionRequestDecoder,
@@ -126,57 +194,46 @@ try:
 except Exception:
     _message0701 = None
 
-# ───────── 모듈별 모니터링 포트(의사결정) ─────────
-def _mon_port() -> int:
-    """Decision Support GUI (MOB - Mission Option Builder) → 대시보드(run.py) 모니터링 전송 포트"""
-    try:
-        return int(os.getenv("KU_MON_DECISION_PORT", "46983"))
-    except Exception:
-        return 46983
-
 def _z4(s: str) -> str:
     s = str(s).strip()
     return s.zfill(4) if s.isdigit() and len(s) < 4 else s
 
 _MODE_LABELS = [
-    "\uc804\uc6d0 OFF",
-    "\ucd08\uae30\ud654 \ubaa8\ub4dc",
-    "\ub300\uae30\ubaa8\ub4dc",
-    "\ucd08\uae30 \uc784\ubb34 \uacc4\ud68d",
-    "\uc784\ubb34 \uc218\ud589",
+    "초기화 모드",
+    "대기모드",
+    "초기 임무 계획",
+    "임무 수행",
 ]
 
 _MODE_TEXT_ALIASES = {
-    "\uc804\uc6d0off": 0,
+    "전원off": 0,
     "off": 0,
     "poweroff": 0,
+    "전원on": 0,
+    "on": 0,
+    "poweron": 0,
     "0": 0,
-    "\uc804\uc6d0on": 1,
-    "on": 1,
-    "poweron": 1,
+    "초기화": 0,
+    "초기화모드": 0,
+    "초기화mode": 0,
     "1": 1,
-    "\ucd08\uae30\ud654": 1,
-    "\ucd08\uae30\ud654\ubaa8\ub4dc": 1,
-    "\ucd08\uae30\ud654mode": 1,
-    "\ub300\uae30\ubaa8\ub4dc": 2,
-    "\ub300\uae30": 2,
-    "standby": 2,
-    "wait": 2,
+    "대기모드": 1,
+    "대기": 1,
+    "standby": 1,
+    "wait": 1,
     "2": 2,
-    "\ucd08\uae30\uc784\ubb34\uacc4\ud68d": 3,
-    "\ucd08\uae30\uc784\ubb34\uacc4\ud68d\ubaa8\ub4dc": 3,
-    "initplan": 3,
-    "initial": 3,
+    "초기임무계획": 2,
+    "초기임무계획모드": 2,
+    "initplan": 2,
+    "initial": 2,
     "3": 3,
-    "\uc784\ubb34\uc218\ud589": 4,
-    "\uc784\ubb34\uc218\ud589\ubaa8\ub4dc": 4,
-    "execution": 4,
-    "run": 4,
-    "4": 4,
-    "\ucd08\uae30\ud654\ubaa8\ub4dc": 1,
+    "임무수행": 3,
+    "임무수행모드": 3,
+    "execution": 3,
+    "run": 3,
 }
 
-_SLIDER_TO_SYSTEM_MODE = {1: 0, 2: 1, 3: 2, 4: 3}
+_SLIDER_TO_SYSTEM_MODE = {0: 0, 1: 1, 2: 2, 3: 3}
 _SYSTEM_MODE_TO_SLIDER = {code: slider for slider, code in _SLIDER_TO_SYSTEM_MODE.items()}
 _MISSION_EXECUTE_CODE = 3
 
@@ -213,7 +270,7 @@ class MainWindow(QMainWindow):
         self.resize(1100, 700)
 
         # 전원/버스/디듀프 상태
-        self._power_on = False
+        self._power_on = True
         self._bus_ready = False
         self._pending_option_entries: list[dict] = []
         self._last_ctrl_ts: dict[str, float] = {}
@@ -221,7 +278,6 @@ class MainWindow(QMainWindow):
         self._rx_counts = {}
         self._self_check_sent = False
         self._system_mode_code: int | None = None
-        self._monitor = MonitorBroadcaster(_mon_port())
         self._selfcheck_messenger = SelfCheckMessenger(NodeMessenger)
         self._option_messenger = OptionInfoMessenger(NodeMessenger)
         self._option_decoder = OptionRequestDecoder()
@@ -238,20 +294,32 @@ class MainWindow(QMainWindow):
         )
 
         self._install_power_gate_hooks()
-        self._install_mon_wires()   # ★ 모니터링 전송 훅 설치
         tabs.addTab(self._tab, "의사결정지원 CSC")
 
         # 상단 모드 슬라이더
         top = QWidget(); top_layout = QHBoxLayout(top)
         top_layout.setContentsMargins(8,4,8,4); top_layout.addStretch(1)
         self.mode_slider = QSlider(Qt.Horizontal)
-        self.mode_slider.setRange(0,4); self.mode_slider.setSingleStep(1)
+        self.mode_slider.setRange(0, 3); self.mode_slider.setSingleStep(1)
         self.mode_slider.setTickInterval(1); self.mode_slider.setTickPosition(QSlider.TicksBelow)
         self.mode_slider.setFixedWidth(420)
         self.mode_slider.valueChanged.connect(self._on_mode_slider_changed)
-        self.mode_now = QLabel("대기모드"); self.mode_now.setStyleSheet("font-weight:600; padding-left:8px;")
+        slider_wrap = QWidget()
+        slider_layout = QVBoxLayout(slider_wrap)
+        slider_layout.setContentsMargins(0, 0, 0, 0)
+        slider_layout.setSpacing(2)
+        slider_layout.addWidget(self.mode_slider, 0, Qt.AlignHCenter)
+        self.mode_hint = ModeTickLabels(
+            self.mode_slider,
+            ["0\n초기화", "1\n대기", "2\n초기임무계획", "3\n임무수행"],
+            slider_wrap,
+        )
+        slider_layout.addWidget(self.mode_hint, 0, Qt.AlignHCenter)
+        self.mode_now = QLabel("초기화 모드"); self.mode_now.setStyleSheet("font-weight:600; padding-left:8px;")
+        self.mode_now.setFixedWidth(140)
+        self.mode_now.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         lbl = QLabel("모드:"); lbl.setStyleSheet("color:#789; padding-right:6px;")
-        top_layout.addWidget(lbl); top_layout.addWidget(self.mode_slider); top_layout.addWidget(self.mode_now)
+        top_layout.addWidget(lbl); top_layout.addWidget(slider_wrap); top_layout.addWidget(self.mode_now)
 
         center = QWidget(); v = QVBoxLayout(center); v.setContentsMargins(0,0,0,0)
         v.addWidget(top); v.addWidget(tabs)
@@ -267,18 +335,10 @@ class MainWindow(QMainWindow):
         # BUS 초기화
         threading.Thread(target=self._rx_setup, daemon=True).start()
 
-        # CTRL 수신(기본 45983)
-        self._start_control_udp()
         self._install_test_shortcuts()
 
         # GUI 표시 후 상태 OK(=1) 1회 송신
         QTimer.singleShot(2000, lambda: send_status_ok("MOB"))
-
-        # 외부 self_check=1 수신 시 상태 OK 재송신
-        start_ctrl_listener(env_ctrl_port(45983),
-            lambda p: (send_status_ok("MOB")
-                       if (p or {}).get("cmd")=="self_check" and int((p or {}).get("status",0))==1 else None)
-        )
 
         # BUS 준비되면(또는 약간의 지연 뒤) 0102 단발 보장 시도
         QTimer.singleShot(120, self._send_0102_when_ready)
@@ -297,29 +357,6 @@ class MainWindow(QMainWindow):
             pass
         try:
             print(text)
-        except Exception:
-            pass
-
-    def _send_mon(self, kind: str, **payload):
-        try:
-            self._monitor.send(kind, **payload)
-        except Exception:
-            pass
-
-    def _install_mon_wires(self):
-        try:
-            tab = getattr(self, "_tab", None)
-            if not tab:
-                return
-            if hasattr(tab, "mark_sent"):
-                self._orig_mark_sent = tab.mark_sent
-                def _wrapped_mark_sent(msg_id: str, raw: bytes | None = None):
-                    try:
-                        self._send_mon("tx", msg_id=_z4(str(msg_id)))
-                    except Exception:
-                        pass
-                    return self._orig_mark_sent(msg_id, raw)
-                tab.mark_sent = _wrapped_mark_sent  # type: ignore
         except Exception:
             pass
 
@@ -350,12 +387,6 @@ class MainWindow(QMainWindow):
                     if not self._power_on:
                         self._append_log_line("[BLOCK] Power OFF → TX 버튼 무시")
                         return
-                    try:
-                        item = getattr(tab, "tbl_tx", None).item(row, 0) if getattr(tab, "tbl_tx", None) else None
-                        if item:
-                            self._send_mon("tx", msg_id=_z4(item.text()))
-                    except Exception:
-                        pass
                     return self._orig_tx_click_for_gate(row)
                 tab._on_tx_button_clicked = _wrapped_tx_click
         except Exception:
@@ -379,7 +410,7 @@ class MainWindow(QMainWindow):
     def _set_mode_slider_by_text(self, text: str):
         labels = _MODE_LABELS
         norm = re.sub(r"\s+", "", str(text)).lower()
-        val = _MODE_TEXT_ALIASES.get(norm, 2)
+        val = _MODE_TEXT_ALIASES.get(norm, 1)
         try:
             if hasattr(self, "mode_slider") and self.mode_slider.value() != val:
                 self.mode_slider.blockSignals(True)
@@ -387,11 +418,10 @@ class MainWindow(QMainWindow):
                 self.mode_slider.blockSignals(False)
             if hasattr(self, "mode_now"):
                 self.mode_now.setText(labels[val])
-            self._send_mon("mode", text=labels[val], role="MOB")
         except Exception:
             pass
         self._update_system_mode_state_from_slider(val)
-        self._power_on = (val != 0)
+        self._power_on = True
         self._apply_power_state()
         if self._power_on:
             QTimer.singleShot(500, self._start_0102_stream)
@@ -407,13 +437,9 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         self._update_system_mode_state_from_slider(val)
-        self._power_on = (int(val) != 0)
+        self._power_on = True
         label = labels[int(val)] if 0 <= val < len(labels) else str(val)
         self._append_log_line(f"[MODE] 모드 변경 → {label}")
-        try:
-            self._send_mon("mode", text=label, role="MOB")
-        except Exception:
-            pass
         self._apply_power_state()
         if self._power_on:
             QTimer.singleShot(500, self._start_0102_stream)
@@ -577,40 +603,6 @@ class MainWindow(QMainWindow):
             self._append_log_line(f"[WARN] RX setup 실패: {exc}")
             self._bus_ready = False
 
-    def _start_control_udp(self):
-        """
-        대시보드(run.py)에서 송신하는 CTRL UDP 명령 수신.
-        기본 포트: 45983 (env KU_CTRL_PORT로 오버라이드 가능)
-        """
-        import socket, json, threading, os
-        if getattr(self, "_ctrl_udp_started", False):
-            return
-        self._ctrl_udp_started = True
-
-        port = int(os.getenv("KU_CTRL_PORT", "45983"))
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            sock.bind(("127.0.0.1", port))
-            self._append_log_line(f"CTRL UDP 수신 대기 시작 (127.0.0.1:{port})")
-        except Exception as exc:
-            self._append_log_line(f"CTRL UDP 바인드 실패: {exc}")
-            return
-
-        def loop():
-            while True:
-                try:
-                    data, _ = sock.recvfrom(8192)
-                    try:
-                        payload = json.loads(data.decode("utf-8", "ignore"))
-                    except Exception:
-                        continue
-                    self.ctrl_payload.emit(payload)
-                except Exception:
-                    pass
-
-        threading.Thread(target=loop, name="CTRL@MOB", daemon=True).start()
-
     def _install_test_shortcuts(self):
         try:
             QShortcut(QKeySequence("Ctrl+1"), self, activated=lambda: self._set_mode_slider_by_text("대기"))
@@ -646,10 +638,6 @@ class MainWindow(QMainWindow):
             self._self_check_sent = (status == 1)
             self._last_0102_sent_ms = now_ms_since_2000()
             self._append_log_line(f"[0102] 상태 보고 송신 (status={status})")
-            try:
-                self._send_mon("tx", msg_id="0102", role="MOB", status=status)
-            except Exception:
-                pass
         else:
             if _retry < 5:
                 QTimer.singleShot(500, lambda: self._send_self_check_0102(status=status, _retry=_retry + 1))
@@ -679,7 +667,6 @@ class MainWindow(QMainWindow):
         if not option_entries:
             self._append_log_line("[0901] payload decode 실패")
             return
-        self._send_mon("rx", msg_id=_z4("0901"), optionCount=len(option_entries))
         self._latest_option_entries = option_entries
         if not self._bus_ready:
             self._append_log_line("[0701] NodeMessenger 초기화 대기 중 – 옵션 정보를 큐에 보관")
@@ -738,10 +725,6 @@ class MainWindow(QMainWindow):
         ok = self._option_messenger.send(body)
         if ok:
             self._append_log_line(f"[0701] option info sent (count={len(body.get('optionList') or [])})")
-            try:
-                self._send_mon("tx", msg_id=_z4("0701"), optionCount=len(body.get("optionList") or []))
-            except Exception:
-                pass
             try:
                 raw_bytes = json.dumps(body, ensure_ascii=False).encode("utf-8")
                 if getattr(self, "_tab", None) is not None:
@@ -827,8 +810,8 @@ class MainWindow(QMainWindow):
           1 : 대기 모드
           2 : 초기임무계획 모드
           3 : 임무수행 모드
-        내부 슬라이더(0~4): [0=전원 OFF, 1=초기화 모드, 2=대기모드, 3=초기 임무 계획, 4=임무 수행]
-        매핑: 0→1, 1→2, 2→3, 3→4
+        내부 슬라이더(0~3): [0=초기화 모드, 1=대기모드, 2=초기 임무 계획, 3=임무 수행]
+        매핑: 동일(0→0, 1→1, 2→2, 3→3)
         """
         slider_val = _SYSTEM_MODE_TO_SLIDER.get(code)
         if slider_val is None:

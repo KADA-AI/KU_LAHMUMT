@@ -8,14 +8,31 @@ from typing import Dict, List, Optional, Tuple
 from .mission_helpers import now_ms_since_2000, terrain_elev
 from .id_allocator import next_waypoint_id as _next_waypoint_id
 from .search_speed import spacing_based_search_speed
-
 try:
-    from ..config import DEFAULT_SWEEP_SEPARATION_M
+    from ..Search_Speed_2 import SearchSpeedCalculator as _SearchSpeedCalculator
 except ImportError:
     try:
-        from config import DEFAULT_SWEEP_SEPARATION_M  # type: ignore
+        from Search_Speed_2 import SearchSpeedCalculator as _SearchSpeedCalculator  # type: ignore
     except ImportError:
-        from modules.mission_planning.MissionPlanner.config import DEFAULT_SWEEP_SEPARATION_M  # type: ignore
+        _SearchSpeedCalculator = None
+
+try:
+    from ..config import DEFAULT_SWEEP_SEPARATION_M, USE_DB_FOR_CORRIDOR
+except ImportError:
+    try:
+        from config import DEFAULT_SWEEP_SEPARATION_M, USE_DB_FOR_CORRIDOR  # type: ignore
+    except ImportError:
+        from modules.mission_planning.MissionPlanner.config import (  # type: ignore
+            DEFAULT_SWEEP_SEPARATION_M,
+            USE_DB_FOR_CORRIDOR,
+        )
+try:
+    from ..DB import select_best_config as _select_best_config
+except ImportError:
+    try:
+        from DB import select_best_config as _select_best_config  # type: ignore
+    except ImportError:
+        _select_best_config = None
 from UAV_missionPlanning import UAVMissionPlanner
 from . import route_planner_algorithms as route_algos
 from .coord_transform import llh_to_xy, xy_to_llh
@@ -57,7 +74,16 @@ LOITER_DIRECTION = 1
 LOITER_TIME_S = 30
 LOITER_SPEED_MPS = 30
 DUBINS_TURN_RADIUS_M = 450.0
-ROUTE_PLANNER_NAME = "linear"
+ROUTE_PLANNER_NAME = "dtatrim"
+
+
+def _select_corridor_db_config(width: float) -> dict | None:
+    if not USE_DB_FOR_CORRIDOR or _select_best_config is None:
+        return None
+    try:
+        return _select_best_config(float(width))
+    except Exception:
+        return None
 
 
 def _normalize_altitude(value: Optional[float], default: int = Altitude) -> int:
@@ -390,6 +416,23 @@ SENSOR_EO_IR    = 1        # 예) EO/IR 센서
 PASS_NONE = 0
 PASS_FLYBY = 1
 PASS_LOITER = 2
+PASS_FLYOVER = 3
+
+# Fly-over options
+FLYOVER_ENTRY_OFFSET = False
+FLYOVER_DUBINS_PREFIX = False
+FLYOVER_ALL_WPS = False
+
+def set_flyover_options(
+    *,
+    entry_offset: bool = False,
+    dubins_prefix: bool = False,
+    all_wps: bool = False,
+) -> None:
+    global FLYOVER_ENTRY_OFFSET, FLYOVER_DUBINS_PREFIX, FLYOVER_ALL_WPS
+    FLYOVER_ENTRY_OFFSET = bool(entry_offset)
+    FLYOVER_DUBINS_PREFIX = bool(dubins_prefix)
+    FLYOVER_ALL_WPS = bool(all_wps)
 
 # OperationMode
 OPMODE_NONE   = 0
@@ -872,17 +915,84 @@ def _annotate_eta_ms_inplace(waypoints: list[OrderedDict], default_speed_mps: fl
     if not ordered:
         return
 
-    # ETA is stored as seconds-per-leg for downstream consumers (spec unit: seconds)
+    # ETA is stored as cumulative seconds within this flight path.
     ordered[0]["eta"] = 0
     acc_s = 0.0
-    prev_cum_s = 0
     for i in range(1, len(ordered)):
         dt_s = _time_from_prev_to_curr_s(ordered[i - 1], ordered[i], default_speed_mps=default_speed_mps)
         acc_s += dt_s
         cum_s = int(round(acc_s))
-        delta_s = max(0, cum_s - prev_cum_s)
-        ordered[i]["eta"] = delta_s
-        prev_cum_s = cum_s
+        ordered[i]["eta"] = max(0, cum_s)
+
+def _calc_search_speed_from_paths(
+    cur_coord: dict,
+    next_coord: dict,
+    line_coords: list[dict],
+    cruise_speed: float,
+) -> float | None:
+    if _SearchSpeedCalculator is None:
+        return None
+    if not cur_coord or not next_coord:
+        return None
+    lat0 = cur_coord.get("latitude")
+    lon0 = cur_coord.get("longitude")
+    if lat0 is None or lon0 is None:
+        if line_coords:
+            lat0 = line_coords[0].get("latitude")
+            lon0 = line_coords[0].get("longitude")
+    if lat0 is None or lon0 is None:
+        return None
+
+    def _to_xyz(coord: dict) -> tuple[float, float, float] | None:
+        if not coord or "latitude" not in coord or "longitude" not in coord:
+            return None
+        x, y = llh_to_xy(coord["latitude"], coord["longitude"], lat0, lon0)
+        alt = float(coord.get("altitude") or 0.0)
+        return (x, y, alt)
+
+    u0 = _to_xyz(cur_coord)
+    u1 = _to_xyz(next_coord)
+    if u0 is None or u1 is None:
+        return None
+
+    sweep_pts: list[tuple[float, float, float]] = []
+    for c in line_coords:
+        pt = _to_xyz(c)
+        if pt is not None:
+            sweep_pts.append(pt)
+    if len(sweep_pts) < 2:
+        return None
+
+    try:
+        calc = _SearchSpeedCalculator([u0, u1], sweep_pts, float(cruise_speed))
+        speed = float(calc.compute_search_speed())
+    except Exception:
+        return None
+    return round(max(0.0, speed), 2)
+
+
+def _apply_line_search_speed_from_paths(wps: list[OrderedDict], cruise_speed: float) -> None:
+    if _SearchSpeedCalculator is None or len(wps) < 2:
+        return
+    for idx in range(1, len(wps)):
+        wp = wps[idx]
+        prev_wp = wps[idx - 1]
+        fp = wp.get("filmingProperty") or OrderedDict()
+        line_search = fp.get("lineSearch")
+        if not line_search:
+            continue
+        coords = line_search.get("coordinateList") or []
+        if not coords:
+            continue
+        speed = _calc_search_speed_from_paths(
+            prev_wp.get("coordinate") or {},
+            wp.get("coordinate") or {},
+            coords,
+            cruise_speed,
+        )
+        if speed is None:
+            continue
+        line_search["searchSpeed"] = speed
 
 def build_flight_plans(
     missions: list[dict],
@@ -903,12 +1013,13 @@ def build_flight_plans(
     ALT_M = geom.separation_m
     geom_fov_deg = geom.fov_deg
     sweep_spacing_m = _sweep_spacing_m(separation_m=ALT_M, fov_deg=geom_fov_deg)
-    use_agl = ROUTE_PLANNER_NAME in ("linear", "algo2")
     def _wp_alt(lat: float, lon: float, fallback: float | int | None = None) -> int:
-        if use_agl:
-            return int(round(_dem_alt(lat, lon) + float(Altitude)))
         base = fallback if fallback is not None else Altitude
-        return _normalize_altitude(base)
+        try:
+            base_alt = float(base)
+        except Exception:
+            base_alt = float(Altitude)
+        return int(round(_dem_alt(lat, lon) + base_alt))
     DEG_M = 111_132
     # ── 마지막점용 POINT 촬영 블록 생성기 ─────────────────
     def _mk_point_filming_for_coord(coord: dict) -> OrderedDict:
@@ -929,6 +1040,75 @@ def build_flight_plans(
 
     packets: list[dict] = []
 
+    formation_offsets = [(-100, -100, 0), (100, -100, 0)]
+
+    def _formation_key(miss: dict) -> int | None:
+        rel = miss.get("relatedMission") if isinstance(miss.get("relatedMission"), dict) else {}
+        raw = rel.get("inputMissionID") or miss.get("inputMissionID") or miss.get("pathID")
+        try:
+            return int(raw)
+        except Exception:
+            return None
+
+    def _formation_role(info: dict) -> Optional[str]:
+        if not isinstance(info, dict):
+            return None
+        if info.get("individualMissionType") != 7:
+            return None
+        line_list = info.get("lineList") or []
+        if not line_list:
+            return None
+        try:
+            width_val = float(line_list[0].get("width", 0))
+        except Exception:
+            return None
+        width_tag = int(round(width_val))
+        if width_tag == 0:
+            return "leader"
+        if width_tag == 1:
+            return "follower"
+        return None
+
+    def _is_formation_line(info: dict) -> bool:
+        if not isinstance(info, dict):
+            return False
+        line_list = info.get("lineList") or []
+        if not line_list:
+            return False
+        try:
+            width_val = float(line_list[0].get("width", 0))
+        except Exception:
+            return False
+        return width_val <= 1.0
+
+    formation_groups: dict[int, dict[str, list[int]]] = {}
+    for miss in missions:
+        aid = miss.get("aircraftID")
+        if aid not in (4, 5, 6):
+            continue
+        info = miss.get("individualMissionInfo") if isinstance(miss.get("individualMissionInfo"), dict) else {}
+        role = _formation_role(info)
+        if role is None and _is_formation_line(info):
+            role = "follower"
+        if role is None:
+            continue
+        key = _formation_key(miss)
+        if key is None:
+            continue
+        bucket = formation_groups.setdefault(key, {"leader": [], "follower": []})
+        bucket[role].append(int(aid))
+
+    formation_group_sorted: dict[int, dict[str, list[int]]] = {}
+    formation_leaders: dict[int, int] = {}
+    for key, bucket in formation_groups.items():
+        leaders = sorted(set(bucket.get("leader") or []))
+        followers = sorted(set(bucket.get("follower") or []))
+        formation_group_sorted[key] = {"leader": leaders, "follower": followers}
+        if leaders:
+            formation_leaders[key] = leaders[0]
+        elif followers:
+            formation_leaders[key] = followers[0]
+
     # ────────────────────────── 1) 미션 → 패킷 ──────────────────────────
     for miss in missions:
         aid = miss["aircraftID"]
@@ -941,9 +1121,73 @@ def build_flight_plans(
         full_sweep_coords: list[dict] | None = None
         full_sweep_speed: float | None = None
         full_sweep_interp_points: int | None = None
+        is_area_mission = False
+        mission_sep_m = ALT_M
+        mission_fov_deg = geom_fov_deg
+        mission_cruise_speed = cruise_speed
+        mission_default_search_speed = DEFAULT_SEARCH_SPEED
+        mission_spacing_line = sweep_spacing_m
+
+        formation_info: OrderedDict | None = None
+        formation_is_flight = False
+        formation_allow_empty = False
+
+        formation_key = _formation_key(miss)
+        formation_role = _formation_role(info)
+        legacy_form = False
+        if formation_role is None and _is_formation_line(info):
+            formation_role = "follower"
+            legacy_form = True
+
+        if formation_key is not None and formation_role is not None:
+            leader_id = formation_leaders.get(formation_key)
+            followers_all = (formation_group_sorted.get(formation_key) or {}).get("follower") or []
+            followers = [fid for fid in followers_all if fid != leader_id]
+            if leader_id is not None and formation_role == "follower" and aid != leader_id:
+                follower_idx = followers.index(aid) if aid in followers else 0
+                dx, dy, dz = formation_offsets[min(follower_idx, len(formation_offsets) - 1)]
+                formation_info = OrderedDict([
+                    ("leaderAircraftID", int(leader_id)),
+                    ("formation", OrderedDict([
+                        ("dX", int(dx)),
+                        ("dY", int(dy)),
+                        ("dZ", int(dz)),
+                    ])),
+                ])
+                formation_is_flight = True
+                formation_allow_empty = True
+                packets.append({
+                    "pathID": miss["pathID"],
+                    "aircraftID": aid,
+                    "wplist": [],
+                    "isFormationFlight": True,
+                    "formationInfo": formation_info,
+                })
+                continue
+
+        formation_line_leader = legacy_form and formation_key is not None and formation_leaders.get(formation_key) == aid and mtype in (3, 4, 6)
 
         # 1-A. 통로정찰 / 영역수색 (type 3·4·6)
-        if mtype in (3, 4, 6):
+        if formation_line_leader:
+            line = (info.get("lineList") or [{}])[0]
+            coords = line.get("coordinateList") or []
+            for coord in coords:
+                lat = float(coord.get("latitude", 0.0))
+                lon = float(coord.get("longitude", 0.0))
+                wplist.append(OrderedDict([
+                    ("waypointID", 0),
+                    ("coordinate", {"latitude": lat, "longitude": lon, "altitude": _wp_alt(lat, lon, Altitude)}),
+                    ("speed", cruise_speed),
+                    ("eta", 0),
+                    ("ecf", 0.0),
+                    ("nextWaypointID", 0),
+                    ("waypointPassType", PASS_FLYBY),
+                    ("filmingProperty", _mk_filming(
+                        operation_mode=OPMODE_HOLD,
+                        sensor=SENSOR_EO_IR,
+                    )),
+                ]))
+        elif mtype in (3, 4, 6):
             base, width = None, 100.0
             spacing_line = sweep_spacing_m
             is_area_mission = False
@@ -953,8 +1197,18 @@ def build_flight_plans(
                 line = info["lineList"][0]
                 width = line["width"]
                 base = [(c["latitude"], c["longitude"]) for c in line["coordinateList"]]
-                spacing_line = _sweep_spacing_m(separation_m=ALT_M, fov_deg=geom_fov_deg)
-                _debug_sweep("LINE", separation=ALT_M, fov=geom_fov_deg, spacing=spacing_line)
+                db_cfg = _select_corridor_db_config(width) if mtype == 6 else None
+                if db_cfg:
+                    mission_sep_m = float(db_cfg["sep"])
+                    mission_fov_deg = float(db_cfg["fov"])
+                    vel = float(db_cfg.get("vel", 0.0) or 0.0)
+                    if vel > 0:
+                        mission_cruise_speed = vel
+                        mission_default_search_speed = round(
+                            mission_cruise_speed * DEFAULT_SEARCH_SPEED_MULTIPLIER, 2
+                        )
+                spacing_line = _sweep_spacing_m(separation_m=mission_sep_m, fov_deg=mission_fov_deg)
+                _debug_sweep("LINE", separation=mission_sep_m, fov=mission_fov_deg, spacing=spacing_line)
 
             # (ii) areaList
             elif info.get("areaList"):
@@ -967,14 +1221,14 @@ def build_flight_plans(
 
                 prev_pt = miss.get("prevPoint", pts[0])
 
-                strip_spacing = ALT_M
-                _debug_sweep("AREA", separation=ALT_M, fov=geom_fov_deg, spacing=spacing_line)
+                strip_spacing = mission_sep_m
+                _debug_sweep("AREA", separation=mission_sep_m, fov=mission_fov_deg, spacing=spacing_line)
                 banded_coords = [_poly_sweeps_general(
                     poly_llh=pts,
                     anchor_llh=prev_pt,
                     bearing_deg=bearing,
-                    fov_deg=geom_fov_deg,
-                    separation_m=ALT_M,
+                    fov_deg=mission_fov_deg,
+                    separation_m=mission_sep_m,
                 )]
                 if not banded_coords:
                     continue
@@ -1020,15 +1274,15 @@ def build_flight_plans(
                         sweep_speed = spacing_based_search_speed(
                             sweep_len_m=sweep_width,
                             spacing_m=spacing_line,
-                            cruise_speed_mps=cruise_speed,
+                            cruise_speed_mps=mission_cruise_speed,
                         )
                         if sweep_speed is None:
-                            sweep_speed = DEFAULT_SEARCH_SPEED
+                            sweep_speed = mission_default_search_speed
 
                         wplist.append(OrderedDict([
                             ("waypointID", 0),
                             ("coordinate", {"latitude": off_lat, "longitude": off_lon, "altitude": _wp_alt(off_lat, off_lon, Altitude)}),
-                            ("speed", cruise_speed),
+                            ("speed", mission_cruise_speed),
                             ("eta", 2500),
                             ("ecf", 0.0),
                             ("nextWaypointID", 0),
@@ -1047,8 +1301,8 @@ def build_flight_plans(
             # (iii) Corridor-planner
             if base and len(base) >= 2:
                 planner = UAVMissionPlanner(
-                    base, corridor_width=width, separation=ALT_M,
-                    fov_deg=geom_fov_deg, cruise_speed=cruise_speed, crs="lla",
+                    base, corridor_width=width, separation=mission_sep_m,
+                    fov_deg=mission_fov_deg, cruise_speed=mission_cruise_speed, crs="lla",
                 )
                 use_centerline = ROUTE_PLANNER_NAME in ("linear", "algo2")
                 if use_centerline:
@@ -1128,10 +1382,10 @@ def build_flight_plans(
                         full_sweep_speed = spacing_based_search_speed(
                             sweep_len_m=merged_width,
                             spacing_m=spacing_line,
-                            cruise_speed_mps=cruise_speed,
+                            cruise_speed_mps=mission_cruise_speed,
                         )
                         if full_sweep_speed is None:
-                            full_sweep_speed = DEFAULT_SEARCH_SPEED
+                            full_sweep_speed = mission_default_search_speed
                 else:
                     sweep_indices = list(range(len(planner.sweeps)))
                     anchor_list = planner.orange_pts
@@ -1160,10 +1414,10 @@ def build_flight_plans(
                     coord_speed = spacing_based_search_speed(
                         sweep_len_m=coord_width,
                         spacing_m=spacing_line,
-                        cruise_speed_mps=cruise_speed,
+                        cruise_speed_mps=mission_cruise_speed,
                     )
                     if coord_speed is None:
-                        coord_speed = DEFAULT_SEARCH_SPEED
+                        coord_speed = mission_default_search_speed
 
                     wplist.append(OrderedDict([
                         ("waypointID", 0),
@@ -1237,12 +1491,15 @@ def build_flight_plans(
                     ]))
 
         # 1-C. 패킷 저장
-        if wplist:
+        if wplist or formation_allow_empty:
             packet = {
                 "pathID": miss["pathID"],
                 "aircraftID": aid,
                 "wplist": wplist,
             }
+            if formation_info:
+                packet["formationInfo"] = formation_info
+                packet["isFormationFlight"] = bool(formation_is_flight)
             if mtype in (3, 4, 6) and is_area_mission:
                 packet["_is_area"] = True
             if full_sweep_coords:
@@ -1293,6 +1550,7 @@ def build_flight_plans(
                 ])
                 entry_wp = OrderedDict([
                     ("waypointID", 0),
+                    ("_flyover_entry_offset", True),
                     ("coordinate", entry_coord),
                     ("speed", cruise_speed),
                     ("eta", 0),
@@ -1319,10 +1577,10 @@ def build_flight_plans(
                 first_search_speed = spacing_based_search_speed(
                     sweep_len_m=first_width,
                     spacing_m=sweep_spacing_m,
-                    cruise_speed_mps=cruise_speed,
+                    cruise_speed_mps=mission_cruise_speed,
                 )
             if first_search_speed is None:
-                first_search_speed = DEFAULT_SEARCH_SPEED
+                first_search_speed = mission_default_search_speed
             records: list[dict] = []
             for idx in sweep_indices[1:]:
                 wp = wps[idx]
@@ -1338,7 +1596,7 @@ def build_flight_plans(
                     search_speed = spacing_based_search_speed(
                         sweep_len_m=width_m,
                         spacing_m=sweep_spacing_m,
-                        cruise_speed_mps=cruise_speed,
+                        cruise_speed_mps=mission_cruise_speed,
                     )
                 records.append({
                     "idx": idx,
@@ -1400,12 +1658,12 @@ def build_flight_plans(
                         full_speed = spacing_based_search_speed(
                             sweep_len_m=full_width,
                             spacing_m=sweep_spacing_m,
-                            cruise_speed_mps=cruise_speed,
+                            cruise_speed_mps=mission_cruise_speed,
                         )
                     if full_speed is None:
                         full_speed = first_search_speed
                     if full_speed is None:
-                        full_speed = DEFAULT_SEARCH_SPEED
+                        full_speed = mission_default_search_speed
 
                     rep = records[-1]
                     rep_fp = rep["fp"]
@@ -1505,7 +1763,7 @@ def build_flight_plans(
                         rep_speed = spacing_based_search_speed(
                             sweep_len_m=merged_width,
                             spacing_m=sweep_spacing_m,
-                            cruise_speed_mps=cruise_speed,
+                            cruise_speed_mps=mission_cruise_speed,
                         )
                         if rep_speed is None:
                             rep_speed = rep["search_speed"]
@@ -1552,47 +1810,6 @@ def build_flight_plans(
                 wps[:] = [wp for wp in wps if _is_required_wp(wp)]
             pkt.pop("_is_area", None)
 
-        if is_alg2 and entry_wp is not None and entry_wp in wps:
-            start_coord = prev_tail_by_aircraft.get(aid) or take_over_map.get(aid)
-            entry_coord = entry_wp.get("coordinate") or {}
-            if start_coord and "latitude" in entry_coord and "longitude" in entry_coord:
-                entry_idx = wps.index(entry_wp)
-                start_heading = prev_heading_by_aircraft.get(aid)
-                if start_heading is None:
-                    start_heading = _heading_rad_between_coords(start_coord, entry_coord)
-                end_heading = start_heading
-                if entry_idx + 1 < len(wps):
-                    next_coord = wps[entry_idx + 1].get("coordinate") or {}
-                    if "latitude" in next_coord and "longitude" in next_coord:
-                        end_heading = _heading_rad_between_coords(entry_coord, next_coord)
-                dubins_coords = _dubins_three_points_llh(
-                    start_coord,
-                    entry_coord,
-                    start_heading,
-                    end_heading,
-                    DUBINS_TURN_RADIUS_M,
-                )
-                filming = deepcopy(entry_wp.get("filmingProperty") or {})
-                prefix: list[OrderedDict] = []
-                for lat, lon in dubins_coords:
-                    coord = {
-                        "latitude": round(lat, 6),
-                        "longitude": round(lon, 6),
-                        "altitude": _wp_alt(lat, lon, Altitude),
-                    }
-                    prefix.append(OrderedDict([
-                        ("waypointID", 0),
-                        ("coordinate", coord),
-                        ("speed", cruise_speed),
-                        ("eta", 0),
-                        ("ecf", 0.0),
-                        ("nextWaypointID", 0),
-                        ("waypointPassType", PASS_FLYBY),
-                        ("filmingProperty", deepcopy(filming)),
-                    ]))
-                if prefix:
-                    wps[entry_idx:entry_idx + 1] = prefix
-
         if prev_tail_coord and wps:
             def _same_coord(a: dict, b: dict, tol_m: float = 1.0) -> bool:
                 if not a or not b:
@@ -1618,6 +1835,33 @@ def build_flight_plans(
 
         for wp in wps:
             if wp.get("waypointPassType") == PASS_LOITER:
+                wp["_was_loiter"] = True
+
+        if FLYOVER_ALL_WPS:
+            for wp in wps:
+                wp["waypointPassType"] = PASS_FLYOVER
+        else:
+            if FLYOVER_ENTRY_OFFSET:
+                for wp in wps:
+                    if wp.get("_flyover_entry_offset"):
+                        wp["waypointPassType"] = PASS_FLYOVER
+            if FLYOVER_DUBINS_PREFIX:
+                for wp in wps:
+                    if wp.get("_flyover_dubins_prefix"):
+                        wp["waypointPassType"] = PASS_FLYOVER
+
+        for wp in wps:
+            if "_flyover_entry_offset" in wp:
+                del wp["_flyover_entry_offset"]
+            if "_flyover_dubins_prefix" in wp:
+                del wp["_flyover_dubins_prefix"]
+
+        for wp in wps:
+            was_loiter = wp.get("_was_loiter")
+            is_loiter = wp.get("waypointPassType") == PASS_LOITER
+            if not is_loiter and FLYOVER_ALL_WPS and was_loiter:
+                is_loiter = True
+            if is_loiter:
                 if not wp.get("filmingProperty"):
                     wp["filmingProperty"] = _mk_point_filming_for_coord(wp.get("coordinate") or {})
                 wp["loiterProperty"] = OrderedDict([
@@ -1626,8 +1870,11 @@ def build_flight_plans(
                     ("time", LOITER_TIME_S),
                     ("speed", LOITER_SPEED_MPS),
                 ])
+            if "_was_loiter" in wp:
+                del wp["_was_loiter"]
 
-        _annotate_eta_ms_inplace(wps, default_speed_mps=cruise_speed)
+        _apply_line_search_speed_from_paths(wps, mission_cruise_speed)
+        _annotate_eta_ms_inplace(wps, default_speed_mps=mission_cruise_speed)
 
         total_eta = sum(max(0, int(w.get("eta", 0))) for w in wps) or 1
         cum = 0
@@ -1652,16 +1899,19 @@ def build_flight_plans(
     # ────────────────────────── 4) 최종 조립 ─────────────────────────
     result = []
     for pkt in packets:
-        result.append(OrderedDict([
+        formation_info = pkt.get("formationInfo")
+        items = [
             ("timestamp", now_ms),
             ("Source", _sw_code()),
             ("pathID", pkt["pathID"]),
             ("aircraftID", pkt["aircraftID"]),
-            ("isFormationFlight", False),
-            ("waypointList", pkt["wplist"]),
-        ]))
+            ("isFormationFlight", bool(pkt.get("isFormationFlight", False))),
+        ]
+        if formation_info:
+            items.append(("formationInfo", formation_info))
+        items.append(("waypointList", pkt["wplist"]))
+        result.append(OrderedDict(items))
     return result
-
 
 
 

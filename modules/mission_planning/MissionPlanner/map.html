@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html>
+<head>
+    
+    <meta http-equiv="content-type" content="text/html; charset=UTF-8" />
+    <script src="file:///C:/Users/LAHMUMT_2/Desktop/KU_LAHMUMT/resource/leaflet/leaflet.js"></script>
+    <script src="file:///C:/Users/LAHMUMT_2/Desktop/KU_LAHMUMT/resource/vendor/jquery/jquery-3.7.1.min.js"></script>
+    <script src="file:///C:/Users/LAHMUMT_2/Desktop/KU_LAHMUMT/resource/vendor/bootstrap/5.2.2/js/bootstrap.bundle.min.js"></script>
+    <script src="file:///C:/Users/LAHMUMT_2/Desktop/KU_LAHMUMT/resource/vendor/awesome-markers/2.0.2/leaflet.awesome-markers.js"></script>
+    <link rel="stylesheet" href="file:///C:/Users/LAHMUMT_2/Desktop/KU_LAHMUMT/resource/leaflet/leaflet.css"/>
+    <link rel="stylesheet" href="file:///C:/Users/LAHMUMT_2/Desktop/KU_LAHMUMT/resource/vendor/bootstrap/5.2.2/css/bootstrap.min.css"/>
+    <link rel="stylesheet" href="file:///C:/Users/LAHMUMT_2/Desktop/KU_LAHMUMT/resource/vendor/bootstrap/3.0.0/css/bootstrap.min.css"/>
+    <link rel="stylesheet" href="file:///C:/Users/LAHMUMT_2/Desktop/KU_LAHMUMT/resource/vendor/fontawesome/6.2.0/css/all.min.css"/>
+    <link rel="stylesheet" href="file:///C:/Users/LAHMUMT_2/Desktop/KU_LAHMUMT/resource/vendor/awesome-markers/2.0.2/leaflet.awesome-markers.css"/>
+    <link rel="stylesheet" href="file:///C:/Users/LAHMUMT_2/Desktop/KU_LAHMUMT/resource/vendor/folium/leaflet.awesome.rotate.min.css"/>
+    
+            <meta name="viewport" content="width=device-width,
+                initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+            <style>
+                #map_a7e3947a1aba7feedd8be45d749d2892 {
+                    position: relative;
+                    width: 100.0%;
+                    height: 100.0%;
+                    left: 0.0%;
+                    top: 0.0%;
+                }
+                .leaflet-container { font-size: 1rem; }
+            </style>
+
+            <style>html, body {
+                width: 100%;
+                height: 100%;
+                margin: 0;
+                padding: 0;
+            }
+            </style>
+
+            <style>#map {
+                position:absolute;
+                top:0;
+                bottom:0;
+                right:0;
+                left:0;
+                }
+            </style>
+
+            <script>
+                L_NO_TOUCH = false;
+                L_DISABLE_3D = false;
+            </script>
+
+        
+    <script src="file:///C:/Users/LAHMUMT_2/Desktop/KU_LAHMUMT/resource/leaflet/Leaflet.VectorGrid.bundled.js"></script>
+</head>
+<body>
+    
+    
+            <div class="folium-map" id="map_a7e3947a1aba7feedd8be45d749d2892" ></div>
+        
+
+                    <style id="map-dark-filter">
+                        .leaflet-tile-pane {
+                            filter: brightness(0.85) contrast(1.05) saturate(0.95);
+                        }
+                    </style>
+        
+                    <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+                    <script>
+                    new QWebChannel(qt.webChannelTransport, function(ch){    
+                        const bridge = ch.objects.bridge;
+
+                        /* 1) 지도 객체 */
+                        let mp = null;
+                        for (let k in window) { if (window[k] instanceof L.Map) { mp = window[k]; break; } }
+
+                        /* 2) WP ↔ Line 클래스 매핑 */
+                        const rawLinks = [];       /*  ← 파이썬 값만 한 쌍 */
+                        const wp2lines = Object.create(null);
+                        const line2wp  = Object.create(null);
+                        rawLinks.forEach(([wp, cls]) => {
+                            (wp2lines[wp] = wp2lines[wp] || []).push(cls);
+                            line2wp[cls] = wp;
+                        });
+
+                        const hoverSpecs = [];
+
+                        /* 3) 강조 / 해제 (legacy for waypoint lineage) */
+                        function highlight(cls, on) {
+                            document.querySelectorAll('.' + cls).forEach(el => {
+                                el.style.stroke      = on ? 'yellow' : '';
+                                el.style.strokeWidth = on ? '4'      : '';
+                                el.style.opacity     = on ? '1.0'    : '0.7';
+                            });
+                        }
+
+                        /* 4) Hover highlight for map elements */
+                        function bindHover() {
+                            hoverSpecs.forEach(spec => {
+                                document.querySelectorAll('.' + spec.cls).forEach(el => {
+                                    if (el.dataset.hoverReady) { return; }
+                                    el.dataset.hoverReady = '1';
+                                    const tag = (el.tagName || '').toLowerCase();
+                                    const isCircle = tag === 'circle';
+
+                                    el.addEventListener('mouseenter', () => {
+                                        if (el.dataset.origStroke === undefined) {
+                                            const strokeAttr = el.getAttribute('stroke');
+                                            el.dataset.origStroke = strokeAttr !== null ? strokeAttr : '';
+                                            el.dataset.origStrokeStyle = el.style.stroke || '';
+                                        }
+                                        if (el.dataset.origStrokeWidth === undefined) {
+                                            const swAttr = el.getAttribute('stroke-width');
+                                            el.dataset.origStrokeWidth = swAttr !== null ? swAttr : '';
+                                            el.dataset.origStrokeWidthStyle = el.style.strokeWidth || '';
+                                        }
+                                        const highlightColor = spec.highlight || '#ffeb3b';
+                                        const highlightWidth = spec.strokeWidth || 4;
+                                        el.setAttribute('stroke', highlightColor);
+                                        el.style.stroke = highlightColor;
+                                        el.setAttribute('stroke-width', highlightWidth);
+                                        el.style.strokeWidth = highlightWidth;
+                                        if (isCircle) {
+                                            if (el.dataset.origRadius === undefined) {
+                                                el.dataset.origRadius = el.getAttribute('r') || '';
+                                            }
+                                            const base = parseFloat(el.dataset.origRadius || spec.baseRadius || 4);
+                                            const ratio = spec.radiusMul || 1.6;
+                                            el.setAttribute('r', (base * ratio).toString());
+                                        }
+                                    });
+
+                                    el.addEventListener('mouseleave', () => {
+                                        const origStroke = el.dataset.origStroke;
+                                        if (origStroke !== undefined) {
+                                            if (origStroke) {
+                                                el.setAttribute('stroke', origStroke);
+                                            } else {
+                                                el.removeAttribute('stroke');
+                                            }
+                                            el.style.stroke = el.dataset.origStrokeStyle || '';
+                                        }
+                                        const origWidth = el.dataset.origStrokeWidth;
+                                        if (origWidth !== undefined) {
+                                            if (origWidth) {
+                                                el.setAttribute('stroke-width', origWidth);
+                                            } else {
+                                                el.removeAttribute('stroke-width');
+                                            }
+                                            el.style.strokeWidth = el.dataset.origStrokeWidthStyle || '';
+                                        }
+                                        if (isCircle && el.dataset.origRadius !== undefined) {
+                                            if (el.dataset.origRadius) {
+                                                el.setAttribute('r', el.dataset.origRadius);
+                                            }
+                                        }
+                                    });
+                                });
+                            });
+                        }
+
+                        /* 5) 실제 바인드 ---------------------------------------------- */
+                        function bindClicks() {
+                            /* 5-A. WP 마커 */
+                            Object.keys(wp2lines).forEach(wp => {
+                                document.querySelectorAll('.wp_' + wp).forEach(mk => {
+                                    mk.onclick = () => activate(wp);
+                                });
+                            });
+
+                            /* 5-B. Line 자체 */
+                            Object.keys(line2wp).forEach(cls => {
+                                document.querySelectorAll('.' + cls).forEach(pl => {
+                                    pl.onclick = () => activate(line2wp[cls]);
+                                });
+                            });
+                        }
+
+                        function wireAll() {
+                            bindClicks();
+                            bindHover();
+                        }
+
+                        /* 6) 맵 레이어가 추가될 때마다 & 첫 렌더 이후 바인드 ------------- */
+                        if (mp) {
+                            mp.whenReady(() => setTimeout(wireAll, 0));
+                            mp.on('layeradd',  () => setTimeout(wireAll, 0));
+                            mp.on('click', e => bridge.sendPoint(e.latlng.lat, e.latlng.lng));
+                        }
+                    });
+                    </script>
+        </body>
+<script>
+    
+    
+            var map_a7e3947a1aba7feedd8be45d749d2892 = L.map(
+                "map_a7e3947a1aba7feedd8be45d749d2892",
+                {
+                    center: [38.128774, 127.318005],
+                    crs: L.CRS.EPSG3857,
+                    ...{
+  "zoom": 14,
+  "zoomControl": true,
+  "preferCanvas": false,
+}
+
+                }
+            );
+
+            
+
+        
+    var vector_grid_protobuf_190b222cb3c88b52f18f2cf24ccdc28a = L.vectorGrid.protobuf(
+                'http://127.0.0.1:57388/tiles/{z}/{x}/{y}.pbf',
+                    {"vectorTileLayerStyles": {"all": {"fill": false, "stroke": false, "opacity": 0, "fillOpacity": 0, "weight": 0, "radius": 0}, "landcover": {"fill": true, "fillColor": "#b8c6ad", "fillOpacity": 0.75, "stroke": false, "weight": 0}, "landuse": {"fill": true, "fillColor": "#b8c6ad", "fillOpacity": 0.75, "stroke": false, "weight": 0}, "park": {"fill": false, "stroke": false, "opacity": 0, "fillOpacity": 0, "weight": 0, "radius": 0}, "water": {"fill": true, "fillColor": "#7aa3c2", "fillOpacity": 0.75, "stroke": true, "color": "#5d88a3", "weight": 1, "opacity": 0.9}, "waterway": {"fill": false, "stroke": true, "color": "#4f7f98", "weight": 1.2, "opacity": 0.9}, "transportation": {"fill": false, "stroke": false, "opacity": 0, "fillOpacity": 0, "weight": 0, "radius": 0}, "transportation_name": {"fill": false, "stroke": false, "opacity": 0, "fillOpacity": 0, "weight": 0, "radius": 0}, "boundary": {"fill": false, "stroke": false, "opacity": 0, "fillOpacity": 0, "weight": 0, "radius": 0}, "building": {"fill": false, "stroke": false, "opacity": 0, "fillOpacity": 0, "weight": 0, "radius": 0}, "aeroway": {"fill": false, "stroke": false, "opacity": 0, "fillOpacity": 0, "weight": 0, "radius": 0}, "aerodrome_label": {"fill": false, "stroke": false, "opacity": 0, "fillOpacity": 0, "weight": 0, "radius": 0}, "park_label": {"fill": false, "stroke": false, "opacity": 0, "fillOpacity": 0, "weight": 0, "radius": 0}, "poi": {"fill": false, "stroke": false, "opacity": 0, "fillOpacity": 0, "weight": 0, "radius": 0}, "housenumber": {"fill": false, "stroke": false, "opacity": 0, "fillOpacity": 0, "weight": 0, "radius": 0}, "place": {"fill": false, "stroke": false, "opacity": 0, "fillOpacity": 0, "weight": 0, "radius": 0}, "water_name": {"fill": false, "stroke": false, "opacity": 0, "fillOpacity": 0, "weight": 0, "radius": 0}, "mountain_peak": {"fill": false, "stroke": false, "opacity": 0, "fillOpacity": 0, "weight": 0, "radius": 0}}, "interactive": false, "minZoom": 0, "maxNativeZoom": 14, "maxZoom": 14}
+            );
+    
+            vector_grid_protobuf_190b222cb3c88b52f18f2cf24ccdc28a.addTo(map_a7e3947a1aba7feedd8be45d749d2892);
+        
+    
+            var pane_bc74b0ee968756bf5726b90a4fc89bda = map_a7e3947a1aba7feedd8be45d749d2892.createPane(
+                "missionPane");
+            pane_bc74b0ee968756bf5726b90a4fc89bda.style.zIndex = 650;
+            
+        
+    
+            var rectangle_9e4222f365a6144013f1d28477d0aa2e = L.rectangle(
+                [[38.110432, 127.29562], [38.147111, 127.340401]],
+                {"bubblingMouseEvents": true, "color": "blue", "dashArray": null, "dashOffset": null, "fill": true, "fillColor": "blue", "fillOpacity": 0.1, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 1.0, "smoothFactor": 1.0, "stroke": true, "weight": 1}
+            ).addTo(map_a7e3947a1aba7feedd8be45d749d2892);
+        
+</script>
+</html>

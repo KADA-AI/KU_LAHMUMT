@@ -1,6 +1,27 @@
 # MessageID 0103 SW상태정보
 
-ulong timestamp
-string source
-uint status
-uint mode
+ulong timestamp:
+ - 길이 : 8
+ - min : 0
+ - Max : 2^64-1
+ - unit : ms
+ - 비고 : 2000년 1월 1일부터 ms
+
+string source:
+ - 비고 : 메시지를 전송하는 모듈 이름
+
+uint status:
+ - 길이 : 4
+ - min : 0
+ - Max : 2
+ - unit : N/A
+ - 비고 : SW 상태
+ - enum : 0=Unknown, 1=정상, 2=비정상
+
+uint mode:
+ - 길이 : 4
+ - min : 0
+ - Max : 4
+ - unit : N/A
+ - 비고 : 현재 모드
+ - enum : 0=Not used, 1=초기모드, 2=대기모드, 3=운용모드, 4~=Reserved

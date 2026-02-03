@@ -226,13 +226,13 @@ def _to_dict_ReplanRequest(obj: Any) -> dict:
     if prior:
         d["priorMissionList"] = [_to_dict_PriorMission(it) for it in prior]
 
-    reason = _get(obj, "replanReason", "ReplanReason")
+    reason = _get(obj, "replanRequest", "ReplanRequest", "replanReason", "ReplanReason")
     if reason:
-        d["replanReason"] = str(reason)
+        d["replanRequest"] = str(reason)
 
-    pending = _get(obj, "pendingOptionList", "PendingOptionList") or []
+    pending = _get(obj, "optionList", "OptionList", "pendingOptionList", "PendingOptionList") or []
     if pending:
-        d["pendingOptionList"] = [_to_dict_PendingOption(it) for it in pending]
+        d["optionList"] = [_to_dict_PendingOption(it) for it in pending]
 
     detail = _get(obj, "replanDetail", "ReplanDetail")
     if detail:

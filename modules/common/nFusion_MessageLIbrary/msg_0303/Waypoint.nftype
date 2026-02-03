@@ -1,9 +1,49 @@
-uint waypointID
+uint waypointID:
+ - 길이 : 4
+ - min : 0
+ - Max : 2^64-1
+ - unit : N/A
+ - 비고 : 경로점 ID
+
 CommonType.Coordinate coordinate
-float speed
-uint eta
-float ecf
-uint nextWaypointID
-uint waypointPassType
-LoiterProperty loiterProperty
-FilmingProperty filmingProperty
+
+float speed:
+ - 길이 : 4
+ - min : 0
+ - Max : 1000
+ - unit : m/s
+ - 비고 : 경로점 목표 속도
+
+uint eta:
+ - 길이 : 4
+ - min : 0
+ - Max : 2^64-1
+ - unit : sec
+ - 비고 : 예상 도착 시간, 해당 비행계획 내에서만 예측 -> 첫 WP에서는 0으로 고정 -> 이후 시간이 더해짐
+
+float ecf:
+ - 길이 : 4
+ - min : 0
+ - Max : 1000
+ - unit : Liter
+ - 비고 : 해당 구간(이전WP -> 이WP)을 비행하는 동안 소모할 것으로 예상되는 연료량
+
+uint nextWaypointID:
+ - 길이 : 4
+ - min : 0
+ - Max : 2^64-1
+ - unit : N/A
+ - 비고 : 다음 경로점의 ID(이 값이 0이면 마지막 WP)
+
+uint waypointPassType:
+ - 길이 : 4
+ - min : 0
+ - Max : 2
+ - unit : N/A
+ - 비고 : 경로점 통과 속성
+ - enum : 0=None, 1=Fly-by, 2=Loiter, 3=Fly-Over
+
+LoiterProperty loiterProperty:
+ - 비고 : WaypointPassType가 2일때 사용
+
+FilmingProperty filmingProperty:

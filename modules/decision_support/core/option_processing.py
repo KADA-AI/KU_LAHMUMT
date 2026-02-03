@@ -117,9 +117,11 @@ class OptionPayloadBuilder:
                 target_value = 0
             if meta.get("attack") and target_value <= 0:
                 target_value = 1
+            recommend = len(option_list) == 0
             option_list.append(
                 {
                     "optionID": option_id,
+                    "recommend": recommend,
                     "optionName": code,
                     "missionPlanID": mission_plan_id,
                     "survivalRate": int(metrics.get("survivalRate", 0)),

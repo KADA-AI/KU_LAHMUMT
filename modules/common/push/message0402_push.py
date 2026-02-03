@@ -11,6 +11,7 @@ from generator.message0402_generator import make_msg0402_body
 
 _EPOCH_2000 = datetime(2000, 1, 1, tzinfo=timezone.utc)
 _now_ms = lambda: int((datetime.utcnow().replace(tzinfo=timezone.utc) - _EPOCH_2000).total_seconds() * 1000)
+from modules.common.source_utils import get_default_source_code, override_source_fields
 MSG_ID = "0402"
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -240,16 +241,18 @@ def make_and_push(body_dict: dict, node_messenger) -> bytes:
     return log_line.encode("utf-8", "ignore")
 
 def make_random_and_push(node_messenger) -> bytes:
+    source = get_default_source_code()
     """제너레이터 기반 랜덤 메시지 생성 → 실패 시 최소 바디로 폴백"""
     try:
         body = make_msg0402_body()
+        override_source_fields(body, source)
     except Exception:
         body = None
     # 폴백(최소 세트)
     if not isinstance(body, dict) or not body:
         body = {
             "timestamp": _now_ms(),
-            "source": "DSC",
+            "source": source,
             "roiInfo": {
                 "aircraftID": 0,
                 "coordinate": {"latitude": 0.0, "longitude": 0.0, "altitude": 0},

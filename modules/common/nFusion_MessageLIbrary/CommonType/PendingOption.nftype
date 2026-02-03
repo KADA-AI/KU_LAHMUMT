@@ -1,3 +1,14 @@
-uint optionID
-string optionName
-uint missionPlanID
+uint optionID:
+ - 길이 : 4
+ - unit : N/A
+ - 비고 : 만들어야 하는 옵션(1 옵션 당 1 임무 계획)
+
+string optionName:
+ - 길이 : Variable
+ - unit : N/A
+ - 비고 : 옵션 명 (어떤 할당/스케줄링 모델을 사용할지를 결정)
+
+uint missionPlanID:
+ - 길이 : 4
+ - unit : N/A
+ - 비고 : 임무계획 ID -> 임무 계획/재계획 모듈에서 해당 ID를 그대로 사용함

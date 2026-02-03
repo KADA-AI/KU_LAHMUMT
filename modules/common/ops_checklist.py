@@ -156,7 +156,7 @@ class S100ChecklistDialog(QDialog):
 
         self.r1.set_detail("mission / monitoring / decision 실행 감시")
         self.r2.set_detail("각 모듈의 0102 최초 송신 감지")
-        self.r3.set_detail("각 모듈의 UDP mode=대기모드 감지")
+        self.r3.set_detail("각 모듈의 mode=대기모드 감지")
 
         for r in (self.r1, self.r2, self.r3):
             r.set_all(False)
@@ -300,7 +300,7 @@ class S100ChecklistController(QObject):
             self._sent0102[key] = True
             self.sig_set_0102.emit(key, True)
 
-    # ---------- 훅 3: dashPulse(role, kind, msg_id) — UDP ----------
+    # ---------- 훅 3: dashPulse(role, kind, msg_id) ----------
     def _hook_dash_pulse(self):
         try:
             self.orch.dashPulse.connect(self._on_dash_pulse)
@@ -311,7 +311,7 @@ class S100ChecklistController(QObject):
         key = self._norm_role_to_key(role)
         if not key:
             return
-        # 어떤 UDP 펄스든 오면 "해당 모듈 실행"으로 간주
+        # 어떤 펄스든 오면 "해당 모듈 실행"으로 간주
         if not self._launched.get(key, False):
             self._launched[key] = True
             self.sig_set_launch.emit(key, True)
@@ -339,7 +339,7 @@ class S100ChecklistController(QObject):
                 else:
                     norm = str(text or "")
                 t = "".join(norm.split()).lower()
-                is_standby = (t in ("대기모드", "대기", "standby", "2"))
+                is_standby = (t in ("대기모드", "대기", "standby", "1"))
                 if key and is_standby and not self._standby.get(key, False):
                     self._standby[key] = True
                     self.sig_set_standby.emit(key, True)
@@ -633,7 +633,7 @@ class S110ChecklistController(QObject):
 
     @staticmethod
     def _is_initial_plan(norm_text: str) -> bool:
-        return norm_text in ("초기임무계획", "초기임무", "initplan", "initialplan", "3")
+        return norm_text in ("초기임무계획", "초기임무", "initplan", "initialplan", "2")
 
     def _hook_mark_received(self):
         orig = getattr(self.orch, "mark_received", None)
@@ -929,7 +929,7 @@ class S120ChecklistController(QObject):
 
     @staticmethod
     def _is_execution_mode(norm_text: str) -> bool:
-        return norm_text in ("임무수행", "임무수행모드", "execution", "missionmode", "4")
+        return norm_text in ("임무수행", "임무수행모드", "execution", "missionmode", "3")
 
 
 def ensure_s120_checklist(orch: Any) -> S120ChecklistController:

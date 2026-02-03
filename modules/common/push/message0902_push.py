@@ -11,6 +11,7 @@ from System import Int32, Single, String, UInt32, UInt64
 from generator.message0902_generator import make_msg0902_body
 _EPOCH_2000 = datetime(2000, 1, 1, tzinfo=timezone.utc)
 _now_ms = lambda: int((datetime.utcnow().replace(tzinfo=timezone.utc) - _EPOCH_2000).total_seconds() * 1000)
+from modules.common.source_utils import get_default_source_code, override_source_fields
 MSG_ID = "0902"
 def _try_set(obj, name: str, value) -> bool:
     # lowerCamel 또는 PascalCase 둘 다 시도
@@ -182,21 +183,29 @@ def _dict_to_ReplanRequest(data: dict):
         lst = List[T]()
         for item in data["inputMissionIDList"]: lst.Add(_dict_to_InputMissionID(item if isinstance(item, dict) else {}))
         _try_set(obj, "inputMissionIDList", lst)
-    if "individualMissionIDList" in data and isinstance(data["individualMissionIDList"], list):
+    individual_list = data.get("individualMissionIDList")
+    if individual_list is None:
+        individual_list = data.get("IndividualMissionIDList")
+    if individual_list is not None and isinstance(individual_list, list):
         T = _cs('IndividualMissionID') or object
         lst = List[T]()
-        for item in data["individualMissionIDList"]: lst.Add(_dict_to_IndividualMissionID(item if isinstance(item, dict) else {}))
+        for item in individual_list: lst.Add(_dict_to_IndividualMissionID(item if isinstance(item, dict) else {}))
         _try_set(obj, "individualMissionIDList", lst)
     if "priorMissionList" in data and isinstance(data["priorMissionList"], list):
         T = _cs('PriorMission') or object
         lst = List[T]()
         for item in data["priorMissionList"]: lst.Add(_dict_to_PriorMission(item if isinstance(item, dict) else {}))
         _try_set(obj, "priorMissionList", lst)
-    if "replanReason" in data: _try_set(obj, "replanReason", str(data["replanReason"]))
-    if "pendingOptionList" in data and isinstance(data["pendingOptionList"], list):
+    reason_value = data.get("replanRequest", data.get("replanReason"))
+    if reason_value is not None:
+        _try_set(obj, "replanReason", str(reason_value))
+    pending_list = data.get("optionList")
+    if pending_list is None:
+        pending_list = data.get("pendingOptionList")
+    if pending_list is not None and isinstance(pending_list, list):
         T = _cs('PendingOption') or object
         lst = List[T]()
-        for item in data["pendingOptionList"]: lst.Add(_dict_to_PendingOption(item if isinstance(item, dict) else {}))
+        for item in pending_list: lst.Add(_dict_to_PendingOption(item if isinstance(item, dict) else {}))
         _try_set(obj, "pendingOptionList", lst)
     if "replanDetail" in data:
         detail_payload = data["replanDetail"]
@@ -228,6 +237,7 @@ def make_and_push(body_dict: dict, node_messenger) -> bytes:
     return log_line.encode("utf-8", "ignore")
 
 def make_random_and_push(node_messenger) -> bytes:
+    source = get_default_source_code()
     # DB 기반 메시지는 DB의 파일명(숫자).json을 ID로 사용하여 최소 필드만 전송
     if MSG_ID in DB_DIR_RULES:
         dbdir = _db_dir_for(MSG_ID, __file__)
@@ -239,7 +249,7 @@ def make_random_and_push(node_messenger) -> bytes:
             wl = TX_FIELD_WHITELIST.get(MSG_ID, [])
             body = {
                 "timestamp": int((datetime.utcnow().replace(tzinfo=timezone.utc) - _EPOCH_2000).total_seconds() * 1000),
-                "Source": "DSC",
+                "Source": source,
             }
             # ID 필드 결정
             if "inputMissionPackageID" in wl:          body["inputMissionPackageID"] = vid
@@ -252,13 +262,14 @@ def make_random_and_push(node_messenger) -> bytes:
     else:
         # 비 DB 메시지는 제너레이터 → 필요 시 화이트리스트로 선별
         body = make_msg0902_body()
+        override_source_fields(body, source)
         # ★ 0102 방어: body가 비거나 dict가 아니면 최소 세트로 채움
         if MSG_ID == "0102":
             if not isinstance(body, dict) or not body:
                 body = {
                     "timestamp": int((datetime.utcnow().replace(tzinfo=timezone.utc) - _EPOCH_2000).total_seconds() * 1000),
                     "status": 1,  # 정상
-                    "Source": "DSC",
+                    "Source": source,
                 }
         wl = TX_FIELD_WHITELIST.get(MSG_ID)
         if wl and isinstance(body, dict):

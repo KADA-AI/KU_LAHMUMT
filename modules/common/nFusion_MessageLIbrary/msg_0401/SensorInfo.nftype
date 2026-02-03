@@ -1,5 +1,23 @@
-uint operationalMode
-uint sensorType
-float fov
+uint operationalMode:
+ - 길이 : 4
+ - min : 0
+ - Max : 5
+ - unit : N/A
+ - 비고 : 센서 운용모드, 0=None, 1=좌표지향모드, 2=구간탐색/구역감시모드, 3=자동추적모드, 4=기체고정모드, 5=자동주사모드
+
+uint sensorType:
+ - 길이 : 4
+ - min : 0
+ - Max : 3
+ - unit : N/A
+ - 비고 : 0=None, 1=촬영하지 않음, 2=EO, 3=IR
+
+float fov:
+ - 길이 : 4
+ - min : 0
+ - Max : 180
+ - unit : deg
+ - 비고 : 대각 화각
+
 CenterCoordinate centerCoordinate
-FootprintCorner[] footprintCornerList # ���̽㿡�� �Ǵ��� Ȯ�� �ʿ�
+FootprintCorner[] footprintCornerList # 센서 시야 영역 코너 목록

@@ -17,6 +17,8 @@ from itertools import cycle
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
+from modules.common import db_paths
+
 import folium
 from branca.element import MacroElement, Template
 from folium import Tooltip
@@ -321,7 +323,7 @@ class MissionPlanVisualizer(QWidget):
             dirs = []
             if base:
                 dirs.append(base / "InputMissionPlan")
-            fallback = (PROJECT_ROOT / "database" / "InputMissionPlan")
+            fallback = (db_paths.LEGACY_DB_ROOT / "InputMissionPlan")
             dirs.append(fallback)
             return dirs
 
@@ -1267,7 +1269,7 @@ class MissionPlanVisualizer(QWidget):
 
     def _resolve_default_dir(self) -> Path:
         """Prefer the Logs base_root from current_scenario.json, fallback to database path."""
-        fallback = (PROJECT_ROOT / "database" / "InputMissionPlan").resolve()
+        fallback = (db_paths.LEGACY_DB_ROOT / "InputMissionPlan").resolve()
         scenario_file = PROJECT_ROOT / "current_scenario.json"
         try:
             with scenario_file.open("r", encoding="utf-8") as fp:

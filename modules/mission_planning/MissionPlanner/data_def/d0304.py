@@ -4,8 +4,11 @@ import math
 from collections import OrderedDict
 from typing import List, Tuple
 
-from UAV_missionPlanning import UAVMissionPlanner
-from .mission_helpers import now_ms_since_2000
+try:
+    from ..UAV_missionPlanning import UAVMissionPlanner
+except Exception:
+    from UAV_missionPlanning import UAVMissionPlanner
+from .mission_helpers import now_ms_since_2000, terrain_elev
 from .id_allocator import next_waypoint_id as _next_waypoint_id
 
 def _sw_code(default: str = "MMR") -> str:
@@ -19,7 +22,18 @@ def _sw_code(default: str = "MMR") -> str:
 
 WP_INTERVAL_M = 500.0        
 HOVER_HOLD_SEC = 10
-Altitude_LAH = 1000  
+Altitude_LAH = 300
+
+def _lah_alt_agl(lat: float, lon: float, offset_m: float | int | None = None) -> int:
+    try:
+        ground = float(terrain_elev(lat, lon))
+    except Exception:
+        ground = 0.0
+    try:
+        offset = float(Altitude_LAH if offset_m is None else offset_m)
+    except Exception:
+        offset = float(Altitude_LAH)
+    return int(round(ground + offset))
          
 _DEFAULT_WP_EXT = OrderedDict([
     ("hovering", OrderedDict([("time", 0)])),
@@ -54,7 +68,7 @@ def _offset_coord(lat: float, lon: float,
                   north_m: float = 0.0,
                   east_m: float  = 0.0) -> Tuple[float, float]:
 
-    k = 111_132.92                         # m/deg (?�도)
+    k = 111_132.92                         # m/deg (위도)
     dlat = north_m / k
     dlon = east_m  / (k * math.cos(math.radians(lat)))
     return lat + dlat, lon + dlon
@@ -83,7 +97,7 @@ def _validate_lah_flight_plans(pkts: List[dict]) -> None:
     for pidx, pkt in enumerate(pkts, 1):
         aid = pkt["aircraftID"]
         if aid not in (1, 2, 3):
-            raise ValueError(f"[0304] pkt#{pidx}: aircraftID must be 1??")
+            raise ValueError(f"[0304] pkt#{pidx}: aircraftID must be 1~3")
         path_id = pkt["pathID"]
         if path_id in seen_path:
             raise ValueError(f"[0304] duplicate pathID {path_id}")
@@ -95,7 +109,7 @@ def _validate_lah_flight_plans(pkts: List[dict]) -> None:
         for widx, wp in enumerate(pkt["lahWaypointList"], 1):
             atk = wp.get("attack")
             if atk is None:
-                raise ValueError(f"[0304] pkt#{pidx}/wp#{widx}: 'attack' ?�드 ?�음")
+                raise ValueError(f"[0304] pkt#{pidx}/wp#{widx}: 'attack' 필드 없음")
             tid = atk.get("targetID")
             if not isinstance(tid, int):
                 raise ValueError(f"[0304] pkt#{pidx}/wp#{widx}: targetID must be int")
@@ -184,7 +198,8 @@ def build_lah_flight_plans_from_mrpk(
 
         # start
         st_lat, st_lon = start_map.get(aid, (wplist[0]["coordinate"]["latitude"], wplist[0]["coordinate"]["longitude"]))
-        start = {"latitude": st_lat, "longitude": st_lon, "altitude": Altitude_LAH}
+        start_alt = _lah_alt_agl(st_lat, st_lon, Altitude_LAH)
+        start = {"latitude": st_lat, "longitude": st_lon, "altitude": start_alt}
         eta_s = _dist_ms(start, wplist[0]["coordinate"])
         wp_start = _mk_wp(st_lat, st_lon, start["altitude"], eta_s)
 
@@ -192,16 +207,24 @@ def build_lah_flight_plans_from_mrpk(
         rtb = rtb_map.get(aid)
         if rtb:
             end   = rtb
-            alt_e = int(rtb.get("altitude", Altitude_LAH))
+            alt_e = _lah_alt_agl(
+                float(end["latitude"]),
+                float(end["longitude"]),
+                end.get("altitude", Altitude_LAH),
+            )
         else:
             end   = wplist[-1]["coordinate"]
-            alt_e = int(end.get("altitude", Altitude_LAH))
+            alt_e = int(end.get("altitude", _lah_alt_agl(
+                float(end["latitude"]),
+                float(end["longitude"]),
+                Altitude_LAH,
+            )))
         eta_e = _dist_ms(wplist[-1]["coordinate"], end)
         wp_rtb = _mk_wp(end["latitude"], end["longitude"], alt_e, eta_e)
 
         new_list = [wp_start] + [dict(w) for w in wplist] + [wp_rtb]
 
-        # WaypointID ?�할??+ next + ECF
+        # WaypointID 재할당 + next + ECF
         for w in new_list:
             w["waypointID"] = wp_alloc.alloc()
         for i in range(len(new_list) - 1):
@@ -279,12 +302,17 @@ def build_lah_flight_plans_fixed(
                         cum_ms += prev
                     eta_ms = int(cum_ms)
                     ecf = 1.0 if idx == len(samples) - 1 else round(cum_ms / total_ms, 2)
+                    alt = _lah_alt_agl(
+                        float(sample.get("lat", 0.0)),
+                        float(sample.get("lon", 0.0)),
+                        Altitude_LAH,
+                    )
                     wp = OrderedDict([
                         ("waypointID", wp_alloc.alloc()),
                         ("coordinate", {
                             "latitude":  round(float(sample.get("lat", 0.0)), 6),
                             "longitude": round(float(sample.get("lon", 0.0)), 6),
-                            "altitude":  Altitude_LAH,
+                            "altitude":  alt,
                         }),
                         ("speed", cruise_speed),
                         ("eta",   eta_ms),
@@ -309,12 +337,13 @@ def build_lah_flight_plans_fixed(
                 eta_ms = int(cum_len / cruise_speed * 1000) if idx else 0
                 ecf    = 1.0 if len(path) == 1 else round(cum_len / total_len, 2)
 
+                alt = _lah_alt_agl(lat, lon, Altitude_LAH)
                 wp = OrderedDict([
                     ("waypointID", wp_alloc.alloc()),
                     ("coordinate", {
                         "latitude":  round(lat, 6),
                         "longitude": round(lon, 6),
-                        "altitude":  Altitude_LAH,
+                        "altitude":  alt,
                     }),
                     ("speed", cruise_speed),
                     ("eta",   eta_ms),

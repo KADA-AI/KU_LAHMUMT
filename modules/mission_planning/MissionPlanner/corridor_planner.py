@@ -34,6 +34,21 @@ from Aisle_Sweep_CPP_shoot_plan import RectanglePath
 import json, pprint
 from data_def.mission_helpers import now_ms_since_2000
 from data_def.search_speed import spacing_based_search_speed
+import config as mp_config
+try:
+    from Search_Speed_2 import SearchSpeedCalculator as _SearchSpeedCalculator
+except ImportError:
+    try:
+        from .Search_Speed_2 import SearchSpeedCalculator as _SearchSpeedCalculator  # type: ignore
+    except ImportError:
+        _SearchSpeedCalculator = None
+try:
+    from DB import select_best_config as _select_best_config
+except ImportError:
+    try:
+        from .DB import select_best_config as _select_best_config  # type: ignore
+    except ImportError:
+        _select_best_config = None
 
 Point = Tuple[float, float]        # generic (x,y) or (lat,lon)
 LatLon = Tuple[float, float]
@@ -77,6 +92,7 @@ class CorridorPlanner:
         separation_dist: float = 850.0,   # m
         corridor_width: float = 1000.0,   # m
         uav_alt: float = 610.0,           # m
+        use_db: bool | None = None,
     ):
         if len(waypoints) < 2:
             raise ValueError("waypoints 는 최소 2개 이상 필요합니다.")
@@ -87,9 +103,27 @@ class CorridorPlanner:
             _latlon_to_xy(self.lat0, self.lon0, lat, lon) for lat, lon in waypoints
         ]
 
-        self.sep   = separation_dist
+        self.sep = separation_dist
         self.width = corridor_width
         self.uav_alt = uav_alt
+        self.fov_deg = 5.5
+        self.selected_vel = None
+        self.selected_dps = None
+        self.selected_width = None
+
+        use_db_flag = mp_config.USE_DB_FOR_CORRIDOR if use_db is None else bool(use_db)
+        self._use_db = use_db_flag
+        if use_db_flag and _select_best_config is not None:
+            try:
+                span = float(corridor_width)
+                cfg = _select_best_config(span)
+                self.sep = float(cfg["sep"])
+                self.fov_deg = float(cfg["fov"])
+                self.selected_vel = float(cfg.get("vel", 0.0))
+                self.selected_dps = float(cfg.get("dps", 0.0))
+                self.selected_width = float(cfg.get("width", 0.0))
+            except Exception:
+                pass
 
         # 결과 컨테이너
         self.camera_paths_xy:   List[List[Point]] = []
@@ -109,10 +143,16 @@ class CorridorPlanner:
                                CorridorPlanner._V_TABLE,
                                CorridorPlanner._R_TABLE))
 
+    def _resolve_cruise_speed(self, cruise_speed: float) -> float:
+        if self._use_db and self.selected_vel is not None and self.selected_vel > 0:
+            return float(self.selected_vel)
+        return float(cruise_speed)
+
     # ─────────────────────────────────────────
     # ▶  MSG-0303 형식(wing 단독) 본문 생성 ◀
     # ─────────────────────────────────────────
     def make_msg0303_body(self, cruise_speed: float = 40.0) -> dict:
+        cruise_speed = self._resolve_cruise_speed(cruise_speed)
         # ── 헬퍼 ─────────────────────────────
         def _coord(lat, lon, alt=self.uav_alt):
             return {"latitude": round(lat, 6),
@@ -121,7 +161,7 @@ class CorridorPlanner:
 
         def _filming(ls0, ls1, search_spd):
             return {
-                "fieldOfView": 5.5,
+                "fieldOfView": float(self.fov_deg),
                 "sensorType":  1,
                 "operationMode": 2,
                 "lineSearch": {
@@ -169,6 +209,33 @@ class CorridorPlanner:
             dy = (lat2 - lat1) * 111_000
             return math.hypot(dx, dy)
 
+        def _to_xy(ll: LatLon) -> Point:
+            return _latlon_to_xy(self.lat0, self.lon0, ll[0], ll[1])
+
+        def _calc_search_speed(idx: int, flt_ll: LatLon, ls0_ll: LatLon, ls1_ll: LatLon) -> float:
+            if idx >= len(sequence) - 1:
+                return 0.0
+            next_flt_ll = sequence[idx + 1][0]
+            try:
+                if _SearchSpeedCalculator is None:
+                    raise RuntimeError("SearchSpeedCalculator unavailable")
+                u0 = _to_xy(flt_ll)
+                u1 = _to_xy(next_flt_ll)
+                s0 = _to_xy(ls0_ll)
+                s1 = _to_xy(ls1_ll)
+                uav_path = [(u0[0], u0[1], 0.0), (u1[0], u1[1], 0.0)]
+                sweep_path = [(s0[0], s0[1], 0.0), (s1[0], s1[1], 0.0)]
+                calc = _SearchSpeedCalculator(uav_path, sweep_path, float(cruise_speed))
+                return float(calc.compute_search_speed())
+            except Exception:
+                sweep_len = _dist(ls0_ll, ls1_ll)
+                fallback = spacing_based_search_speed(
+                    sweep_len_m=sweep_len,
+                    spacing_m=strip_spacing,
+                    cruise_speed_mps=cruise_speed,
+                )
+                return float(fallback) if fallback is not None else 0.0
+
         total_d = sum(_dist(sequence[i][0], sequence[i+1][0])
                       for i in range(len(sequence)-1))
 
@@ -181,13 +248,7 @@ class CorridorPlanner:
 
             # 구간 거리 / 시간 (다음 WP까지)
             if idx < len(sequence) - 1:
-                search_spd = spacing_based_search_speed(
-                    sweep_len_m=sweep_len,
-                    spacing_m=strip_spacing,
-                    cruise_speed_mps=cruise_speed,
-                )
-                if search_spd is None:
-                    search_spd = 0.0
+                search_spd = _calc_search_speed(idx, flt_ll, ls0_ll, ls1_ll)
             else:
                 search_spd = 0             # 마지막 WP는 고정
 

@@ -9,6 +9,7 @@ from System import UInt32, UInt64  # type: ignore
 from nFusion.Model.msg_0504 import FuelWarning  # type: ignore
 from nFusion.Model.CommonType import *  # type: ignore  # noqa: F401,F403
 
+from modules.common.source_utils import get_default_source_code, override_source_fields
 MSG_ID = "0504"
 
 _EPOCH_2000 = datetime(2000, 1, 1, tzinfo=timezone.utc)
@@ -115,16 +116,11 @@ def make_and_push(body_dict: dict, node_messenger) -> bytes:
         except Exception:
             pass
 
-    try:
-        import udp_reporter  # type: ignore
-        udp_reporter.notify_tx(MSG_ID)
-    except Exception:
-        pass
-
     return log_line.encode("utf-8", "ignore")
 
 
 def make_random_and_push(node_messenger) -> bytes:
+    source = get_default_source_code()
     from generator.message0504_generator import make_msg0504_body
 
     return make_and_push(make_msg0504_body(), node_messenger)

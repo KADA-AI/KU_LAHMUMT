@@ -7,6 +7,7 @@ from System.Collections.Generic import List
 from nFusion.Model.msg_0501 import *       # C# 모델 우선 검색
 from nFusion.Model.CommonType import *     # 공통 타입
 from System import String                  # (필요 시 사용)
+from modules.common.source_utils import get_default_source_code, override_source_fields
 MSG_ID = "0501"
 
 # ────────────────────────── 시간/Epoch ──────────────────────────
@@ -153,9 +154,10 @@ def _normalize_body(d: dict) -> dict:
         return _gen_body()
 
     out = {}
+    default_source = get_default_source_code()
     out['timestamp'] = _as_int(d.get('timestamp', _now_ms()), _now_ms())
-    src = d.get('source', d.get('Source', d.get('requestModuleName', 'DSC')))
-    out['source'] = str(src) if str(src).strip() != '' else 'DSC'
+    src = d.get('source', d.get('Source', d.get('requestModuleName', default_source)))
+    out['source'] = str(src) if str(src).strip() != '' else default_source
 
     if 'currentMissionPlanID' in d:
         out['currentMissionPlanID'] = _as_int(d['currentMissionPlanID'], 0)
@@ -200,6 +202,7 @@ def make_and_push(body_dict: dict, node_messenger) -> bytes:
     return log_line.encode("utf-8", "ignore")
 
 def make_random_and_push(node_messenger) -> bytes:
+    source = get_default_source_code()
     """
     랜덤/샘플 본문을 제너레이터로 만들고 Push.
     제너레이터가 리스트를 반환해도 처리 가능(여러 건 전송).
@@ -208,7 +211,11 @@ def make_random_and_push(node_messenger) -> bytes:
     logs = []
     if isinstance(got, list):
         for d in got:
-            logs.append(make_and_push(d if isinstance(d, dict) else {}, node_messenger))
+            body = d if isinstance(d, dict) else {}
+            override_source_fields(body, source)
+            logs.append(make_and_push(body, node_messenger))
     else:
-        logs.append(make_and_push(got if isinstance(got, dict) else {}, node_messenger))
+        body = got if isinstance(got, dict) else {}
+        override_source_fields(body, source)
+        logs.append(make_and_push(body, node_messenger))
     return b"\n".join(logs)

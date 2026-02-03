@@ -511,6 +511,7 @@ def _gen_AgentState(source: str = "DS"):
     obj["velocity"] = _gen_Velocity(source=source)
     obj["fuel"] = gen_value("fuel", "float32", MSG_ID, obj, 0)
     obj["health"] = gen_value("health", "uint32", MSG_ID, obj, 0)
+    obj["lastSignalTime"] = gen_value("lastSignalTime", "uint64", MSG_ID, obj, 0)
     obj["mannedInfo"] = _gen_MannedInfo(source=source)
     obj["unmannedInfo"] = _gen_UnmannedInfo(source=source)
     return obj

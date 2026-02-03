@@ -106,6 +106,8 @@ def _load_vehicle_status_available() -> Optional[Set[int]]:
     raw = payload.get("available")
     if not isinstance(raw, list):
         return None
+    if not raw:
+        return None
     available: Set[int] = set()
     for item in raw:
         try:
@@ -945,8 +947,15 @@ def split_mission_into_subareas(
     subs: list[dict] = []
 
     # ── corridor형 (1·4·5) ───────────────────────────────
-    if mtype in (1, 4, 5):
+    if mtype in (1, 4, 5, 7):
         for seg in md["lineList"]:
+            if mtype == 7:
+                try:
+                    width_val = float(seg.get("width", 0))
+                except Exception:
+                    width_val = 0.0
+                if width_val <= 0:
+                    seg["width"] = 1
             if prev_pt is not None:           # bearing 기록만 유지
                 start_pt = seg["coordinateList"][0]
                 seg["bearingFromPrev"] = _bearing_deg(prev_pt, start_pt)
@@ -998,7 +1007,7 @@ def save_lah_tasks(cmpk: dict, out_dir: str, log):
         input_id_u32 = _as_uint32(im["inputMissionID"])
 
         # corridor형 ------------------------------------------------
-        if mtype in (1, 4, 5) and "lineList" in md:
+        if mtype in (1, 4, 5, 7) and "lineList" in md:
             for lah in lah_ids:
                 for seg in md["lineList"]:
                     mission = {
@@ -1010,8 +1019,8 @@ def save_lah_tasks(cmpk: dict, out_dir: str, log):
                             "priorMissionID": 0
                         },
                         "individualMissionInfo": {
-                            "individualMissionType": 7 if mtype == 1 else 9,
-                            "patternType": 10 if mtype == 1 else 11,
+                            "individualMissionType": 7 if mtype in (1, 7) else 9,
+                            "patternType": 10 if mtype in (1, 7) else 11,
                             "autoZoomIn": False,
                             "coordinateList": [
                                 {
@@ -1290,12 +1299,23 @@ def run_divide_and_pattern(
         log(f"       └─ sub-area {len(new_subs)}개 추가 (누적 {len(areas)})")
 
         # 다음 임무를 위한 prev_pt 갱신
-        mtype = im["inputMissionType"]
-        if mtype in (1, 4, 5):  # corridor → 마지막 좌표
-            prev_pt = im["missionDetail"]["lineList"][-1]["coordinateList"][-1]
-        else:                   # area → 다각형 중심
-            poly = im["missionDetail"]["areaList"][0]["coordinateList"]
-            prev_pt = _centroid_llh(poly)
+        mtype = im.get("inputMissionType")
+        md = im.get("missionDetail") or {}
+        line_list = md.get("lineList") or []
+        area_list = md.get("areaList") or []
+        if mtype in (1, 4, 5, 7) and line_list:
+            coords = (line_list[-1] or {}).get("coordinateList") or []
+            if coords:
+                prev_pt = coords[-1]
+        elif area_list:
+            poly = (area_list[0] or {}).get("coordinateList") or []
+            if poly:
+                prev_pt = _centroid_llh(poly)
+        else:
+            log(
+                f"       [WARN] inputMissionID={im.get('inputMissionID')} "
+                "has no usable geometry; keeping previous reference point."
+            )
 
     log(f"    ▸ 분할 완료: {len(areas)}개 sub-area")
 
@@ -1415,6 +1435,20 @@ def run_divide_and_pattern(
     imp_paths, imp_objs = [], []
     uav_map: dict[str, dict] = {}
 
+    # Formation leader selection (UAV 4 -> 5 -> 6)
+    formation_candidates = []
+    for uav in uavs:
+        try:
+            uav_num = int(uav[3:])
+        except Exception:
+            continue
+        if uav_num in (4, 5, 6):
+            formation_candidates.append(uav_num)
+    formation_leader_id = min(formation_candidates) if formation_candidates else None
+    if formation_leader_id is not None:
+        followers = [aid for aid in sorted(formation_candidates) if aid != formation_leader_id]
+        log(f"[FORMATION] leader UAV{formation_leader_id}, followers={followers}")
+
     for uav in uavs:
         num = int(uav[3:])
         pkg = {"timestamp": now_ms_since_2000(),
@@ -1431,21 +1465,50 @@ def run_divide_and_pattern(
         tgt  = uav_map[a_id]
 
         orig = area["inputMissionType"]
-        if orig in (1, 4, 5):                       # corridor → 통로정찰(6)
+        if orig in (1, 4, 5):                       # corridor
             im_type = 6
             detail = {"lineList": [{
                         "width": area["width"],
                         "coordinateList": area["Centerline"]}],
                       "targetID": None}
-        else:                                       # area형
+            pattern_type = area["patternType"]
+        elif orig == 7:
+            im_type = 7
+            # Formation marker: width 0 = leader, width 1 = follower (UAV 4/5/6)
+            width_tag = area.get("width", 1)
+            try:
+                aircraft_id = int(a_id[3:])
+            except Exception:
+                aircraft_id = None
+            if formation_leader_id is not None and aircraft_id in (4, 5, 6):
+                width_tag = 0 if aircraft_id == formation_leader_id else 1
+                role = "leader" if width_tag == 0 else "follower"
+                log(
+                    f"[FORMATION] inputMissionID={area.get('MissionID')} "
+                    f"aircraft=UAV{aircraft_id} role={role} width={width_tag}"
+                )
+            # type 7 is validated as a coordinate mission (0302),
+            # but downstream (0303) can also consume lineList.
+            # Provide both to avoid validation failures when line-only data arrives.
+            detail = {
+                "coordinateList": area["Centerline"],
+                "lineList": [{
+                    "width": width_tag,
+                    "coordinateList": area["Centerline"],
+                }],
+                "targetID": None,
+            }
+            pattern_type = 10
+        else:                                       # area
             im_type = 3 if orig in (2, 6) else 4
             detail = {"areaList": [{
                         "isHole": False,
                         "coordinateList": area["coordinateList"]}],
                       "targetID": None}
+            pattern_type = area["patternType"]
 
         info = {"individualMissionType": im_type,
-                "patternType": area["patternType"],
+                "patternType": pattern_type,
                 "autoZoomIn": True}
         info.update(detail)
 

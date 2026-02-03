@@ -5,6 +5,7 @@ class ReceivedDatabase(object):
     _MESSAGE_CODES = [
         # 0000 Response(ACK/NACK 등 공통 응답)
         "0000",
+        "0001",
         # 010x 시스템 운용/상태
         "0101", "0102", "0103",
         # 020x 임무 입력/선행/참조
@@ -46,6 +47,8 @@ class ReceivedDatabase(object):
     # 0000
     def get_received_0000(self): return self.received_0000
     def set_received_0000(self, value): self.received_0000 = value
+    def get_received_0001(self): return self.received_0001
+    def set_received_0001(self, value): self.received_0001 = value
 
     # 0101/0102/0103
     def get_received_0101(self): return self.received_0101

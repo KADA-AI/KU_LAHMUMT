@@ -7,16 +7,17 @@ from PyQt5.QtWidgets import (
     QComboBox, QWidget
 )
 
-from Tabs.csc_tab_base import CSCTabBase, _now_ms_since_2000
+from .csc_tab_base import CSCTabBase, _now_ms_since_2000
 from push_center import push_message
 
 
 class ManageInfo(CSCTabBase):
-    TITLE = "데이터 상태 정보"
+    TITLE = "정보관리 CSC (INF)"
 
     # Message definitions (0000 ~ 0904)
     PUSH_MESSAGES = [
         ("0000", "응답(Response)"),
+        ("0001", "공지"),
         ("0101", "시스템 운용 모드"),
         ("0102", "모듈 상태 정보"),
         ("0103", "SW 상태정보"),
@@ -41,6 +42,7 @@ class ManageInfo(CSCTabBase):
         ("0801", "운용자 임무재계획 명령"),
         ("0802", "강제명령"),
         ("0803", "다음 협업기저임무 수행 명령"),
+        ("0804", "선행임무 취소"),
         ("0805", "운용 이벤트"),
         ("0806", "시스템 부팅 명령"),
         ("0901", "옵션 정보 생성 요청"),
@@ -51,6 +53,7 @@ class ManageInfo(CSCTabBase):
 
     RECEIVE_MESSAGES = [
         ("0000", "응답(Response)"),
+        ("0001", "공지"),
         ("0101", "시스템 운용 모드"),
         ("0102", "모듈 상태 정보"),
         ("0103", "SW 상태정보"),
@@ -75,6 +78,7 @@ class ManageInfo(CSCTabBase):
         ("0801", "운용자 임무재계획 명령"),
         ("0802", "강제명령"),
         ("0803", "다음 협업기저임무 수행 명령"),
+        ("0804", "선행임무 취소"),
         ("0805", "운용 이벤트"),
         ("0806", "시스템 부팅 명령"),
         ("0901", "옵션 정보 생성 요청"),

@@ -1,6 +1,6 @@
 # 파일: /mnt/data/decision_support_tab.py
 # -*- coding: utf-8 -*-
-from Tabs.csc_tab_base import CSCTabBase
+from .csc_tab_base import CSCTabBase
 import time
 
 from modules.common.option_codes import (
@@ -13,7 +13,7 @@ def _now_ms_since_2000():
     return int(time.time() * 1000) - _EPOCH2000_MS
 
 class DecisionSupportTab(CSCTabBase):
-    TITLE = "의사결정 지원 CSC"
+    TITLE = "의사결정 지원 CSC (MOB)"
     def __init__(self, *, messenger, parent=None, owner=None):
         super().__init__(messenger=messenger, parent=parent)
         self._owner = owner
@@ -21,12 +21,14 @@ class DecisionSupportTab(CSCTabBase):
     
     # **FB → Push**
     PUSH_MESSAGES = [
+        ("0001", "공지"),
         ("0102", "모듈 상태 정보"),
         ("0701", "의사결정 옵션정보"),
     ]
     
     # **BF → Receive**
     RECEIVE_MESSAGES = [
+        ("0001", "공지"),
         ("0101", "시스템 운용 모드"),
         ("0201", "협업기저임무 계획"),
         ("0202", "선행임무정보"),

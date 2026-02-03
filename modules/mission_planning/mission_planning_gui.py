@@ -2,7 +2,7 @@
 # mission_planning_gui.py – 임무 할당·계획수립 전용 GUI (S110 플로우 대응)
 from __future__ import annotations
 
-import sys, os, threading, json, re, time, shutil, socket, copy
+import sys, os, threading, json, re, time, shutil, copy
 import concurrent.futures
 import folium
 os.environ["KU_ROLE"] = "mission"  # MMR
@@ -19,7 +19,6 @@ from mission_planning_gui_env import (
     _bootstrap_paths,
     _ensure_fusion_configs,
     _load_msglib_and_deps,
-    _mon_port,
     _now_ms_since_2000,
     _sanitize_reason,
     _z4,
@@ -28,18 +27,95 @@ from mission_planning_pipeline_logging import PipelineLogManager
 from mission_plan_file_logger import MissionPlanFileLogger
 
 PROJECT_ROOT, COMMON_DIR = _bootstrap_paths(Path(__file__))
+_TEMP_DIR = PROJECT_ROOT / "temp"
+
+
+def _ensure_temp_dir() -> Path:
+    _TEMP_DIR.mkdir(parents=True, exist_ok=True)
+    return _TEMP_DIR
 
 from modules.common.qt_env import ensure_qt_platform
 ensure_qt_platform()
 
 from PyQt5.QtCore import (
-    qInstallMessageHandler, QtMsgType, pyqtSignal, QTimer, Qt, QEvent, QObject, QUrl
+    qInstallMessageHandler, QtMsgType, pyqtSignal, QTimer, Qt, QEvent, QObject, QUrl, QRect
 )
+from PyQt5.QtGui import QKeySequence, QPainter, QColor, QFontMetrics, QFont
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QTabWidget, QShortcut,
-    QWidget, QLabel, QHBoxLayout, QVBoxLayout, QSlider, QPushButton, QCheckBox
+    QWidget, QLabel, QHBoxLayout, QVBoxLayout, QSlider, QPushButton, QCheckBox,
+    QStyle, QStyleOptionSlider,
 )
-from PyQt5.QtGui import QKeySequence
+
+class ModeTickLabels(QWidget):
+    def __init__(self, slider, labels, parent=None):
+        super().__init__(parent)
+        self._slider = slider
+        self._labels = list(labels)
+        self._pad = 0
+        self._font = QFont("Malgun Gothic")
+        self._font.setPointSize(8)
+        metrics = QFontMetrics(self._font)
+        self.setFixedHeight(max(30, metrics.height() * 2 + 2))
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self._slider.installEventFilter(self)
+        self._sync_width()
+
+    def _calc_pad(self):
+        metrics = QFontMetrics(self._font)
+        max_width = 0
+        for label in self._labels:
+            lines = str(label).splitlines() or [""]
+            width = max(metrics.horizontalAdvance(line) for line in lines)
+            if width > max_width:
+                max_width = width
+        rect_width = max(max_width + 6, 24)
+        return int(rect_width / 2) + 2
+
+    def _sync_width(self):
+        self._pad = self._calc_pad()
+        self.setFixedWidth(self._slider.width() + self._pad * 2)
+        self.update()
+
+    def eventFilter(self, obj, event):
+        if obj is self._slider and event.type() == QEvent.Resize:
+            self._sync_width()
+        return super().eventFilter(obj, event)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.TextAntialiasing)
+        painter.setPen(QColor("#6b7280"))
+        painter.setFont(self._font)
+        metrics = QFontMetrics(self._font)
+        option = QStyleOptionSlider()
+        self._slider.initStyleOption(option)
+        style = self._slider.style()
+        groove = style.subControlRect(QStyle.CC_Slider, option, QStyle.SC_SliderGroove, self._slider)
+        handle = style.subControlRect(QStyle.CC_Slider, option, QStyle.SC_SliderHandle, self._slider)
+        min_val = self._slider.minimum()
+        max_val = self._slider.maximum()
+        count = len(self._labels)
+        if count < 2 or max_val == min_val:
+            return
+        step = (max_val - min_val) / (count - 1)
+        available = groove.width() - handle.width()
+        if available < 0:
+            available = 0
+        for idx, label in enumerate(self._labels):
+            val = min_val + int(round(step * idx))
+            pos = style.sliderPositionFromValue(min_val, max_val, val, available, option.upsideDown)
+            x = self._pad + groove.x() + (handle.width() // 2) + pos
+            lines = str(label).splitlines() or [""]
+            text_width = max(metrics.horizontalAdvance(line) for line in lines)
+            rect_width = max(text_width + 6, 24)
+            x0 = int(x - rect_width / 2)
+            rect = QRect(int(x0), 0, int(rect_width), self.height())
+            painter.drawText(rect, Qt.AlignHCenter | Qt.AlignTop, label)
+        painter.end()
+
+
+
 try:
     from PyQt5.QtWebEngineWidgets import QWebEngineView
 except Exception:
@@ -54,7 +130,6 @@ qInstallMessageHandler(_qt_silent_handler)
 
 # ───────── 경로 부트스트랩 ─────────
 from modules.common.status_reporter import send_status_ok
-from modules.common.ctrl_listener import start_ctrl_listener, env_ctrl_port
 from modules.common import db_paths
 from modules.common.option_codes import (
     DEFAULT_OPTION_CODE_SEQUENCE,
@@ -96,7 +171,7 @@ class MissionVisualizationTab(QWidget):
         self._db_root_provider = db_root_provider
         self._log = log_cb or (lambda _: None)
         self._map_view_state: dict | None = None
-        self._map_html_path = PROJECT_ROOT / "mission_planning_map.html"
+        self._map_html_path = _ensure_temp_dir() / "mission_planning_map.html"
         self._show_waypoints = True
         self._show_geometry = True
         self._map_view: QWebEngineView | None = None
@@ -418,7 +493,7 @@ class MissionVisualizationTab(QWidget):
 # ───────── 메인 윈도우 ─────────
 class MainWindow(QMainWindow):
     # 백그라운드 → UI 스레드용 신호
-    ctrl_payload   = pyqtSignal(dict)   # UDP 제어
+    ctrl_payload   = pyqtSignal(dict)   # 제어
     log_sig        = pyqtSignal(str)    # 로그
     pipeline_log_sig = pyqtSignal(dict) # pipeline log fan-out
     start_push_seq = pyqtSignal()       # 0301/0305/0901 순차 푸시 트리거
@@ -430,7 +505,7 @@ class MainWindow(QMainWindow):
         self.resize(1100, 700)
 
         # 파워/상태
-        self._power_on = False
+        self._power_on = True
         self._self_check_sent = False
         self._last_ctrl_ts = {}     # 디듀프
         self._rx_counts = {}
@@ -466,7 +541,6 @@ class MainWindow(QMainWindow):
         )
 
         self._install_power_gate_hooks()       # Power OFF 가드
-        self._install_mon_wires()              # ★ 모니터링 전송 훅
         self._install_0301_override()          # 0301 전송 커스텀
         tabs.addTab(self._tab, "임무 할당·계획수립 CSC")
         self._log_tab = MissionPlanningLogTab()
@@ -498,15 +572,28 @@ class MainWindow(QMainWindow):
         top_layout.addWidget(self._latest_input_label)
         top_layout.addStretch(1)
         self.mode_slider = QSlider(Qt.Horizontal)
-        self.mode_slider.setRange(0, 4)
+        self.mode_slider.setRange(0, 3)
         self.mode_slider.setSingleStep(1)
         self.mode_slider.setTickInterval(1)
         self.mode_slider.setTickPosition(QSlider.TicksBelow)
         self.mode_slider.setFixedWidth(420)
         self.mode_slider.valueChanged.connect(self._on_mode_slider_changed)
-        self.mode_now = QLabel("대기모드"); self.mode_now.setStyleSheet("font-weight:600; padding-left:8px;")
+        slider_wrap = QWidget()
+        slider_layout = QVBoxLayout(slider_wrap)
+        slider_layout.setContentsMargins(0, 0, 0, 0)
+        slider_layout.setSpacing(2)
+        slider_layout.addWidget(self.mode_slider, 0, Qt.AlignHCenter)
+        self.mode_hint = ModeTickLabels(
+            self.mode_slider,
+            ["0\n초기화", "1\n대기", "2\n초기임무계획", "3\n임무수행"],
+            slider_wrap,
+        )
+        slider_layout.addWidget(self.mode_hint, 0, Qt.AlignHCenter)
+        self.mode_now = QLabel("초기화 모드"); self.mode_now.setStyleSheet("font-weight:600; padding-left:8px;")
+        self.mode_now.setFixedWidth(140)
+        self.mode_now.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         lbl = QLabel("모드:"); lbl.setStyleSheet("color:#789; padding-right:6px;")
-        top_layout.addWidget(lbl); top_layout.addWidget(self.mode_slider); top_layout.addWidget(self.mode_now)
+        top_layout.addWidget(lbl); top_layout.addWidget(slider_wrap); top_layout.addWidget(self.mode_now)
         self._refresh_input_banner()
 
         center = QWidget(); v = QVBoxLayout(center); v.setContentsMargins(0, 0, 0, 0)
@@ -526,23 +613,14 @@ class MainWindow(QMainWindow):
         if self._log_file_path:
             self._append_log_line(f"[LOG] Mission planning log started: {self._log_file_path}")
 
-        # nFusion RX 초기화 + UDP 컨트롤 리스너
+        # nFusion RX 초기화 + 테스트 단축키
         threading.Thread(target=self._rx_setup, daemon=True).start()
-        self._start_control_udp()
         self._install_test_shortcuts()
 
         # GUI 표시 후 상태 OK(=1) 한 번 송신
         QTimer.singleShot(800, lambda: send_status_ok("MMR"))
 
         # run.py 등의 self_check ON 신호 수신 시에도 내부에서만 0102=1 송신
-        def _on_ctrl(payload: dict):
-            try:
-                if (payload or {}).get("cmd") == "self_check" and int((payload or {}).get("status", 0)) == 1:
-                    send_status_ok("MMR")
-            except Exception:
-                pass
-        start_ctrl_listener(env_ctrl_port(45981), _on_ctrl)
-
         # ★★★ 0101 수신 → 모드 반영 리스너 + 폴백 폴링 설치
         self._install_0101_mode_listener()
         self._start_0101_rx_poller()
@@ -637,13 +715,12 @@ class MainWindow(QMainWindow):
           1 : 대기 모드
           2 : 초기임무계획 모드
           3 : 임무수행 모드
-        내부 슬라이더(0~4): [0=전원 OFF, 1=초기화 모드, 2=대기모드, 3=초기 임무 계획, 4=임무 수행]
-        → 매핑: 0→1, 1→2, 2→3, 3→4
+        내부 슬라이더(0~3): [0=초기화 모드, 1=대기모드, 2=초기 임무 계획, 3=임무 수행]
+        → 매핑: 동일(0→0, 1→1, 2→2, 3→3)
         """
-        code_to_slider = {0: 1, 1: 2, 2: 3, 3: 4}
-        if code not in code_to_slider:
+        if code not in (0, 1, 2, 3):
             return None
-        val = code_to_slider[code]
+        val = code
         try:
             self.mode_slider.blockSignals(True)
             self.mode_slider.setValue(val)
@@ -716,60 +793,6 @@ class MainWindow(QMainWindow):
 
 
     # ───────── 모니터링(대시보드) 전송 훅 ─────────
-    def _install_mon_wires(self):
-        """
-        - TX 완료(mark_sent) 시 → {"kind":"tx","msg_id":"XXXX"} UDP 전송
-        - 주기 TX(_log_only) 경로도 동일 처리
-        - 버튼 클릭 경로에서도 선제 통지(실패해도 무해)
-        - 모드 변경은 슬라이더 핸들러에서 {"kind":"mode","text":..., "role":"MMR"} 송신
-        """
-        tab = self._tab
-
-        # (1) mark_sent 래핑
-        if hasattr(tab, "mark_sent"):
-            self._orig_mark_sent = tab.mark_sent
-            def _wrapped_mark_sent(msg_id: str, raw: bytes | None = None):
-                try: self._send_mon("tx", msg_id=_z4(str(msg_id)))
-                except Exception: pass
-                return self._orig_mark_sent(msg_id, raw)
-            tab.mark_sent = _wrapped_mark_sent  # type: ignore
-
-        # (2) _log_only 래핑(주기 전송 로그 경로)
-        if hasattr(tab, "_log_only"):
-            self._orig_log_only = tab._log_only
-            def _wrapped_log_only(row: int, msg_id: str, raw: bytes | None):
-                try: self._send_mon("tx", msg_id=_z4(str(msg_id)))
-                except Exception: pass
-                return self._orig_log_only(row, msg_id, raw)
-            tab._log_only = _wrapped_log_only  # type: ignore
-
-        # (3) 버튼 클릭 경로에서도 선제 통지
-        if hasattr(tab, "tbl_tx") and hasattr(tab, "_on_tx_button_clicked"):
-            self._orig_tx_click_for_mon = tab._on_tx_button_clicked
-            def _wrapped_click_for_mon(row: int):
-                try:
-                    it = getattr(tab, "tbl_tx").item(row, 0)
-                    if it:
-                        self._send_mon("tx", msg_id=_z4(it.text()))
-                except Exception:
-                    pass
-                return self._orig_tx_click_for_mon(row)
-            tab._on_tx_button_clicked = _wrapped_click_for_mon  # type: ignore
-
-        # (4) RX 카운트 발생 지점 훅: bump_rx 호출 ‘후’에 비동기 UDP 알림
-        if hasattr(tab, "bump_rx") and not hasattr(self, "_rx_bump_wrapped"):
-            _orig_bump_rx = tab.bump_rx
-            def _wrapped_bump_rx(msg_id: str):
-                _orig_bump_rx(msg_id)
-                mid = _z4(str(msg_id))
-                def _pulse():
-                    cnt = self._rx_counts.get(mid, 0) + 1
-                    self._rx_counts[mid] = cnt
-                    self._send_mon("rx", msg_id=mid, count=cnt)
-                QTimer.singleShot(0, _pulse)
-            tab.bump_rx = _wrapped_bump_rx  # type: ignore
-            self._rx_bump_wrapped = True
-
     def _install_0301_override(self):
         tab = getattr(self, "_tab", None)
         if not tab or not hasattr(tab, "_on_tx_button_clicked") or hasattr(self, "_tx_override_installed"):
@@ -796,10 +819,6 @@ class MainWindow(QMainWindow):
                 plan_ids = list(dict.fromkeys(plan_ids))
                 if not plan_ids:
                     return original_handler(row)
-                try:
-                    self._send_mon("tx", msg_id=_z4("0301"))
-                except Exception:
-                    pass
                 self._send_0301_batch(plan_ids)
                 return
 
@@ -849,21 +868,6 @@ class MainWindow(QMainWindow):
             self._push_single_0301(pid)
         self._scheduled_0301_plan_ids = []
 
-    def _send_mon(self, kind: str, **payload):
-        """
-        대시보드(run.py)가 수신하는 모듈별 모니터링 UDP(JSON).
-        포트: KU_MON_ASSIGNMENT_PORT(기본 46981)
-        kind: "tx" | "mode"
-        """
-        data = {"kind": str(kind), **payload}
-        try:
-            buf = json.dumps(data, ensure_ascii=False).encode("utf-8", "ignore")
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.sendto(buf, ("127.0.0.1", _mon_port()))
-            s.close()
-        except Exception:
-            pass  # 모니터링용이므로 실패해도 동작에는 영향 없음
-
     def _start_0102_stream(self, _retry: int = 0):
         """초기화 모드 직후 0.5s 뒤 0102를 5Hz로 자동 시작."""
         if not self._power_on:
@@ -905,7 +909,7 @@ class MainWindow(QMainWindow):
         try:
             db_root = db_paths.get_active_db_root()
         except Exception:
-            db_root = Path(PROJECT_ROOT) / "database"
+            db_root = db_paths.LEGACY_DB_ROOT
 
         entries = []
         tips = []
@@ -967,6 +971,137 @@ class MainWindow(QMainWindow):
 
     def _build_attack_context_from_replan_detail(self, detail: Any) -> Optional[Dict[str, Any]]:
         return build_attack_context_from_replan_detail(detail)
+
+    def _load_uav_params_from_store(self) -> Optional[Dict[str, Any]]:
+        path = PROJECT_ROOT / "modules" / "mission_planning" / "MissionPlanner" / "uav_params.json"
+        if not path.exists():
+            return None
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        return payload
+
+    def _apply_uav_params_from_store(
+        self,
+        d0303_module,
+        *,
+        mp_config_module=None,
+        search_speed_module=None,
+        default_cruise: float = 40.0,
+        default_turn_step: float = 15.0,
+    ) -> tuple[float, float, bool]:
+        payload = self._load_uav_params_from_store()
+        if not payload:
+            return default_cruise, default_turn_step, False
+
+        values = payload.get("values")
+        if not isinstance(values, dict):
+            values = {}
+
+        def _get_float(key: str, default: float) -> float:
+            if key not in values:
+                return default
+            try:
+                return float(values.get(key))
+            except Exception:
+                return default
+
+        def _get_int(key: str, default: int) -> int:
+            if key not in values:
+                return default
+            try:
+                return int(float(values.get(key)))
+            except Exception:
+                return default
+
+        cruise_speed = _get_float("cruise_speed_mps", default_cruise)
+        turn_step = _get_float("turn_step_deg", default_turn_step)
+        sweep_sep = _get_float(
+            "default_sweep_separation_m",
+            float(getattr(mp_config_module, "DEFAULT_SWEEP_SEPARATION_M", d0303_module.SWEEP_GEOMETRY.separation_m)),
+        )
+        search_weight = _get_float(
+            "search_speed_weight",
+            float(getattr(mp_config_module, "SEARCH_SPEED_WEIGHT", 1.0)),
+        )
+        fov_deg = _get_float("fov_deg", float(getattr(d0303_module, "FOV_DEG", 0.0)))
+        altitude = _get_int("altitude_m", int(getattr(d0303_module, "Altitude", 0)))
+        d0303_module.FOV_DEG = fov_deg
+        d0303_module.Altitude = int(round(altitude))
+        d0303_module.SWEEP_ENTRY_OFFSET_M = _get_float(
+            "sweep_entry_offset_m", float(getattr(d0303_module, "SWEEP_ENTRY_OFFSET_M", 0.0))
+        )
+        d0303_module.SWEEP_MERGE_HEADING_DEG = _get_float(
+            "sweep_merge_heading_deg", float(getattr(d0303_module, "SWEEP_MERGE_HEADING_DEG", 0.0))
+        )
+        d0303_module.SWEEP_LINE_INTERP_POINTS = _get_int(
+            "sweep_line_interp_points", int(getattr(d0303_module, "SWEEP_LINE_INTERP_POINTS", 2))
+        )
+        d0303_module.MIN_SWEEP_LEN_M = _get_float(
+            "min_sweep_len_m", float(getattr(d0303_module, "MIN_SWEEP_LEN_M", 0.0))
+        )
+        d0303_module.MIN_ROUTE_SPACING_M = _get_float(
+            "min_route_spacing_m", float(getattr(d0303_module, "MIN_ROUTE_SPACING_M", 0.0))
+        )
+        d0303_module.DEFAULT_SEARCH_SPEED_MULTIPLIER = _get_float(
+            "default_search_speed_multiplier",
+            float(getattr(d0303_module, "DEFAULT_SEARCH_SPEED_MULTIPLIER", 1.0)),
+        )
+        d0303_module.POINT_FOV_DEG = _get_float(
+            "point_fov_deg", float(getattr(d0303_module, "POINT_FOV_DEG", 0.0))
+        )
+        d0303_module.ENTRY_HOLD_FOV_DEG = _get_float(
+            "entry_hold_fov_deg", float(getattr(d0303_module, "ENTRY_HOLD_FOV_DEG", 0.0))
+        )
+        d0303_module.ENTRY_HOLD_GIMBAL_PITCH = _get_float(
+            "entry_hold_gimbal_pitch",
+            float(getattr(d0303_module, "ENTRY_HOLD_GIMBAL_PITCH", 0.0)),
+        )
+        d0303_module.ENTRY_HOLD_GIMBAL_YAW = _get_float(
+            "entry_hold_gimbal_yaw",
+            float(getattr(d0303_module, "ENTRY_HOLD_GIMBAL_YAW", 0.0)),
+        )
+        d0303_module.LOITER_RADIUS_M = _get_float(
+            "loiter_radius_m", float(getattr(d0303_module, "LOITER_RADIUS_M", 0.0))
+        )
+        d0303_module.LOITER_DIRECTION = _get_int(
+            "loiter_direction", int(getattr(d0303_module, "LOITER_DIRECTION", 0))
+        )
+        d0303_module.LOITER_TIME_S = _get_float(
+            "loiter_time_s", float(getattr(d0303_module, "LOITER_TIME_S", 0.0))
+        )
+        d0303_module.LOITER_SPEED_MPS = _get_float(
+            "loiter_speed_mps", float(getattr(d0303_module, "LOITER_SPEED_MPS", 0.0))
+        )
+        d0303_module.SWEEP_GEOMETRY = d0303_module.SweepConfig(
+            separation_m=sweep_sep,
+            fov_deg=fov_deg,
+        )
+
+        if mp_config_module is not None:
+            mp_config_module.DEFAULT_SWEEP_SEPARATION_M = float(sweep_sep)
+            mp_config_module.SEARCH_SPEED_WEIGHT = float(search_weight)
+        if search_speed_module is not None:
+            search_speed_module._CFG_WEIGHT = float(search_weight)
+
+        algo_map = {"dtatrim": "dtatrim", "algo2": "linear", "algo3": "algo3"}
+        algo_key = payload.get("algo_key")
+        algo_name = algo_map.get(str(algo_key))
+        if algo_name:
+            d0303_module.set_route_planner(algo_name)
+
+        flyover = payload.get("flyover")
+        if isinstance(flyover, dict):
+            d0303_module.set_flyover_options(
+                entry_offset=bool(flyover.get("entry_offset", False)),
+                dubins_prefix=bool(flyover.get("dubins_prefix", False)),
+                all_wps=bool(flyover.get("all_wps", False)),
+            )
+
+        return cruise_speed, turn_step, True
 
     def _compute_attack_waypoint(
         self, friendly: Dict[str, Any], target: Dict[str, Any], variant_no: int
@@ -1115,7 +1250,6 @@ class MainWindow(QMainWindow):
                         return
                     try:
                         it = getattr(tab, "tbl_tx", None).item(row, 0) if getattr(tab, "tbl_tx", None) else None
-                        if it: self._send_mon("tx", msg_id=_z4(it.text()))
                     except Exception: pass
                     return self._orig_tx_click(row)
                 tab._on_tx_button_clicked = _wrapped_tx_click
@@ -1196,7 +1330,7 @@ class MainWindow(QMainWindow):
             try:
                 mode_slider = getattr(self, "mode_slider", None)
                 if mode_slider is not None:
-                    is_execution_mode = int(mode_slider.value()) == 4
+                    is_execution_mode = int(mode_slider.value()) == 3
             except Exception:
                 is_execution_mode = False
         else:
@@ -1256,10 +1390,6 @@ class MainWindow(QMainWindow):
             try:
                 btn = tbl.cellWidget(target_row, 3)
                 if btn is not None and hasattr(btn, "click"):
-                    try:
-                        self._send_mon("tx", msg_id=_z4(code))
-                    except Exception:
-                        pass
                     btn.click()
                     self._append_log_line(f"[PUSH] {code} button click()")
                     return
@@ -1268,10 +1398,6 @@ class MainWindow(QMainWindow):
 
             try:
                 if hasattr(tab, "_on_tx_button_clicked"):
-                    try:
-                        self._send_mon("tx", msg_id=_z4(code))
-                    except Exception:
-                        pass
                     tab._on_tx_button_clicked(target_row)
                     self._append_log_line(f"[PUSH] {code} handler invoked")
                     return
@@ -1322,30 +1448,28 @@ class MainWindow(QMainWindow):
 
     # ───────── 모드/슬라이더 ─────────
     def _on_mode_slider_changed(self, val: int):
-        labels = ["전원 OFF", "초기화 모드", "대기모드", "초기 임무 계획", "임무 수행"]
+        labels = ["초기화 모드", "대기모드", "초기 임무 계획", "임무 수행"]
         try: self.mode_now.setText(labels[int(val)])
         except Exception: pass
-        self._power_on = (int(val) != 0)
+        self._power_on = True
         self._append_log_line(f"[MODE] 슬라이더 변경 → {labels[int(val)] if 0 <= val < len(labels) else val}")
-        # ★ 모드 변경도 대시보드로 통지
-        try: self._send_mon("mode", text=labels[int(val)], role="MMR")
-        except Exception: pass
         self._apply_power_state()
         if self._power_on:
             QTimer.singleShot(500, self._start_0102_stream)
 
     def _set_mode_slider_by_text(self, text: str):
-        labels = ["전원 OFF", "초기화 모드", "대기모드", "초기 임무 계획", "임무 수행"]
+        labels = ["초기화 모드", "대기모드", "초기 임무 계획", "임무 수행"]
         norm = re.sub(r"\s+", "", str(text)).lower()
         mapping = {
-            "전원off":0,"off":0,"poweroff":0,"0":0,
-            "전원on":1,"on":1,"poweron":1,"1":1,
-            "초기화":1,"초기화모드":1,"초기화mode":1,
-            "대기모드":2,"대기":2,"standby":2,"2":2,
-            "초기임무계획":3,"초기임무계획모드":3,"initplan":3,"initial":3,"3":3,
-            "임무수행":4,"execution":4,"4":4
+            "전원off":0,"off":0,"poweroff":0,
+            "전원on":0,"on":0,"poweron":0,
+            "0":0,
+            "초기화":0,"초기화모드":0,"초기화mode":0,
+            "1":1,"대기모드":1,"대기":1,"standby":1,
+            "2":2,"초기임무계획":2,"초기임무계획모드":2,"initplan":2,"initial":2,
+            "3":3,"임무수행":3,"execution":3,
         }
-        val = mapping.get(norm, 2)
+        val = mapping.get(norm, 1)
         try:
             if getattr(self, "mode_slider", None):
                 if self.mode_slider.value() != val:
@@ -1355,10 +1479,9 @@ class MainWindow(QMainWindow):
             if getattr(self, "mode_now", None):
                 self.mode_now.setText(labels[val])
             # ★ 텍스트 기반 모드 변경도 통지
-            self._send_mon("mode", text=labels[val], role="MMR")
         except Exception:
             pass
-        self._power_on = (int(val) != 0)
+        self._power_on = True
         self._apply_power_state()
         if self._power_on:
             QTimer.singleShot(500, self._start_0102_stream)
@@ -1387,7 +1510,7 @@ class MainWindow(QMainWindow):
     def _push_0305(self, status: int, reason: str = "초기임무재계획"):
         try:
             from push_center import push_message
-            clean_reason = _sanitize_reason(reason, "??????????")
+            clean_reason = _sanitize_reason(reason, "초기임무재계획")
             body = {
                 "timestamp": _now_ms_since_2000(),
                 "source": "MMR",
@@ -1422,11 +1545,6 @@ class MainWindow(QMainWindow):
                 body_dict=body,
             )
             self.log_sig.emit(f"[0305] status={status}, reason={clean_reason} 전송")
-            try:
-                if not mon_sent_via_wrapper["done"]:
-                    self._send_mon("tx", msg_id=_z4("0305"), missionPlanningStatus=int(status))
-            except Exception:
-                pass
         except Exception as e:
             self.log_sig.emit(f"[ERR] 0305 전송 실패: {e}")
 
@@ -1462,10 +1580,7 @@ class MainWindow(QMainWindow):
             try:
                 self._tab.mark_sent(_z4("0903"), raw)
             except Exception:
-                try:
-                    self._send_mon("tx", msg_id=_z4("0903"), missionPlanID=mpid)
-                except Exception:
-                    pass
+                pass
         except Exception as e:
             self.log_sig.emit(f"[ERR] 0903 push failed: {e}")
 
@@ -1531,12 +1646,35 @@ class MainWindow(QMainWindow):
                 for entry in entries
             )
             self.log_sig.emit(f"[0901] option request sent (count={len(entries)}, codes={labels})")
-            try:
-                self._send_mon("tx", msg_id=_z4("0901"), optionCount=len(entries))
-            except Exception:
-                pass
         except Exception as e:
             self.log_sig.emit(f"[ERR] 0901 push failed: {e}")
+
+    def _push_0001_notice(self, contents: str) -> None:
+        if not contents:
+            return
+        try:
+            from push_center import push_message
+        except Exception as exc:
+            self.log_sig.emit(f"[ERR] 0001 push unavailable: {exc}")
+            return
+        body = {
+            "timestamp": _now_ms_since_2000(),
+            "source": "MMR",
+            "contents": str(contents),
+        }
+        try:
+            push_message("0001", NodeMessenger, body_dict=body)
+            self.log_sig.emit(f"[0001] notice sent: {contents}")
+            try:
+                raw = json.dumps(body, ensure_ascii=False).encode("utf-8", "ignore")
+            except Exception:
+                raw = None
+            try:
+                self._tab.mark_sent(_z4("0001"), raw)
+            except Exception:
+                pass
+        except Exception as exc:
+            self.log_sig.emit(f"[ERR] 0001 push failed: {exc}")
 
     # ───────── 0102 폴백(일반적으론 send_status_ok 사용) ─────────
     def _send_self_check_0102(self, status: int = 1, _retry: int = 0):
@@ -1574,32 +1712,7 @@ class MainWindow(QMainWindow):
             else:
                 self._append_log_line(f"자체점검(0102) 발신 실패: {e}")
 
-    # ───────── UDP 컨트롤 수신 ─────────
-    def _start_control_udp(self):
-        import socket, json, threading, os
-        if getattr(self, "_ctrl_udp_started", False): return
-        self._ctrl_udp_started = True
-
-        port = int(os.getenv("KU_CTRL_PORT", "45981"))
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            sock.bind(("127.0.0.1", port))
-            self._append_log_line(f"CTRL UDP 수신 대기 시작 (127.0.0.1:{port})")
-        except Exception as e:
-            self._append_log_line(f"CTRL UDP 바인드 실패: {e}")
-            return
-
-        def loop():
-            while True:
-                try:
-                    data, _ = sock.recvfrom(8192)
-                    payload = json.loads(data.decode("utf-8", "ignore"))
-                    self.ctrl_payload.emit(payload)
-                except Exception:
-                    pass
-        threading.Thread(target=loop, daemon=True).start()
-
+    # ───────── 테스트 단축키 ─────────
     def _install_test_shortcuts(self):
         # 테스트: 1 → 0102 ON 토글, 0 → 0102 OFF 토글
         QShortcut(QKeySequence("1"), self, activated=lambda: self._ensure_0102(True))
@@ -1751,7 +1864,8 @@ class MainWindow(QMainWindow):
         # 0902에서 옵션/계획 ID 추출
         plan_ids: list[int] = []
         option_names: list[str] = []
-        for item in payload.get("pendingOptionList") or []:
+        option_payload = payload.get("optionList") or payload.get("pendingOptionList") or []
+        for item in option_payload:
             try:
                 plan_ids.append(int(item.get("missionPlanID")))
             except Exception:
@@ -1769,7 +1883,7 @@ class MainWindow(QMainWindow):
                 continue
 
         staged_reason = _sanitize_reason(staged.get("reason"), "init-plan")
-        reason = _sanitize_reason(payload.get("replanReason"), staged_reason)
+        reason = _sanitize_reason(payload.get("replanRequest") or payload.get("replanReason"), staged_reason)
 
         ctx = dict(staged)
         if plan_ids:
@@ -1885,10 +1999,10 @@ class MainWindow(QMainWindow):
             timer.deleteLater()
             self._replan_delay_timer = None
         ctx = getattr(self, "_active_plan_context", {}) or {}
-        reason = _sanitize_reason(ctx.get("reason"), "??????????")
+        reason = _sanitize_reason(ctx.get("reason"), "초기임무재계획")
         plan_logger = getattr(self, "_mission_plan_logger", None)
         if not self._power_on:
-            msg = "[BLOCK] Power OFF ?? replan pipeline ????"
+            msg = "[BLOCK] Power OFF 상태에서 replan pipeline 차단"
             self._append_log_line(msg)
             try:
                 if plan_logger:
@@ -2067,6 +2181,29 @@ class MainWindow(QMainWindow):
             from AnS import run_divide_and_pattern, build_mission_plan_0301
             from data_def import d0302, d0303, d0304
             from data_def.id_allocator import next_path_id
+
+            uav_cruise_speed = 40.0
+            uav_turn_step = 15.0
+            try:
+                import config as mp_config
+                from data_def import search_speed as mp_search_speed
+            except Exception:
+                mp_config = None
+                mp_search_speed = None
+            try:
+                uav_cruise_speed, uav_turn_step, applied = self._apply_uav_params_from_store(
+                    d0303,
+                    mp_config_module=mp_config,
+                    search_speed_module=mp_search_speed,
+                    default_cruise=uav_cruise_speed,
+                    default_turn_step=uav_turn_step,
+                )
+                if applied:
+                    self.log_sig.emit(
+                        f"[INFO] UAV params loaded (cruise={uav_cruise_speed:.2f}, turn_step={uav_turn_step:.1f})"
+                    )
+            except Exception as exc:
+                self.log_sig.emit(f"[WARN] UAV params load failed: {exc}")
 
             def _imp_path_id(im):
                 for key in ('pathID', 'pathId', 'individualMissionPathID', 'missionPathID'):
@@ -2412,6 +2549,297 @@ class MainWindow(QMainWindow):
                 self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
                 return
 
+            cmpk_data = None
+            mrpk_data = None
+            try:
+                with cmpk_path.open("r", encoding="utf-8") as fh:
+                    cmpk_data = json.load(fh)
+            except Exception as exc:
+                self.log_sig.emit(f"[ERR] 0201 로드 실패: {exc}")
+                _record_issue("0201_load_failed", "failed to load 0201", detail={"path": str(cmpk_path), "error": str(exc)})
+                plan_log_summary.update({"stop_reason": "0201_load_failed", "cmpk_path": str(cmpk_path)})
+                self._plan_status = "임무계획 실패"
+                self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
+                return
+            try:
+                with mrpk_path.open("r", encoding="utf-8") as fh:
+                    mrpk_data = json.load(fh)
+            except Exception as exc:
+                self.log_sig.emit(f"[ERR] 0203 로드 실패: {exc}")
+                _record_issue("0203_load_failed", "failed to load 0203", detail={"path": str(mrpk_path), "error": str(exc)})
+                plan_log_summary.update({"stop_reason": "0203_load_failed", "mrpk_path": str(mrpk_path)})
+                self._plan_status = "임무계획 실패"
+                self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
+                return
+
+            validation_errors: list[dict[str, Any]] = []
+
+            def _require_list(
+                payload: dict,
+                key: str,
+                label: str,
+                *,
+                allow_empty: bool = False,
+                allow_missing: bool = False,
+            ) -> list:
+                value = payload.get(key)
+                if not isinstance(value, list):
+                    if value is None and allow_missing:
+                        self.log_sig.emit(f"[WARN] {label} 없음 (선택 항목)")
+                        return []
+                    self.log_sig.emit(f"[ERR] {label} 필요하지만 없음/형식오류 → 중단")
+                    validation_errors.append({"key": key, "reason": "missing_or_invalid"})
+                    return []
+                if not value and not allow_empty:
+                    self.log_sig.emit(f"[ERR] {label} 필요하지만 비어있음 → 중단")
+                    validation_errors.append({"key": key, "reason": "empty"})
+                else:
+                    self.log_sig.emit(f"[OK] {label} 확인됨 (count={len(value)}) → 진행")
+                return value
+
+            def _summarize_ids(values: list, limit: int = 5) -> str:
+                if not values:
+                    return "-"
+                return ", ".join(str(v) for v in values[:limit])
+
+            self.log_sig.emit("[CHECK] 0201/0203 필수 데이터 확인 시작")
+            mission_list = _require_list(cmpk_data or {}, "inputMissionList", "0201 inputMissionList")
+            aircraft_list = _require_list(cmpk_data or {}, "availableAircraftList", "0201 availableAircraftList")
+
+            pkg_type_raw = (cmpk_data or {}).get("inputMissionPackageType")
+            try:
+                pkg_type = int(pkg_type_raw)
+            except Exception:
+                pkg_type = None
+            if not pkg_type or pkg_type == 0:
+                self.log_sig.emit("[ERR] 0201 inputMissionPackageType=0/없음 → 중단")
+                validation_errors.append({"key": "inputMissionPackageType", "reason": "invalid"})
+            else:
+                self.log_sig.emit(f"[OK] 0201 inputMissionPackageType={pkg_type} 확인")
+
+            main_sensor_raw = (cmpk_data or {}).get("mainSensor")
+            try:
+                main_sensor = int(main_sensor_raw)
+            except Exception:
+                main_sensor = None
+            if not main_sensor or main_sensor == 0:
+                self.log_sig.emit("[ERR] 0201 mainSensor=0/없음 → 중단")
+                validation_errors.append({"key": "mainSensor", "reason": "invalid"})
+            else:
+                self.log_sig.emit(f"[OK] 0201 mainSensor={main_sensor} 확인")
+
+            uav_count = 0
+            lah_count = 0
+            zero_aircraft: list[Any] = []
+            invalid_aircraft: list[Any] = []
+            for idx, entry in enumerate(aircraft_list):
+                aircraft_id = None
+                if isinstance(entry, dict):
+                    aircraft_id = entry.get("aircraftID")
+                elif isinstance(entry, int):
+                    aircraft_id = entry
+                elif isinstance(entry, str) and entry.isdigit():
+                    aircraft_id = int(entry)
+                if not isinstance(aircraft_id, int):
+                    invalid_aircraft.append(idx)
+                    continue
+                if aircraft_id == 0:
+                    zero_aircraft.append(idx)
+                    continue
+                if 1 <= aircraft_id <= 3:
+                    lah_count += 1
+                elif 4 <= aircraft_id <= 6:
+                    uav_count += 1
+                else:
+                    invalid_aircraft.append(aircraft_id)
+            if aircraft_list:
+                self.log_sig.emit(f"[CHECK] 0201 기체 수={len(aircraft_list)} (UAV={uav_count}, LAH={lah_count})")
+                if zero_aircraft:
+                    self.log_sig.emit(
+                        f"[ERR] 0201 availableAircraftList에 0 포함 (idx={_summarize_ids(zero_aircraft)}) → 중단"
+                    )
+                    validation_errors.append({"key": "availableAircraftList", "reason": "contains_zero"})
+                if invalid_aircraft:
+                    self.log_sig.emit(
+                        f"[ERR] 0201 availableAircraftList 형식/범위 오류 (idx={_summarize_ids(invalid_aircraft)}) → 중단"
+                    )
+                    validation_errors.append({"key": "availableAircraftList", "reason": "invalid_entries"})
+                if uav_count == 0:
+                    self.log_sig.emit("[ERR] 0201 UAV 정보 없음 → 중단")
+                    validation_errors.append({"key": "availableAircraftList", "reason": "no_uav"})
+                if lah_count == 0:
+                    self.log_sig.emit("[ERR] 0201 LAH 정보 없음 → 중단")
+                    validation_errors.append({"key": "availableAircraftList", "reason": "no_lah"})
+
+            missing_id: list[Any] = []
+            missing_detail: list[Any] = []
+            missing_shape: list[Any] = []
+            unknown_type: list[Any] = []
+            type_zero: list[Any] = []
+            line_only_violation: list[Any] = []
+            for mission in mission_list:
+                if not isinstance(mission, dict):
+                    missing_detail.append("?")
+                    continue
+                mid = mission.get("inputMissionID")
+                if mid is None:
+                    missing_id.append("?")
+                detail = mission.get("missionDetail")
+                if not isinstance(detail, dict):
+                    missing_detail.append(mid)
+                    continue
+                mtype_raw = mission.get("inputMissionType")
+                try:
+                    mtype = int(mtype_raw)
+                except Exception:
+                    mtype = None
+                if mtype == 0 or mtype is None:
+                    type_zero.append(mid)
+                    continue
+                if mtype in (1, 7):
+                    if not detail.get("lineList"):
+                        missing_shape.append(mid)
+                    if detail.get("areaList"):
+                        line_only_violation.append(mid)
+                elif mtype in (4, 5):
+                    if not detail.get("lineList"):
+                        missing_shape.append(mid)
+                elif mtype in (2, 3, 6):
+                    if not detail.get("areaList"):
+                        missing_shape.append(mid)
+                else:
+                    unknown_type.append(mid)
+
+            if mission_list:
+                self.log_sig.emit(
+                    "[CHECK] 0201 임무: total={total} missingID={mid} missingDetail={md} "
+                    "missingShape={ms} unknownType={ut} typeZero={tz} lineOnlyViolation={lv}".format(
+                        total=len(mission_list),
+                        mid=len(missing_id),
+                        md=len(missing_detail),
+                        ms=len(missing_shape),
+                        ut=len(unknown_type),
+                        tz=len(type_zero),
+                        lv=len(line_only_violation),
+                    )
+                )
+                if missing_id or missing_detail or missing_shape or unknown_type or type_zero or line_only_violation:
+                    self.log_sig.emit(
+                        "[DETAIL] 0201 문제 샘플: missingID={mid} missingDetail={md} "
+                        "missingShape={ms} unknownType={ut} typeZero={tz} lineOnlyViolation={lv}".format(
+                            mid=_summarize_ids(missing_id),
+                            md=_summarize_ids(missing_detail),
+                            ms=_summarize_ids(missing_shape),
+                            ut=_summarize_ids(unknown_type),
+                            tz=_summarize_ids(type_zero),
+                            lv=_summarize_ids(line_only_violation),
+                        )
+                    )
+                    validation_errors.append({"key": "inputMissionList", "reason": "invalid_entries"})
+
+            take_over_list = _require_list(mrpk_data or {}, "takeOverInfoList", "0203 takeOverInfoList")
+            hand_over_list = _require_list(mrpk_data or {}, "handOverInfoList", "0203 handOverInfoList")
+            flight_area_list = _require_list(
+                mrpk_data or {},
+                "flightAreaList",
+                "0203 flightAreaList",
+                allow_empty=True,
+                allow_missing=True,
+            )
+            bad_take: list[int] = []
+            bad_hand: list[int] = []
+
+            def _count_bad_coords(entries: list) -> list[int]:
+                bad = []
+                for idx, item in enumerate(entries):
+                    coord = item.get("coordinate") if isinstance(item, dict) else None
+                    if not isinstance(coord, dict) or "latitude" not in coord or "longitude" not in coord:
+                        bad.append(idx)
+                return bad
+
+            if take_over_list:
+                bad_take = _count_bad_coords(take_over_list)
+                if bad_take:
+                    self.log_sig.emit(f"[WARN] 0203 takeOver 좌표 누락: {len(bad_take)}건 (idx={_summarize_ids(bad_take)})")
+            if hand_over_list:
+                bad_hand = _count_bad_coords(hand_over_list)
+                if bad_hand:
+                    self.log_sig.emit(f"[WARN] 0203 handOver 좌표 누락: {len(bad_hand)}건 (idx={_summarize_ids(bad_hand)})")
+            if flight_area_list:
+                self.log_sig.emit(f"[CHECK] 0203 flightAreaList count={len(flight_area_list)}")
+            else:
+                self.log_sig.emit("[WARN] 0203 flightAreaList 비어있음 (선택 항목)")
+
+            if validation_errors:
+                notice_parts: list[str] = []
+                reason_labels = {
+                    "missing_or_invalid": "누락/형식오류",
+                    "empty": "빈목록",
+                    "invalid": "값오류",
+                    "contains_zero": "0포함",
+                    "invalid_entries": "형식오류",
+                    "no_uav": "UAV없음",
+                    "no_lah": "LAH없음",
+                }
+                key_labels = {
+                    "inputMissionPackageType": "0201 패키지타입",
+                    "mainSensor": "0201 메인센서",
+                    "availableAircraftList": "0201 기체목록",
+                    "inputMissionList": "0201 임무목록",
+                    "takeOverInfoList": "0203 인계목록",
+                    "handOverInfoList": "0203 반환목록",
+                    "flightAreaList": "0203 비행구역목록",
+                }
+                err_map: dict[str, set[str]] = {}
+                for err in validation_errors:
+                    key = err.get("key") if isinstance(err, dict) else None
+                    reason = err.get("reason") if isinstance(err, dict) else None
+                    key_text = key_labels.get(str(key), str(key or "알수없음"))
+                    reason_text = reason_labels.get(str(reason), str(reason or "오류"))
+                    err_map.setdefault(key_text, set()).add(reason_text)
+                if err_map:
+                    chunks = []
+                    for key_text, reasons in err_map.items():
+                        reason_text = ",".join(sorted(reasons))
+                        chunks.append(f"{key_text}({reason_text})")
+                    notice_parts.append("항목: " + " / ".join(chunks))
+                if missing_id or missing_detail or missing_shape or unknown_type or type_zero or line_only_violation:
+                    notice_parts.append(
+                        "0201 임무오류(ID누락={mid},상세누락={md},도형누락={ms},타입미정={ut},타입0={tz},lineOnly위반={lv})".format(
+                            mid=len(missing_id),
+                            md=len(missing_detail),
+                            ms=len(missing_shape),
+                            ut=len(unknown_type),
+                            tz=len(type_zero),
+                            lv=len(line_only_violation),
+                        )
+                    )
+                if bad_take or bad_hand:
+                    notice_parts.append(
+                        f"0203 좌표누락(인계={len(bad_take)},반환={len(bad_hand)})"
+                    )
+                if notice_parts:
+                    self._push_0001_notice("0201/0203 검증 실패: " + " | ".join(notice_parts))
+                self.log_sig.emit("[ERR] 0201/0203 필수 데이터 부족 → 임무계획 중단")
+                _record_issue("input_validation_failed", "0201/0203 validation failed", detail={"errors": validation_errors})
+                plan_log_summary.update({"stop_reason": "input_validation_failed", "errors": validation_errors})
+                self._plan_status = "임무계획 실패"
+                self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
+                return
+            _record_step(
+                "input_validation",
+                "ok",
+                detail={
+                    "missions": len(mission_list),
+                    "aircrafts": len(aircraft_list),
+                    "uavs": uav_count,
+                    "lahs": lah_count,
+                    "takeOver": len(take_over_list),
+                    "handOver": len(hand_over_list),
+                    "flightArea": len(flight_area_list),
+                },
+            )
+
             # Exclude completed input missions (isDone=True) before generating new plans.
             mission_whitelist: Set[int] = set()
             for source in (ctx.get("mission_ids"), staged.get("mission_ids")):
@@ -2422,102 +2850,96 @@ class MainWindow(QMainWindow):
                         continue
 
             filtered_cmpk_path = cmpk_path
-            try:
-                with cmpk_path.open("r", encoding="utf-8") as fh:
-                    cmpk_data = json.load(fh)
-            except Exception as exc:
-                self.log_sig.emit(f"[WARN] Failed to load 0201 for mission filtering: {exc}")
-            else:
-                mission_list = cmpk_data.get("inputMissionList")
-                if isinstance(mission_list, list):
-                    filtered_list = []
-                    removed_ids: list[str] = []
-                    converted_ids: list[str] = []
-                    width_adjusted_ids: list[str] = []
-                    active_ids: list[int] = []
-                    for mission in mission_list:
-                        mid_raw = mission.get("inputMissionID")
-                        try:
-                            mid_int = int(mid_raw)
-                        except Exception:
-                            mid_int = None
-                        if mission_whitelist and (mid_int is None or mid_int not in mission_whitelist):
-                            removed_ids.append(str(mid_raw))
-                            continue
-                        if bool(mission.get("isDone")):
-                            removed_ids.append(str(mid_raw))
-                            continue
-                        mtype = mission.get("inputMissionType")
-                        if not isinstance(mtype, int) or mtype == 0:
-                            detail = mission.get("missionDetail") or {}
-                            if detail.get("lineList"):
-                                mission["inputMissionType"] = 1
-                                mtype = 1
-                                converted_ids.append(f"{mid_raw}->1")
-                            elif detail.get("areaList"):
-                                mission["inputMissionType"] = 2
-                                mtype = 2
-                                converted_ids.append(f"{mid_raw}->2")
-                            else:
-                                removed_ids.append(str(mid_raw))
-                                continue
-                        if mtype == 1:
-                            detail = mission.get("missionDetail") or {}
-                            for entry in detail.get("lineList") or []:
-                                try:
-                                    width_val = float(entry.get("width", 0))
-                                except Exception:
-                                    width_val = 0.0
-                                if width_val <= 0:
-                                    entry["width"] = 1000
-                                    width_adjusted_ids.append(str(mid_raw))
-                        filtered_list.append(mission)
-                        if mid_int is not None:
-                            active_ids.append(mid_int)
-                    if not filtered_list:
-                        plan_log_status = "skipped"
-                        _record_issue(
-                            "0201_filter_empty",
-                            "filtered 0201 has no missions",
-                            detail={"removed": removed_ids, "mission_whitelist": sorted(mission_whitelist) if mission_whitelist else []},
-                            status="skipped",
-                        )
-                        plan_log_summary.update({
-                            "stop_reason": "0201_filter_empty",
-                            "removed_input_ids": removed_ids,
-                            "mission_whitelist": sorted(mission_whitelist) if mission_whitelist else [],
-                        })
-                        self.log_sig.emit("[WARN] No pending missions remain after filtering; skipping replan pipeline.")
-                        self._plan_status = "replan_skipped"
-                        self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
-                        return
-                    if active_ids:
-                        ctx["mission_ids"] = active_ids
-
-                    if len(filtered_list) != len(mission_list) or (mission_whitelist and set(active_ids) != mission_whitelist):
-                        cmpk_data["inputMissionList"] = filtered_list
-                        filtered_dir = out_root_base / "_filtered"
-                        filtered_dir.mkdir(parents=True, exist_ok=True)
-                        filtered_cmpk_path = filtered_dir / cmpk_path.name
-                        try:
-                            filtered_cmpk_path.write_text(
-                                json.dumps(cmpk_data, ensure_ascii=False, indent=2),
-                                encoding="utf-8",
-                            )
-                            cmpk_path = filtered_cmpk_path
-                        except Exception as exc:
-                            self.log_sig.emit(f"[WARN] Failed to persist filtered 0201 snapshot: {exc}")
+            mission_list = cmpk_data.get("inputMissionList") if isinstance(cmpk_data, dict) else None
+            if isinstance(mission_list, list):
+                filtered_list = []
+                removed_ids: list[str] = []
+                converted_ids: list[str] = []
+                width_adjusted_ids: list[str] = []
+                active_ids: list[int] = []
+                for mission in mission_list:
+                    mid_raw = mission.get("inputMissionID")
+                    try:
+                        mid_int = int(mid_raw)
+                    except Exception:
+                        mid_int = None
+                    if mission_whitelist and (mid_int is None or mid_int not in mission_whitelist):
+                        removed_ids.append(str(mid_raw))
+                        continue
+                    if bool(mission.get("isDone")):
+                        removed_ids.append(str(mid_raw))
+                        continue
+                    mtype = mission.get("inputMissionType")
+                    if not isinstance(mtype, int) or mtype == 0:
+                        detail = mission.get("missionDetail") or {}
+                        if detail.get("lineList"):
+                            mission["inputMissionType"] = 1
+                            mtype = 1
+                            converted_ids.append(f"{mid_raw}->1")
+                        elif detail.get("areaList"):
+                            mission["inputMissionType"] = 2
+                            mtype = 2
+                            converted_ids.append(f"{mid_raw}->2")
                         else:
-                            removed_summary = ", ".join(removed_ids) if removed_ids else "-"
-                            converted_summary = ", ".join(converted_ids) if converted_ids else "-"
-                            width_summary = ", ".join(width_adjusted_ids) if width_adjusted_ids else "-"
-                            self.log_sig.emit(
-                                "[INFO] Filtered completed input missions "
-                                f"(removed={removed_summary or '-'}, converted={converted_summary or '-'}, "
-                                f"widthAdjusted={width_summary or '-'})"
-                            )
-                else:
-                    self.log_sig.emit("[WARN] 0201 payload missing valid inputMissionList; continuing without filtering")
+                            removed_ids.append(str(mid_raw))
+                            continue
+                    if mtype in (1, 7):
+                        detail = mission.get("missionDetail") or {}
+                        for entry in detail.get("lineList") or []:
+                            try:
+                                width_val = float(entry.get("width", 0))
+                            except Exception:
+                                width_val = 0.0
+                            if width_val <= 0:
+                                entry["width"] = 1 if mtype == 7 else 1000
+                                width_adjusted_ids.append(str(mid_raw))
+                    filtered_list.append(mission)
+                    if mid_int is not None:
+                        active_ids.append(mid_int)
+                if not filtered_list:
+                    plan_log_status = "skipped"
+                    _record_issue(
+                        "0201_filter_empty",
+                        "filtered 0201 has no missions",
+                        detail={"removed": removed_ids, "mission_whitelist": sorted(mission_whitelist) if mission_whitelist else []},
+                        status="skipped",
+                    )
+                    plan_log_summary.update({
+                        "stop_reason": "0201_filter_empty",
+                        "removed_input_ids": removed_ids,
+                        "mission_whitelist": sorted(mission_whitelist) if mission_whitelist else [],
+                    })
+                    self.log_sig.emit("[WARN] No pending missions remain after filtering; skipping replan pipeline.")
+                    self._plan_status = "replan_skipped"
+                    self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
+                    return
+                if active_ids:
+                    ctx["mission_ids"] = active_ids
+
+                if len(filtered_list) != len(mission_list) or (mission_whitelist and set(active_ids) != mission_whitelist):
+                    cmpk_data["inputMissionList"] = filtered_list
+                    filtered_dir = out_root_base / "_filtered"
+                    filtered_dir.mkdir(parents=True, exist_ok=True)
+                    filtered_cmpk_path = filtered_dir / cmpk_path.name
+                    try:
+                        filtered_cmpk_path.write_text(
+                            json.dumps(cmpk_data, ensure_ascii=False, indent=2),
+                            encoding="utf-8",
+                        )
+                        cmpk_path = filtered_cmpk_path
+                    except Exception as exc:
+                        self.log_sig.emit(f"[WARN] Failed to persist filtered 0201 snapshot: {exc}")
+                    else:
+                        removed_summary = ", ".join(removed_ids) if removed_ids else "-"
+                        converted_summary = ", ".join(converted_ids) if converted_ids else "-"
+                        width_summary = ", ".join(width_adjusted_ids) if width_adjusted_ids else "-"
+                        self.log_sig.emit(
+                            "[INFO] Filtered completed input missions "
+                            f"(removed={removed_summary or '-'}, converted={converted_summary or '-'}, "
+                            f"widthAdjusted={width_summary or '-'})"
+                        )
+            else:
+                self.log_sig.emit("[WARN] 0201 payload missing valid inputMissionList; continuing without filtering")
 
             ctx['cmpk_path'] = str(cmpk_path)
             ctx['mrpk_path'] = str(mrpk_path)
@@ -2752,7 +3174,12 @@ class MainWindow(QMainWindow):
 
                 def _build_0303():
                     start = time.perf_counter()
-                    plans = d0303.build_flight_plans(unmanned, wp_alloc, 40.0, turn_step_deg=15.0)
+                    plans = d0303.build_flight_plans(
+                        unmanned,
+                        wp_alloc,
+                        uav_cruise_speed,
+                        turn_step_deg=uav_turn_step,
+                    )
                     return plans, (time.perf_counter() - start) * 1000.0
 
                 def _build_0304():
@@ -2863,6 +3290,13 @@ class MainWindow(QMainWindow):
                         path_id = fp.get("pathID")
                         if path_id is None:
                             continue
+                        # Formation followers may not have explicit waypoints.
+                        if fp.get("isFormationFlight"):
+                            try:
+                                collected.add(int(path_id))
+                            except Exception:
+                                pass
+                            continue
                         waypoints = fp.get("waypointList")
                         if not waypoints:
                             waypoints = fp.get("lahWaypointList")
@@ -2884,7 +3318,7 @@ class MainWindow(QMainWindow):
                     )
                     _record_issue("flightpath_missing_ids", f"missing pathID(s) {missing_summary}")
                     plan_log_summary.update({"stop_reason": "flightpath_missing_ids", "missing_paths": missing_summary})
-                    self._plan_status = "?????? ????"
+                    self._plan_status = "임무계획 실패"
                     self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
                     return
 
@@ -3036,7 +3470,7 @@ class MainWindow(QMainWindow):
                 plan_state=self._plan_status,
             )
 
-            # ?? ????? ??? ?? ?? ??(Level 4)? ?? ??
+            # 강제 전송 여부는 옵션/재계획 레벨(4)에 따라 결정
             force_direct_update = bool(ctx.get("force_direct_update"))
             try:
                 replan_level_val = int(ctx.get("replan_level", 0))

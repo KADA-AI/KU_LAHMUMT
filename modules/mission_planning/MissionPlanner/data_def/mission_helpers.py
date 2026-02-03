@@ -19,8 +19,11 @@ from branca.colormap import linear
 from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot
 from PyQt5.QtWidgets import (QDialog, QGridLayout, QLabel, QComboBox,
                              QDialogButtonBox, QDoubleSpinBox)
-from folium import CircleMarker   # ?뚯씪 留???import
-from data_def.id_allocator import next_individual_mission_id, next_path_id
+from folium import CircleMarker   # folium 원형 마커 import
+try:
+    from .id_allocator import next_individual_mission_id, next_path_id
+except Exception:
+    from data_def.id_allocator import next_individual_mission_id, next_path_id  # type: ignore
 
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[4]
@@ -126,7 +129,7 @@ def _candidate_tiles(lat: float, lon: float) -> Iterable[Path]:
 
 
 def terrain_elev(lat: float, lon: float) -> float:
-    """??(?????)? ???? GeoTIFF ??(m). ?? ??? 0."""
+    """지형(DEM)에서 가져온 GeoTIFF 고도(m). 없으면 0."""
     chosen_tile = None
     for path in _candidate_tiles(lat, lon):
         band, transform, bounds, nodata = _load_dem_data(path)

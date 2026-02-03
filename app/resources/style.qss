@@ -10,6 +10,12 @@ QMainWindow, QWidget { background: #f5f7fa; color: #111; }
   padding-left: 4px;
 }
 
+#MainSubtitle {
+  font-size: 12px;
+  color: #6b7280;
+  padding-left: 4px;
+}
+
 /* 카드 공통 */
 #Card {
   background: #ffffff;
@@ -24,6 +30,12 @@ QMainWindow, QWidget { background: #f5f7fa; color: #111; }
 }
 #Card QLabel {
   background: transparent;
+}
+
+/* Section labels inside control cards */
+#SectionTitle {
+  color: #374151;
+  font-weight: 700;
 }
 
 /* 자리표시자 텍스트 */

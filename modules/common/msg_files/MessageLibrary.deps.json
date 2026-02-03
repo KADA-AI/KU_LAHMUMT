@@ -11,11 +11,8 @@
         "dependencies": {
           "JonSkeet.MiscUtil": "0.2.0",
           "NETStandard.Library": "2.0.3",
-          "nFusion.Core": "1.1.2",
-          "nFusion.Interface.Contracts": "1.1.6",
-          "nFusion.InterfaceGen": "1.1.16",
-          "nFusion.Nodes.Core": "1.1.13",
-          "nFusion.SimpleMiddleware": "1.1.8",
+          "nFusion.InterfaceGen": "1.1.17",
+          "nFusion.Nodes.Core": "1.1.14",
           "K4586Model.Assist": "1.0.0.0",
           "K4586Model": "1.0.0.0",
           "K4586Serializer": "1.0.0.0"
@@ -320,7 +317,7 @@
           }
         }
       },
-      "nFusion.Interface.Contracts/1.1.6": {
+      "nFusion.Interface.Contracts/1.1.7": {
         "dependencies": {
           "Microsoft.Bcl.AsyncInterfaces": "9.0.2",
           "Microsoft.CodeAnalysis.CSharp": "4.12.0",
@@ -329,18 +326,18 @@
         },
         "runtime": {
           "lib/netstandard2.0/nFusion.Interface.Contracts.dll": {
-            "assemblyVersion": "1.1.6.0",
-            "fileVersion": "1.1.6.0"
+            "assemblyVersion": "1.1.7.0",
+            "fileVersion": "1.1.7.0"
           }
         }
       },
-      "nFusion.InterfaceGen/1.1.16": {
+      "nFusion.InterfaceGen/1.1.17": {
         "dependencies": {
           "Microsoft.Bcl.AsyncInterfaces": "9.0.2",
-          "nFusion.Interface.Contracts": "1.1.6"
+          "nFusion.Interface.Contracts": "1.1.7"
         }
       },
-      "nFusion.Nodes.Core/1.1.13": {
+      "nFusion.Nodes.Core/1.1.14": {
         "dependencies": {
           "Microsoft.Bcl.AsyncInterfaces": "9.0.2",
           "Microsoft.CSharp": "4.7.0",
@@ -348,17 +345,17 @@
           "Microsoft.Extensions.Configuration.Json": "9.0.2",
           "Microsoft.Extensions.DependencyInjection": "9.0.2",
           "nFusion.Core": "1.1.2",
-          "nFusion.Interface.Contracts": "1.1.6",
-          "nFusion.SimpleMiddleware": "1.1.8"
+          "nFusion.Interface.Contracts": "1.1.7",
+          "nFusion.SimpleMiddleware": "1.1.9"
         },
         "runtime": {
           "lib/netstandard2.0/nFusion.Nodes.Core.dll": {
-            "assemblyVersion": "1.1.13.0",
-            "fileVersion": "1.1.13.0"
+            "assemblyVersion": "1.1.14.0",
+            "fileVersion": "1.1.14.0"
           }
         }
       },
-      "nFusion.SimpleMiddleware/1.1.8": {
+      "nFusion.SimpleMiddleware/1.1.9": {
         "dependencies": {
           "Microsoft.Bcl.AsyncInterfaces": "9.0.2",
           "Microsoft.CodeAnalysis.CSharp": "4.12.0",
@@ -368,8 +365,8 @@
         },
         "runtime": {
           "lib/netstandard2.0/nFusion.SimpleMiddleware.dll": {
-            "assemblyVersion": "1.1.8.0",
-            "fileVersion": "1.1.8.0"
+            "assemblyVersion": "1.1.9.0",
+            "fileVersion": "1.1.9.0"
           }
         }
       },
@@ -734,33 +731,33 @@
       "path": "nfusion.core/1.1.2",
       "hashPath": "nfusion.core.1.1.2.nupkg.sha512"
     },
-    "nFusion.Interface.Contracts/1.1.6": {
+    "nFusion.Interface.Contracts/1.1.7": {
       "type": "package",
       "serviceable": true,
-      "sha512": "sha512-FP+6sa4XMFIBKOvjee6SzFzbioumN/ZCq+fcE8tLJBRTOgt47RDWwaP+eTV0JQ1XwoztDxX+PAIopkAf1IwZ5g==",
-      "path": "nfusion.interface.contracts/1.1.6",
-      "hashPath": "nfusion.interface.contracts.1.1.6.nupkg.sha512"
+      "sha512": "sha512-QBjEZhcSsDQyfLNzhNeS3fYhQ8DY3dqXUPmJyfI+sAglO7+GOydVtWlfL0LbN+fI9l+7YWclVZiOyq4zHXYluQ==",
+      "path": "nfusion.interface.contracts/1.1.7",
+      "hashPath": "nfusion.interface.contracts.1.1.7.nupkg.sha512"
     },
-    "nFusion.InterfaceGen/1.1.16": {
+    "nFusion.InterfaceGen/1.1.17": {
       "type": "package",
       "serviceable": true,
-      "sha512": "sha512-r1KOJmlgN44aFgHNt763JuN5ci19Ss3MpeZaTpHzDQFOxeEMrJrEd8R6s+ZiaPiGUn4At98KjEiOR3adz/t3dw==",
-      "path": "nfusion.interfacegen/1.1.16",
-      "hashPath": "nfusion.interfacegen.1.1.16.nupkg.sha512"
+      "sha512": "sha512-FsC/xKRGJZehl81H/70o1FGKpsjsykFUKk2WRzzHNldruHi5EzfNK+l9mZ6D7JkQyDhRSkcSAlUhTvYsB7yoRQ==",
+      "path": "nfusion.interfacegen/1.1.17",
+      "hashPath": "nfusion.interfacegen.1.1.17.nupkg.sha512"
     },
-    "nFusion.Nodes.Core/1.1.13": {
+    "nFusion.Nodes.Core/1.1.14": {
       "type": "package",
       "serviceable": true,
-      "sha512": "sha512-L2H/DBkZdGThyet+FpRCPatEBJ+meQalwsFxEZ6Oek+qqr2bUKBG0ybzFkzqmZF+9R9z10mxLenU/ioBdtm/HA==",
-      "path": "nfusion.nodes.core/1.1.13",
-      "hashPath": "nfusion.nodes.core.1.1.13.nupkg.sha512"
+      "sha512": "sha512-wp7Jq/UbfM2GzPDEf5TnysVkuIUS6iOr1OSc1QIMIz4S2v1E+mKv8KWkllPupY5EAmsp70sYUMnH66B7tsK4Tg==",
+      "path": "nfusion.nodes.core/1.1.14",
+      "hashPath": "nfusion.nodes.core.1.1.14.nupkg.sha512"
     },
-    "nFusion.SimpleMiddleware/1.1.8": {
+    "nFusion.SimpleMiddleware/1.1.9": {
       "type": "package",
       "serviceable": true,
-      "sha512": "sha512-Ghb9Wyk7nmHV3Yf7gs7i53vnGUzjH4O+7SsHFo0cx8Jz6du3sif4h2HBHiIt96CzcS3v6ptBVnTrAESgBtgK7w==",
-      "path": "nfusion.simplemiddleware/1.1.8",
-      "hashPath": "nfusion.simplemiddleware.1.1.8.nupkg.sha512"
+      "sha512": "sha512-R5sG1nGaQBFeK8hc0P6eDAXOnQcjFFJch2RQPBhqwiQnW2bDF5Z2XWJIwB8/fRZ+rHy0DDVbtymCdsAZCweIwA==",
+      "path": "nfusion.simplemiddleware/1.1.9",
+      "hashPath": "nfusion.simplemiddleware.1.1.9.nupkg.sha512"
     },
     "System.Buffers/4.6.0": {
       "type": "package",

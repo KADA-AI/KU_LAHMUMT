@@ -4,16 +4,29 @@ from __future__ import annotations
 
 from typing import Iterable, Optional
 
-OPTION_CODE_TO_LABEL = {
-    1: "시스템추천",
+# Canonical option codes and labels (ICD-aligned).
+OPTION_CODE_TO_LABEL: dict[int, str] = {
+    1: "시스템 추천",
     2: "공격특화",
     3: "공격배제",
     4: "정찰특화",
     5: "최소시간",
+    6: "정찰/시간 균형",
 }
 
-# Default option codes used by current mission-planning pipeline (no 공격 variants).
-DEFAULT_OPTION_CODE_SEQUENCE: tuple[int, ...] = (1, 4, 5)
+
+def _normalize_label(text: str) -> str:
+    """Normalize labels for tolerant string matching."""
+    return "".join(str(text).split()).lower()
+
+
+# Normalized label lookup -> option code.
+_LABEL_TO_CODE_NORM: dict[str, int] = {
+    _normalize_label(label): code for code, label in OPTION_CODE_TO_LABEL.items()
+}
+
+# Default option codes used by current monitoring replan flows.
+DEFAULT_OPTION_CODE_SEQUENCE: tuple[int, ...] = (6, 4, 5)
 
 
 def normalize_option_code(value: object, fallback: Optional[int] = None) -> Optional[int]:
@@ -31,11 +44,9 @@ def normalize_option_code(value: object, fallback: Optional[int] = None) -> Opti
                 except Exception:
                     candidate = None
             else:
-                # Try to map from label text.
-                for code, label in OPTION_CODE_TO_LABEL.items():
-                    if stripped == label:
-                        candidate = code
-                        break
+                # Try to map from (possibly normalized) label text.
+                norm = _normalize_label(stripped)
+                candidate = _LABEL_TO_CODE_NORM.get(norm)
         else:
             try:
                 candidate = int(value)  # type: ignore[arg-type]

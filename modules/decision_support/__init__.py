@@ -5,7 +5,6 @@ from .core import (
     OptionInfoMessenger,
     OptionRequestDecoder,
     OptionPayloadBuilder,
-    MonitorBroadcaster,
     now_ms_since_2000,
 )
 
@@ -14,6 +13,5 @@ __all__ = [
     "OptionInfoMessenger",
     "OptionRequestDecoder",
     "OptionPayloadBuilder",
-    "MonitorBroadcaster",
     "now_ms_since_2000",
 ]

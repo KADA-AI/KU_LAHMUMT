@@ -200,6 +200,8 @@ def _to_dict_UnmannedInfo(obj):
     if _v is not None: d['payloadHealth'] = int(_v)
     _v = _get(obj, 'fuelWarning', 'FuelWarning')
     if _v is not None: d['fuelWarning'] = int(_v)
+    _v = _get(obj, 'onMission', 'OnMission')
+    if _v is not None: d['onMission'] = int(_v)
     return d
 
 def _to_dict_AgentState(obj):
@@ -216,6 +218,10 @@ def _to_dict_AgentState(obj):
     if _v is not None: d['fuel'] = float(_v)
     _v = _get(obj, 'health', 'Health')
     if _v is not None: d['health'] = int(_v)
+    _v = _get(obj, 'lastSignalTime', 'LastSignalTime')
+    if _v is not None: d['lastSignalTime'] = int(_v)
+    _v = _get(obj, 'onMission', 'OnMission')
+    if _v is not None: d['onMission'] = int(_v)
     _sub = _get(obj, 'mannedInfo', 'MannedInfo')
     if _sub is not None: d['mannedInfo'] = _to_dict_MannedInfo(_sub)
     _sub = _get(obj, 'unmannedInfo', 'UnmannedInfo')

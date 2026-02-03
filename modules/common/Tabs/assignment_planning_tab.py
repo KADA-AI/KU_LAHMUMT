@@ -1,13 +1,14 @@
 # assignment_planning_tab.py
 from typing import Callable, Optional
-from Tabs.csc_tab_base import CSCTabBase
+from .csc_tab_base import CSCTabBase
 
 
 class AssignmentPlanningTab(CSCTabBase):
-    TITLE = "업무 할당 및 계획수립 CSC"
+    TITLE = "업무 할당 및 계획수립 CSC (MMR)"
     
     # **BD → Receive**
     RECEIVE_MESSAGES = [
+        ("0001", "공지"),
         ("0101", "시스템 운용 모드"),
         ("0201", "협업기저임무 계획"),
         ("0202", "선행임무정보"),
@@ -21,6 +22,7 @@ class AssignmentPlanningTab(CSCTabBase):
     
     # **DB → Push**
     PUSH_MESSAGES = [
+        ("0001", "공지"),
         ("0102", "모듈 상태 정보"),              # manage_info_tab.py 기준 이름 반영
         ("0301", "임무 계획"),
         ("0302", "개별 임무 계획"),

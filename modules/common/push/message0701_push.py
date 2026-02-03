@@ -19,6 +19,7 @@ from System import Boolean, Int32, String, UInt32, UInt64
 from generator.message0701_generator import make_msg0701_body
 _EPOCH_2000 = datetime(2000, 1, 1, tzinfo=timezone.utc)
 _now_ms = lambda: int((datetime.utcnow().replace(tzinfo=timezone.utc) - _EPOCH_2000).total_seconds() * 1000)
+from modules.common.source_utils import get_default_source_code, override_source_fields
 MSG_ID = "0701"
 def _try_set(obj, name: str, value) -> bool:
     # lowerCamel 또는 PascalCase 둘 다 시도
@@ -128,6 +129,7 @@ def _list_numeric_ids(dirname: str, prefix_first_char: str | None = None) -> lis
 def _dict_to_Option(data: dict):
     obj = _new('Option')
     if "optionID" in data: _try_set(obj, "optionID", int(data["optionID"]))
+    if "recommend" in data: _try_set(obj, "recommend", bool(data["recommend"]))
     if "optionName" in data:
         value = data["optionName"]
         if value is not None:
@@ -139,6 +141,7 @@ def _dict_to_Option(data: dict):
     if "survivalRate" in data: _try_set(obj, "survivalRate", int(data["survivalRate"]))
     if "timeContraction" in data: _try_set(obj, "timeContraction", int(data["timeContraction"]))
     if "recogEffectiveness" in data: _try_set(obj, "recogEffectiveness", int(data["recogEffectiveness"]))
+    if "fuelWarning" in data: _try_set(obj, "fuelWarning", int(data["fuelWarning"]))
     if "distance" in data: _try_set(obj, "distance", int(data["distance"]))
     if "target" in data: _try_set(obj, "target", int(data["target"]))
     return obj
@@ -178,6 +181,7 @@ def make_and_push(body_dict: dict, node_messenger) -> bytes:
     return log_line.encode("utf-8", "ignore")
 
 def make_random_and_push(node_messenger) -> bytes:
+    source = get_default_source_code()
     # DB 기반 메시지는 DB의 파일명(숫자).json을 ID로 사용하여 최소 필드만 전송
     if MSG_ID in DB_DIR_RULES:
         dbdir = _db_dir_for(MSG_ID, __file__)
@@ -189,7 +193,7 @@ def make_random_and_push(node_messenger) -> bytes:
             wl = TX_FIELD_WHITELIST.get(MSG_ID, [])
             body = {
                 "timestamp": int((datetime.utcnow().replace(tzinfo=timezone.utc) - _EPOCH_2000).total_seconds() * 1000),
-                "Source": "DSC",
+                "Source": source,
             }
             # ID 필드 결정
             if "inputMissionPackageID" in wl:          body["inputMissionPackageID"] = vid
@@ -202,13 +206,14 @@ def make_random_and_push(node_messenger) -> bytes:
     else:
         # 비 DB 메시지는 제너레이터 → 필요 시 화이트리스트로 선별
         body = make_msg0701_body()
+        override_source_fields(body, source)
         # ★ 0102 방어: body가 비거나 dict가 아니면 최소 세트로 채움
         if MSG_ID == "0102":
             if not isinstance(body, dict) or not body:
                 body = {
                     "timestamp": int((datetime.utcnow().replace(tzinfo=timezone.utc) - _EPOCH_2000).total_seconds() * 1000),
                     "status": 1,  # 정상
-                    "Source": "DSC",
+                    "Source": source,
                 }
         wl = TX_FIELD_WHITELIST.get(MSG_ID)
         if wl and isinstance(body, dict):

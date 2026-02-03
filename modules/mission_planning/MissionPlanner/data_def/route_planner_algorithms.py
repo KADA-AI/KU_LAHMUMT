@@ -22,6 +22,7 @@ def plan_route_dtatrim(
         input_lla,
         cruise_speed=cruise_speed,
         heading_tol_deg=heading_tol_deg,
+        insert_turn_waypoints=False,
         store=False,
     )
 

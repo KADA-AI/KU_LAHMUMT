@@ -34,8 +34,14 @@ except ImportError:
 
 import numpy as np
 import matplotlib.pyplot as plt
-from dividing_Aisle_class import PolygonProcessor
-from simple_dynamics import SimpleUAV, VerySimpleAutopilot
+try:
+    from .dividing_Aisle_class import PolygonProcessor
+except Exception:
+    from dividing_Aisle_class import PolygonProcessor  # type: ignore
+try:
+    from .simple_dynamics import SimpleUAV, VerySimpleAutopilot
+except Exception:
+    from simple_dynamics import SimpleUAV, VerySimpleAutopilot  # type: ignore
 
 Point = Tuple[float, float]
 Line  = Tuple[Point, Point]
@@ -398,7 +404,10 @@ class UAVMissionPlanner:
             pts_xy = new_xy
 
         # ── ③ VerySimpleAutopilot 시뮬레이션(기존과 동일) ─────────
-        from simple_dynamics import SimpleUAV, VerySimpleAutopilot
+        try:
+            from .simple_dynamics import SimpleUAV, VerySimpleAutopilot
+        except Exception:
+            from simple_dynamics import SimpleUAV, VerySimpleAutopilot  # type: ignore
         if len(pts_xy) == 2:
             traj_x, traj_y = zip(*pts_xy)
         else:

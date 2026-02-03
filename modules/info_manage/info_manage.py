@@ -2,7 +2,7 @@
 # info.py – 정보관리(INF) 전용 GUI
 from __future__ import annotations
 
-import sys, os, threading, json, re, time, socket
+import sys, os, threading, json, re, time
 os.environ["KU_ROLE"] = "info"  # INF
 from pathlib import Path
 
@@ -32,7 +32,6 @@ qInstallMessageHandler(_qt_silent_handler)
 
 # ───────── 경로 부트스트랩 ─────────
 from modules.common.status_reporter import send_status_ok
-from modules.common.ctrl_listener import start_ctrl_listener, env_ctrl_port
 from modules.common.fusion_files import copy_file_with_retry
 
 _EPOCH2000_MS = 946_684_800_000
@@ -94,8 +93,18 @@ def _load_msglib_and_deps():
             import clr as _clr  # type: ignore
     msg_dir = COMMON_DIR / "msg_files"
     stem = msg_dir / "MessageLibrary"
-    try: _clr.AddReference(str(stem))
-    except Exception: _clr.AddReference(str(stem.with_suffix(".dll")))
+    def _already_loaded(exc: Exception) -> bool:
+        return "already loaded" in str(exc).lower()
+
+    try:
+        _clr.AddReference(str(stem))
+    except Exception as exc:
+        if not _already_loaded(exc):
+            try:
+                _clr.AddReference(str(stem.with_suffix(".dll")))
+            except Exception as exc2:
+                if not _already_loaded(exc2):
+                    raise
     for s in ("K4586Model", "K4586Model.Assist", "MiscUtil"):
         dll = msg_dir / (s + ".dll")
         if dll.exists():
@@ -110,14 +119,6 @@ _ = _load_msglib_and_deps()
 from receive import *  # noqa
 from Tabs.manage_info_tab import ManageInfo
 
-# ───────── 모듈별 모니터링 포트(정보관리) ─────────
-def _mon_port() -> int:
-    """정보관리 GUI → 대시보드(run.py) 모니터링 전송 포트"""
-    try:
-        return int(os.getenv("KU_MON_INFO_PORT", "46984"))
-    except Exception:
-        return 46984
-
 def _z4(s: str) -> str:
     s = str(s).strip()
     return s.zfill(4) if s.isdigit() and len(s) < 4 else s
@@ -131,12 +132,12 @@ class MainWindow(QMainWindow):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.setWindowTitle('데이터 상태 정보')
+        self.setWindowTitle('정보관리 모듈')
         # default footprint sized so multiple GUIs can coexist comfortably
         self.resize(1100, 700)
 
         # 파워/상태
-        self._power_on = False
+        self._power_on = True
         self._self_check_sent = False
         self._last_ctrl_ts = {}   # 디듀프
 
@@ -150,27 +151,11 @@ class MainWindow(QMainWindow):
         )
 
         self._install_power_gate_hooks()  # Power OFF 가드
-        self._install_mon_wires()         # ★ 모니터링 전송 훅
-        tabs.addTab(self._tab, "데이터 상태 정보")
+        tabs.addTab(self._tab, "정보관리 모듈")
 
-        # ───── 상단 슬라이더 바 ─────
-        top = QWidget()
-        top_layout = QHBoxLayout(top)
-        top_layout.setContentsMargins(8,4,8,4); top_layout.addStretch(1)
-        self.mode_slider = QSlider(Qt.Horizontal)
-        self.mode_slider.setRange(0,4)
-        self.mode_slider.setSingleStep(1)
-        self.mode_slider.setTickInterval(1)
-        self.mode_slider.setTickPosition(QSlider.TicksBelow)
-        self.mode_slider.setFixedWidth(420)
-        self.mode_slider.valueChanged.connect(self._on_mode_slider_changed)
-        self.mode_now = QLabel("대기모드"); self.mode_now.setStyleSheet("font-weight:600; padding-left:8px;")
-        lbl = QLabel("모드:"); lbl.setStyleSheet("color:#789; padding-right:6px;")
-        top_layout.addWidget(lbl); top_layout.addWidget(self.mode_slider); top_layout.addWidget(self.mode_now)
-
-        center = QWidget(); v = QVBoxLayout(center); v.setContentsMargins(0,0,0,0)
-        v.addWidget(top); v.addWidget(tabs)
-        self.setCentralWidget(center)
+        self.mode_slider = None
+        self.mode_now = None
+        self.setCentralWidget(tabs)
 
         # 초기 실행 시 곧바로 초기화 모드로 설정
         self._set_mode_slider_by_text("초기화 모드")
@@ -180,80 +165,15 @@ class MainWindow(QMainWindow):
         self.ctrl_payload.connect(self._handle_ctrl_payload)
         self.log_sig.connect(self._append_log_line)
 
-        # BUS 초기화 + UDP 컨트롤 리스너
+        # BUS 초기화 + 테스트 단축키
         threading.Thread(target=self._rx_setup, daemon=True).start()
-        self._start_control_udp()
         self._install_test_shortcuts()
 
         # GUI 표시 후 status=1 한 번 송신
         QTimer.singleShot(2000, lambda: send_status_ok("INF"))
 
         # CTRL 리스너: self_check ON → status=1 송신
-        def _on_ctrl(payload: dict):
-            try:
-                if (payload or {}).get("cmd") == "self_check" and int((payload or {}).get("status", 0)) == 1:
-                    send_status_ok("INF")
-            except Exception:
-                pass
-        start_ctrl_listener(env_ctrl_port(45984), _on_ctrl)
-
     # ───────── 모니터링(대시보드) 전송 훅 ─────────
-    def _install_mon_wires(self):
-        """
-        - TX 완료(mark_sent) 시 → {"kind":"tx","msg_id":"XXXX"} UDP 전송
-        - 주기 TX(_log_only)도 동일 처리
-        - 버튼 클릭 경로에서도 선제 통지(실패해도 무해)
-        - 모드 변경 시점에서 {"kind":"mode","text":..., "role":"INF"} 전송(아래 슬라이더 핸들러에서 수행)
-        """
-        tab = self._tab
-
-        # (1) mark_sent 래핑
-        if hasattr(tab, "mark_sent"):
-            self._orig_mark_sent = tab.mark_sent
-            def _wrapped_mark_sent(msg_id: str, raw: bytes | None = None):
-                try: self._send_mon("tx", msg_id=_z4(str(msg_id)))
-                except Exception: pass
-                return self._orig_mark_sent(msg_id, raw)
-            tab.mark_sent = _wrapped_mark_sent  # type: ignore
-
-        # (2) _log_only 래핑(주기 전송 로그 경로)
-        if hasattr(tab, "_log_only"):
-            self._orig_log_only = tab._log_only
-            def _wrapped_log_only(row: int, msg_id: str, raw: bytes | None):
-                try: self._send_mon("tx", msg_id=_z4(str(msg_id)))
-                except Exception: pass
-                return self._orig_log_only(row, msg_id, raw)
-            tab._log_only = _wrapped_log_only  # type: ignore
-
-        # (3) 버튼 클릭 경로에서도 선제 통지
-        if hasattr(tab, "tbl_tx") and hasattr(tab, "_on_tx_button_clicked"):
-            self._orig_tx_click_for_mon = tab._on_tx_button_clicked
-            def _wrapped_click_for_mon(row: int):
-                try:
-                    it = getattr(tab, "tbl_tx").item(row, 0)
-                    if it:
-                        self._send_mon("tx", msg_id=_z4(it.text()))
-                except Exception:
-                    pass
-                return self._orig_tx_click_for_mon(row)
-            tab._on_tx_button_clicked = _wrapped_click_for_mon  # type: ignore
-
-    def _send_mon(self, kind: str, **payload):
-        """
-        대시보드(run.py)가 수신하는 모듈별 모니터링 UDP(JSON).
-        포트: KU_MON_INFO_PORT(기본 46984)
-        kind: "tx" | "mode"
-        """
-        data = {"kind": str(kind), **payload}
-        try:
-            buf = json.dumps(data, ensure_ascii=False).encode("utf-8", "ignore")
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.sendto(buf, ("127.0.0.1", _mon_port()))
-            s.close()
-        except Exception:
-            pass  # 모니터링용이므로 실패해도 동작에는 영향 없음
-
-    # 0102 periodic auto-start disabled (INF mock mode)
     def _start_0102_stream(self):
         if not self._power_on:
             return
@@ -291,7 +211,6 @@ class MainWindow(QMainWindow):
                         return
                     try:
                         it = getattr(tab, "tbl_tx", None).item(row, 0) if getattr(tab, "tbl_tx", None) else None
-                        if it: self._send_mon("tx", msg_id=_z4(it.text()))
                     except Exception: pass
                     return self._orig_tx_click(row)
                 tab._on_tx_button_clicked = _wrapped_tx_click
@@ -368,30 +287,28 @@ class MainWindow(QMainWindow):
 
     # ───────── 모드/슬라이더 ─────────
     def _on_mode_slider_changed(self, val: int):
-        labels = ["전원 OFF", "초기화 모드", "대기모드", "초기 임무 계획", "임무 수행"]
+        labels = ["초기화 모드", "대기모드", "초기 임무 계획", "임무 수행"]
         try: self.mode_now.setText(labels[int(val)])
         except Exception: pass
-        self._power_on = (int(val) != 0)
+        self._power_on = True
         self._append_log_line(f"[MODE] 슬라이더 변경 → {labels[int(val)] if 0 <= val < len(labels) else val}")
-        # ★ 대시보드에도 모드 통지
-        try: self._send_mon("mode", text=labels[int(val)], role="INF")
-        except Exception: pass
         self._apply_power_state()
         if self._power_on:
             QTimer.singleShot(500, self._start_0102_stream)
 
     def _set_mode_slider_by_text(self, text: str):
-        labels = ["전원 OFF", "초기화 모드", "대기모드", "초기 임무 계획", "임무 수행"]
+        labels = ["초기화 모드", "대기모드", "초기 임무 계획", "임무 수행"]
         norm = re.sub(r"\s+", "", str(text)).lower()
         mapping = {
-            "전원off":0,"off":0,"poweroff":0,"0":0,
-            "전원on":1,"on":1,"poweron":1,"1":1,
-            "초기화":1,"초기화모드":1,"초기화mode":1,
-            "대기모드":2,"대기":2,"standby":2,"2":2,
-            "초기임무계획":3,"초기임무계획모드":3,"initplan":3,"initial":3,"3":3,
-            "임무수행":4,"execution":4,"4":4
+            "전원off":0,"off":0,"poweroff":0,
+            "전원on":0,"on":0,"poweron":0,
+            "0":0,
+            "초기화":0,"초기화모드":0,"초기화mode":0,
+            "1":1,"대기모드":1,"대기":1,"standby":1,
+            "2":2,"초기임무계획":2,"초기임무계획모드":2,"initplan":2,"initial":2,
+            "3":3,"임무수행":3,"execution":3,
         }
-        val = mapping.get(norm, 2)
+        val = mapping.get(norm, 1)
         try:
             if getattr(self, "mode_slider", None):
                 if self.mode_slider.value() != val:
@@ -401,10 +318,9 @@ class MainWindow(QMainWindow):
             if getattr(self, "mode_now", None):
                 self.mode_now.setText(labels[val])
             # ★ 텍스트로 모드 세팅될 때도 모니터링 통지
-            self._send_mon("mode", text=labels[val], role="INF")
         except Exception:
             pass
-        self._power_on = (int(val) != 0)
+        self._power_on = True
         self._apply_power_state()
         if self._power_on:
             QTimer.singleShot(500, self._start_0102_stream)
@@ -439,36 +355,6 @@ class MainWindow(QMainWindow):
                 QTimer.singleShot(500, lambda: self._send_self_check_0102(status=status, _retry=_retry+1))
             else:
                 self._append_log_line(f"자체점검(0102) 발신 실패: {e}")
-
-    # ───────── UDP 컨트롤 수신 ─────────
-    def _start_control_udp(self):
-        """
-        대시보드 제어 명령 수신 (기본 포트 45984)
-        - 백그라운드 스레드 → ctrl_payload 시그널 emit
-        """
-        import socket, json, os
-        if getattr(self, "_ctrl_udp_started", False): return
-        self._ctrl_udp_started = True
-
-        port = int(os.getenv("KU_CTRL_PORT", "45984"))
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            sock.bind(("127.0.0.1", port))
-            self._append_log_line(f"CTRL UDP 수신 대기 시작 (127.0.0.1:{port})")
-        except Exception as e:
-            self._append_log_line(f"CTRL UDP 바인드 실패: {e}")
-            return
-
-        def loop():
-            while True:
-                try:
-                    data, _ = sock.recvfrom(8192)
-                    payload = json.loads(data.decode("utf-8", "ignore"))
-                    self.ctrl_payload.emit(payload)
-                except Exception:
-                    pass
-        threading.Thread(target=loop, daemon=True).start()
 
     # ───────── 테스트 단축키 ─────────
     def _install_test_shortcuts(self):
@@ -540,7 +426,7 @@ class MainWindow(QMainWindow):
             self._send_system_mode_0101(mode)
 
             # UI도 함께 맞춰주기(대시보드 모드 표시/펄스를 위해)
-            label_map = {0:"전원 OFF", 1:"초기화 모드", 2:"대기모드", 3:"초기 임무 계획", 4:"임무 수행"}
+            label_map = {0:"초기화 모드", 1:"대기모드", 2:"초기 임무 계획", 3:"임무 수행"}
             self._set_mode_slider_by_text(label_map.get(mode, "대기모드"))
             return
         
@@ -553,7 +439,7 @@ class MainWindow(QMainWindow):
         """
         SystemMode(0101) 메시지 발신:
         - Timestamp: ms since 2000
-        - SystemMode: int (0~4)
+        - SystemMode: int (0~3)
         - Source: 'INF'
         """
         try:

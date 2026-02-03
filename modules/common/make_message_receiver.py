@@ -206,7 +206,7 @@ CLASS_NAME_OVERRIDES = {
     "0103": "SWStatus",
     "0201": "InputMissionPlan",
     "0202": "PriorMissionInfo",
-    "0203": "FlightReferenceInfo",
+    "0203": "MissionReferenceInfo",
     "0301": "MissionPlan",
     "0302": "IndividualMissionPlan",
     "0303": "UAVFlightPlan",

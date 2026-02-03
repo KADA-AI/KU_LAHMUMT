@@ -10,9 +10,16 @@ from __future__ import annotations
 
 from functools import partial
 import json
+import sys
 from typing import Callable, Dict, List, Optional
 
-from PyQt5.QtCore import QObject, QTimer, pyqtSignal
+from PyQt5.QtCore import QObject, QTimer, QCoreApplication, pyqtSignal
+
+# Keep a single receive_center module instance regardless of import path.
+_this_module = sys.modules.get(__name__)
+if _this_module is not None:
+    sys.modules.setdefault("receive_center", _this_module)
+    sys.modules.setdefault("modules.common.receive_center", _this_module)
 
 # ── Listener registries ─────────────────────────────────────────────────────
 
@@ -94,11 +101,20 @@ def notify(msg_id: str, raw: Optional[bytes] = None) -> None:
     tabs = _tab_registry.get(key, [])
     handlers = _handler_registry.get(key, [])
 
+    def _dispatch(fn):
+        if QCoreApplication.instance() is None:
+            try:
+                fn()
+            except Exception:
+                return
+        else:
+            QTimer.singleShot(0, fn)
+
     for tab in tabs:
-        QTimer.singleShot(0, partial(tab.mark_received, key, raw))
+        _dispatch(partial(tab.mark_received, key, raw))
 
     for handler in handlers:
-        QTimer.singleShot(0, partial(handler, key, payload))
+        _dispatch(partial(handler, key, payload))
 
     # print(
     #     f"[receive_center] notify {key}: handlers={len(handlers)}, tabs={len(tabs)}, emitter={'set' if _global_signal_emitter else 'none'}",
@@ -106,7 +122,7 @@ def notify(msg_id: str, raw: Optional[bytes] = None) -> None:
     # )
 
     if _global_signal_emitter is not None:
-        QTimer.singleShot(0, lambda: _global_signal_emitter.message_received.emit(key, payload))
+        _dispatch(lambda: _global_signal_emitter.message_received.emit(key, payload))
 
     if not tabs and not handlers and _global_signal_emitter is None:
         # Nothing registered for incoming message; drop silently to avoid noisy output.

@@ -22,9 +22,20 @@ for _path in (_MODULES_PARENT, _MODULES_DIR, _DLL_DIR, _MSG_DIR):
         sys.path.append(str(_path))
 
 _DLL_REFERENCES = (
+    "Microsoft.Bcl.AsyncInterfaces",
+    "Microsoft.Extensions.Configuration.Abstractions",
+    "Microsoft.Extensions.Configuration",
+    "Microsoft.Extensions.Configuration.FileExtensions",
+    "Microsoft.Extensions.Configuration.Json",
+    "Microsoft.Extensions.DependencyInjection.Abstractions",
+    "Microsoft.Extensions.DependencyInjection",
+    "Microsoft.Extensions.FileProviders.Abstractions",
+    "Microsoft.Extensions.FileProviders.Physical",
+    "Microsoft.Extensions.FileSystemGlobbing",
+    "Microsoft.Extensions.Primitives",
+    "nFusion.Core",
     "nFusion.Interface.Contracts",
     "nFusion.Nodes.Core",
-    "nFusion.Core",
     "nFusion.SimpleMiddleware",
 )
 

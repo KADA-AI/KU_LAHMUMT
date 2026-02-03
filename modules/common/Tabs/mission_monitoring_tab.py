@@ -7,12 +7,13 @@ from modules.common.option_codes import (
     ensure_option_code_sequence,
 )
 
-from Tabs.csc_tab_base import CSCTabBase, _now_ms_since_2000
+from .csc_tab_base import CSCTabBase, _now_ms_since_2000
 
 
 class MissionMonitoringTab(CSCTabBase):
-    TITLE = "임무 모니터링 CSC"
+    TITLE = "임무 모니터링 CSC (MSM)"
     PUSH_MESSAGES = (
+        ("0001", "공지"),
         ("0102", "모듈 상태 정보"),
         ("0501", "임무수행상태정보"),
         ("0502", "임무종료 요청"),
@@ -22,6 +23,7 @@ class MissionMonitoringTab(CSCTabBase):
     )
 
     RECEIVE_MESSAGES = (
+        ("0001", "공지"),
         ("0101", "시스템 운용 모드"),
         ("0201", "협업기저임무 계획"),
         ("0202", "선행임무정보"),
@@ -61,7 +63,14 @@ class MissionMonitoringTab(CSCTabBase):
         200: "S200",
         300: "S300",
     }
+    _MODE_CODE_NAME_MAP = {
+        0: "초기화 모드",
+        1: "대기 모드",
+        2: "초기 임무 계획",
+        3: "임무 수행 모드",
+    }
     _MODE_KEY_CANDIDATES = (
+        "systemMode", "SystemMode", "system_mode",
         "systemOperationMode", "SystemOperationMode",
         "operationMode", "OperationMode",
         "opMode", "OpMode",
@@ -75,6 +84,7 @@ class MissionMonitoringTab(CSCTabBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._current_mode_s: Optional[str] = None  # e.g., "S200"
+        self._replan_context: Optional[Dict[str, Any]] = None
 
     # ── 0101 수신 가로채기 → 모드 반영 ─────────────────────────────
     def mark_received(self, msg_id: str, raw: bytes | None = None):
@@ -119,34 +129,43 @@ class MissionMonitoringTab(CSCTabBase):
 
         # 3) 문자열이면 바로 처리
         if isinstance(val, str):
-            s = val.strip().upper()
+            s_raw = val.strip()
+            if s_raw.isdigit():
+                code = int(s_raw)
+                name = self._MODE_CODE_NAME_MAP.get(code, "")
+                return s_raw, name
+            s = s_raw.upper()
             # "S200", "STANDBY", "대기" 등 처리
             if s.startswith("S") and s[1:].isdigit():
                 mode_s = "S" + str(int(s[1:]))  # 정규화
+                name = self._MODE_NAME_MAP.get(mode_s or "", "")
+                return mode_s, name
+            # 한글/영문 명칭에서 추정
+            if "대기" in s or "STANDBY" in s:
+                mode_s = "S200"
+            elif "임무" in s or "MISSION" in s:
+                mode_s = "S300"
+            elif "초기준비" in s or "INIT" in s and "PREP" in s:
+                mode_s = "S110"
+            elif "자가점검" in s or "SELF" in s:
+                mode_s = "S102"
+            elif "일괄" in s or "RUN_ALL" in s or "RUNALL" in s:
+                mode_s = "S101"
+            elif "초기" in s or s == "INIT":
+                mode_s = "S100"
             else:
-                # 한글/영문 명칭에서 추정
-                if "대기" in s or "STANDBY" in s:
-                    mode_s = "S200"
-                elif "임무" in s or "MISSION" in s:
-                    mode_s = "S300"
-                elif "초기준비" in s or "INIT" in s and "PREP" in s:
-                    mode_s = "S110"
-                elif "자가점검" in s or "SELF" in s:
-                    mode_s = "S102"
-                elif "일괄" in s or "RUN_ALL" in s or "RUNALL" in s:
-                    mode_s = "S101"
-                elif "초기" in s or s == "INIT":
-                    mode_s = "S100"
-                else:
-                    mode_s = None
+                mode_s = None
             name = self._MODE_NAME_MAP.get(mode_s or "", "")
             return mode_s, name
 
         # 4) 숫자면 매핑
         if isinstance(val, int):
             mode_s = self._MODE_NUM_TO_S.get(val)
-            name = self._MODE_NAME_MAP.get(mode_s or "", "")
-            return mode_s, name
+            if mode_s is not None:
+                name = self._MODE_NAME_MAP.get(mode_s or "", "")
+                return mode_s, name
+            name = self._MODE_CODE_NAME_MAP.get(val, "")
+            return str(val), name
 
         # 5) 못 찾음
         return None, ""
@@ -156,25 +175,49 @@ class MissionMonitoringTab(CSCTabBase):
         self._current_mode_s = mode_s
         tag = f"{mode_s} {mode_name}".strip()
 
-        # 제목 갱신(베이스에서 _title_label 보관 중일 때만)
+        # 제목은 고정 표기
         try:
             if hasattr(self, "_title_label") and self._title_label:
-                self._title_label.setText(f"{self.TITLE} [{tag}]")
+                self._title_label.setText(self.TITLE)
         except Exception:
             pass
 
         # 로그 한 줄 남김
         self._append_mode_log(f"→ 시스템 운용 모드 변경: {tag}")
 
+        # MonitoringCSCTab에서는 manager에 모드 반영 (상단 슬라이더 동기화용)
+        manager = getattr(self, "manager", None)
+        if manager is not None and hasattr(manager, "set_system_mode"):
+            mode_code = None
+            if mode_s and mode_s.isdigit():
+                mode_code = int(mode_s)
+            elif mode_s.startswith("S") and mode_s[1:].isdigit():
+                s_code = int(mode_s[1:])
+                s_to_code = {100: 0, 101: 0, 102: 0, 110: 2, 200: 1, 300: 3}
+                mode_code = s_to_code.get(s_code)
+            if mode_code is not None:
+                try:
+                    manager.set_system_mode(int(mode_code))
+                except Exception:
+                    pass
+
         # (선택) 모드에 따라 0102 주기 송신 자동 토글 예시
         try:
             row_0102 = self._find_tx_row("0102")
             if row_0102 >= 0:
                 freq = self.periodic_config.get("0102")
-                if mode_s in ("S102", "S200", "S300") and freq:
+                mode_num = int(mode_s) if mode_s and mode_s.isdigit() else None
+                start_modes = {"S102", "S200", "S300"}
+                stop_modes = {"S100"}
+                if mode_num is not None:
+                    if mode_num in (1, 2, 3):
+                        start_modes.add(str(mode_num))
+                    if mode_num == 0:
+                        stop_modes.add(str(mode_num))
+                if mode_s in start_modes and freq:
                     if "0102" not in self.periodic_timers:
                         self._start_periodic_send("0102", row_0102, freq)
-                if mode_s in ("S100",) and "0102" in self.periodic_timers:
+                if mode_s in stop_modes and "0102" in self.periodic_timers:
                     self._stop_periodic_send("0102", row_0102)
         except Exception:
             pass
@@ -220,8 +263,9 @@ class MissionMonitoringTab(CSCTabBase):
             self.set_replan_context(None)
 
     def _build_overridden_body(self, msg_id: str):
-        if str(msg_id).strip() == "0902" and isinstance(self._replan_context, dict):
-            ctx = dict(self._replan_context)
+        ctx_data = getattr(self, "_replan_context", None)
+        if str(msg_id).strip() == "0902" and isinstance(ctx_data, dict):
+            ctx = dict(ctx_data)
             ts = _now_ms_since_2000()
             mission_ids = [
                 {"inputMissionID": int(mid)}
@@ -270,7 +314,7 @@ class MissionMonitoringTab(CSCTabBase):
                 "replanRequestTime": {"replanRequestTimestamp": ts},
                 "replanLevel": int(ctx.get("replan_level", 1)),
                 "inputMissionIDList": mission_ids,
-                "replanReason": reason,
-                "pendingOptionList": options,
+                "replanRequest": reason,
+                "optionList": options,
             }
         return super()._build_overridden_body(msg_id)

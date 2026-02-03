@@ -11,12 +11,17 @@ from PyQt5.QtWidgets import (
 import json
 import re
 import os
-import socket
 
 from PyQt5.QtGui import QColor
 from PyQt5.QtCore import Qt, QTimer
-from push_center import push_message
-from receive_center import register_listener
+try:
+    from push_center import push_message
+except ModuleNotFoundError:
+    from modules.common.push_center import push_message
+try:
+    from modules.common.receive_center import register_listener
+except ModuleNotFoundError:
+    from receive_center import register_listener
 
 _EPOCH2000_MS = 946684800000
 def _now_ms_since_2000():
@@ -24,23 +29,7 @@ def _now_ms_since_2000():
     return int(time.time() * 1000) - _EPOCH2000_MS
 
 class CSCTabBase(QWidget):
-    """
-    공용 CSC 탭 베이스
-    ──────────────────────────────────────────────
-    서브클래스에서 TITLE / PUSH_MESSAGES / RECEIVE_MESSAGES 만 바꿔주면
-    UI·로직은 자동 재사용된다.
-
-    [UDP 모니터링 전송 설정]
-    - 우선순위 1: KU_MONITOR_UDP="HOST:PORT" (전체 모듈 공용)
-    - 우선순위 2: 모듈별 호스트/포트
-        KU_MON_HOST (기본 127.0.0.1)
-        KU_MON_ASSIGNMENT_PORT (기본 46981)  # mission_planning / mission
-        KU_MON_MONITORING_PORT (기본 46982)  # monitoring
-        KU_MON_DECISION_PORT   (기본 46983)  # decision / decision_support
-        KU_MON_INFO_PORT       (기본 46984)  # info / info_manage
-    - KU_ROLE 별 role 코드:
-        monitoring → MSM, mission → MMR, decision → MOB, info → INF
-    """
+    """Common CSC tab base."""
 
     # 서브클래스에서 오버라이드할 상수 -----------------
     HISTORY_LIMIT: int = 50
@@ -57,6 +46,7 @@ class CSCTabBase(QWidget):
 
         self.periodic_config: Dict[str, Optional[float]] = {
             '0000': None,  
+            '0001': None,
             '0101': None,
             '0102': 5,
             '0103': 5,
@@ -96,14 +86,6 @@ class CSCTabBase(QWidget):
         # 4) 비주기 수신 횟수 카운트용 사전: { msg_id: int }
         self.receive_counts: Dict[str, int] = {}
 
-        # ── UDP 모니터 연결(옵션) ─────────────────────────────
-        self._udp_addr = self._resolve_udp_target()       # ('host', port) 또는 None
-        self._udp_sock: Optional[socket.socket] = None
-        if self._udp_addr:
-            try:
-                self._udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            except Exception:
-                self._udp_sock = None
         # ───────────────────────────────────────────────────
 
         self._init_ui()
@@ -558,8 +540,6 @@ class CSCTabBase(QWidget):
             break
 
         self._write_log(self.log_rx, "RECV", msg_id, raw)
-        self._print_received_summary(msg_id, raw)
-        self._emit_rx_monitor(msg_id, raw)
 
     # ──────────── 더블클릭 → Push (주기/비주기) ────────────────
     def _on_tx_double_clicked(self, row: int, _col: int):
@@ -726,26 +706,7 @@ class CSCTabBase(QWidget):
         log_w.append(line)
 
     # ────────────────────────────────────────────────────────────────
-    # [신규] 수신 데이터 요약 JSON 프린트 + UDP 모니터 전송
     # ────────────────────────────────────────────────────────────────
-    def _print_received_summary(self, msg_id: str, raw: bytes | None):
-        """
-        콘솔 프린트 비활성화.
-        UDP 모니터 전송은 _emit_rx_monitor()가 계속 수행함.
-        디버그로 콘솔 로그가 필요하면 KU_MON_RX_PRINT=1 로 일시 활성화.
-        """
-        import os, json  # 상단에 이미 있으면 무시됨
-        if str(os.environ.get("KU_MON_RX_PRINT", "0")).lower() not in ("1", "true", "on", "yes"):
-            return
-        # ── 아래는 디버그용(환경변수로 켰을 때만 동작) ──
-        try:
-            s = str(msg_id)
-            extracted = s.zfill(4) if s.isdigit() and len(s) < 4 else s
-            payload = {"kind": "rx", "msg_id": extracted, "role": self._sw_code()}
-            print(json.dumps(payload, ensure_ascii=False), flush=True)
-        except Exception:
-            pass
-
     def _extract_msg_id_from_raw(self, raw: bytes, allowed_ids: set) -> Optional[str]:
         """
         RAW 바이트 스트림에서 가능한 메시지 ID를 추출한다.
@@ -783,92 +744,4 @@ class CSCTabBase(QWidget):
         return None
 
     # ────────────────────────────────────────────────────────────────
-    # [신규] UDP 모니터 전송 부분
     # ────────────────────────────────────────────────────────────────
-    def _resolve_udp_target(self) -> Optional[tuple]:
-        """
-        1) KU_MONITOR_UDP="HOST:PORT" 우선 사용
-        2) 없으면 KU_ROLE 표준화 후 모듈별 포트 환경변수/기본값 적용
-        """
-        # 우선 구버전 호환
-        try:
-            spec = (os.environ.get("KU_MONITOR_UDP") or "").strip()
-            if spec:
-                m = re.match(r"^\s*([^:]+)\s*:\s*(\d{2,5})\s*$", spec)
-                if m:
-                    host, port = m.group(1), int(m.group(2))
-                    return (host, port)
-        except Exception:
-            pass
-
-        # 모듈별 설정
-        try:
-            host = (os.environ.get("KU_MON_HOST") or "127.0.0.1").strip()
-            role = self._role_norm()
-            if role in ("mission", "mission_planning"):
-                port = int(os.environ.get("KU_MON_ASSIGNMENT_PORT", "46981"))
-            elif role == "monitoring":
-                port = int(os.environ.get("KU_MON_MONITORING_PORT", "46982"))
-            elif role in ("decision", "decision_support"):
-                port = int(os.environ.get("KU_MON_DECISION_PORT", "46983"))
-            elif role in ("info", "info_manage"):
-                port = int(os.environ.get("KU_MON_INFO_PORT", "46984"))
-            else:
-                return None
-            return (host, port)
-        except Exception:
-            return None
-
-    def _send_udp_monitor(self, payload: dict):
-        """
-        UDP로 payload(JSON) 전송. 오류는 조용히 무시.
-        """
-        if not self._udp_sock or not self._udp_addr:
-            return
-        try:
-            data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-            self._udp_sock.sendto(data, self._udp_addr)
-        except Exception:
-            pass
-
-    def _emit_rx_monitor(self, msg_id: str, raw: bytes | None):
-        """
-        수신 이벤트를 UDP 모니터로 전송. 포맷:
-        {"kind":"rx","msg_id":"0301","role":"MSM"}
-        """
-        try:
-            allowed_ids = set(map(str, self.periodic_config.keys()))
-            for mid, _ in getattr(self, "PUSH_MESSAGES", ()):
-                allowed_ids.add(str(mid).zfill(4) if str(mid).isdigit() else str(mid))
-            for mid, _ in getattr(self, "RECEIVE_MESSAGES", ()):
-                allowed_ids.add(str(mid).zfill(4) if str(mid).isdigit() else str(mid))
-
-            extracted = None
-            if raw:
-                extracted = self._extract_msg_id_from_raw(raw, allowed_ids)
-            if not extracted:
-                s = str(msg_id)
-                extracted = s.zfill(4) if s.isdigit() and len(s) < 4 else s
-
-            role_code = self._sw_code()
-            payload = {
-                "kind": "rx",
-                "msg_id": extracted,
-                "role": role_code
-            }
-            if payload.get("msg_id") == "0901" and role_code == "MOB":
-                try:
-                    host, port = self._udp_addr if self._udp_addr else ("?", "?")
-                    print(f"[UDP SEND RX] addr={host}:{port} data={payload}", flush=True)
-                except Exception:
-                    pass
-            self._send_udp_monitor(payload)
-        except Exception:
-            pass
-
-
-
-
-
-
-

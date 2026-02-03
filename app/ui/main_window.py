@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QGridLayout, QPushButton, QLabel, QLineEdit, QFileDialog, QShortcut,
-    QHBoxLayout, QVBoxLayout, QSizePolicy, QDialog, QPlainTextEdit, QSplitter, QMessageBox
+    QHBoxLayout, QVBoxLayout, QSizePolicy, QMessageBox, QPlainTextEdit
 )
 from PyQt5.QtCore import Qt, QTimer, QUrl
 from PyQt5.QtGui import QKeySequence, QDesktopServices
@@ -11,225 +11,29 @@ from .zones import GRID_ROWS, GRID_COLS, ZONES
 from ..widgets.cards import Card
 from ..widgets.module_with_log import ModuleWithLog
 from ..widgets.operation_flow_panel import OperationFlowPanel
-import os, subprocess, json, socket, shutil
+import os, sys, subprocess, json, socket, shutil
 from pathlib import Path
 from modules.common import db_paths
 
-APP_TITLE = "KU Mission Decision Support Dashboard (v251120)"
-SW_UPDATE_FILE = db_paths.PROJECT_ROOT / "memo" / "SW_UPDATE_LOG.txt"
-SW_MEMO_FILE = db_paths.PROJECT_ROOT / "memo" / "SW_MEMO_NOTE.txt"
-REFERENCE_PDF_PATH = db_paths.PROJECT_ROOT / "ref" / "04. 모듈 간 인터페이스 설계-v7-20250917_133206.pdf"
-SW_DEFAULT_UPDATE_SAMPLE = """[예시 업데이트]
-- 2025-10-28: 모니터링 연료 경보 로직을 리터 → 퍼센트 변환으로 개선
-- 2025-10-22: 초기 시나리오 활성화 경로 검증 로그 추가
-
-※ 실제 배포 시 업데이트 내용을 이 파일(SW_UPDATE_LOG.txt)에 정리해 주세요.
-"""
-
-
-class SWNotesDialog(QDialog):
-    def __init__(self, parent: QWidget, update_path: Path, memo_path: Path):
-        super().__init__(parent)
-        self.setWindowTitle("SW 업데이트 / 테스트 메모")
-        self.resize(900, 620)
-        self._update_path = Path(update_path)
-        self._memo_path = Path(memo_path)
-        self._dirty = False
-
-        layout = QVBoxLayout(self)
-
-        header = QHBoxLayout()
-        lbl_update = QLabel("SW 업데이트 (읽기 전용)", self)
-        lbl_update.setStyleSheet("font-weight: 600;")
-        lbl_memo = QLabel("테스트 메모 (자동 저장)", self)
-        lbl_memo.setStyleSheet("font-weight: 600;")
-        header.addWidget(lbl_update, 1)
-        header.addWidget(lbl_memo, 1, alignment=Qt.AlignRight)
-        layout.addLayout(header)
-
-        splitter = QSplitter(Qt.Horizontal, self)
-
-        self.update_view = QPlainTextEdit(self)
-        self.update_view.setReadOnly(True)
-        self.update_view.setPlainText(self._load_update_text())
-        splitter.addWidget(self.update_view)
-
-        self.memo_edit = QPlainTextEdit(self)
-        self.memo_edit.setPlaceholderText("SW 테스트 중 메모를 자유롭게 남겨 주세요.")
-        self.memo_edit.setPlainText(self._load_memo_text())
-        self.memo_edit.textChanged.connect(self._mark_dirty)
-        splitter.addWidget(self.memo_edit)
-
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 1)
-        layout.addWidget(splitter, 1)
-
-        controls = QHBoxLayout()
-        controls.addStretch(1)
-        btn_save = QPushButton("저장", self)
-        btn_save.clicked.connect(self._save_notes)
-        btn_close = QPushButton("닫기", self)
-        btn_close.clicked.connect(self.close)
-        controls.addWidget(btn_save)
-        controls.addWidget(btn_close)
-        layout.addLayout(controls)
-
-    def _load_update_text(self) -> str:
-        try:
-            if self._update_path.exists():
-                return self._update_path.read_text(encoding="utf-8")
-        except Exception:
-            pass
-        return SW_DEFAULT_UPDATE_SAMPLE
-
-    def _load_memo_text(self) -> str:
-        try:
-            if self._memo_path.exists():
-                return self._memo_path.read_text(encoding="utf-8")
-        except Exception:
-            pass
-        return ""
-
-    def _mark_dirty(self) -> None:
-        self._dirty = True
-
-    def _save_notes(self) -> None:
-        try:
-            self._memo_path.parent.mkdir(parents=True, exist_ok=True)
-        except Exception:
-            pass
-        try:
-            self._memo_path.write_text(self.memo_edit.toPlainText(), encoding="utf-8")
-            self._dirty = False
-        except Exception as exc:
-            QMessageBox.warning(
-                self,
-                "저장 실패",
-                f"메모를 저장하지 못했습니다.\n{exc}",
-            )
-
-    def closeEvent(self, event):
-        if self._dirty:
-            self._save_notes()
-        super().closeEvent(event)
-
-
-class SWNotesPanel(Card):
-    """Inline panel that mirrors the SW update/memo dialog functionality."""
-
-    def __init__(self, parent: QWidget, update_path: Path, memo_path: Path):
-        super().__init__("SW 업데이트 / 메모", parent)
-        self._update_path = Path(update_path)
-        self._memo_path = Path(memo_path)
-        self._dirty = False
-
-        layout = self.body_layout
-        layout.setSpacing(12)
-
-        splitter = QSplitter(Qt.Horizontal, self)
-
-        self.update_view = QPlainTextEdit(self)
-        self.update_view.setReadOnly(True)
-        self.update_view.setPlainText(self._load_update_text())
-        splitter.addWidget(self.update_view)
-
-        self.memo_edit = QPlainTextEdit(self)
-        self.memo_edit.setPlaceholderText("SW 메모를 입력하세요.")
-        memo_text = self._load_memo_text()
-        self.memo_edit.setPlainText(memo_text)
-        splitter.addWidget(self.memo_edit)
-
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 1)
-        layout.addWidget(splitter, 1)
-
-        controls = QHBoxLayout()
-        controls.setContentsMargins(0, 0, 0, 0)
-
-        self.status_label = QLabel("", self)
-        self.status_label.setObjectName("SwNotesStatus")
-        self.status_label.setStyleSheet("color: #2563eb;")
-        controls.addWidget(self.status_label, 0)
-        controls.addStretch(1)
-
-        self.save_button = QPushButton("메모 저장", self)
-        self.save_button.setMinimumWidth(110)
-        self.save_button.clicked.connect(self._save_notes)
-        controls.addWidget(self.save_button, 0)
-
-        layout.addLayout(controls)
-
-        # Track memo modifications after initial load
-        self.memo_edit.document().modificationChanged.connect(self._on_modification_changed)
-        self.memo_edit.document().setModified(False)
-        self._dirty = False
-        self._set_status("현재 메모가 저장되어 있습니다.")
-
-    def refresh_update_log(self) -> None:
-        """Reload update text from disk."""
-        self.update_view.setPlainText(self._load_update_text())
-
-    def save_if_dirty(self) -> None:
-        if self._dirty:
-            self._save_notes()
-
-    def _load_update_text(self) -> str:
-        try:
-            if self._update_path.exists():
-                return self._update_path.read_text(encoding="utf-8")
-        except Exception:
-            pass
-        return SW_DEFAULT_UPDATE_SAMPLE
-
-    def _load_memo_text(self) -> str:
-        try:
-            if self._memo_path.exists():
-                return self._memo_path.read_text(encoding="utf-8")
-        except Exception:
-            pass
-        return ""
-
-    def _on_modification_changed(self, modified: bool) -> None:
-        self._dirty = bool(modified)
-        if self._dirty:
-            self._set_status("저장되지 않은 변경 내용이 있습니다.")
-        else:
-            self._set_status("현재 메모가 저장되어 있습니다.")
-
-    def _set_status(self, text: str) -> None:
-        if self.status_label is not None:
-            self.status_label.setText(text)
-
-    def _save_notes(self) -> None:
-        try:
-            self._memo_path.parent.mkdir(parents=True, exist_ok=True)
-        except Exception:
-            pass
-        try:
-            self._memo_path.write_text(self.memo_edit.toPlainText(), encoding="utf-8")
-            self.memo_edit.document().setModified(False)
-            self._on_modification_changed(False)
-            self._set_status("메모를 저장했습니다.")
-        except Exception as exc:
-            QMessageBox.warning(
-                self,
-                "저장 실패",
-                f"메모를 저장하지 못했습니다.\n{exc}",
-            )
-
+APP_TITLE = "KU Mission Decision Support Dashboard (v1.0.0)"
+REFERENCE_PDF_PATH = db_paths.PROJECT_ROOT / "ref" / "04. 모듈 간 인터페이스 설계-v7-20260116_175548.pdf"
+if not REFERENCE_PDF_PATH.exists():
+    REFERENCE_PDF_PATH = db_paths.PROJECT_ROOT / "ref" / "04. 모듈 간 인터페이스 설계-v7-20250917_133206.pdf"
 
 class MainWindow(QMainWindow):
     """Main dashboard window arranged on a 35x50 grid."""
     def __init__(self):
         super().__init__()
         self.setWindowTitle(APP_TITLE)
-        self.resize(1200, 820)
+        self.resize(900, 620)
 
         self._db_path_line: QLineEdit = None
         self._scenario_root_line: QLineEdit = None
         self._current_db_root: str = ""
         self._scenario_status_dot: Optional[QLabel] = None
         self._scenario_status_label: Optional[QLabel] = None
+        self._version_notes: Optional[QPlainTextEdit] = None
+        self._version_notes_path: Path = db_paths.PROJECT_ROOT / "version_notes.txt"
 
         # Middleware widget references
         self._mw_name: QLineEdit = None
@@ -245,37 +49,54 @@ class MainWindow(QMainWindow):
         self.btn_auto_boot = None
         self.btn_module_shutdown = None
         self.btn_integration_module = None
+        self.btn_simulation_run = None
         self.btn_overwrite_020x = None
         self.btn_reference_pdf = None
         self.btn_decision_reset = None
         self._role_processes = {}
-        self._sw_notes_dialog = None
-        self._sw_notes_panel = None
 
         self._build_ui()
 
     def _build_ui(self):
         root = QWidget(self)
         grid = QGridLayout(root)
-        grid.setContentsMargins(0, 8, 0, 0)
-        grid.setHorizontalSpacing(4)
-        grid.setVerticalSpacing(12)
+        grid.setContentsMargins(16, 12, 16, 12)
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(10)
 
         for r in range(GRID_ROWS):
             grid.setRowStretch(r, 1)
         for c in range(GRID_COLS):
             grid.setColumnStretch(c, 1)
+        footer_zone = ZONES.get("FOOTER")
+        if footer_zone:
+            grid.setRowStretch(footer_zone["r0"], 2)
 
         # Title label
-        title_lbl = QLabel(APP_TITLE, self)
+        title_wrap = QWidget(self)
+        title_layout = QVBoxLayout(title_wrap)
+        title_layout.setContentsMargins(0, 0, 0, 0)
+        title_layout.setSpacing(2)
+        title_lbl = QLabel(APP_TITLE, title_wrap)
         title_lbl.setObjectName("MainTitle")
         title_lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        self._add_zone(grid, title_lbl, "TITLE")
+        title_layout.addWidget(title_lbl)
+        subtitle_lbl = QLabel("최근 업데이트 날짜 : 26-01-27", title_wrap)
+        subtitle_lbl.setObjectName("MainSubtitle")
+        subtitle_lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        title_layout.addWidget(subtitle_lbl)
+        self._add_zone(grid, title_wrap, "TITLE")
 
-        btn_browse = QPushButton("Browse...")
+        btn_browse = QPushButton("DB 폴더 선택")
         btn_browse.setMinimumHeight(28)
+        btn_browse.setFixedWidth(140)
         btn_browse.clicked.connect(self._browse_db)
-        self._add_zone(grid, btn_browse, "ROUTE_BUTTON")
+        btn_wrap = QWidget(self)
+        btn_layout = QHBoxLayout(btn_wrap)
+        btn_layout.setContentsMargins(0, 0, 0, 0)
+        btn_layout.addStretch(1)
+        btn_layout.addWidget(btn_browse, 0, Qt.AlignRight | Qt.AlignVCenter)
+        self._add_zone(grid, btn_wrap, "ROUTE_BUTTON")
 
         # Database path entry
         self._db_path_line = QLineEdit(self)
@@ -286,6 +107,7 @@ class MainWindow(QMainWindow):
         self._scenario_root_line.setObjectName("ScenarioRootLine")
         self._scenario_root_line.setPlaceholderText("Scenario base (optional)")
         self._scenario_root_line.setReadOnly(True)
+        self._scenario_root_line.setVisible(False)
 
         # Apply default path via shared db path manager
         info = db_paths.get_info()
@@ -296,8 +118,8 @@ class MainWindow(QMainWindow):
 
         path_container = QWidget(self)
         path_layout = QVBoxLayout(path_container)
-        path_layout.setContentsMargins(0, 0, 0, 0)
-        path_layout.setSpacing(2)
+        path_layout.setContentsMargins(6, 2, 6, 2)
+        path_layout.setSpacing(6)
         indicator_row = QHBoxLayout()
         indicator_row.setContentsMargins(0, 0, 0, 0)
         indicator_row.setSpacing(6)
@@ -306,14 +128,13 @@ class MainWindow(QMainWindow):
         self._scenario_status_dot.setProperty("active", False)
         self._scenario_status_dot.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         indicator_row.addWidget(self._scenario_status_dot, 0, Qt.AlignLeft)
-        self._scenario_status_label = QLabel("대기 시나리오 (유지)", self)
+        self._scenario_status_label = QLabel("신규 DB 설정 여부 (유지)", self)
         self._scenario_status_label.setObjectName("ScenarioStatusLabel")
         self._scenario_status_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         indicator_row.addWidget(self._scenario_status_label, 0, Qt.AlignLeft)
         indicator_row.addStretch(1)
         path_layout.addLayout(indicator_row)
         path_layout.addWidget(self._db_path_line)
-        path_layout.addWidget(self._scenario_root_line)
         self._add_zone(grid, path_container, "DB_PATH")
         self.update_scenario_status_indicator(False, "대기 모드에서 새로운 폴더가 생성되면 초록색으로 바뀝니다.")
 
@@ -324,20 +145,10 @@ class MainWindow(QMainWindow):
         # Remove left-hand controls but keep layout slots
         self._add_left_placeholder(grid)
 
-        # Central SW update/memo panel
-        self._sw_notes_panel = SWNotesPanel(self, SW_UPDATE_FILE, SW_MEMO_FILE)
-        self._add_zone(grid, self._sw_notes_panel, "MODULE_CENTER")
-        self._normalize_module_columns(grid)
+        notes_card = self._build_version_notes()
+        self._add_zone(grid, notes_card, "FOOTER")
 
-        # Operation flow panel
-        self.operation_panel = OperationFlowPanel()
-        self._add_zone(grid, self.operation_panel, "OPS_FLOW")
-
-        # Footer
-        footer = QLabel(APP_TITLE, self)
-        footer.setObjectName("FooterFull")
-        footer.setAlignment(Qt.AlignCenter)
-        self._add_zone(grid, footer, "FOOTER")
+        self.operation_panel = None
 
         self.setCentralWidget(root)
 
@@ -348,13 +159,35 @@ class MainWindow(QMainWindow):
         self._init_msg_monitor()
         self._apply_middleware()
 
+    def _load_version_notes_text(self) -> str:
+        path = self._version_notes_path
+        try:
+            return path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return f"[version notes missing] {path}"
+        except Exception as exc:
+            return f"[version notes read failed] {path}: {exc}"
+
+    def _build_version_notes(self) -> QWidget:
+        card = Card("Version Notes", self, dense=True)
+        body = getattr(card, "body_layout", None)
+        self._version_notes = QPlainTextEdit(self)
+        self._version_notes.setObjectName("VersionNotes")
+        self._version_notes.setReadOnly(True)
+        self._version_notes.setMinimumHeight(120)
+        self._version_notes.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self._version_notes.setPlainText(self._load_version_notes_text())
+        if body is not None:
+            body.addWidget(self._version_notes)
+        return card
+
     # ---------- Middleware helpers ----------
     def _make_middleware_row(self) -> QWidget:
         """Build the inline middleware configuration row."""
         w = QWidget(self)
         lay = QHBoxLayout(w)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(8)
+        lay.setContentsMargins(6, 0, 6, 0)
+        lay.setSpacing(10)
 
         lbl = QLabel("Middleware", self)
         lbl.setStyleSheet("font-weight:600;")
@@ -608,11 +441,10 @@ class MainWindow(QMainWindow):
 
         elif role == "monitor":
             candidates = [
-                root / "modules" / "monitoring_ver2" / "test_monitoring.py",
-                root / "app"     / "modules" / "monitoring_ver2" / "test_monitoring.py",
+                root / "modules" / "monitoring_ver2" / "monitoring_gui.py",
+                root / "app"     / "modules" / "monitoring_ver2" / "monitoring_gui.py",
             ]
             target_log = self.module_monitor
-            extra_args = ["--gui"]
 
         elif role == "info":
             candidates = [
@@ -670,6 +502,31 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
 
+    
+    def _launch_simulation(self):
+        root = Path(__file__).resolve().parents[2]
+        script = root / "sim_main.py"
+        if not script.exists():
+            self._log_to_modules(f"[RUN ERR] not found: {script}")
+            return
+
+        existing = self._role_processes.get("sim")
+        if existing and existing.poll() is None:
+            self._log_to_modules("[RUN] Simulation already running")
+            return
+
+        try:
+            proc = subprocess.Popen([sys.executable, str(script)], cwd=str(root))
+            try:
+                import webbrowser
+                webbrowser.open("http://127.0.0.1:8000/", new=2)
+            except Exception:
+                pass
+            self._role_processes["sim"] = proc
+            self._log_to_modules("[RUN] Simulation launched")
+        except Exception as exc:
+            self._log_to_modules(f"[RUN ERR] Simulation launch failed: {exc}")
+
     def _install_flow_test_shortcuts(self):
         """Setup demo shortcuts for flow visualizer."""
         # 1/2: Monitoring in/out
@@ -723,29 +580,30 @@ class MainWindow(QMainWindow):
 
         body = getattr(placeholder, 'body_layout', None)
         if body is not None:
-            body.setSpacing(12)
-
-            self.btn_auto_boot = QPushButton("자동 부팅", placeholder)
-            self.btn_auto_boot.setObjectName("BtnAutoBoot")
-            self.btn_auto_boot.setMinimumHeight(34)
-            self.btn_auto_boot.clicked.connect(self._handle_auto_boot)
-            body.addWidget(self.btn_auto_boot)
+            body.setSpacing(16)
+            body.setContentsMargins(18, 16, 18, 16)
 
             self.btn_module_shutdown = QPushButton("모듈 종료", placeholder)
             self.btn_module_shutdown.setObjectName("BtnModuleShutdown")
-            self.btn_module_shutdown.setMinimumHeight(34)
+            self.btn_module_shutdown.setMinimumHeight(32)
             self.btn_module_shutdown.clicked.connect(self._handle_module_shutdown)
             body.addWidget(self.btn_module_shutdown)
 
-            self.btn_integration_module = QPushButton("연동모듈 실행", placeholder)
+            self.btn_integration_module = QPushButton("통합모듈 실행", placeholder)
             self.btn_integration_module.setObjectName("BtnIntegrationModule")
-            self.btn_integration_module.setMinimumHeight(34)
+            self.btn_integration_module.setMinimumHeight(32)
             self.btn_integration_module.clicked.connect(lambda: self._launch_role("integration"))
             body.addWidget(self.btn_integration_module)
 
+            self.btn_simulation_run = QPushButton("Simulation \uc2e4\ud589", placeholder)
+            self.btn_simulation_run.setObjectName("BtnSimulationRun")
+            self.btn_simulation_run.setMinimumHeight(32)
+            self.btn_simulation_run.clicked.connect(self._launch_simulation)
+            body.addWidget(self.btn_simulation_run)
+
             self.btn_overwrite_020x = QPushButton("0201/0203 덮어쓰기", placeholder)
             self.btn_overwrite_020x.setObjectName("BtnOverwrite020x")
-            self.btn_overwrite_020x.setMinimumHeight(34)
+            self.btn_overwrite_020x.setMinimumHeight(32)
             self.btn_overwrite_020x.setStyleSheet(
                 "QPushButton { background-color: #f97316; color: #ffffff; font-weight: 600; }"
                 "QPushButton:hover { background-color: #fb923c; }"
@@ -755,20 +613,9 @@ class MainWindow(QMainWindow):
             body.addWidget(self.btn_overwrite_020x)
 
 
-            self.btn_reference_pdf = QPushButton("모듈 인터페이스 문서", placeholder)
-            self.btn_reference_pdf.setObjectName("BtnReferencePdf")
-            self.btn_reference_pdf.setMinimumHeight(34)
-            self.btn_reference_pdf.setStyleSheet(
-                "QPushButton { background-color: #f97316; color: #ffffff; font-weight: 600; }"
-                "QPushButton:hover { background-color: #fb923c; }"
-                "QPushButton:pressed { background-color: #ea580c; }"
-            )
-            self.btn_reference_pdf.clicked.connect(self._open_reference_pdf)
-            body.addWidget(self.btn_reference_pdf)
-
-            self.btn_decision_reset = QPushButton("의사결정 모듈 초기화", placeholder)
+            self.btn_decision_reset = QPushButton("의사결정 SW 초기화", placeholder)
             self.btn_decision_reset.setObjectName("BtnDecisionReset")
-            self.btn_decision_reset.setMinimumHeight(34)
+            self.btn_decision_reset.setMinimumHeight(32)
             self.btn_decision_reset.setStyleSheet(
                 "QPushButton { background-color: #111827; color: #f9fafb; font-weight: 600; }"
                 "QPushButton:hover { background-color: #1f2937; }"
@@ -992,10 +839,9 @@ class MainWindow(QMainWindow):
         grid.addWidget(w, z["r0"], z["c0"], z["rs"], z["cs"])
 
     def closeEvent(self, event):
-        """Persist memo edits before the window closes."""
+        """Shutdown child modules before closing."""
         try:
-            if self._sw_notes_panel is not None:
-                self._sw_notes_panel.save_if_dirty()
+            self._handle_module_shutdown()
         except Exception:
             pass
         super().closeEvent(event)
@@ -1061,27 +907,13 @@ class MainWindow(QMainWindow):
                 f"문서를 여는 중 오류가 발생했습니다.\n{exc}",
             )
 
-    def _open_sw_notes_dialog(self) -> None:
-        if self._sw_notes_dialog is not None and self._sw_notes_dialog.isVisible():
-            self._sw_notes_dialog.raise_()
-            self._sw_notes_dialog.activateWindow()
-            return
-
-        dialog = SWNotesDialog(self, SW_UPDATE_FILE, SW_MEMO_FILE)
-        self._sw_notes_dialog = dialog
-
-        def _cleanup(_=None):
-            self._sw_notes_dialog = None
-
-        dialog.finished.connect(_cleanup)
-        dialog.show()
-
+    
     def update_scenario_status_indicator(self, changed: bool, tooltip: Optional[str] | None = None) -> None:
         if self._scenario_status_dot is None:
             return
         active = bool(changed)
         self._scenario_status_dot.setProperty("active", active)
-        label_text = "대기 시나리오 (신규)" if active else "대기 시나리오 (유지)"
+        label_text = "신규 DB 설정 여부 (신규)" if active else "신규 DB 설정 여부 (유지)"
         if self._scenario_status_label is not None:
             self._scenario_status_label.setText(label_text)
             self._scenario_status_label.setProperty("active", active)
@@ -1109,6 +941,11 @@ class MainWindow(QMainWindow):
         if self._scenario_root_line is not None:
             self._scenario_root_line.setText(text)
             self._scenario_root_line.setToolTip(text or "Scenario base (optional)")
+        if self._db_path_line is not None:
+            if text:
+                self._db_path_line.setToolTip(f"Scenario base: {text}")
+            else:
+                self._db_path_line.setToolTip(self._current_db_root or "")
 
     def _toggle_demo_flow(self):
         """Toggle demo animation with the D shortcut."""
@@ -1123,6 +960,3 @@ class MainWindow(QMainWindow):
         mod, direc = self._demo_seq[self._demo_idx]
         self._pulse(mod, direc)
         self._demo_idx = (self._demo_idx + 1) % len(self._demo_seq)
-
-
-

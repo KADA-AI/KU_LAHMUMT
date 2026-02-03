@@ -1,7 +1,37 @@
-uint targetID
-uint targetType
+uint targetID:
+ - 길이 : 4
+ - unit : N/A
+ - 비고 : 표적 ID
+
+uint targetType:
+ - 길이 : 4
+ - min : 0
+ - Max : 2^8-1
+ - unit : N/A
+ - 비고 : 표적 타입
+ - enum : 0=None, 1=전차, 2=장갑차, 3=방사포, 4=곡사포, 5=고정 고사포, 6=군인, 7~=Reserved
+
 CommonType.Coordinate coordinate
 Watcher watcher
-bool targetInFrame
-bool isDestroyed
-float threat
+bool targetInFrame:
+ - 길이 : 1
+ - min : 0
+ - Max : 1
+ - unit : N/A
+ - 비고 : 영상 내 표적 존재 여부
+ - enum : 0=영상 내 없음, 1=영상 내 존재
+
+bool isDestroyed:
+ - 길이 : 4
+ - min : 0
+ - Max : 1
+ - unit : N/A
+ - 비고 : 완파 여부
+ - enum : 0=완파 아님, 1=완파
+
+float threat:
+ - 길이 : 4
+ - min : 0
+ - Max : 100.0
+ - unit : %
+ - 비고 : 전장정보 상황인지 SW가 판단한 표적의 위협 수준

@@ -67,7 +67,7 @@ def _to_dict_RequestRenewMission(obj):
     if _v is not None: d['timestamp'] = int(_v)
     _sval = _get(obj, 'source', 'Source', 'source','Source','Source','Source','requestModuleName','RequestModuleName')
     if _sval is not None and _sval != '': d['source'] = str(_sval)
-    _v = _get(obj, 'missionPlanID', 'MissionPlanID')
+    _v = _get(obj, 'missionPlanID', 'MissionPlanID', 'missionPlanId', 'MissionPlanId')
     if _v is not None: d['missionPlanID'] = int(_v)
     return d
 

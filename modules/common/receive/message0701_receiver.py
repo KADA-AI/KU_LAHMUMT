@@ -65,6 +65,8 @@ def _to_dict_Option(obj):
     d = {}
     _v = _get(obj, 'optionID', 'OptionID')
     if _v is not None: d['optionID'] = int(_v)
+    _v = _get(obj, 'recommend', 'Recommend')
+    if _v is not None: d['recommend'] = bool(_v)
     _v = _get(obj, 'optionName', 'OptionName')
     if _v is not None: d['optionName'] = int(_v)
     _v = _get(obj, 'missionPlanID', 'MissionPlanID')
@@ -75,6 +77,8 @@ def _to_dict_Option(obj):
     if _v is not None: d['timeContraction'] = int(_v)
     _v = _get(obj, 'recogEffectiveness', 'RecogEffectiveness')
     if _v is not None: d['recogEffectiveness'] = int(_v)
+    _v = _get(obj, 'fuelWarning', 'FuelWarning')
+    if _v is not None: d['fuelWarning'] = int(_v)
     _v = _get(obj, 'distance', 'Distance')
     if _v is not None: d['distance'] = int(_v)
     _v = _get(obj, 'target', 'Target')

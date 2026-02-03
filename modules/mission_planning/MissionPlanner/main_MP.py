@@ -1,6 +1,9 @@
 # main_app.py  ― 2025-06-16  직접 실행용(Option B)
-import sys, os, time, json, math
+import sys, os, time, json, math, sqlite3, threading, re
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+from urllib.parse import urlparse
 import folium
+from folium import plugins as folium_plugins
 from itertools import cycle
 import shutil, tempfile
 from pathlib import Path
@@ -11,6 +14,7 @@ from PyQt5.QtWidgets import (
     QComboBox, QDialog, QPlainTextEdit, QFileDialog, QMessageBox, QLabel, QCheckBox
 )
 from PyQt5.QtWebEngineWidgets import QWebEngineView
+from PyQt5.QtGui import QTextDocument, QTextCursor
 from PyQt5.QtCore import QUrl
 from PyQt5.QtWebChannel import QWebChannel
 from PyQt5.QtWidgets import QApplication
@@ -25,6 +29,304 @@ if str(PKG_DIR) not in sys.path:
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
+
+from modules.common import db_paths
+
+_TEMP_DIR = _PROJECT_ROOT / "temp"
+
+
+def _map_html_path() -> Path:
+    _TEMP_DIR.mkdir(parents=True, exist_ok=True)
+    return _TEMP_DIR / "map.html"
+
+MBTILES_PATH = Path(os.environ.get("KU_MBTILES_PATH", _PROJECT_ROOT / "resource" / "korea.mbtiles"))
+_LEAFLET_DIR = _PROJECT_ROOT / "resource" / "leaflet"
+_LEAFLET_JS = _LEAFLET_DIR / "leaflet.js"
+_LEAFLET_CSS = _LEAFLET_DIR / "leaflet.css"
+_VECTORGRID_JS = _LEAFLET_DIR / "Leaflet.VectorGrid.bundled.js"
+_VENDOR_DIR = _PROJECT_ROOT / "resource" / "vendor"
+_JQUERY_JS = _VENDOR_DIR / "jquery" / "jquery-3.7.1.min.js"
+_BOOTSTRAP_JS = _VENDOR_DIR / "bootstrap" / "5.2.2" / "js" / "bootstrap.bundle.min.js"
+_BOOTSTRAP_CSS = _VENDOR_DIR / "bootstrap" / "5.2.2" / "css" / "bootstrap.min.css"
+_BOOTSTRAP3_CSS = _VENDOR_DIR / "bootstrap" / "3.0.0" / "css" / "bootstrap.min.css"
+_FONTAWESOME_CSS = _VENDOR_DIR / "fontawesome" / "6.2.0" / "css" / "all.min.css"
+_AWESOME_MARKERS_JS = _VENDOR_DIR / "awesome-markers" / "2.0.2" / "leaflet.awesome-markers.js"
+_AWESOME_MARKERS_CSS = _VENDOR_DIR / "awesome-markers" / "2.0.2" / "leaflet.awesome-markers.css"
+_AWESOME_ROTATE_CSS = _VENDOR_DIR / "folium" / "leaflet.awesome.rotate.min.css"
+
+_MBTILES_LOCK = threading.Lock()
+_MBTILES_SERVER = None
+_MBTILES_INFO = None
+_TILE_RE = re.compile(r"^/tiles/(?P<z>\d+)/(?P<x>\d+)/(?P<y>\d+)\.(?P<ext>\w+)$")
+
+_FOLIUM_DEFAULT_JS = list(folium.Map.default_js)
+_FOLIUM_DEFAULT_CSS = list(folium.Map.default_css)
+
+_HIDE_STYLE = {
+    "fill": False,
+    "stroke": False,
+    "opacity": 0,
+    "fillOpacity": 0,
+    "weight": 0,
+    "radius": 0,
+}
+
+_TERRAIN_STYLE = {
+    "fill": True,
+    "fillColor": "#b8c6ad",
+    "fillOpacity": 0.75,
+    "stroke": False,
+    "weight": 0,
+}
+
+_WATER_STYLE = {
+    "fill": True,
+    "fillColor": "#7aa3c2",
+    "fillOpacity": 0.75,
+    "stroke": True,
+    "color": "#5d88a3",
+    "weight": 1,
+    "opacity": 0.9,
+}
+
+_WATERWAY_STYLE = {
+    "fill": False,
+    "stroke": True,
+    "color": "#4f7f98",
+    "weight": 1.2,
+    "opacity": 0.9,
+}
+
+_BASEMAP_FILTER = "brightness(0.85) contrast(1.05) saturate(0.95)"
+_MISSION_PANE = "missionPane"
+_MISSION_PANE_Z = 650
+
+_VECTOR_TILE_STYLES = {
+    "all": _HIDE_STYLE,
+    "landcover": dict(_TERRAIN_STYLE),
+    "landuse": dict(_TERRAIN_STYLE),
+    "park": _HIDE_STYLE,
+    "water": dict(_WATER_STYLE),
+    "waterway": dict(_WATERWAY_STYLE),
+    "transportation": _HIDE_STYLE,
+    "transportation_name": _HIDE_STYLE,
+    "boundary": _HIDE_STYLE,
+    "building": _HIDE_STYLE,
+    "aeroway": _HIDE_STYLE,
+    "aerodrome_label": _HIDE_STYLE,
+    "park_label": _HIDE_STYLE,
+    "poi": _HIDE_STYLE,
+    "housenumber": _HIDE_STYLE,
+    "place": _HIDE_STYLE,
+    "water_name": _HIDE_STYLE,
+    "mountain_peak": _HIDE_STYLE,
+}
+
+
+def _safe_int(value, default=None):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _asset_url(path: Path) -> str:
+    try:
+        return path.resolve().as_uri()
+    except Exception:
+        return path.as_posix()
+
+
+def _replace_asset(assets: list[tuple[str, str]], key: str, value: str) -> list[tuple[str, str]]:
+    updated: list[tuple[str, str]] = []
+    replaced = False
+    for name, url in assets:
+        if name == key:
+            updated.append((name, value))
+            replaced = True
+        else:
+            updated.append((name, url))
+    if not replaced:
+        updated.insert(0, (key, value))
+    return updated
+
+
+def _configure_folium_assets() -> None:
+    js_assets = list(_FOLIUM_DEFAULT_JS)
+    css_assets = list(_FOLIUM_DEFAULT_CSS)
+    local_js = {
+        "leaflet": _LEAFLET_JS,
+        "jquery": _JQUERY_JS,
+        "bootstrap": _BOOTSTRAP_JS,
+        "awesome_markers": _AWESOME_MARKERS_JS,
+    }
+    local_css = {
+        "leaflet_css": _LEAFLET_CSS,
+        "bootstrap_css": _BOOTSTRAP_CSS,
+        "glyphicons_css": _BOOTSTRAP3_CSS,
+        "awesome_markers_font_css": _FONTAWESOME_CSS,
+        "awesome_markers_css": _AWESOME_MARKERS_CSS,
+        "awesome_rotate_css": _AWESOME_ROTATE_CSS,
+    }
+    for key, path in local_js.items():
+        if path.is_file():
+            js_assets = _replace_asset(js_assets, key, _asset_url(path))
+    for key, path in local_css.items():
+        if path.is_file():
+            css_assets = _replace_asset(css_assets, key, _asset_url(path))
+    folium.Map.default_js = js_assets
+    folium.Map.default_css = css_assets
+    if _VECTORGRID_JS.is_file():
+        folium_plugins.VectorGridProtobuf.default_js = [
+            ("vectorGrid", _asset_url(_VECTORGRID_JS))
+        ]
+
+
+def _load_mbtiles_metadata(path: Path) -> dict:
+    meta: dict[str, str] = {}
+    z_min = z_max = None
+    try:
+        with sqlite3.connect(path) as con:
+            cur = con.cursor()
+            cur.execute("SELECT name, value FROM metadata")
+            meta = {str(k): str(v) for k, v in cur.fetchall()}
+            cur.execute("SELECT min(zoom_level), max(zoom_level) FROM tiles")
+            row = cur.fetchone()
+            if row:
+                z_min, z_max = row
+    except Exception:
+        return {}
+
+    fmt = (meta.get("format") or "").strip().lower()
+    if fmt in ("mvt",):
+        fmt = "pbf"
+
+    def _as_int(value, fallback):
+        try:
+            return int(value)
+        except Exception:
+            return fallback
+
+    minzoom = _as_int(meta.get("minzoom"), z_min if z_min is not None else 0)
+    maxzoom = _as_int(meta.get("maxzoom"), z_max if z_max is not None else 18)
+
+    bounds = None
+    if meta.get("bounds"):
+        try:
+            bounds = [float(v) for v in meta["bounds"].split(",")]
+        except Exception:
+            bounds = None
+
+    center = None
+    if meta.get("center"):
+        try:
+            center = [float(v) for v in meta["center"].split(",")]
+        except Exception:
+            center = None
+
+    return {
+        "format": fmt,
+        "minzoom": minzoom,
+        "maxzoom": maxzoom,
+        "bounds": bounds,
+        "center": center,
+    }
+
+
+def _mbtiles_content_type(tile_ext: str) -> str:
+    ext = tile_ext.lower()
+    if ext in ("jpg", "jpeg"):
+        return "image/jpeg"
+    if ext in ("png",):
+        return "image/png"
+    if ext in ("pbf", "mvt"):
+        return "application/vnd.mapbox-vector-tile"
+    return "application/octet-stream"
+
+
+def _make_mbtiles_handler(mbtiles_path: Path, tile_ext: str):
+    content_type = _mbtiles_content_type(tile_ext)
+
+    class MBTilesHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            match = _TILE_RE.match(urlparse(self.path).path)
+            if not match:
+                self.send_error(404)
+                return
+
+            try:
+                z = int(match.group("z"))
+                x = int(match.group("x"))
+                y = int(match.group("y"))
+            except Exception:
+                self.send_error(400)
+                return
+
+            tms_y = (1 << z) - 1 - y
+            tile_data = None
+            try:
+                with sqlite3.connect(mbtiles_path) as con:
+                    cur = con.execute(
+                        "SELECT tile_data FROM tiles WHERE zoom_level=? AND tile_column=? AND tile_row=?",
+                        (z, x, tms_y),
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        tile_data = row[0]
+            except Exception:
+                tile_data = None
+
+            if not tile_data:
+                self.send_error(404)
+                return
+
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Access-Control-Allow-Origin", "*")
+            if tile_data[:2] == b"\x1f\x8b":
+                self.send_header("Content-Encoding", "gzip")
+            self.end_headers()
+            self.wfile.write(tile_data)
+
+        def log_message(self, format, *args):
+            return
+
+    return MBTilesHandler
+
+
+class _MBTilesServer:
+    def __init__(self, path: Path, info: dict):
+        self.path = path
+        fmt = (info.get("format") or "png").lower()
+        if fmt in ("jpeg",):
+            fmt = "jpg"
+        elif fmt in ("mvt", "pbf"):
+            fmt = "pbf"
+        self.tile_ext = fmt
+        handler = _make_mbtiles_handler(self.path, self.tile_ext)
+        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        self.port = self.httpd.server_address[1]
+        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+
+    def start(self):
+        self.thread.start()
+
+
+def _ensure_mbtiles_server():
+    global _MBTILES_SERVER, _MBTILES_INFO
+    with _MBTILES_LOCK:
+        if _MBTILES_SERVER is not None:
+            return _MBTILES_SERVER, _MBTILES_INFO
+        if not MBTILES_PATH.is_file():
+            return None, None
+        info = _load_mbtiles_metadata(MBTILES_PATH)
+        if not info:
+            return None, None
+        server = _MBTilesServer(MBTILES_PATH, info)
+        server.start()
+        _MBTILES_SERVER = server
+        _MBTILES_INFO = info
+        return server, info
 
 
 # ───────── data_def 패키지 ──────────
@@ -64,20 +366,30 @@ def _html_kv(title: str, dic: dict) -> str:
     )
     return f"<b>{title}</b><br><table>{rows}</table>"
 
-# ????????????????????????????????????????????????????????????????????
+# ─────────────────────────────────────────────────────────────
 class MainGUI(QWidget):
     BRIDGE_THRESH_M = 150.0
     CRUISE_SP       = 40.0
 
     # ★ 저장 루트: <프로젝트루트>\database
-    SAVE_DIR = _PROJECT_ROOT / "database"
+    SAVE_DIR = db_paths.LEGACY_DB_ROOT
 
     # 하위 폴더들
     DIR_0201 = SAVE_DIR / "InputMissionPlan"
     DIR_0203 = SAVE_DIR / "MissionReferenceInfo"
 
+    @staticmethod
+    def _resolve_save_dir() -> Path:
+        try:
+            return db_paths.get_active_db_root()
+        except Exception:
+            return db_paths.LEGACY_DB_ROOT
+
     def __init__(self) -> None:
         super().__init__()
+        self.SAVE_DIR = self._resolve_save_dir()
+        self.DIR_0201 = self.SAVE_DIR / "InputMissionPlan"
+        self.DIR_0203 = self.SAVE_DIR / "MissionReferenceInfo"
         # ── 새로운 임무 저장 전에 기존 파일 전체 삭제 ──
         for d in (self.SAVE_DIR, self.DIR_0201, self.DIR_0203):
             d.mkdir(parents=True, exist_ok=True)
@@ -117,6 +429,7 @@ class MainGUI(QWidget):
         self._last_compute_ms_0303 = 0.0
         self._last_compute_ms_0304 = 0.0
         self._uav_turn_step_deg = 15.0
+        self._map_html_path = _map_html_path()
 
 
         # ── 레이아웃 ────────────────────────────────────────────
@@ -170,7 +483,7 @@ class MainGUI(QWidget):
         ch = QWebChannel(self.map_view.page())
         ch.registerObject("bridge", mh.bridge)
         self.map_view.page().setWebChannel(ch)
-        self.map_view.setUrl(QUrl.fromLocalFile(os.path.join(os.getcwd(), "map.html")))
+        self.map_view.setUrl(QUrl.fromLocalFile(str(self._map_html_path)))
         self.map_view.loadFinished.connect(self._on_map_load_finished)
         self.map_lay.addWidget(self.map_view)
         mh.bridge.pointClicked.connect(self._handle_point)
@@ -248,7 +561,61 @@ class MainGUI(QWidget):
             center = [38.128774, 127.318005]
             zoom = 14
 
-        fmap = folium.Map(location=center, zoom_start=zoom)
+        _configure_folium_assets()
+        mb_server, mb_info = _ensure_mbtiles_server()
+        if mb_server and mb_info:
+            min_zoom = int(mb_info.get("minzoom", 0))
+            max_zoom = int(mb_info.get("maxzoom", 18))
+            if zoom < min_zoom:
+                zoom = min_zoom
+            if zoom > max_zoom:
+                zoom = max_zoom
+
+            fmap = folium.Map(
+                location=center,
+                zoom_start=zoom,
+                tiles=None,
+                min_zoom=min_zoom,
+                max_zoom=max_zoom,
+            )
+            tile_url = (
+                f"http://127.0.0.1:{mb_server.port}/tiles/{{z}}/{{x}}/{{y}}.{mb_server.tile_ext}"
+            )
+            fmt = (mb_info.get("format") or "").lower()
+            if fmt in ("pbf", "mvt"):
+                options_payload = {
+                    "vectorTileLayerStyles": _VECTOR_TILE_STYLES,
+                    "interactive": False,
+                    "minZoom": min_zoom,
+                    "maxNativeZoom": max_zoom,
+                    "maxZoom": max_zoom,
+                }
+                options = json.dumps(options_payload, ensure_ascii=False)
+                folium_plugins.VectorGridProtobuf(
+                    tile_url,
+                    name="Local MBTiles",
+                    overlay=False,
+                    control=False,
+                    show=True,
+                    options=options,
+                ).add_to(fmap)
+            else:
+                folium.TileLayer(
+                    tiles=tile_url,
+                    attr="Local MBTiles",
+                    name="Local MBTiles",
+                    overlay=False,
+                    control=False,
+                    min_zoom=min_zoom,
+                    max_zoom=max_zoom,
+                ).add_to(fmap)
+        else:
+            fmap = folium.Map(location=center, zoom_start=zoom)
+
+        mission_pane = folium.map.CustomPane(
+            _MISSION_PANE, z_index=_MISSION_PANE_Z, pointer_events=True
+        )
+        fmap.add_child(mission_pane)
         
         _js_links = []
         hover_specs = []
@@ -256,7 +623,8 @@ class MainGUI(QWidget):
         # 작업 구역(예시 사각형) ---------------------------------
         folium.Rectangle(
             [[38.110432, 127.295620], [38.147111, 127.340401]],
-            color="blue", weight=1, fill=True, fill_opacity=0.1
+            color="blue", weight=1, fill=True, fill_opacity=0.1,
+            pane=_MISSION_PANE
         ).add_to(fmap)
 
         # ── 0201 Input Mission (CMPK) ───────────────────────────
@@ -293,6 +661,7 @@ class MainGUI(QWidget):
                         coords, color=color_area, weight=2,
                         fill=True, fill_opacity=0.2,
                         popup=popup,
+                        pane=_MISSION_PANE,
                         **{"className": cls}
                     )
                     poly.add_to(fmap)
@@ -320,6 +689,7 @@ class MainGUI(QWidget):
                     seg = folium.PolyLine(
                         coords, color=color_line, weight=3, dash_array="6,4",
                         popup=popup,
+                        pane=_MISSION_PANE,
                         **{"className": cls}
                     )
                     seg.add_to(fmap)
@@ -344,15 +714,16 @@ class MainGUI(QWidget):
                         fill=True, fill_opacity=1,
                         popup=popup,
                         tooltip=f"{label} - P{idx_pt}",
+                        pane=_MISSION_PANE,
                         **{"className": cls}
                     ).add_to(fmap)
                     hover_specs.append({"cls": cls, "kind": "circle", "baseRadius": 4, "radiusMul": 1.6, "strokeWidth": 4})
 
         # ── 0302 개별 임무 도형 ───────────────────────────────
         for miss in self.missions:
-            aid   = miss["aircraftID"]
-            if aid not in self._visible_aircrafts:   # ★ 추가
-               continue
+            aid = _safe_int(miss.get("aircraftID"))
+            if aid is None or aid not in self._visible_aircrafts:   # ★ 추가
+                continue
             info  = miss.get("individualMissionInfo", {})
             color = miss.get("color") or {   # d0302에서 넣어준 필드
                 1:"#e6194b", 2:"#3cb44b", 3:"#0082c8",
@@ -373,7 +744,8 @@ class MainGUI(QWidget):
                 folium.Polygon(
                     coords, color=color, weight=2,
                     fill=True, fill_opacity=0.15,
-                    popup=popup                          # ★ NEW
+                    popup=popup,                         # ★ NEW
+                    pane=_MISSION_PANE
                 ).add_to(fmap)
 
             # ─ 통로·선형(lineList) ----------------------------
@@ -386,7 +758,8 @@ class MainGUI(QWidget):
                 }), max_width=220)
                 folium.PolyLine(
                     coords, color=color, weight=3, dash_array="4,4",
-                    popup=popup                          # ★ NEW
+                    popup=popup,                         # ★ NEW
+                    pane=_MISSION_PANE
                 ).add_to(fmap)
 
             # 3) 이동 / 은엄폐 구분 ----------------------------------
@@ -404,6 +777,7 @@ class MainGUI(QWidget):
                     folium.CircleMarker(
                         pts[0], radius=4, color=color, fill=True, fill_opacity=1,
                         popup=popup,                                         # ★ NEW
+                        pane=_MISSION_PANE,
                         tooltip=f"IM {miss['individualMissionID']}"          # (선택)
                     ).add_to(fmap)
 
@@ -419,7 +793,8 @@ class MainGUI(QWidget):
 
                     folium.PolyLine(
                         pts, color=color, weight=2,
-                        popup=seg_popup                                    # ★ NEW
+                        popup=seg_popup,                                   # ★ NEW
+                        pane=_MISSION_PANE
                     ).add_to(fmap)
 
                     # 경유지 마커에 개별 팝업 / 툴팁
@@ -433,6 +808,7 @@ class MainGUI(QWidget):
                         folium.CircleMarker(
                             pt, radius=3, color=color, fill=True, fill_opacity=1,
                             popup=wp_popup,                               # ★ NEW
+                            pane=_MISSION_PANE,
                             tooltip=f"WP {idx}"                           # (선택)
                         ).add_to(fmap)
 
@@ -440,19 +816,24 @@ class MainGUI(QWidget):
         COLOR3 = {4: "red", 5: "blue", 6: "brown"}
 
         for fp in self.flight_plans:                     # ← d0303 결과
-            aid = fp["aircraftID"]
-            if aid not in self._visible_aircrafts:       # 가시성 토글
+            aid = _safe_int(fp.get("aircraftID"))
+            if aid is None or aid not in self._visible_aircrafts:       # 가시성 토글
                 continue
             c = COLOR3.get(aid, "gray")
 
             # ─ 1) 전체 경로(점선) -------------------------------------------------
-            pts = [(w["coordinate"]["latitude"], w["coordinate"]["longitude"])
-                for w in fp["waypointList"]]
+            pts = [
+                (w["coordinate"]["latitude"], w["coordinate"]["longitude"])
+                for w in fp["waypointList"]
+                if isinstance(w, dict) and w.get("coordinate")
+            ]
             line_cls = f"path3_{aid}_{fp['pathID']}"
-            folium.PolyLine(
-                pts, color=c, weight=2, dash_array="4,4",
-                **{"className": line_cls}
-            ).add_to(fmap)
+            if len(pts) >= 2:
+                folium.PolyLine(
+                    pts, color=c, weight=2, dash_array="4,4",
+                    pane=_MISSION_PANE,
+                    **{"className": line_cls}
+                ).add_to(fmap)
 
             # ─ 2) 각 WP + scan-line(모드-2 lineSearch) ----------------------------
             for w in fp["waypointList"]:
@@ -470,6 +851,7 @@ class MainGUI(QWidget):
                     radius=3, color=c, fill=True, fill_opacity=1,
                     popup=popup,
                     tooltip=f"WP {wp_id}",                 # ← enumerate idx → 실제 ID
+                    pane=_MISSION_PANE,
                     **{"className": f"wp_{wp_id}"}
                 ).add_to(fmap)
 
@@ -489,6 +871,7 @@ class MainGUI(QWidget):
                     folium.PolyLine(
                         seq,
                         color=c, weight=3, opacity=0.9, dash_array="5,4",
+                        pane=_MISSION_PANE,
                         **{"className": ls_cls}
                     ).add_to(fmap)
 
@@ -501,8 +884,8 @@ class MainGUI(QWidget):
         # ── 0304 시각화 (aircraft 1·2·3) ──────────────────────────────────
         COLOR4 = {1: "green", 2: "orange", 3: "purple"}
         for fp in self.flight_plans_0304:
-            aid = fp["aircraftID"]
-            if aid not in self._visible_aircrafts:
+            aid = _safe_int(fp.get("aircraftID"))
+            if aid is None or aid not in self._visible_aircrafts:
                 continue
             c   = COLOR4.get(aid, "green")
 
@@ -510,6 +893,7 @@ class MainGUI(QWidget):
                         for w in fp["lahWaypointList"]]
             line_cls = f"path4_{aid}_{fp['pathID']}"
             folium.PolyLine(pts, color=c, weight=2,
+                            pane=_MISSION_PANE,
                             **{"className": line_cls}).add_to(fmap)
 
             for w in fp["lahWaypointList"]:
@@ -525,6 +909,7 @@ class MainGUI(QWidget):
                     radius=3, color=c, fill=True, fill_opacity=1,
                     popup=popup,
                     tooltip=f"WP {wp_id}",
+                    pane=_MISSION_PANE,
                     **{"className": f"wp_{wp_id}"}
                 ).add_to(fmap)
 
@@ -556,6 +941,7 @@ class MainGUI(QWidget):
                     fill=True, fill_opacity=1,
                     popup=popup,
                     tooltip=f"TakeOver A/C {aid}",
+                    pane=_MISSION_PANE,
                     **{"className": cls}
                 ).add_to(fmap)
                 hover_specs.append({"cls": cls, "kind": "circle", "baseRadius": 6, "radiusMul": 1.4, "strokeWidth": 4})
@@ -579,6 +965,7 @@ class MainGUI(QWidget):
                     fill=True, fill_opacity=1,
                     popup=popup,
                     tooltip=f"HandOver A/C {aid}",
+                    pane=_MISSION_PANE,
                     **{"className": cls}
                 ).add_to(fmap)
                 hover_specs.append({"cls": cls, "kind": "circle", "baseRadius": 6, "radiusMul": 1.4, "strokeWidth": 4})
@@ -600,6 +987,7 @@ class MainGUI(QWidget):
                     fill=True, fill_opacity=0.95,
                     popup=popup,
                     tooltip=f"RTB #{idx_rtb}",
+                    pane=_MISSION_PANE,
                     **{"className": cls}
                 ).add_to(fmap)
                 hover_specs.append({"cls": cls, "kind": "circle", "baseRadius": 7, "radiusMul": 1.3, "strokeWidth": 4})
@@ -617,6 +1005,7 @@ class MainGUI(QWidget):
                 poly = folium.Polygon(
                     coords, color="#2196f3", weight=1.5,
                     fill=True, fill_opacity=0.1,
+                    pane=_MISSION_PANE
                 )
                 poly.add_to(fmap)
                 limits = area.get("altitudeLimits") or {}
@@ -638,6 +1027,7 @@ class MainGUI(QWidget):
                     coords, color="#e53935", weight=1.5,
                     fill=True, fill_opacity=0.08,
                     dash_array="4,4",
+                    pane=_MISSION_PANE
                 )
                 poly.add_to(fmap)
                 limits = area.get("altitudeLimits") or {}
@@ -646,8 +1036,15 @@ class MainGUI(QWidget):
                 folium.Tooltip(tooltip_text, permanent=True, direction='center', opacity=0.75).add_to(poly)
 
         # ── HTML 저장 + WebChannel 스크립트 삽입 ───────────────
-        path = os.path.join(os.getcwd(), "map.html")
-        fmap.save(path)
+        path = self._map_html_path
+        fmap.save(str(path))
+        css = f"""
+                    <style id="map-dark-filter">
+                        .leaflet-tile-pane {{
+                            filter: {_BASEMAP_FILTER};
+                        }}
+                    </style>
+        """
         js = f"""
                     <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
                     <script>
@@ -779,15 +1176,16 @@ class MainGUI(QWidget):
         with open(path, "r+", encoding="utf-8") as f:
             html = f.read()
             if "qwebchannel.js" not in html:
-                f.seek(0); f.write(html.replace("</body>", js + "</body>")); f.truncate()
+                inject = css + js
+                f.seek(0); f.write(html.replace("</body>", inject + "</body>")); f.truncate()
 
     # ─────────────────────────── 탭 0301 ───────────────────────────
     def _build_tab_0301(self):
         tab  = QWidget(); form = QFormLayout(tab)
 
         # ---- 입력 위젯 -------------------------------------------------
-        self.le_mpid  = QLineEdit("")                 # ?? 기본값 공백
-        self.le_mpid.setPlaceholderText("auto")       #  ? 자동 부여 안내
+        self.le_mpid  = QLineEdit("")                 # 미입력 기본값 공백
+        self.le_mpid.setPlaceholderText("auto")       # 자동 부여 안내
         self.le_plid  = QLineEdit("1")
         self.le_ptime = QLineEdit("1.0")
 
@@ -881,6 +1279,220 @@ class MainGUI(QWidget):
             "loiter_speed_mps": float(d0303.LOITER_SPEED_MPS),
         }
 
+    def _uav_params_store_path(self) -> Path:
+        return PKG_DIR / "uav_params.json"
+
+    def _merge_uav_param_values(self, stored: dict) -> dict:
+        merged = dict(self._get_uav_param_values())
+        for spec in self._uav_param_specs:
+            key = spec["key"]
+            if key not in stored:
+                continue
+            raw = stored.get(key)
+            try:
+                if spec["type"] is int:
+                    value = int(float(raw))
+                else:
+                    value = float(raw)
+            except Exception:
+                continue
+            min_value = spec.get("min")
+            max_value = spec.get("max")
+            if min_value is not None and value < min_value:
+                continue
+            if max_value is not None and value > max_value:
+                continue
+            merged[key] = value
+        return merged
+
+    def _load_uav_params_from_store(self) -> dict | None:
+        path = self._uav_params_store_path()
+        if not path.is_file():
+            return None
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            print(f"[WARN] failed to load uav params: {exc}")
+            return None
+        if not isinstance(payload, dict):
+            return None
+        values = payload.get("values")
+        if not isinstance(values, dict):
+            return None
+        algo_key = str(payload.get("algo_key") or "")
+        if algo_key not in ("dtatrim", "algo2", "algo3"):
+            algo_key = ""
+        flyover = payload.get("flyover")
+        if not isinstance(flyover, dict):
+            flyover = {}
+        return {"values": values, "algo_key": algo_key, "flyover": flyover}
+
+    def _save_uav_params_to_store(self, values: dict, algo_key: str, flyover: dict) -> None:
+        payload = {"algo_key": algo_key, "values": values, "flyover": flyover}
+        path = self._uav_params_store_path()
+        try:
+            path.write_text(
+                json.dumps(payload, ensure_ascii=True, indent=2),
+                encoding="utf-8",
+            )
+        except Exception as exc:
+            print(f"[WARN] failed to save uav params: {exc}")
+            QMessageBox.warning(
+                self,
+                "UAV Mission Manager",
+                f"Failed to persist parameters: {exc}",
+            )
+
+    def _algo_key_to_name(self, algo_key: str) -> str:
+        return {"dtatrim": "dtatrim", "algo2": "linear", "algo3": "algo3"}.get(
+            algo_key, "dtatrim"
+        )
+
+    def _selected_uav_algo_key(self) -> str | None:
+        algo_keys = [key for key, cb in self._uav_algo_checks.items() if cb.isChecked()]
+        if len(algo_keys) != 1:
+            return None
+        return algo_keys[0]
+
+    def _set_uav_algo_checkbox(self, algo_key: str) -> None:
+        if not hasattr(self, "_uav_algo_checks"):
+            return
+        for key, cb in self._uav_algo_checks.items():
+            cb.setChecked(key == algo_key)
+
+    def _on_flyover_option_toggled(self, key: str, checked: bool) -> None:
+        if not hasattr(self, "_flyover_option_checks"):
+            return
+        if getattr(self, "_flyover_option_guard", False):
+            return
+        self._flyover_option_guard = True
+        try:
+            if key == "keep" and checked:
+                self._flyover_option_checks["entry_offset"].setChecked(False)
+                self._flyover_option_checks["dubins_prefix"].setChecked(False)
+                self._flyover_option_checks["all_wps"].setChecked(False)
+            elif key == "all_wps" and checked:
+                self._flyover_option_checks["keep"].setChecked(False)
+                self._flyover_option_checks["entry_offset"].setChecked(False)
+                self._flyover_option_checks["dubins_prefix"].setChecked(False)
+            elif key in ("entry_offset", "dubins_prefix") and checked:
+                self._flyover_option_checks["keep"].setChecked(False)
+                self._flyover_option_checks["all_wps"].setChecked(False)
+
+            any_on = any(
+                cb.isChecked()
+                for cb in (
+                    self._flyover_option_checks["keep"],
+                    self._flyover_option_checks["entry_offset"],
+                    self._flyover_option_checks["dubins_prefix"],
+                    self._flyover_option_checks["all_wps"],
+                )
+            )
+            if not any_on:
+                self._flyover_option_checks["keep"].setChecked(True)
+        finally:
+            self._flyover_option_guard = False
+        self._normalize_flyover_checks()
+
+    def _normalize_flyover_checks(self) -> None:
+        if getattr(self, "_flyover_option_guard", False):
+            return
+        self._flyover_option_guard = True
+        try:
+            keep = bool(self._flyover_option_checks["keep"].isChecked())
+            entry = bool(self._flyover_option_checks["entry_offset"].isChecked())
+            dubins = bool(self._flyover_option_checks["dubins_prefix"].isChecked())
+            all_wps = bool(self._flyover_option_checks["all_wps"].isChecked())
+            if all_wps:
+                keep, entry, dubins = False, False, False
+            elif entry or dubins:
+                keep = False
+                all_wps = False
+            elif keep:
+                entry, dubins = False, False
+            else:
+                all_wps = False
+                if not entry and not dubins:
+                    keep = True
+            self._flyover_option_checks["keep"].setChecked(keep)
+            self._flyover_option_checks["entry_offset"].setChecked(entry)
+            self._flyover_option_checks["dubins_prefix"].setChecked(dubins)
+            self._flyover_option_checks["all_wps"].setChecked(all_wps)
+        finally:
+            self._flyover_option_guard = False
+
+    def _get_flyover_option_values(self) -> dict:
+        self._normalize_flyover_checks()
+        return {
+            "entry_offset": bool(self._flyover_option_checks["entry_offset"].isChecked()),
+            "dubins_prefix": bool(self._flyover_option_checks["dubins_prefix"].isChecked()),
+            "all_wps": bool(self._flyover_option_checks["all_wps"].isChecked()),
+        }
+
+    def _set_flyover_option_values(self, values: dict) -> None:
+        if not hasattr(self, "_flyover_option_checks"):
+            return
+        entry = bool(values.get("entry_offset", False))
+        dubins = bool(values.get("dubins_prefix", False))
+        all_wps = bool(values.get("all_wps", False))
+        self._flyover_option_checks["entry_offset"].setChecked(entry)
+        self._flyover_option_checks["dubins_prefix"].setChecked(dubins)
+        self._flyover_option_checks["all_wps"].setChecked(all_wps)
+        self._normalize_flyover_checks()
+
+    def _apply_flyover_flags(self, flyover: dict) -> None:
+        d0303.set_flyover_options(
+            entry_offset=bool(flyover.get("entry_offset", False)),
+            dubins_prefix=bool(flyover.get("dubins_prefix", False)),
+            all_wps=bool(flyover.get("all_wps", False)),
+        )
+
+    def _apply_uav_values(
+        self,
+        values: dict,
+        algo_key: str,
+        flyover: dict | None = None,
+        *,
+        save: bool,
+    ) -> None:
+        algo_name = self._algo_key_to_name(algo_key)
+
+        self.CRUISE_SP = float(values["cruise_speed_mps"])
+        self._uav_turn_step_deg = float(values["turn_step_deg"])
+
+        mp_config.DEFAULT_SWEEP_SEPARATION_M = float(values["default_sweep_separation_m"])
+        mp_config.SEARCH_SPEED_WEIGHT = float(values["search_speed_weight"])
+        search_speed._CFG_WEIGHT = float(values["search_speed_weight"])
+
+        d0303.FOV_DEG = float(values["fov_deg"])
+        d0303.Altitude = int(round(values["altitude_m"]))
+        d0303.SWEEP_ENTRY_OFFSET_M = float(values["sweep_entry_offset_m"])
+        d0303.SWEEP_MERGE_HEADING_DEG = float(values["sweep_merge_heading_deg"])
+        d0303.SWEEP_LINE_INTERP_POINTS = int(values["sweep_line_interp_points"])
+        d0303.MIN_SWEEP_LEN_M = float(values["min_sweep_len_m"])
+        d0303.MIN_ROUTE_SPACING_M = float(values["min_route_spacing_m"])
+        d0303.DEFAULT_SEARCH_SPEED_MULTIPLIER = float(values["default_search_speed_multiplier"])
+        d0303.POINT_FOV_DEG = float(values["point_fov_deg"])
+        d0303.ENTRY_HOLD_FOV_DEG = float(values["entry_hold_fov_deg"])
+        d0303.ENTRY_HOLD_GIMBAL_PITCH = float(values["entry_hold_gimbal_pitch"])
+        d0303.ENTRY_HOLD_GIMBAL_YAW = float(values["entry_hold_gimbal_yaw"])
+        d0303.LOITER_RADIUS_M = float(values["loiter_radius_m"])
+        d0303.LOITER_DIRECTION = int(values["loiter_direction"])
+        d0303.LOITER_TIME_S = float(values["loiter_time_s"])
+        d0303.LOITER_SPEED_MPS = float(values["loiter_speed_mps"])
+        d0303.SWEEP_GEOMETRY = d0303.SweepConfig(
+            separation_m=float(values["default_sweep_separation_m"]),
+            fov_deg=float(values["fov_deg"]),
+        )
+        d0303.set_route_planner(algo_name)
+        if flyover is not None:
+            self._apply_flyover_flags(flyover)
+
+        if save:
+            self._save_uav_params_to_store(values, algo_key, flyover or {})
+
+        self._load_uav_params_into_form(self._get_uav_param_values())
+
     def _on_uav_algo_toggled(self, key: str, checked: bool) -> None:
         if not checked:
             return
@@ -928,62 +1540,31 @@ class MainGUI(QWidget):
         return values
 
     def _apply_uav_params(self) -> None:
-        algo_keys = [key for key, cb in self._uav_algo_checks.items() if cb.isChecked()]
-        if len(algo_keys) != 1:
+        algo_key = self._selected_uav_algo_key()
+        if algo_key is None:
             QMessageBox.warning(self, "UAV Mission Manager", "Select exactly one algorithm.")
             return
-        algo_key = algo_keys[0]
-        if algo_key == "dtatrim":
-            algo_name = "dtatrim"
-        elif algo_key == "algo2":
-            algo_name = "linear"
-        else:
-            algo_name = "algo3"
 
         values = self._read_uav_params_from_form()
         if values is None:
             return
 
-        self.CRUISE_SP = float(values["cruise_speed_mps"])
-        self._uav_turn_step_deg = float(values["turn_step_deg"])
-
-        mp_config.DEFAULT_SWEEP_SEPARATION_M = float(values["default_sweep_separation_m"])
-        mp_config.SEARCH_SPEED_WEIGHT = float(values["search_speed_weight"])
-        search_speed._CFG_WEIGHT = float(values["search_speed_weight"])
-
-        d0303.FOV_DEG = float(values["fov_deg"])
-        d0303.Altitude = int(round(values["altitude_m"]))
-        d0303.SWEEP_ENTRY_OFFSET_M = float(values["sweep_entry_offset_m"])
-        d0303.SWEEP_MERGE_HEADING_DEG = float(values["sweep_merge_heading_deg"])
-        d0303.SWEEP_LINE_INTERP_POINTS = int(values["sweep_line_interp_points"])
-        d0303.MIN_SWEEP_LEN_M = float(values["min_sweep_len_m"])
-        d0303.MIN_ROUTE_SPACING_M = float(values["min_route_spacing_m"])
-        d0303.DEFAULT_SEARCH_SPEED_MULTIPLIER = float(values["default_search_speed_multiplier"])
-        d0303.POINT_FOV_DEG = float(values["point_fov_deg"])
-        d0303.ENTRY_HOLD_FOV_DEG = float(values["entry_hold_fov_deg"])
-        d0303.ENTRY_HOLD_GIMBAL_PITCH = float(values["entry_hold_gimbal_pitch"])
-        d0303.ENTRY_HOLD_GIMBAL_YAW = float(values["entry_hold_gimbal_yaw"])
-        d0303.LOITER_RADIUS_M = float(values["loiter_radius_m"])
-        d0303.LOITER_DIRECTION = int(values["loiter_direction"])
-        d0303.LOITER_TIME_S = float(values["loiter_time_s"])
-        d0303.LOITER_SPEED_MPS = float(values["loiter_speed_mps"])
-        d0303.SWEEP_GEOMETRY = d0303.SweepConfig(
-            separation_m=float(values["default_sweep_separation_m"]),
-            fov_deg=float(values["fov_deg"]),
-        )
-        d0303.set_route_planner(algo_name)
-
-        self._load_uav_params_into_form(self._get_uav_param_values())
+        flyover = self._get_flyover_option_values()
+        self._apply_uav_values(values, algo_key, flyover=flyover, save=True)
 
     def _reset_uav_params(self) -> None:
         if not hasattr(self, "_uav_param_defaults"):
             return
-        if hasattr(self, "_uav_algo_checks"):
-            default_key = getattr(self, "_uav_algo_default", "algo2")
-            for key, cb in self._uav_algo_checks.items():
-                cb.setChecked(key == default_key)
-        self._load_uav_params_into_form(self._uav_param_defaults)
-        self._apply_uav_params()
+        defaults = self._uav_param_defaults
+        if not isinstance(defaults, dict):
+            return
+        default_key = defaults.get("algo_key") or getattr(self, "_uav_algo_default", "dtatrim")
+        self._set_uav_algo_checkbox(default_key)
+        values = defaults.get("values") or self._get_uav_param_values()
+        flyover = defaults.get("flyover") or {}
+        self._load_uav_params_into_form(values)
+        self._set_flyover_option_values(flyover)
+        self._apply_uav_values(values, default_key, flyover=flyover, save=True)
 
     def _build_tab_uav_manager(self):
         tab = QWidget()
@@ -999,12 +1580,30 @@ class MainGUI(QWidget):
             ("algo3", "Algorithm-3"),
         ):
             cb = QCheckBox(label)
-            cb.setChecked(key == "algo2")
+            cb.setChecked(key == "dtatrim")
             cb.toggled.connect(lambda checked, k=key: self._on_uav_algo_toggled(k, checked))
             self._uav_algo_checks[key] = cb
             algo_row.addWidget(cb)
-        self._uav_algo_default = "algo2"
+        self._uav_algo_default = "dtatrim"
         form.addRow("Algorithm", algo_row_widget)
+
+        flyover_row = QHBoxLayout()
+        flyover_row_widget = QWidget()
+        flyover_row_widget.setLayout(flyover_row)
+        self._flyover_option_checks = {}
+        self._flyover_option_guard = False
+        for key, label in (
+            ("keep", "Keep current"),
+            ("entry_offset", "Entry offset only"),
+            ("dubins_prefix", "Dubins prefix only"),
+            ("all_wps", "All WPs"),
+        ):
+            cb = QCheckBox(label)
+            cb.toggled.connect(lambda checked, k=key: self._on_flyover_option_toggled(k, checked))
+            self._flyover_option_checks[key] = cb
+            flyover_row.addWidget(cb)
+        self._flyover_option_checks["keep"].setChecked(True)
+        form.addRow("Fly-over", flyover_row_widget)
 
         self._uav_param_specs = [
             {"key": "cruise_speed_mps", "label": "Cruise speed (m/s)", "type": float, "min": 0.1},
@@ -1044,8 +1643,24 @@ class MainGUI(QWidget):
         btn_row.addWidget(btn_reset)
         form.addRow(btn_row)
 
-        self._uav_param_defaults = self._get_uav_param_values()
-        self._load_uav_params_into_form(self._uav_param_defaults)
+        stored = self._load_uav_params_from_store()
+        if stored:
+            algo_key = stored.get("algo_key") or self._uav_algo_default
+            values = self._merge_uav_param_values(stored.get("values") or {})
+            flyover = stored.get("flyover") or {}
+            self._set_flyover_option_values(flyover)
+            self._apply_uav_values(values, algo_key, flyover=flyover, save=False)
+            self._set_uav_algo_checkbox(algo_key)
+            self._uav_algo_default = algo_key
+        else:
+            self._normalize_flyover_checks()
+
+        self._uav_param_defaults = {
+            "values": self._get_uav_param_values(),
+            "algo_key": self._uav_algo_default,
+            "flyover": self._get_flyover_option_values(),
+        }
+        self._load_uav_params_into_form(self._uav_param_defaults["values"])
 
         self.tabs.insertTab(0, tab, "UAV Mission Manager")
 
@@ -1151,6 +1766,223 @@ class MainGUI(QWidget):
         plan_start = time.perf_counter()
         compute_ms = 0.0
 
+        # 입력 데이터 검증 (0201/0203)
+        try:
+            cmpk_data = self._cmpk_data
+            if not isinstance(cmpk_data, dict):
+                with open(self._cmpk_path, encoding="utf-8") as f:
+                    cmpk_data = json.load(f)
+            mrpk_data = self._mrpk_data
+            if not isinstance(mrpk_data, dict):
+                with open(self._mrpk_path, encoding="utf-8") as f:
+                    mrpk_data = json.load(f)
+        except Exception as e:
+            self.log_init.appendPlainText(f"[ERR] 0201/0203 로드 실패: {e}")
+            return
+
+        validation_errors = []
+
+        def _require_list(payload, key, label, allow_empty=False, allow_missing=False):
+            value = payload.get(key) if isinstance(payload, dict) else None
+            if not isinstance(value, list):
+                if value is None and allow_missing:
+                    self.log_init.appendPlainText(f"[WARN] {label} 없음 (선택 항목)")
+                    return []
+                self.log_init.appendPlainText(f"[ERR] {label} 필요하지만 없음/형식오류 → 중단")
+                validation_errors.append({"key": key, "reason": "missing_or_invalid"})
+                return []
+            if not value and not allow_empty:
+                self.log_init.appendPlainText(f"[ERR] {label} 필요하지만 비어있음 → 중단")
+                validation_errors.append({"key": key, "reason": "empty"})
+            else:
+                self.log_init.appendPlainText(f"[OK] {label} 확인됨 (count={len(value)}) → 진행")
+            return value
+
+        def _summarize_ids(values, limit=5):
+            if not values:
+                return "-"
+            return ", ".join(str(v) for v in values[:limit])
+
+        self.log_init.appendPlainText("[CHECK] 0201/0203 필수 데이터 확인 시작")
+        mission_list = _require_list(cmpk_data, "inputMissionList", "0201 inputMissionList")
+        aircraft_list = _require_list(cmpk_data, "availableAircraftList", "0201 availableAircraftList")
+
+        pkg_type_raw = cmpk_data.get("inputMissionPackageType") if isinstance(cmpk_data, dict) else None
+        try:
+            pkg_type = int(pkg_type_raw)
+        except Exception:
+            pkg_type = None
+        if not pkg_type or pkg_type == 0:
+            self.log_init.appendPlainText("[ERR] 0201 inputMissionPackageType=0/없음 → 중단")
+            validation_errors.append({"key": "inputMissionPackageType", "reason": "invalid"})
+        else:
+            self.log_init.appendPlainText(f"[OK] 0201 inputMissionPackageType={pkg_type} 확인")
+
+        main_sensor_raw = cmpk_data.get("mainSensor") if isinstance(cmpk_data, dict) else None
+        try:
+            main_sensor = int(main_sensor_raw)
+        except Exception:
+            main_sensor = None
+        if not main_sensor or main_sensor == 0:
+            self.log_init.appendPlainText("[ERR] 0201 mainSensor=0/없음 → 중단")
+            validation_errors.append({"key": "mainSensor", "reason": "invalid"})
+        else:
+            self.log_init.appendPlainText(f"[OK] 0201 mainSensor={main_sensor} 확인")
+
+
+        uav_count = 0
+        lah_count = 0
+        zero_aircraft = []
+        invalid_aircraft = []
+        for idx, entry in enumerate(aircraft_list):
+            aircraft_id = None
+            if isinstance(entry, dict):
+                aircraft_id = entry.get("aircraftID")
+            elif isinstance(entry, int):
+                aircraft_id = entry
+            elif isinstance(entry, str) and entry.isdigit():
+                aircraft_id = int(entry)
+            if not isinstance(aircraft_id, int):
+                invalid_aircraft.append(idx)
+                continue
+            if aircraft_id == 0:
+                zero_aircraft.append(idx)
+                continue
+            if 1 <= aircraft_id <= 3:
+                lah_count += 1
+            elif 4 <= aircraft_id <= 6:
+                uav_count += 1
+            else:
+                invalid_aircraft.append(aircraft_id)
+        if aircraft_list:
+            self.log_init.appendPlainText(
+                f"[CHECK] 0201 가용기체 수={len(aircraft_list)} (UAV={uav_count}, LAH={lah_count})"
+            )
+            if zero_aircraft:
+                self.log_init.appendPlainText(
+                    f"[ERR] 0201 availableAircraftList에 0 포함 (idx={_summarize_ids(zero_aircraft)}) → 중단"
+                )
+                validation_errors.append({"key": "availableAircraftList", "reason": "contains_zero"})
+            if invalid_aircraft:
+                self.log_init.appendPlainText(
+                    f"[ERR] 0201 availableAircraftList 잘못된 항목 포함 (idx={_summarize_ids(invalid_aircraft)}) → 중단"
+                )
+                validation_errors.append({"key": "availableAircraftList", "reason": "invalid_entries"})
+            if uav_count == 0:
+                self.log_init.appendPlainText("[ERR] 0201 UAV 기체 없음 → 중단")
+                validation_errors.append({"key": "availableAircraftList", "reason": "no_uav"})
+            if lah_count == 0:
+                self.log_init.appendPlainText("[ERR] 0201 LAH 기체 없음 → 중단")
+                validation_errors.append({"key": "availableAircraftList", "reason": "no_lah"})
+
+
+        missing_id = []
+        missing_detail = []
+        missing_shape = []
+        unknown_type = []
+        type_zero = []
+        line_only_violation = []
+        for mission in mission_list:
+            if not isinstance(mission, dict):
+                missing_detail.append("?")
+                continue
+            mid = mission.get("inputMissionID")
+            if mid is None:
+                missing_id.append("?")
+            detail = mission.get("missionDetail")
+            if not isinstance(detail, dict):
+                missing_detail.append(mid)
+                continue
+            mtype_raw = mission.get("inputMissionType")
+            try:
+                mtype = int(mtype_raw)
+            except Exception:
+                mtype = None
+            if mtype == 0 or mtype is None:
+                type_zero.append(mid)
+                continue
+            if mtype in (1, 7):
+                if not detail.get("lineList"):
+                    missing_shape.append(mid)
+                if detail.get("areaList"):
+                    line_only_violation.append(mid)
+            elif mtype in (4, 5):
+                if not detail.get("lineList"):
+                    missing_shape.append(mid)
+            elif mtype in (2, 3, 6):
+                if not detail.get("areaList"):
+                    missing_shape.append(mid)
+            else:
+                unknown_type.append(mid)
+
+        if mission_list:
+            self.log_init.appendPlainText(
+                "[CHECK] 0201 임무검사: total={total} missingID={mid} missingDetail={md} "
+                "missingShape={ms} unknownType={ut} typeZero={tz} lineOnlyViolation={lv}".format(
+                    total=len(mission_list),
+                    mid=len(missing_id),
+                    md=len(missing_detail),
+                    ms=len(missing_shape),
+                    ut=len(unknown_type),
+                    tz=len(type_zero),
+                    lv=len(line_only_violation),
+                )
+            )
+            if missing_id or missing_detail or missing_shape or unknown_type or type_zero or line_only_violation:
+                self.log_init.appendPlainText(
+                    "[DETAIL] 0201 임무검사 상세: missingID={mid} missingDetail={md} "
+                    "missingShape={ms} unknownType={ut} typeZero={tz} lineOnlyViolation={lv}".format(
+                        mid=_summarize_ids(missing_id),
+                        md=_summarize_ids(missing_detail),
+                        ms=_summarize_ids(missing_shape),
+                        ut=_summarize_ids(unknown_type),
+                        tz=_summarize_ids(type_zero),
+                        lv=_summarize_ids(line_only_violation),
+                    )
+                )
+                validation_errors.append({"key": "inputMissionList", "reason": "invalid_entries"})
+
+        take_over_list = _require_list(mrpk_data, "takeOverInfoList", "0203 takeOverInfoList")
+        hand_over_list = _require_list(mrpk_data, "handOverInfoList", "0203 handOverInfoList")
+        flight_area_list = _require_list(
+            mrpk_data,
+            "flightAreaList",
+            "0203 flightAreaList",
+            allow_empty=True,
+            allow_missing=True,
+        )
+
+        def _count_bad_coords(entries):
+            bad = []
+            for idx, item in enumerate(entries):
+                coord = item.get("coordinate") if isinstance(item, dict) else None
+                if not isinstance(coord, dict) or "latitude" not in coord or "longitude" not in coord:
+                    bad.append(idx)
+            return bad
+
+        if take_over_list:
+            bad_take = _count_bad_coords(take_over_list)
+            if bad_take:
+                self.log_init.appendPlainText(
+                    f"[ERR] 0203 takeOver 좌표 누락: {len(bad_take)}건 (idx={_summarize_ids(bad_take)}) → 중단"
+                )
+                validation_errors.append({"key": "takeOverInfoList", "reason": "missing_coordinate"})
+        if hand_over_list:
+            bad_hand = _count_bad_coords(hand_over_list)
+            if bad_hand:
+                self.log_init.appendPlainText(
+                    f"[ERR] 0203 handOver 좌표 누락: {len(bad_hand)}건 (idx={_summarize_ids(bad_hand)}) → 중단"
+                )
+                validation_errors.append({"key": "handOverInfoList", "reason": "missing_coordinate"})
+        if flight_area_list:
+            self.log_init.appendPlainText(f"[CHECK] 0203 flightAreaList count={len(flight_area_list)}")
+        else:
+            self.log_init.appendPlainText("[WARN] 0203 flightAreaList 비어있음 (선택 항목)")
+
+        if validation_errors:
+            self.log_init.appendPlainText("[ERR] 0201/0203 필수 데이터 부족 → 임무계획 중단")
+            return
+
         # ── 1. 0201+0203 → IMP(0302) ---------------------------------
         try:
             imp_paths = run_divide_and_pattern(
@@ -1241,7 +2073,7 @@ class MainGUI(QWidget):
             mp_data["planningTime"] = float(compute_ms)
             mp_path.write_text(json.dumps(mp_data, ensure_ascii=False, indent=2), encoding="utf-8")
             self.log_init.appendPlainText(
-                f"[INFO] planningTime(ComputeOnly) ????: {compute_ms:.1f} ms (total={elapsed_ms:.1f} ms)"
+                f"[INFO] planningTime(ComputeOnly) 갱신: {compute_ms:.1f} ms (total={elapsed_ms:.1f} ms)"
             )
         except Exception as e:
             self.log_init.appendPlainText(f"[WARN] planningTime update failed: {e}")
@@ -1469,6 +2301,45 @@ class MainGUI(QWidget):
         self.log0302.setText(json.dumps(pkg_list, indent=2, ensure_ascii=False))
         self._rebuild_map()
 
+    def _find_in_editor(
+        self, editor: QPlainTextEdit, text: str, *, backward: bool = False
+    ) -> None:
+        query = (text or "").strip()
+        if not query:
+            return
+        flags = QTextDocument.FindFlags()
+        if backward:
+            flags |= QTextDocument.FindBackward
+        if editor.find(query, flags):
+            return
+        cursor = editor.textCursor()
+        cursor.movePosition(QTextCursor.End if backward else QTextCursor.Start)
+        editor.setTextCursor(cursor)
+        editor.find(query, flags)
+
+    def _build_search_row(self, editor: QPlainTextEdit) -> QWidget:
+        container = QWidget()
+        row = QHBoxLayout(container)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(QLabel("Search"))
+        search_input = QLineEdit()
+        search_input.setPlaceholderText("Find text")
+        btn_prev = QPushButton("Prev")
+        btn_next = QPushButton("Next")
+        btn_prev.clicked.connect(
+            lambda: self._find_in_editor(editor, search_input.text(), backward=True)
+        )
+        btn_next.clicked.connect(
+            lambda: self._find_in_editor(editor, search_input.text(), backward=False)
+        )
+        search_input.returnPressed.connect(
+            lambda: self._find_in_editor(editor, search_input.text(), backward=False)
+        )
+        row.addWidget(search_input, stretch=1)
+        row.addWidget(btn_prev)
+        row.addWidget(btn_next)
+        return container
+
 
 
     # ─────────────────────────── 탭 0303 ───────────────────────────
@@ -1476,7 +2347,10 @@ class MainGUI(QWidget):
         tab = QWidget(); lay = QVBoxLayout(tab)
         gen = QPushButton("Generate 0303 FlightPlan"); gen.clicked.connect(self._refresh_0303)
         self.log0303 = QPlainTextEdit(); self.log0303.setReadOnly(True)
-        lay.addWidget(gen); lay.addWidget(self.log0303); self.tabs.addTab(tab, "0303")
+        lay.addWidget(gen)
+        lay.addWidget(self._build_search_row(self.log0303))
+        lay.addWidget(self.log0303)
+        self.tabs.addTab(tab, "0303")
 
     def _refresh_0303(self):
         t0 = time.perf_counter()
@@ -1513,6 +2387,7 @@ class MainGUI(QWidget):
 
         # ── 로그창 ─────────────────────────────────────
         self.log0304 = QPlainTextEdit(); self.log0304.setReadOnly(True)
+        lay.addWidget(self._build_search_row(self.log0304))
         lay.addWidget(self.log0304)
 
         self.tabs.addTab(tab, "0304")
@@ -1901,7 +2776,7 @@ class MainGUI(QWidget):
 
 
 
-# ????????????????????????????????????????????????????????????????????
+# ─────────────────────────────────────────────────────────────
 def main():
     import sys, os
     from PyQt5.QtWidgets import QApplication

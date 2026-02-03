@@ -477,8 +477,8 @@ def _gen_ReplanRequest(source: str = "DS"):
     obj["inputMissionIDList"] = [ _gen_InputMissionID(source=source) for _ in range(LIST_LEN) ]
     obj["individualMissionIDList"] = [ _gen_IndividualMissionID(source=source) for _ in range(LIST_LEN) ]
     obj["priorMissionList"] = [ _gen_PriorMission(source=source) for _ in range(LIST_LEN) ]
-    obj["replanReason"] = gen_value("replanReason", "string", MSG_ID, obj, 0)
-    obj["pendingOptionList"] = [ _gen_PendingOption(source=source) for _ in range(LIST_LEN) ]
+    obj["replanRequest"] = gen_value("replanRequest", "string", MSG_ID, obj, 0)
+    obj["optionList"] = [ _gen_PendingOption(source=source) for _ in range(LIST_LEN) ]
     return obj
 
 

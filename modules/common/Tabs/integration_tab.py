@@ -2,12 +2,13 @@
 from __future__ import annotations
 from typing import Optional
 from PyQt5.QtWidgets import QWidget
-from Tabs.csc_tab_base import CSCTabBase, _now_ms_since_2000
+from .csc_tab_base import CSCTabBase, _now_ms_since_2000
 
 class IntegrationTab(CSCTabBase):
-    TITLE = "Integration CSC"
+    TITLE = "Integration CSC (INT)"
 
     PUSH_MESSAGES = [
+        ("0001", "공지"),
         ("0201", "협업기저임무 계획"),
         ("0202", "선행임무정보"),
         ("0203", "비행참조정보"),
@@ -20,7 +21,7 @@ class IntegrationTab(CSCTabBase):
 
     RECEIVE_MESSAGES = [
         # (생략) 전체 수신 등록 그대로 둠
-        ("0000","응답(Response)"),("0101","시스템 운용 모드"),("0102","모듈 상태 정보"),("0103","SW 상태정보"),
+        ("0000","응답(Response)"),("0001","공지"),("0101","시스템 운용 모드"),("0102","모듈 상태 정보"),("0103","SW 상태정보"),
         ("0201","협업기저임무 계획"),("0202","선행임무정보"),("0203","비행참조정보"),
         ("0301","임무 계획"),("0302","개별 임무 계획"),("0303","무인기 비행 계획"),("0304","LAH 비행 계획"),
         ("0305","재계획 수행 상태 정보"),("0401","유무인기 상태정보"),("0402","전장상황인지정보"),

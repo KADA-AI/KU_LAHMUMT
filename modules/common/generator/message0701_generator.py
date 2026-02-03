@@ -168,13 +168,21 @@ def _build_option_list_from_cached() -> list[dict]:
         if not display_name:
             display_name = f"option{option_id}"
         survival, time, recog = _derive_effects(display_name)
+        recommend = bool(item.get("recommend", False))
+        fuel_warning = item.get("fuelWarning", item.get("fuelwarning", 0))
+        try:
+            fuel_warning = int(fuel_warning)
+        except Exception:
+            fuel_warning = 0
         options.append({
             "optionID": option_id,
+            "recommend": recommend,
             "optionName": opt_code,
             "missionPlanID": mission_plan_id,
             "survivalRate": survival,
             "timeContraction": time,
             "recogEffectiveness": recog,
+            "fuelWarning": fuel_warning,
             "distance": 15000,
             "target": 0,
         })
@@ -585,6 +593,7 @@ MSG_ID = "0701"
 def _gen_Option(source: str = "DS"):
     obj = {}
     obj["optionID"] = gen_value("optionID", "uint32", MSG_ID, obj, 0)
+    obj["recommend"] = gen_value("recommend", "bool", MSG_ID, obj, 0)
     opt_val = gen_value("optionName", "uint32", MSG_ID, obj, 0)
     if isinstance(opt_val, int):
         obj["optionName"] = opt_val
@@ -597,6 +606,7 @@ def _gen_Option(source: str = "DS"):
     obj["survivalRate"] = gen_value("survivalRate", "int32", MSG_ID, obj, 0)
     obj["timeContraction"] = gen_value("timeContraction", "int32", MSG_ID, obj, 0)
     obj["recogEffectiveness"] = gen_value("recogEffectiveness", "int32", MSG_ID, obj, 0)
+    obj["fuelWarning"] = gen_value("fuelWarning", "int32", MSG_ID, obj, 0)
     obj["distance"] = random.randint(0, 200_000)
     obj["target"] = random.randint(0, 20)
     return obj

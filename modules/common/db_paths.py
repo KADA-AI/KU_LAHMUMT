@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-LEGACY_DB_ROOT = PROJECT_ROOT / "database"
+LEGACY_DB_ROOT = PROJECT_ROOT / "temp" / "database"
 DEFAULT_SCENARIO_DIRNAME = "Logs"
 DEFAULT_SCENARIO_BASE = PROJECT_ROOT / DEFAULT_SCENARIO_DIRNAME
 SCENARIO_PREFIX = "Scenario_"

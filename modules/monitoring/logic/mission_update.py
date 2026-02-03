@@ -1,0 +1,634 @@
+# -*- coding: utf-8 -*-
+from __future__ import annotations
+
+import json
+import re
+from pathlib import Path
+from typing import Any, Iterable
+
+from modules.common import db_paths
+
+
+def _coerce_int(value: object) -> int | None:
+    try:
+        return int(value)
+    except Exception:
+        return None
+
+
+def _coerce_float(value: object) -> float | None:
+    try:
+        return float(value)
+    except Exception:
+        return None
+
+
+def _derive_cumulative_etas(raw_etas: list[float]) -> tuple[list[float], bool]:
+    """Return cumulative ETAs and whether the raw values looked cumulative."""
+    if not raw_etas:
+        return [], False
+    values = [max(0.0, float(v)) for v in raw_etas]
+    eps = 1e-6
+    is_non_decreasing = all(values[idx] + eps >= values[idx - 1] for idx in range(1, len(values)))
+    starts_at_zero = values[0] <= eps
+    if starts_at_zero and is_non_decreasing:
+        return values, True
+    cumulative: list[float] = []
+    total = 0.0
+    for v in values:
+        total += v
+        cumulative.append(total)
+    return cumulative, False
+
+
+def _select_next_pending_id(items: Iterable[object], id_key: str) -> int | None:
+    entries = [item for item in items if isinstance(item, dict)]
+    for item in entries:
+        if not item.get("isDone"):
+            value = _coerce_int(item.get(id_key))
+            if value is not None:
+                return value
+    for item in reversed(entries):
+        value = _coerce_int(item.get(id_key))
+        if value is not None:
+            return value
+    return None
+
+
+def _payload_text(raw: bytes | str) -> str:
+    if isinstance(raw, bytes):
+        return raw.decode("utf-8", "ignore")
+    return str(raw)
+
+
+def parse_payload(payload: object | None) -> dict[str, Any]:
+    if payload is None:
+        return {}
+    if isinstance(payload, dict):
+        return dict(payload)
+    if isinstance(payload, list) and payload:
+        payload = payload[-1]
+        if isinstance(payload, dict):
+            return dict(payload)
+    raw_bytes: bytes | None = None
+    if isinstance(payload, bytes):
+        raw_bytes = payload
+    elif isinstance(payload, str):
+        raw_bytes = payload.encode("utf-8", "ignore")
+    else:
+        try:
+            raw_bytes = bytes(payload)  # type: ignore[arg-type]
+        except Exception:
+            raw_bytes = None
+    if raw_bytes is None:
+        return {}
+    text = _payload_text(raw_bytes)
+    match = re.search(r"\{.*\}", text, flags=re.S)
+    json_text = match.group(0) if match else text.strip()
+    if not json_text.startswith("{"):
+        return {}
+    try:
+        return json.loads(json_text)
+    except Exception:
+        return {}
+
+
+def extract_0903_info(payload: object | None) -> tuple[int | None, int | None, str | None, dict[str, Any]]:
+    body = parse_payload(payload)
+    if not body:
+        return None, None, None, {}
+    ts = None
+    for key in ("timestamp", "Timestamp", "timeStamp", "TimeStamp"):
+        if key in body:
+            ts = _coerce_int(body.get(key))
+            break
+    mpid = None
+    for key in ("missionPlanID", "MissionPlanID", "missionPlanId", "mission_plan_id"):
+        if key in body:
+            mpid = _coerce_int(body.get(key))
+            break
+    source = None
+    for key in ("source", "Source", "sourceModuleName", "SourceModuleName"):
+        if key in body:
+            source = str(body.get(key))
+            break
+    return ts, mpid, source, body
+
+
+def extract_0803_execute(payload: object | None) -> tuple[int | None, int | None, str | None, dict[str, Any]]:
+    body = parse_payload(payload)
+    if not body:
+        return None, None, None, {}
+    ts = None
+    for key in ("timestamp", "Timestamp", "timeStamp", "TimeStamp"):
+        if key in body:
+            ts = _coerce_int(body.get(key))
+            break
+    execute = None
+    for key in ("execute", "Execute"):
+        if key in body:
+            execute = _coerce_int(body.get(key))
+            break
+    source = None
+    for key in ("source", "Source", "sourceModuleName", "SourceModuleName"):
+        if key in body:
+            source = str(body.get(key))
+            break
+    return ts, execute, source, body
+
+
+def extract_0802_command(
+    payload: object | None,
+) -> tuple[int | None, int | None, int | None, str | None, dict[str, Any]]:
+    """Extract timestamp/aircraftID/mandatoryType from 0802 (MandatoryCommand)."""
+    body = parse_payload(payload)
+    if not body:
+        return None, None, None, None, {}
+
+    ts = None
+    for key in ("timestamp", "Timestamp", "timeStamp", "TimeStamp"):
+        if key in body:
+            ts = _coerce_int(body.get(key))
+            break
+
+    aircraft_id = None
+    for key in ("aircraftID", "AircraftID", "aircraftId", "aircraft_id"):
+        if key in body:
+            aircraft_id = _coerce_int(body.get(key))
+            break
+
+    mandatory_type = None
+    for key in ("mandatoryType", "MandatoryType", "mandatory_type"):
+        if key in body:
+            mandatory_type = _coerce_int(body.get(key))
+            break
+
+    source = None
+    for key in ("source", "Source", "sourceModuleName", "SourceModuleName"):
+        if key in body:
+            source = str(body.get(key))
+            break
+
+    return ts, aircraft_id, mandatory_type, source, body
+
+
+def extract_0702_decision(
+    payload: object | None,
+) -> tuple[int | None, int | None, int | None, str | None, dict[str, Any]]:
+    """Extract timestamp/ignore/missionPlanID from 0702 (PilotDecision)."""
+    body = parse_payload(payload)
+    if not body:
+        return None, None, None, None, {}
+
+    ts = None
+    for key in ("timestamp", "Timestamp", "timeStamp", "TimeStamp"):
+        if key in body:
+            ts = _coerce_int(body.get(key))
+            break
+
+    ignore_val = None
+    for key in ("ignore", "Ignore"):
+        if key in body:
+            ignore_val = _coerce_int(body.get(key))
+            break
+
+    mpid = None
+    for key in ("missionPlanID", "MissionPlanID", "missionPlanId", "mission_plan_id"):
+        if key in body:
+            mpid = _coerce_int(body.get(key))
+            break
+
+    source = None
+    for key in ("source", "Source", "sourceModuleName", "SourceModuleName"):
+        if key in body:
+            source = str(body.get(key))
+            break
+
+    return ts, ignore_val, mpid, source, body
+
+
+def extract_0401_agent_states(payload: object | None) -> tuple[int | None, list[dict[str, Any]]]:
+    body = parse_payload(payload)
+    if not body:
+        return None, []
+    ts = None
+    for key in ("timestamp", "Timestamp", "timeStamp", "TimeStamp"):
+        if key in body:
+            ts = _coerce_int(body.get(key))
+            break
+    raw_list = body.get("agentStateList") or body.get("AgentStateList") or []
+    states: list[dict[str, Any]] = []
+
+    def _extract_current_waypoint(item: dict[str, Any], info: object) -> int | None:
+        for container in (info, item):
+            if not isinstance(container, dict):
+                continue
+            for key in ("currentWaypointID", "CurrentWaypointID", "currentWaypointId"):
+                if key not in container:
+                    continue
+                value = container.get(key)
+                if isinstance(value, dict):
+                    for sub_key in ("waypointID", "WaypointID", "waypointId"):
+                        if sub_key in value:
+                            return _coerce_int(value.get(sub_key))
+                return _coerce_int(value)
+        return None
+
+    def _extract_on_mission(item: dict[str, Any], info: object) -> int | None:
+        for container in (info, item):
+            if not isinstance(container, dict):
+                continue
+            for key in ("onMission", "OnMission"):
+                if key in container:
+                    return _coerce_int(container.get(key))
+        return None
+
+    def _extract_fuel(item: dict[str, Any], info: object) -> float | None:
+        for container in (item, info):
+            if not isinstance(container, dict):
+                continue
+            for key in ("fuel", "Fuel", "fuelLiters", "fuel_liters"):
+                if key in container:
+                    return _coerce_float(container.get(key))
+        return None
+
+    for item in raw_list:
+        if not isinstance(item, dict):
+            continue
+        unmanned_info = item.get("unmannedInfo") or item.get("UnmannedInfo") or {}
+        fuel_val = _extract_fuel(item, unmanned_info)
+        states.append(
+            {
+                "aircraft_id": _coerce_int(item.get("aircraftID") or item.get("AircraftID")),
+                "health": _coerce_int(item.get("health") or item.get("Health")),
+                "last_signal_time": _coerce_int(item.get("lastSignalTime") or item.get("LastSignalTime")),
+                "is_unmanned": item.get("isUnmanned") or item.get("IsUnmanned"),
+                "current_waypoint_id": _extract_current_waypoint(item, unmanned_info),
+                "on_mission": _extract_on_mission(item, unmanned_info),
+                "fuel_liters": fuel_val,
+            }
+        )
+    return ts, states
+
+
+def format_timestamp_ms(timestamp_ms: int | None) -> str:
+    if timestamp_ms is None:
+        return "-"
+    try:
+        iso = db_paths.ms_to_iso(int(timestamp_ms))
+    except Exception:
+        return str(timestamp_ms)
+    if "T" in iso:
+        date_part, time_part = iso.split("T", 1)
+        if len(time_part) >= 6:
+            time_part = f"{time_part[0:2]}:{time_part[2:4]}:{time_part[4:6]}"
+        return f"{date_part} {time_part}"
+    return iso
+
+
+def mission_plan_json_path(mission_plan_id: int | None, db_root: Path | str | None = None) -> Path | None:
+    if mission_plan_id is None:
+        return None
+    if db_root is None:
+        base = db_paths.get_db_subpath("MissionPlan")
+    else:
+        base = Path(db_root) / "MissionPlan"
+    return base / f"{int(mission_plan_id)}.json"
+
+
+def load_db_json(folder: str, file_id: int | None, db_root: Path | str | None = None) -> dict[str, Any]:
+    if file_id is None:
+        return {}
+    if db_root is None:
+        base = db_paths.get_db_subpath(folder)
+    else:
+        base = Path(db_root) / folder
+    path = base / f"{int(file_id)}.json"
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def save_db_json(folder: str, file_id: int | None, payload: dict[str, Any], db_root: Path | str | None = None) -> bool:
+    if file_id is None:
+        return False
+    if db_root is None:
+        base = db_paths.get_db_subpath(folder)
+    else:
+        base = Path(db_root) / folder
+    path = base / f"{int(file_id)}.json"
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        return True
+    except Exception:
+        return False
+
+
+def build_uav_mission_view(
+    mission_plan_id: int | None,
+    *,
+    uav_ids: Iterable[int] = (4, 5, 6),
+    db_root: Path | str | None = None,
+) -> dict[str, Any]:
+    plan = load_db_json("MissionPlan", mission_plan_id, db_root=db_root)
+    aircraft_list = plan.get("aircraftList") or []
+    input_package_id = _coerce_int(plan.get("inputMissionPackageID"))
+    input_plan = load_db_json("InputMissionPlan", input_package_id, db_root=db_root)
+    input_missions = input_plan.get("inputMissionList") or []
+    current_input_mission_id = _select_next_pending_id(input_missions, "inputMissionID")
+    input_type_map: dict[int, int] = {}
+    input_items: list[dict[str, Any]] = []
+    for item in input_missions:
+        if not isinstance(item, dict):
+            continue
+        mission_id = _coerce_int(item.get("inputMissionID"))
+        if mission_id is None:
+            continue
+        mission_type = _coerce_int(item.get("inputMissionType"))
+        if mission_type is not None:
+            input_type_map[int(mission_id)] = int(mission_type)
+        input_items.append(
+            {
+                "input_mission_id": mission_id,
+                "is_done": bool(item.get("isDone")),
+            }
+        )
+
+    uav_entries: list[dict[str, Any]] = []
+    for uav_id in uav_ids:
+        package_id = None
+        for entry in aircraft_list:
+            if _coerce_int(entry.get("aircraftID")) == int(uav_id):
+                package_id = _coerce_int(entry.get("individualMissionPackageID"))
+                break
+
+        individual_plan = load_db_json("IndividualMissionPlan", package_id, db_root=db_root)
+        mission_list = individual_plan.get("individualMissionList") or []
+        current_mission_id: int | None = _select_next_pending_id(mission_list, "individualMissionID")
+        missions: list[dict[str, Any]] = []
+
+        for mission in mission_list:
+            mission_id = _coerce_int(mission.get("individualMissionID"))
+            related = mission.get("relatedMission") or {}
+            input_id = _coerce_int(related.get("inputMissionID"))
+            input_type = input_type_map.get(int(input_id)) if input_id is not None else None
+            path_id = _coerce_int(mission.get("pathID"))
+            waypoint_ids: list[int] = []
+            is_done = bool(mission.get("isDone"))
+            raw_etas: list[float] = []
+            waypoint_defs: list[dict[str, Any]] = []
+            is_formation_flight = False
+            formation_leader_id: int | None = None
+            if path_id is not None:
+                path_data = load_db_json("FlightPath", path_id, db_root=db_root)
+                is_formation_flight = bool(
+                    path_data.get("isFormationFlight") or path_data.get("IsFormationFlight")
+                )
+                formation_info = (
+                    path_data.get("formationInfo")
+                    or path_data.get("FormationInfo")
+                    or {}
+                )
+                if isinstance(formation_info, dict):
+                    formation_leader_id = _coerce_int(
+                        formation_info.get("leaderAircraftID")
+                        or formation_info.get("leaderAircraftId")
+                        or formation_info.get("LeaderAircraftID")
+                    )
+                for wp in path_data.get("waypointList") or []:
+                    if isinstance(wp, dict):
+                        wid = _coerce_int(wp.get("waypointID"))
+                        if wid is None:
+                            continue
+                        waypoint_ids.append(wid)
+                        eta_val = wp.get("eta")
+                        if eta_val is None:
+                            eta_val = wp.get("ETA")
+                        eta_float = _coerce_float(eta_val)
+                        raw_etas.append(float(eta_float) if eta_float is not None else 0.0)
+
+            cumulative_etas, used_cumulative = _derive_cumulative_etas(raw_etas)
+            if cumulative_etas:
+                eta_total = float(cumulative_etas[-1])
+            else:
+                eta_total = float(sum(max(0.0, v) for v in raw_etas))
+
+            for idx, wid in enumerate(waypoint_ids):
+                raw_eta = raw_etas[idx] if idx < len(raw_etas) else 0.0
+                if idx < len(cumulative_etas):
+                    cum_eta = cumulative_etas[idx]
+                elif cumulative_etas:
+                    cum_eta = cumulative_etas[-1]
+                else:
+                    cum_eta = raw_eta
+                waypoint_defs.append(
+                    {
+                        "waypoint_id": int(wid),
+                        "eta": float(raw_eta),
+                        "eta_cumulative": float(cum_eta),
+                        "eta_is_cumulative": bool(used_cumulative),
+                    }
+                )
+            has_waypoints = bool(waypoint_ids)
+            is_formation_input = input_type == 7 if input_type is not None else False
+            is_formation_follower = False
+            if is_formation_flight:
+                if formation_leader_id is not None:
+                    is_formation_follower = int(formation_leader_id) != int(uav_id)
+                else:
+                    is_formation_follower = not has_waypoints
+            if not is_formation_follower and is_formation_input and not has_waypoints:
+                is_formation_follower = True
+            label = "편대 무인기" if is_formation_follower else None
+            eta_seconds: int | None = int(round(eta_total))
+            if is_formation_follower and not has_waypoints:
+                eta_seconds = None
+            missions.append(
+                {
+                    "individual_mission_id": mission_id,
+                    "input_id": input_id,
+                    "path_id": path_id,
+                    "waypoint_ids": waypoint_ids,
+                    "is_done": is_done,
+                    "eta_seconds": eta_seconds,
+                    "waypoints": waypoint_defs,
+                    "label": label,
+                    "skip_progress": bool(is_formation_follower),
+                    "skip_pending": bool(is_formation_follower),
+                    "is_formation_flight": bool(is_formation_flight),
+                    "formation_leader_id": formation_leader_id,
+                }
+            )
+
+        uav_entries.append(
+            {
+                "aircraft_id": int(uav_id),
+                "individual_mission_package_id": package_id,
+                "current_individual_mission_id": current_mission_id,
+                "missions": missions,
+            }
+        )
+
+    return {
+        "mission_plan_id": mission_plan_id,
+        "input_mission_package_id": input_package_id,
+        "current_input_mission_id": current_input_mission_id,
+        "input_missions": input_items,
+        "uav_entries": uav_entries,
+    }
+
+
+def extract_input_mission_package_id(payload: object | None) -> int | None:
+    body = parse_payload(payload)
+    if not body:
+        return None
+    for key in ("inputMissionPackageID", "InputMissionPackageID", "inputMissionPackageId"):
+        if key in body:
+            return _coerce_int(body.get(key))
+    return None
+
+
+def collect_available_aircraft_ids(
+    payload: object | None,
+    *,
+    db_root: Path | str | None = None,
+) -> list[int]:
+    body = parse_payload(payload)
+    available = body.get("availableAircraftList") if body else None
+    if available:
+        return sorted({
+            _coerce_int(item.get("aircraftID"))
+            for item in available
+            if isinstance(item, dict)
+        } - {None})
+
+    package_id = extract_input_mission_package_id(payload)
+    if package_id is None:
+        return []
+    plan = load_db_json("InputMissionPlan", package_id, db_root=db_root)
+    available = plan.get("availableAircraftList") or []
+    return sorted({
+        _coerce_int(item.get("aircraftID"))
+        for item in available
+        if isinstance(item, dict)
+    } - {None})
+
+
+def mark_individual_mission_done(
+    package_id: int | None,
+    mission_id: int | None,
+    *,
+    db_root: Path | str | None = None,
+) -> bool:
+    if package_id is None or mission_id is None:
+        return False
+    payload = load_db_json("IndividualMissionPlan", package_id, db_root=db_root)
+    if not payload:
+        return False
+    changed = False
+    missions = payload.get("individualMissionList") or []
+    for mission in missions:
+        if not isinstance(mission, dict):
+            continue
+        if _coerce_int(mission.get("individualMissionID")) != int(mission_id):
+            continue
+        if not mission.get("isDone"):
+            mission["isDone"] = True
+            changed = True
+    if not changed:
+        return False
+    return save_db_json("IndividualMissionPlan", package_id, payload, db_root=db_root)
+
+
+def mark_input_mission_done(
+    package_id: int | None,
+    input_mission_id: int | None,
+    *,
+    db_root: Path | str | None = None,
+) -> bool:
+    if package_id is None or input_mission_id is None:
+        return False
+    payload = load_db_json("InputMissionPlan", package_id, db_root=db_root)
+    if not payload:
+        return False
+    changed = False
+    missions = payload.get("inputMissionList") or []
+    for mission in missions:
+        if not isinstance(mission, dict):
+            continue
+        if _coerce_int(mission.get("inputMissionID")) != int(input_mission_id):
+            continue
+        if not mission.get("isDone"):
+            mission["isDone"] = True
+            changed = True
+    if not changed:
+        return False
+    return save_db_json("InputMissionPlan", package_id, payload, db_root=db_root)
+
+
+def mark_individual_mission_undone(
+    package_id: int | None,
+    mission_id: int | None,
+    *,
+    db_root: Path | str | None = None,
+) -> bool:
+    if package_id is None or mission_id is None:
+        return False
+    payload = load_db_json("IndividualMissionPlan", package_id, db_root=db_root)
+    if not payload:
+        return False
+    changed = False
+    missions = payload.get("individualMissionList") or []
+    for mission in missions:
+        if not isinstance(mission, dict):
+            continue
+        if _coerce_int(mission.get("individualMissionID")) != int(mission_id):
+            continue
+        if mission.get("isDone"):
+            mission["isDone"] = False
+            changed = True
+    if not changed:
+        return False
+    return save_db_json("IndividualMissionPlan", package_id, payload, db_root=db_root)
+
+
+def mark_input_mission_undone(
+    package_id: int | None,
+    input_mission_id: int | None,
+    *,
+    db_root: Path | str | None = None,
+) -> bool:
+    if package_id is None or input_mission_id is None:
+        return False
+    payload = load_db_json("InputMissionPlan", package_id, db_root=db_root)
+    if not payload:
+        return False
+    changed = False
+    missions = payload.get("inputMissionList") or []
+    for mission in missions:
+        if not isinstance(mission, dict):
+            continue
+        if _coerce_int(mission.get("inputMissionID")) != int(input_mission_id):
+            continue
+        if mission.get("isDone"):
+            mission["isDone"] = False
+            changed = True
+    if not changed:
+        return False
+    return save_db_json("InputMissionPlan", package_id, payload, db_root=db_root)
+
+
+def coerce_int_list(values: Iterable[object] | None) -> list[int]:
+    result: list[int] = []
+    if values is None:
+        return result
+    for value in values:
+        try:
+            result.append(int(value))
+        except Exception:
+            continue
+    return result

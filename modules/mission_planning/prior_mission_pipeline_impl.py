@@ -640,6 +640,33 @@ def run_prior_mission_pipeline(
             or 700
         )
 
+        approach_speed = 40.0
+        target_speed = 30.0
+        loiter_seconds = 30
+        distance_m = None
+        if (
+            approach_coord.get("latitude") is not None
+            and approach_coord.get("longitude") is not None
+            and target_coord.get("latitude") is not None
+            and target_coord.get("longitude") is not None
+        ):
+            try:
+                distance_m = _haversine_distance(
+                    float(approach_coord["latitude"]),
+                    float(approach_coord["longitude"]),
+                    float(target_coord["latitude"]),
+                    float(target_coord["longitude"]),
+                )
+            except Exception:
+                distance_m = None
+        eta_to_target = 0
+        if isinstance(distance_m, (int, float)) and target_speed > 0:
+            try:
+                eta_to_target = int(round(float(distance_m) / float(target_speed)))
+            except Exception:
+                eta_to_target = 0
+        target_eta = max(0, int(eta_to_target) + int(loiter_seconds))
+
         approach_wp = {
             "waypointID": prior_approach_wp_id,
             "coordinate": {
@@ -647,8 +674,8 @@ def run_prior_mission_pipeline(
                 "longitude": approach_coord["longitude"],
                 "altitude": approach_coord["altitude"],
             },
-            "speed": 35.0,
-            "eta": 25,
+            "speed": approach_speed,
+            "eta": 0,
             "ecf": 0.0,
             "nextWaypointID": prior_target_wp_id,
             "waypointPassType": 1,
@@ -674,8 +701,8 @@ def run_prior_mission_pipeline(
                 "longitude": target_coord["longitude"],
                 "altitude": target_altitude,
             },
-            "speed": 30.0,
-            "eta": 30,
+            "speed": target_speed,
+            "eta": target_eta,
             "ecf": 0.0,
             "nextWaypointID": 0,
             "waypointPassType": 2,
@@ -694,7 +721,7 @@ def run_prior_mission_pipeline(
             "loiterProperty": {
                 "radius": 400,
                 "direction": 1,
-                "time": 100,
+                "time": loiter_seconds,
                 "speed": 30,
             },
         }
