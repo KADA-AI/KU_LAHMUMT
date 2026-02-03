@@ -651,6 +651,7 @@ class SimulationService:
         speed: float,
         hit_radius: float,
         max_range: float,
+        p_hit: float | None = None,
     ) -> None:
         if len(self._projectiles) >= int(SIM_PROJECTILE_MAX):
             return
@@ -663,11 +664,11 @@ class SimulationService:
         if dist <= 1e-6:
             return
         speed = max(1.0, float(speed))
-        p_hit = None
-        if kind == "missile" and max_range > 0:
+        if p_hit is None and kind == "missile" and max_range > 0:
             ratio = max(0.0, min(1.0, dist / float(max_range)))
             p_hit = 0.25 + 0.7 * (1.0 - ratio)
-            p_hit = max(0.1, min(0.95, p_hit))
+        if p_hit is not None:
+            p_hit = max(0.0, min(1.0, float(p_hit)))
         vx = dx / dist * speed
         vy = dy / dist * speed
         vz = dz / dist * speed
@@ -2124,10 +2125,6 @@ class SimulationService:
             max_range = float(weapon.a_range or 0.0)
             if max_range <= 0.0:
                 continue
-            last_fire = self._last_enemy_fire.get(int(tgt.id), -1e9)
-            reload_time = max(0.2, float(weapon.reload or 0.0))
-            if (self.sim_time - last_fire) < reload_time:
-                continue
             best = None
             best_dist = float("inf")
             best_state = None
@@ -2139,7 +2136,7 @@ class SimulationService:
                 dy = tgt.y - s.y
                 dz = tgt.z - s.z
                 dist = math.sqrt(dx * dx + dy * dy + dz * dz)
-                if dist <= 0.0 or dist > min(_MAX_THREAT_RANGE_M, max_range):
+                if dist <= 0.0 or dist > _MAX_THREAT_RANGE_M:
                     continue
                 if dist < best_dist:
                     best_dist = dist
@@ -2151,7 +2148,15 @@ class SimulationService:
             tgt.threat.detection_prob(best_dist, los, dt)
             if not tgt.threat.state.detected:
                 continue
-            if weapon.weapon_type is WeaponType.MISSILE and tgt.threat.state.t_exposed < weapon.t_fire:
+            if best_dist > max_range:
+                continue
+            last_fire = self._last_enemy_fire.get(int(tgt.id), -1e9)
+            reload_time = max(0.2, float(weapon.reload or 0.0))
+            if (self.sim_time - last_fire) < reload_time:
+                continue
+            shot_dt = max(float(dt or 0.0), reload_time)
+            p_hit = tgt.threat.kill_prob(best_dist, shot_dt)
+            if p_hit <= 0.0:
                 continue
             speed = self._weapon_projectile_speed(weapon)
             hit_radius = self._weapon_hit_radius(weapon)
@@ -2168,6 +2173,7 @@ class SimulationService:
                 speed=speed,
                 hit_radius=hit_radius,
                 max_range=max_range,
+                p_hit=p_hit,
             )
             self._last_enemy_fire[int(tgt.id)] = float(self.sim_time)
 

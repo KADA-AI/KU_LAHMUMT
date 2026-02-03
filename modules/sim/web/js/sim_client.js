@@ -24,6 +24,7 @@ export const initSimClient = () => {
   let lastStep = null;
   let frameQueue = [];
   let draining = false;
+  let suspendRender = typeof document !== "undefined" ? document.hidden : false;
   const subscribers = new Set();
 
   const notify = () => {
@@ -82,6 +83,11 @@ export const initSimClient = () => {
   };
 
   const drainQueue = () => {
+    if (suspendRender) {
+      frameQueue = [];
+      draining = false;
+      return;
+    }
     if (!frameQueue.length) {
       draining = false;
       return;
@@ -101,7 +107,9 @@ export const initSimClient = () => {
       const state = await fetchJson(`${STATE_ENDPOINT}${query}`, { method: "GET" });
       if (state && Array.isArray(state.history)) {
         if (state.history.length) {
-          enqueueFrames(state.history.map((frame) => ({ ok: true, ...frame })));
+          if (!suspendRender) {
+            enqueueFrames(state.history.map((frame) => ({ ok: true, ...frame })));
+          }
           const last = state.history[state.history.length - 1];
           if (Number.isFinite(last?.step)) {
             lastStep = last.step;
@@ -122,7 +130,7 @@ export const initSimClient = () => {
               lastStep = state.latest.step;
             }
           }
-          if (!state.history.length) {
+          if (!state.history.length && !suspendRender) {
             updateMarkers(state.latest);
           }
         }
@@ -130,7 +138,9 @@ export const initSimClient = () => {
         return;
       }
       lastState = state;
-      updateMarkers(state);
+      if (!suspendRender) {
+        updateMarkers(state);
+      }
       if (Number.isFinite(state?.step)) {
         lastStep = state.step;
       }
@@ -290,6 +300,19 @@ export const initSimClient = () => {
     subscribers.add(cb);
     return () => subscribers.delete(cb);
   };
+
+  if (typeof document !== "undefined") {
+    document.addEventListener("visibilitychange", () => {
+      suspendRender = document.hidden;
+      if (!suspendRender) {
+        frameQueue = [];
+        draining = false;
+        if (lastState) {
+          updateMarkers(lastState);
+        }
+      }
+    });
+  }
 
   return {
     startPolling,

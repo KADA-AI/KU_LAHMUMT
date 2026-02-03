@@ -1136,6 +1136,7 @@ export const initVehicleMarkers = (map) => {
   });
 
   const getPosition = (label) => currentPositions[label] || null;
+  const getPositions = () => ({ ...currentPositions });
 
-  return { loadFromReference, getPosition };
+  return { loadFromReference, getPosition, getPositions };
 };

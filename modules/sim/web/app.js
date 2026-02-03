@@ -59,6 +59,78 @@ import { initSimClient } from "./js/sim_client.js";
   };
 
   const resetView = () => {
+    const positions =
+      typeof window.getAgentPositions === "function" ? window.getAgentPositions() : null;
+    if (positions && typeof positions === "object") {
+      const entries = Object.entries(positions).filter(([, pos]) => {
+        if (!pos) {
+          return false;
+        }
+        if (!Number.isFinite(pos.lat) || !Number.isFinite(pos.lon)) {
+          return false;
+        }
+        if (pos.alive === false) {
+          return false;
+        }
+        return true;
+      });
+      if (entries.length) {
+        const uavLabels = entries
+          .filter(([label]) => String(label).toUpperCase().startsWith("UAV"))
+          .map(([label]) => label);
+        const labels = uavLabels.length ? uavLabels : entries.map(([label]) => label);
+        if (labels.length === 1 && typeof window.flyToAgent === "function") {
+          window.flyToAgent(labels[0]);
+          return;
+        }
+        let minLon = Infinity;
+        let maxLon = -Infinity;
+        let minLat = Infinity;
+        let maxLat = -Infinity;
+        labels.forEach((label) => {
+          const pos = positions[label];
+          if (!pos) {
+            return;
+          }
+          minLon = Math.min(minLon, pos.lon);
+          maxLon = Math.max(maxLon, pos.lon);
+          minLat = Math.min(minLat, pos.lat);
+          maxLat = Math.max(maxLat, pos.lat);
+        });
+        if (
+          Number.isFinite(minLon) &&
+          Number.isFinite(maxLon) &&
+          Number.isFinite(minLat) &&
+          Number.isFinite(maxLat)
+        ) {
+          let minLonAdj = minLon;
+          let maxLonAdj = maxLon;
+          let minLatAdj = minLat;
+          let maxLatAdj = maxLat;
+          const spanLon = Math.abs(maxLon - minLon);
+          const spanLat = Math.abs(maxLat - minLat);
+          if (spanLon < 1e-5 && spanLat < 1e-5) {
+            const centerLat = (minLat + maxLat) * 0.5;
+            const deltaLat = 0.02;
+            const cosLat = Math.cos((centerLat * Math.PI) / 180) || 1e-6;
+            const deltaLon = deltaLat / cosLat;
+            minLonAdj -= deltaLon;
+            maxLonAdj += deltaLon;
+            minLatAdj -= deltaLat;
+            maxLatAdj += deltaLat;
+          }
+          map.fitBounds(
+            [
+              [minLonAdj, minLatAdj],
+              [maxLonAdj, maxLatAdj],
+            ],
+            { padding: 140, duration: 600, bearing: 0, pitch: 0, maxZoom: 13.2 },
+          );
+          return;
+        }
+      }
+    }
+
     if (initialView) {
       map.easeTo({
         center: initialView.center,
@@ -126,6 +198,7 @@ import { initSimClient } from "./js/sim_client.js";
   const vehicleMarkers = initVehicleMarkers(map);
   window.missionVehicleLoader = vehicleMarkers.loadFromReference;
   window.getAgentPosition = vehicleMarkers.getPosition;
+  window.getAgentPositions = vehicleMarkers.getPositions;
   const targetMarkers = initTargetMarkers(map);
   window.missionTargetLoader = targetMarkers.loadFromReference;
   const projectileMarkers = initProjectileMarkers(map);
