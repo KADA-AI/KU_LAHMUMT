@@ -1424,11 +1424,25 @@ class MainWindow(QMainWindow):
         if not path:
             return
         try:
+            if not path.parent.exists():
+                self._init_gui_log_file_sink()
+                path = getattr(self, "_log_file_path", None)
+                if not path:
+                    return
             stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
             with path.open("a", encoding="utf-8") as fh:
                 fh.write(f"{stamp} {text}\n")
         except Exception:
-            pass
+            try:
+                self._init_gui_log_file_sink()
+                path = getattr(self, "_log_file_path", None)
+                if not path:
+                    return
+                stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+                with path.open("a", encoding="utf-8") as fh:
+                    fh.write(f"{stamp} {text}\n")
+            except Exception:
+                pass
 
     def _append_log_line(self, text: str):
         try:

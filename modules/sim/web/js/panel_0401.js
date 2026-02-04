@@ -76,6 +76,18 @@ const applySimState = (status, simEntry) => {
   } else if (typeof simEntry.alive === "boolean") {
     agent.health = simEntry.alive ? 1 : 2;
   }
+  if (!agent.isUnmanned && simEntry.weapons) {
+    const weapons = simEntry.weapons;
+    if (Number.isFinite(Number(weapons.type1))) {
+      agent.mannedInfo.weapons.type1 = Number(weapons.type1);
+    }
+    if (Number.isFinite(Number(weapons.type2))) {
+      agent.mannedInfo.weapons.type2 = Number(weapons.type2);
+    }
+    if (Number.isFinite(Number(weapons.type3))) {
+      agent.mannedInfo.weapons.type3 = Number(weapons.type3);
+    }
+  }
   if (agent.isUnmanned) {
     const flightMode = Number(simEntry.flightMode);
     if (Number.isFinite(flightMode)) {

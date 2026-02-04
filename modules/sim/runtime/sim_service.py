@@ -314,7 +314,7 @@ _TARGET_TYPE_CONFIG: dict[int, dict[str, Any]] = {
 
 _FRIENDLY_WEAPON_CONFIG: dict[str, dict[str, float | str]] = {
     "lah": {
-        "range": 2400.0,
+        "range": 5000.0,
         "reload": 4.0,
         "speed": SIM_PROJECTILE_SPEED_MISSILE,
         "hit_radius": SIM_PROJECTILE_HIT_RADIUS_MISSILE,
@@ -324,21 +324,21 @@ _FRIENDLY_WEAPON_CONFIG: dict[str, dict[str, float | str]] = {
 
 _FRIENDLY_WEAPON_TYPE_CONFIG: dict[int, dict[str, float | str]] = {
     1: {
-        "range": 2400.0,
+        "range": 5000.0,
         "reload": 4.0,
         "speed": SIM_PROJECTILE_SPEED_MISSILE,
         "hit_radius": SIM_PROJECTILE_HIT_RADIUS_MISSILE,
         "kind": "missile",
     },
     2: {
-        "range": 2400.0,
+        "range": 5000.0,
         "reload": 4.0,
         "speed": SIM_PROJECTILE_SPEED_MISSILE,
         "hit_radius": SIM_PROJECTILE_HIT_RADIUS_MISSILE,
         "kind": "missile",
     },
     3: {
-        "range": 1200.0,
+        "range": 5000.0,
         "reload": 0.25,
         "speed": SIM_PROJECTILE_SPEED_GUN,
         "hit_radius": SIM_PROJECTILE_HIT_RADIUS_GUN,
@@ -4083,6 +4083,11 @@ class SimulationService:
                 "health": int(health_value),
                 "fuel": float(fuel),
             }
+            if simv.airframe == "lah":
+                try:
+                    entry["weapons"] = dict(self._get_weapon_counts(simv))
+                except Exception:
+                    pass
             if simv.airframe == "uav":
                 flight_mode = int(self._flight_mode_for(simv))
                 on_mission = int(self._on_mission_for(simv))

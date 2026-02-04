@@ -149,6 +149,7 @@ def build_lah_flight_plans_from_mrpk(
     def _mk_wp(lat: float, lon: float, alt: float, eta_ms: int) -> OrderedDict:
         wp = OrderedDict([
             ("waypointID", 0),
+            ("isDone", False),
             ("coordinate", {"latitude": round(lat,6), "longitude": round(lon,6), "altitude": int(round(alt))}),
             ("speed", cruise_speed),
             ("eta",   int(eta_ms)),
@@ -322,6 +323,7 @@ def build_lah_flight_plans_fixed(
                     )
                     wp = OrderedDict([
                         ("waypointID", wp_alloc.alloc()),
+                        ("isDone", False),
                         ("coordinate", {
                             "latitude":  round(float(sample.get("lat", 0.0)), 6),
                             "longitude": round(float(sample.get("lon", 0.0)), 6),
@@ -352,6 +354,7 @@ def build_lah_flight_plans_fixed(
                 alt = _lah_alt_agl(lat, lon, Altitude_LAH)
                 wp = OrderedDict([
                     ("waypointID", wp_alloc.alloc()),
+                    ("isDone", False),
                     ("coordinate", {
                         "latitude":  round(lat, 6),
                         "longitude": round(lon, 6),
@@ -367,6 +370,8 @@ def build_lah_flight_plans_fixed(
         for i in range(len(wplist) - 1):
             wplist[i]["nextWaypointID"] = wplist[i + 1]["waypointID"]
         if wplist:
+            for w in wplist:
+                w.setdefault("isDone", False)
             for w in wplist:
                 _strip_wp_extras(w)
             last_wp = wplist[-1]

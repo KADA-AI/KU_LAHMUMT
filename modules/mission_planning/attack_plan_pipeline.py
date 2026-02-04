@@ -42,9 +42,6 @@ LogCallback = Callable[[str], None]
 LOG_FILENAME = "log_attack_algorithm.json"
 ATTACK_ENTRY_OFFSET_METERS = 100.0
 ATTACK_MANNED_CANDIDATES = (2, 3)
-SWEEP_TRIM_LEAD_SECONDS = 5.0
-SWEEP_TRIM_MIN_SEGMENT_M = 5.0
-SWEEP_TRIM_MIN_REMAINING_M = 10.0
 
 
 def run_attack_plan_pipeline(
@@ -556,169 +553,6 @@ def _haversine_distance_m(a: Dict[str, Any], b: Dict[str, Any]) -> Optional[floa
     return r * c
 
 
-def _is_sweep_mission(mission_info: Optional[Dict[str, Any]]) -> bool:
-    if not isinstance(mission_info, dict):
-        return False
-    if mission_info.get("lineList"):
-        return True
-    if mission_info.get("areaList"):
-        return True
-    return False
-
-
-def _find_waypoint_by_id(
-    waypoints: List[Dict[str, Any]],
-    waypoint_id: Optional[int],
-) -> Optional[Dict[str, Any]]:
-    if waypoint_id is None:
-        return None
-    for wp in waypoints:
-        if _to_int(wp.get("waypointID")) == waypoint_id:
-            return wp
-    return None
-
-
-def _to_local_xy_m(
-    coord: Dict[str, Any],
-    ref_lat: float,
-    ref_lon: float,
-) -> Optional[Tuple[float, float]]:
-    lat = _to_float(coord.get("latitude"))
-    lon = _to_float(coord.get("longitude"))
-    if lat is None or lon is None:
-        return None
-    r = 6_371_000.0
-    ref_lat_rad = math.radians(ref_lat)
-    x = math.radians(lon - ref_lon) * math.cos(ref_lat_rad) * r
-    y = math.radians(lat - ref_lat) * r
-    return (x, y)
-
-
-def _trim_resume_sweep_progress(
-    flight_path: Dict[str, Any],
-    *,
-    original_waypoints: List[Dict[str, Any]],
-    current_waypoint_id: Optional[int],
-    previous_waypoint_id: Optional[int],
-    agent_coord: Optional[Dict[str, Any]],
-    agent_speed: Optional[float],
-    mission_info: Optional[Dict[str, Any]],
-    lead_seconds: float,
-    emit: Optional[Callable[[str], None]] = None,
-) -> bool:
-    if not _is_sweep_mission(mission_info):
-        return False
-    if current_waypoint_id is None:
-        return False
-    if not agent_coord:
-        return False
-
-    waypoints = list(flight_path.get("waypointList") or [])
-    if not waypoints:
-        return False
-
-    current_wp = _find_waypoint_by_id(waypoints, current_waypoint_id)
-    if current_wp is None:
-        return False
-
-    current_coord = _normalize_coordinate(current_wp.get("coordinate"))
-    if not current_coord:
-        return False
-
-    prev_wp = _find_waypoint_by_id(original_waypoints, previous_waypoint_id)
-    prev_coord = _normalize_coordinate(prev_wp.get("coordinate")) if prev_wp else None
-
-    speed = _to_float(agent_speed) or _to_float(current_wp.get("speed")) or 0.0
-    lead_dist = max(0.0, speed) * max(0.0, lead_seconds)
-
-    if prev_coord:
-        seg_xy_start = _to_local_xy_m(prev_coord, prev_coord["latitude"], prev_coord["longitude"])
-        seg_xy_end = _to_local_xy_m(current_coord, prev_coord["latitude"], prev_coord["longitude"])
-        agent_xy = _to_local_xy_m(agent_coord, prev_coord["latitude"], prev_coord["longitude"])
-        if not seg_xy_start or not seg_xy_end or not agent_xy:
-            return False
-
-        vx = seg_xy_end[0] - seg_xy_start[0]
-        vy = seg_xy_end[1] - seg_xy_start[1]
-        seg_len = math.hypot(vx, vy)
-        if seg_len < SWEEP_TRIM_MIN_SEGMENT_M:
-            return False
-
-        px = agent_xy[0] - seg_xy_start[0]
-        py = agent_xy[1] - seg_xy_start[1]
-        denom = vx * vx + vy * vy
-        if denom <= 0.0:
-            return False
-        t = (px * vx + py * vy) / denom
-        t = max(0.0, min(1.0, t))
-        progress_dist = t * seg_len
-        cut_dist = min(seg_len, max(0.0, progress_dist) + lead_dist)
-
-        remaining = seg_len - cut_dist
-        if remaining < SWEEP_TRIM_MIN_REMAINING_M:
-            if len(waypoints) > 1:
-                flight_path["waypointList"] = [
-                    wp for wp in waypoints if _to_int(wp.get("waypointID")) != current_waypoint_id
-                ]
-                if emit:
-                    emit(
-                        f"[ATTACK][UAV] Sweep resume dropped waypoint {current_waypoint_id} "
-                        f"(remaining={remaining:.1f}m)."
-                    )
-                return True
-            return False
-
-        bearing = _bearing_between(
-            prev_coord["latitude"],
-            prev_coord["longitude"],
-            current_coord["latitude"],
-            current_coord["longitude"],
-        )
-        new_coord = _project_coordinate(prev_coord, bearing, cut_dist)
-        if not new_coord:
-            return False
-        alt = _normalize_altitude_value(current_coord.get("altitude"))
-        if alt is None:
-            alt = _normalize_altitude_value(agent_coord.get("altitude"))
-        if alt is not None:
-            new_coord["altitude"] = alt
-        current_wp["coordinate"] = new_coord
-        if emit:
-            emit(
-                f"[ATTACK][UAV] Sweep resume trimmed waypoint {current_waypoint_id} "
-                f"(cut={cut_dist:.1f}m, remaining={remaining:.1f}m)."
-            )
-        return True
-
-    # Fallback: advance from current position toward the waypoint.
-    distance_to_wp = _haversine_distance_m(agent_coord, current_coord)
-    if distance_to_wp is None or distance_to_wp < SWEEP_TRIM_MIN_SEGMENT_M:
-        return False
-    cut_dist = min(distance_to_wp, lead_dist)
-    if cut_dist < SWEEP_TRIM_MIN_SEGMENT_M:
-        return False
-    bearing = _bearing_between(
-        agent_coord["latitude"],
-        agent_coord["longitude"],
-        current_coord["latitude"],
-        current_coord["longitude"],
-    )
-    new_coord = _project_coordinate(agent_coord, bearing, cut_dist)
-    if not new_coord:
-        return False
-    alt = _normalize_altitude_value(current_coord.get("altitude"))
-    if alt is None:
-        alt = _normalize_altitude_value(agent_coord.get("altitude"))
-    if alt is not None:
-        new_coord["altitude"] = alt
-    current_wp["coordinate"] = new_coord
-    if emit:
-        emit(
-            f"[ATTACK][UAV] Sweep resume advanced waypoint {current_waypoint_id} "
-            f"by {cut_dist:.1f}m from current position."
-        )
-    return True
-
 
 def _json_safe(value: Any) -> Any:
     try:
@@ -1196,17 +1030,6 @@ def _build_uav_attack_tracking_package(
         resume_fp_data,
         current_waypoint_id=artifacts.current_waypoint_id,
         previous_waypoint_id=artifacts.previous_waypoint_id,
-    )
-    _trim_resume_sweep_progress(
-        resume_fp_data,
-        original_waypoints=original_resume_waypoints,
-        current_waypoint_id=artifacts.current_waypoint_id,
-        previous_waypoint_id=artifacts.previous_waypoint_id,
-        agent_coord=agent_coord,
-        agent_speed=_to_float(state.get("speed")),
-        mission_info=mission_resume.get("individualMissionInfo") or {},
-        lead_seconds=SWEEP_TRIM_LEAD_SECONDS,
-        emit=emit,
     )
     resume_waypoints = resume_fp_data.get("waypointList") or []
     if not resume_waypoints and original_resume_waypoints:

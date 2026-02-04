@@ -1883,6 +1883,7 @@ def build_flight_plans(
 
         for wp in wps:
             wp["waypointID"] = wp_alloc.alloc()
+            wp.setdefault("isDone", False)
 
         for idx in range(len(wps) - 1):
             wps[idx]["nextWaypointID"] = wps[idx + 1]["waypointID"]
