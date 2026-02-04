@@ -48,7 +48,7 @@ const renderManned = (state) => `
     <div class="agent-section-title">기체 상태</div>
     <div class="agent-field">
       <div class="agent-label">Health</div>
-      <div class="segmented" data-field="health" data-columns="3">
+      <div class="segmented" data-field="health" data-columns="3" data-default="1">
         <button type="button" data-value="0">미확인</button>
         <button type="button" data-value="1">정상</button>
         <button type="button" data-value="2">비정상</button>
@@ -67,21 +67,21 @@ const renderManned = (state) => `
     <div class="agent-section-title">데이터링크</div>
     <div class="agent-field">
       <div class="agent-label">UAV1</div>
-      <div class="segmented" data-field="datalink.uav1" data-boolean="true" data-columns="2">
+      <div class="segmented" data-field="datalink.uav1" data-boolean="true" data-columns="2" data-default="1">
         <button type="button" data-value="1">연결</button>
         <button type="button" data-value="0">끊김</button>
       </div>
     </div>
     <div class="agent-field">
       <div class="agent-label">UAV2</div>
-      <div class="segmented" data-field="datalink.uav2" data-boolean="true" data-columns="2">
+      <div class="segmented" data-field="datalink.uav2" data-boolean="true" data-columns="2" data-default="1">
         <button type="button" data-value="1">연결</button>
         <button type="button" data-value="0">끊김</button>
       </div>
     </div>
     <div class="agent-field">
       <div class="agent-label">UAV3</div>
-      <div class="segmented" data-field="datalink.uav3" data-boolean="true" data-columns="2">
+      <div class="segmented" data-field="datalink.uav3" data-boolean="true" data-columns="2" data-default="1">
         <button type="button" data-value="1">연결</button>
         <button type="button" data-value="0">끊김</button>
       </div>
@@ -109,7 +109,7 @@ const renderUnmanned = (state) => `
     <div class="agent-section-title">기체 상태</div>
     <div class="agent-field">
       <div class="agent-label">Health</div>
-      <div class="segmented" data-field="health" data-columns="3">
+      <div class="segmented" data-field="health" data-columns="3" data-default="1">
         <button type="button" data-value="0">미확인</button>
         <button type="button" data-value="1">정상</button>
         <button type="button" data-value="2">비정상</button>
@@ -117,7 +117,7 @@ const renderUnmanned = (state) => `
     </div>
     <div class="agent-field">
       <div class="agent-label">임무장비</div>
-      <div class="segmented" data-field="payloadHealth" data-columns="3">
+      <div class="segmented" data-field="payloadHealth" data-columns="3" data-default="1">
         <button type="button" data-value="0">없음</button>
         <button type="button" data-value="1">정상</button>
         <button type="button" data-value="2">비정상</button>
@@ -125,7 +125,7 @@ const renderUnmanned = (state) => `
     </div>
     <div class="agent-field">
       <div class="agent-label">연료 경고</div>
-      <div class="segmented" data-field="fuelWarning" data-columns="2">
+      <div class="segmented" data-field="fuelWarning" data-columns="2" data-default="0">
         <button type="button" data-value="0">없음</button>
         <button type="button" data-value="1">양호</button>
         <button type="button" data-value="2">경고</button>
@@ -141,32 +141,48 @@ const renderUnmanned = (state) => `
       </div>
     </div>
   </div>
-  <div class="agent-section">
-    <div class="agent-section-title">임무 진행</div>
-    <div class="agent-field">
-      <div class="agent-label">비행 모드</div>
-      <select class="agent-select" data-field="flightMode">
-        ${createOptionList(FLIGHT_MODES, state.flightMode)}
-      </select>
-    </div>
-    <div class="agent-field">
-      <div class="agent-label">임무 상태</div>
-      <div class="segmented" data-field="onMission" data-columns="3">
-        <button type="button" data-value="0">기본</button>
-        <button type="button" data-value="1">수행중</button>
-        <button type="button" data-value="2">완료</button>
-      </div>
-    </div>
-    <div class="agent-field">
-      <div class="agent-label">현재 WP</div>
-      <input class="agent-input" type="number" min="0" max="65535" data-field="currentWaypointID" />
-    </div>
-    <div class="agent-field" data-when="flightMode:9">
-      <div class="agent-label">표적 ID</div>
-      <input class="agent-input" type="number" min="0" max="65535" data-field="targetID" />
-    </div>
-  </div>
 `;
+
+const overrideTimers = new Map();
+
+const buildOverridePayload = (label) => {
+  const state = getUiState(label);
+  return {
+    agent: label,
+    health: Number(state.health),
+    fuelConsumption: Number(state.fuelConsumption),
+    payloadHealth: Number(state.payloadHealth),
+    fuelWarning: Number(state.fuelWarning),
+    weapons: {
+      type1: Number(state.weapons?.type1 ?? 0),
+      type2: Number(state.weapons?.type2 ?? 0),
+      type3: Number(state.weapons?.type3 ?? 0),
+    },
+    datalink: {
+      uav1: Boolean(state.datalink?.uav1),
+      uav2: Boolean(state.datalink?.uav2),
+      uav3: Boolean(state.datalink?.uav3),
+    },
+  };
+};
+
+const queueAgentOverride = (label) => {
+  if (!label) {
+    return;
+  }
+  if (!window.simClient || typeof window.simClient.setAgentState !== "function") {
+    return;
+  }
+  const key = String(label);
+  if (overrideTimers.has(key)) {
+    clearTimeout(overrideTimers.get(key));
+  }
+  const handle = setTimeout(() => {
+    overrideTimers.delete(key);
+    window.simClient.setAgentState(buildOverridePayload(label));
+  }, 80);
+  overrideTimers.set(key, handle);
+};
 
 const updateStatusDot = (button, state, manned) => {
   const dot = button.querySelector(".ui-btn-dot");
@@ -218,18 +234,42 @@ const applyConditionalVisibility = (root, state) => {
   });
 };
 
+const applyDisabledState = (root, state) => {
+  const locked = Number(state.health) === 2;
+  root.classList.toggle("is-locked", locked);
+  root.querySelectorAll("button, input, select").forEach((el) => {
+    el.disabled = locked;
+  });
+};
+
+const normalizeSegmentValue = (group, value) =>
+  group.dataset.boolean === "true" ? (value ? 1 : 0) : Number(value);
+
+const getSegmentDefault = (group) =>
+  group.dataset.default !== undefined ? Number(group.dataset.default) : null;
+
 const syncSegmented = (root, state) => {
   root.querySelectorAll(".segmented").forEach((group) => {
     const field = group.dataset.field;
     if (!field) {
       return;
     }
-    const current = getNested(state, field);
+    const current = normalizeSegmentValue(group, getNested(state, field));
+    const defaultValue = getSegmentDefault(group);
     group.querySelectorAll("button[data-value]").forEach((btn) => {
       const value = Number(btn.dataset.value);
-      btn.classList.toggle("is-active", value === Number(current));
+      const isActive = value === Number(current);
+      btn.classList.toggle("is-active", isActive);
+      if (isActive) {
+        const isDefault = defaultValue === null ? true : value === defaultValue;
+        btn.classList.toggle("is-ok", isDefault);
+        btn.classList.toggle("is-danger", !isDefault);
+      } else {
+        btn.classList.remove("is-ok", "is-danger");
+      }
     });
   });
+  applyDisabledState(root, state);
 };
 
 const bindSegmented = (root, state, button, label, manned) => {
@@ -242,8 +282,18 @@ const bindSegmented = (root, state, button, label, manned) => {
     group.querySelectorAll("button[data-value]").forEach((btn) => {
       const value = Number(btn.dataset.value);
       btn.addEventListener("click", () => {
-        const next = group.dataset.boolean === "true" ? value === 1 : value;
+        if (Number(state.health) === 2) {
+          return;
+        }
+        const current = normalizeSegmentValue(group, getNested(state, field));
+        const defaultValue = getSegmentDefault(group);
+        let nextValue = value;
+        if (defaultValue !== null && value === current && value !== defaultValue) {
+          nextValue = defaultValue;
+        }
+        const next = group.dataset.boolean === "true" ? nextValue === 1 : nextValue;
         updateUiField(label, field, next);
+        queueAgentOverride(label);
         syncSegmented(root, state);
         applyConditionalVisibility(root, state);
         updateStatusDot(button, state, manned);
@@ -257,7 +307,11 @@ const bindSelects = (root, state, button, label, manned) => {
   root.querySelectorAll("select[data-field]").forEach((select) => {
     const field = select.dataset.field;
     select.addEventListener("change", () => {
+      if (Number(state.health) === 2) {
+        return;
+      }
       updateUiField(label, field, Number(select.value));
+      queueAgentOverride(label);
       applyConditionalVisibility(root, state);
       updateStatusDot(button, state, manned);
     });
@@ -272,7 +326,11 @@ const bindNumbers = (root, state, button, label, manned) => {
       input.value = current;
     }
     input.addEventListener("input", () => {
+      if (Number(state.health) === 2) {
+        return;
+      }
       updateUiField(label, field, Number(input.value));
+      queueAgentOverride(label);
       updateStatusDot(button, state, manned);
     });
   });
@@ -293,16 +351,24 @@ const bindSteppers = (root, state, button, label, manned) => {
         input.value = current;
       }
       input.addEventListener("input", () => {
+        if (Number(state.health) === 2) {
+          return;
+        }
         updateUiField(label, field, Number(input.value));
+        queueAgentOverride(label);
         updateStatusDot(button, state, manned);
       });
     }
     buttons.forEach((btn) => {
       const step = Number(btn.dataset.step);
       btn.addEventListener("click", () => {
+        if (Number(state.health) === 2) {
+          return;
+        }
         const current = Number(getNested(state, field) || 0);
         const next = Math.max(0, Math.min(10, Number((current + step).toFixed(1))));
         updateUiField(label, field, next);
+        queueAgentOverride(label);
         if (input) {
           input.value = next;
         }
@@ -356,6 +422,7 @@ export const initAgentPanel = () => {
     const state = getUiState(label);
     renderPanelBody(agentPanelBody, state, manned);
     applyConditionalVisibility(agentPanelBody, state);
+    applyDisabledState(agentPanelBody, state);
     bindSegmented(agentPanelBody, state, button, label, manned);
     bindSelects(agentPanelBody, state, button, label, manned);
     bindNumbers(agentPanelBody, state, button, label, manned);

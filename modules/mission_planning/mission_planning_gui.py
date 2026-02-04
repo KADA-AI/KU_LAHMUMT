@@ -1446,6 +1446,43 @@ class MainWindow(QMainWindow):
         try: print(text)
         except Exception: pass
 
+    def _mark_attack_target_used(self, attack_result: dict | None) -> None:
+        try:
+            result = (attack_result or {}).get("result") or {}
+            primary = result.get("primary_target")
+            if not isinstance(primary, dict):
+                return
+
+            key = primary.get("key") or primary.get("targetKey")
+            target_id = primary.get("target_id") or primary.get("targetID") or primary.get("targetId")
+            watcher_id = primary.get("watcher_id") or primary.get("watcherID") or primary.get("watcherId")
+            raw = primary.get("raw")
+            if isinstance(raw, dict):
+                key = key or raw.get("key") or raw.get("targetKey")
+                target_id = target_id or raw.get("targetID") or raw.get("targetId")
+                watcher_id = watcher_id or raw.get("watcherID") or raw.get("watcherId")
+
+            if key is None and target_id is None:
+                return
+
+            try:
+                from modules.monitoring.logic.target_info import mark_targets_as_used
+            except Exception as exc:
+                self._append_log_line(f"[ATTACK] mark target used import failed: {exc}")
+                return
+
+            payload = {}
+            if key is not None:
+                payload["key"] = key
+            if target_id is not None:
+                payload["targetID"] = target_id
+            if watcher_id is not None:
+                payload["watcherID"] = watcher_id
+            mark_targets_as_used([payload])
+            self._append_log_line(f"[ATTACK] mark target used: key={key}, targetID={target_id}")
+        except Exception as exc:
+            self._append_log_line(f"[ATTACK] mark target used failed: {exc}")
+
     # ───────── 모드/슬라이더 ─────────
     def _on_mode_slider_changed(self, val: int):
         labels = ["초기화 모드", "대기모드", "초기 임무 계획", "임무 수행"]
@@ -1918,7 +1955,7 @@ class MainWindow(QMainWindow):
 
     def _should_use_attack_pipeline(self, ctx: Dict[str, Any]) -> bool:
         reason_text = str(ctx.get("reason") or "").strip()
-        if "공격 특화" in reason_text or "공격특화" in reason_text:
+        if "공격 특화" in reason_text or "공격특화" in reason_text or "공격추천" in reason_text:
             return True
 
         detail = ctx.get("replan_detail")
@@ -1934,7 +1971,7 @@ class MainWindow(QMainWindow):
         option_names = ctx.get("option_names") or []
         for name in option_names:
             text = str(name)
-            if "공격 특화" in text or "공격특화" in text:
+            if "공격 특화" in text or "공격특화" in text or "공격추천" in text:
                 return True
 
         return False
@@ -2103,13 +2140,42 @@ class MainWindow(QMainWindow):
             )
 
 
+            def _normalize_option_label(value: Any) -> str:
+                return str(value).strip() if value is not None else ""
+
+            def _collect_attack_option_indices(context: Dict[str, Any]) -> list[int]:
+                labels = list(context.get("option_names") or [])
+                attack_labels = {"공격추천", "공격 특화", "공격특화"}
+                return [
+                    idx for idx, label in enumerate(labels)
+                    if _normalize_option_label(label) in attack_labels
+                ]
+
+            def _select_by_indices(values: list[Any], indices: list[int]) -> list[Any]:
+                seq = list(values or [])
+                return [seq[idx] if idx < len(seq) else None for idx in indices]
+
+            def _filter_context_by_indices(context: Dict[str, Any], keep_indices: list[int]) -> Dict[str, Any]:
+                filtered = dict(context)
+                plan_ids = list(context.get("plan_ids") or [])
+                option_names = list(context.get("option_names") or [])
+                if keep_indices:
+                    filtered["plan_ids"] = _select_by_indices(plan_ids, keep_indices)
+                    filtered["option_names"] = _select_by_indices(option_names, keep_indices)
+                else:
+                    filtered.pop("plan_ids", None)
+                    filtered.pop("option_names", None)
+                return filtered
+
+            attack_option_indices = _collect_attack_option_indices(ctx)
+            attack_ctx = _filter_context_by_indices(ctx, attack_option_indices) if attack_option_indices else ctx
             attack_summary_info: Optional[Dict[str, Any]] = None
             if self._should_use_attack_pipeline(ctx):
                 _record_step("attack_pipeline", "start", detail={"reason": reason})
                 self.log_sig.emit("[ATTACK] 공격 특화 재계획 요청 감지 → 전용 파이프라인 실행")
                 try:
-                    attack_result = run_attack_plan_pipeline(ctx, log_callback=self._append_log_line)
-                    ctx["_attack_pipeline"] = attack_result
+                    attack_result = run_attack_plan_pipeline(attack_ctx, log_callback=self._append_log_line)
+                    attack_ctx["_attack_pipeline"] = attack_result
                     log_path = (attack_result or {}).get("log_path")
                     if log_path:
                         self.log_sig.emit(f"[ATTACK] 분석 로그 저장: {log_path}")
@@ -2124,23 +2190,24 @@ class MainWindow(QMainWindow):
                     if attack_updates:
                         try:
                             self._finalize_attack_pipeline(
-                                ctx, attack_result, attack_updates, reason, session_id, schedule_delivery=False
+                                attack_ctx, attack_result, attack_updates, reason, session_id, schedule_delivery=False
                             )
+                            self._mark_attack_target_used(attack_result)
 
                             attack_summary_info = {
                                 "mode": "attack",
-                                "plan_ids": list(ctx.get("plan_ids") or []),
+                                "plan_ids": list(attack_ctx.get("plan_ids") or []),
                                 "attack_log": log_path,
                             }
 
                             self._attack_delivery_buffer.append(
                                 {
-                                    "plan_ids": list(ctx.get("plan_ids") or []),
-                                    "option_names": list(ctx.get("option_names") or []),
-                                    "option_meta": dict(ctx.get("_option_meta") or {}),
+                                    "plan_ids": list(attack_ctx.get("plan_ids") or []),
+                                    "option_names": list(attack_ctx.get("option_names") or []),
+                                    "option_meta": dict(attack_ctx.get("_option_meta") or {}),
                                 }
                             )
-                            _record_step("attack_pipeline", "complete", detail={"plan_ids": list(ctx.get("plan_ids") or []), "log_path": str(log_path) if log_path else None})
+                            _record_step("attack_pipeline", "complete", detail={"plan_ids": list(attack_ctx.get("plan_ids") or []), "log_path": str(log_path) if log_path else None})
                         except Exception as exc:
                             self._append_log_line(f"[ATTACK][ERR] finalize failed: {exc}")
                             self._pipeline_logger.log_event(
@@ -2153,6 +2220,27 @@ class MainWindow(QMainWindow):
                         session_id, "error", f"Attack pipeline failed: {exc}"
                     )
                     _record_issue("attack_pipeline_failed", f"Attack pipeline failed: {exc}")
+
+            # 공격 옵션은 공격 파이프라인 결과만 사용 (일반 파이프라인에서 제외)
+            if attack_option_indices:
+                keep_indices = [
+                    idx for idx in range(max(len(ctx.get("plan_ids") or []), len(ctx.get("option_names") or [])))
+                    if idx not in attack_option_indices
+                ]
+                if not keep_indices:
+                    if attack_summary_info:
+                        summary_info = attack_summary_info
+                        plan_log_status = "success"
+                        plan_log_summary.update(summary_info or {})
+                        success = True
+                    else:
+                        _record_issue(
+                            "attack_pipeline_empty",
+                            "Attack option requested but no attack plan was generated.",
+                            status="error",
+                        )
+                    return
+                ctx = _filter_context_by_indices(ctx, keep_indices)
 
             prior_summary = self._try_run_prior_mission_pipeline(ctx, reason, session_id=session_id)
             if prior_summary:
@@ -3184,7 +3272,7 @@ class MainWindow(QMainWindow):
 
                 def _build_0304():
                     start = time.perf_counter()
-                    plans = d0304.build_lah_flight_plans_fixed(manned, cruise_speed=40.0, wp_alloc=wp_alloc)
+                    plans = d0304.build_lah_flight_plans_fixed(manned, cruise_speed=30.0, wp_alloc=wp_alloc)
                     return plans, (time.perf_counter() - start) * 1000.0
 
                 flight_plans_0303: list[dict] = []

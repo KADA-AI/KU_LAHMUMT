@@ -519,7 +519,16 @@ class MainWindow(QMainWindow):
             proc = subprocess.Popen([sys.executable, str(script)], cwd=str(root))
             try:
                 import webbrowser
-                webbrowser.open("http://127.0.0.1:8000/", new=2)
+                try:
+                    from modules.sim.config import SERVER_HOST, SERVER_PORT
+                    host = str(SERVER_HOST)
+                    port = int(SERVER_PORT)
+                    if host in ("0.0.0.0", "::"):
+                        host = "127.0.0.1"
+                    url = f"http://{host}:{port}/"
+                except Exception:
+                    url = "http://127.0.0.1:8000/"
+                webbrowser.open(url, new=2)
             except Exception:
                 pass
             self._role_processes["sim"] = proc

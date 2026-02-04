@@ -22,6 +22,7 @@ def _sw_code(default: str = "MMR") -> str:
 
 WP_INTERVAL_M = 500.0        
 HOVER_HOLD_SEC = 10
+HOVER_LAST_SEC = 30
 Altitude_LAH = 300
 
 def _lah_alt_agl(lat: float, lon: float, offset_m: float | int | None = None) -> int:
@@ -48,6 +49,12 @@ _DEFAULT_WP_EXT = OrderedDict([
         ("weaponType", 0),
     ])),
 ])
+
+
+def _strip_wp_extras(wp: dict) -> None:
+    for key in ("hovering", "loiter", "attack"):
+        if key in wp:
+            del wp[key]
 
 class _WPAllocator:
     def __init__(self, start: int | None = None):
@@ -109,7 +116,7 @@ def _validate_lah_flight_plans(pkts: List[dict]) -> None:
         for widx, wp in enumerate(pkt["lahWaypointList"], 1):
             atk = wp.get("attack")
             if atk is None:
-                raise ValueError(f"[0304] pkt#{pidx}/wp#{widx}: 'attack' 필드 없음")
+                continue
             tid = atk.get("targetID")
             if not isinstance(tid, int):
                 raise ValueError(f"[0304] pkt#{pidx}/wp#{widx}: targetID must be int")
@@ -121,7 +128,7 @@ def build_lah_flight_plans_from_mrpk(
     missions: List[dict],
     mrpk: dict,
     *,
-    cruise_speed: float = 40.0,
+    cruise_speed: float = 30.0,
     wp_interval_m: float = WP_INTERVAL_M,
     wp_alloc: _WPAllocator | None = None,
 ) -> List[dict]:
@@ -148,7 +155,6 @@ def build_lah_flight_plans_from_mrpk(
             ("ecf",   0.0),
             ("nextWaypointID", 0),
         ])
-        wp.update(_DEFAULT_WP_EXT)
         return wp
 
     wp_alloc = wp_alloc or _WPAllocator()
@@ -236,8 +242,15 @@ def build_lah_flight_plans_from_mrpk(
             acc += int(w.get("eta", 0))
             w["ecf"] = round(acc / tot, 2)
 
+        for w in new_list:
+            _strip_wp_extras(w)
+        if new_list:
+            last_wp = new_list[-1]
+            last_wp["hovering"] = {"time": HOVER_LAST_SEC}
+
         out_packets.append(OrderedDict([
             ("timestamp",  now_ms),
+            ("Source", _sw_code()),
             ("pathID",     pkt["pathID"]),
             ("aircraftID", aid),
             ("lahWaypointList", new_list),
@@ -249,7 +262,7 @@ def build_lah_flight_plans_from_mrpk(
 def build_lah_flight_plans_fixed(
     missions: List[dict],
     *,
-    cruise_speed: float = 40.0,
+    cruise_speed: float = 30.0,
     wp_interval_m: float = WP_INTERVAL_M,
     wp_alloc: _WPAllocator | None = None,
 ) -> List[dict]:
@@ -319,7 +332,6 @@ def build_lah_flight_plans_fixed(
                         ("ecf",   ecf),
                         ("nextWaypointID", 0),
                     ])
-                    wp.update(_DEFAULT_WP_EXT)
                     wplist.append(wp)
 
         # --- fallback: 기존 직선 분할 ---
@@ -350,29 +362,15 @@ def build_lah_flight_plans_fixed(
                     ("ecf",   ecf),
                     ("nextWaypointID", 0),
                 ])
-                wp.update(_DEFAULT_WP_EXT)
                 wplist.append(wp)
 
         for i in range(len(wplist) - 1):
             wplist[i]["nextWaypointID"] = wplist[i + 1]["waypointID"]
         if wplist:
-            first_wp = wplist[0]
-            first_wp["speed"] = 10
-            hover = first_wp.get("hovering")
-            if isinstance(hover, dict):
-                hover["time"] = HOVER_HOLD_SEC
-            else:
-                first_wp["hovering"] = {"time": HOVER_HOLD_SEC}
-
+            for w in wplist:
+                _strip_wp_extras(w)
             last_wp = wplist[-1]
-            if last_wp is not first_wp:
-                last_wp["speed"] = 10
-                hover_last = last_wp.get("hovering")
-                if isinstance(hover_last, dict):
-                    hover_last["time"] = HOVER_HOLD_SEC
-                else:
-                    last_wp["hovering"] = {"time": HOVER_HOLD_SEC}
-
+            last_wp["hovering"] = {"time": HOVER_LAST_SEC}
             wplist[-1]["ecf"] = 1.0
 
         packets.append(OrderedDict([

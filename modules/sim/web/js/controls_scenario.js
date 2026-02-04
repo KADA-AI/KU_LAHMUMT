@@ -397,7 +397,15 @@ export const initScenarioPanel = (map) => {
       aircraftID: Math.trunc(num(aircraft0802?.value, 4) || 4),
       mandatoryType: Math.trunc(num(type0802?.value, 1) || 1),
     };
-    return sendCustom("0802", body, "0802");
+    const sendResult = await sendCustom("0802", body, "0802");
+    const sim = window.simClient;
+    if (sim && typeof sim.forceCommand === "function") {
+      sim.forceCommand({
+        aircraftID: body.aircraftID,
+        mandatoryType: body.mandatoryType,
+      });
+    }
+    return sendResult;
   };
 
   const handleSend0803 = async (execute) => {

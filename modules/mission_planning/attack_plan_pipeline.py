@@ -42,6 +42,9 @@ LogCallback = Callable[[str], None]
 LOG_FILENAME = "log_attack_algorithm.json"
 ATTACK_ENTRY_OFFSET_METERS = 100.0
 ATTACK_MANNED_CANDIDATES = (2, 3)
+SWEEP_TRIM_LEAD_SECONDS = 5.0
+SWEEP_TRIM_MIN_SEGMENT_M = 5.0
+SWEEP_TRIM_MIN_REMAINING_M = 10.0
 
 
 def run_attack_plan_pipeline(
@@ -310,13 +313,14 @@ def _load_target_entries() -> Tuple[List[Dict[str, Any]], Optional[str]]:
                 watcher_id = _to_int(watcher_field)
         if watcher_id is None:
             watcher_id = _extract_watcher_from_key(str(key))
+        is_destroyed = bool(entry.get("isDestroyed"))
         target_entries.append(
             {
                 "key": str(key),
                 "target_id": target_id,
                 "watcher_id": watcher_id,
                 "coordinate": _normalize_coordinate(entry.get("coordinate")),
-                "is_destroyed": bool(entry.get("isDestroyed")),
+                "is_destroyed": is_destroyed,
                 "is_used": _to_int(entry.get("isUsed")),
                 "target_in_frame": bool(entry.get("targetInFrame")),
                 "threat": _to_float(entry.get("threat")),
@@ -327,7 +331,6 @@ def _load_target_entries() -> Tuple[List[Dict[str, Any]], Optional[str]]:
         key=lambda item: (
             not item["is_destroyed"],
             item["target_in_frame"],
-            item["is_used"] == 0,
             item["target_id"] if item["target_id"] is not None else -1,
         ),
         reverse=True,
@@ -371,6 +374,8 @@ def _build_primary_target_from_detail(
     if coord is None and target_id is not None:
         for entry in target_entries:
             if entry.get("target_id") == target_id:
+                if entry.get("is_destroyed"):
+                    return None
                 coord = entry.get("coordinate")
                 if watcher_id is None:
                     watcher_id = entry.get("watcher_id")
@@ -398,7 +403,7 @@ def _pick_primary_target(target_entries: List[Dict[str, Any]]) -> Optional[Dict[
     for entry in target_entries:
         if not entry["is_destroyed"] and entry.get("coordinate"):
             return entry
-    return target_entries[0] if target_entries else None
+    return None
 
 
 def _compute_attack_point(
@@ -549,6 +554,170 @@ def _haversine_distance_m(a: Dict[str, Any], b: Dict[str, Any]) -> Optional[floa
     a_val = math.sin(dphi / 2.0) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2.0) ** 2
     c = 2.0 * math.atan2(math.sqrt(a_val), math.sqrt(1.0 - a_val))
     return r * c
+
+
+def _is_sweep_mission(mission_info: Optional[Dict[str, Any]]) -> bool:
+    if not isinstance(mission_info, dict):
+        return False
+    if mission_info.get("lineList"):
+        return True
+    if mission_info.get("areaList"):
+        return True
+    return False
+
+
+def _find_waypoint_by_id(
+    waypoints: List[Dict[str, Any]],
+    waypoint_id: Optional[int],
+) -> Optional[Dict[str, Any]]:
+    if waypoint_id is None:
+        return None
+    for wp in waypoints:
+        if _to_int(wp.get("waypointID")) == waypoint_id:
+            return wp
+    return None
+
+
+def _to_local_xy_m(
+    coord: Dict[str, Any],
+    ref_lat: float,
+    ref_lon: float,
+) -> Optional[Tuple[float, float]]:
+    lat = _to_float(coord.get("latitude"))
+    lon = _to_float(coord.get("longitude"))
+    if lat is None or lon is None:
+        return None
+    r = 6_371_000.0
+    ref_lat_rad = math.radians(ref_lat)
+    x = math.radians(lon - ref_lon) * math.cos(ref_lat_rad) * r
+    y = math.radians(lat - ref_lat) * r
+    return (x, y)
+
+
+def _trim_resume_sweep_progress(
+    flight_path: Dict[str, Any],
+    *,
+    original_waypoints: List[Dict[str, Any]],
+    current_waypoint_id: Optional[int],
+    previous_waypoint_id: Optional[int],
+    agent_coord: Optional[Dict[str, Any]],
+    agent_speed: Optional[float],
+    mission_info: Optional[Dict[str, Any]],
+    lead_seconds: float,
+    emit: Optional[Callable[[str], None]] = None,
+) -> bool:
+    if not _is_sweep_mission(mission_info):
+        return False
+    if current_waypoint_id is None:
+        return False
+    if not agent_coord:
+        return False
+
+    waypoints = list(flight_path.get("waypointList") or [])
+    if not waypoints:
+        return False
+
+    current_wp = _find_waypoint_by_id(waypoints, current_waypoint_id)
+    if current_wp is None:
+        return False
+
+    current_coord = _normalize_coordinate(current_wp.get("coordinate"))
+    if not current_coord:
+        return False
+
+    prev_wp = _find_waypoint_by_id(original_waypoints, previous_waypoint_id)
+    prev_coord = _normalize_coordinate(prev_wp.get("coordinate")) if prev_wp else None
+
+    speed = _to_float(agent_speed) or _to_float(current_wp.get("speed")) or 0.0
+    lead_dist = max(0.0, speed) * max(0.0, lead_seconds)
+
+    if prev_coord:
+        seg_xy_start = _to_local_xy_m(prev_coord, prev_coord["latitude"], prev_coord["longitude"])
+        seg_xy_end = _to_local_xy_m(current_coord, prev_coord["latitude"], prev_coord["longitude"])
+        agent_xy = _to_local_xy_m(agent_coord, prev_coord["latitude"], prev_coord["longitude"])
+        if not seg_xy_start or not seg_xy_end or not agent_xy:
+            return False
+
+        vx = seg_xy_end[0] - seg_xy_start[0]
+        vy = seg_xy_end[1] - seg_xy_start[1]
+        seg_len = math.hypot(vx, vy)
+        if seg_len < SWEEP_TRIM_MIN_SEGMENT_M:
+            return False
+
+        px = agent_xy[0] - seg_xy_start[0]
+        py = agent_xy[1] - seg_xy_start[1]
+        denom = vx * vx + vy * vy
+        if denom <= 0.0:
+            return False
+        t = (px * vx + py * vy) / denom
+        t = max(0.0, min(1.0, t))
+        progress_dist = t * seg_len
+        cut_dist = min(seg_len, max(0.0, progress_dist) + lead_dist)
+
+        remaining = seg_len - cut_dist
+        if remaining < SWEEP_TRIM_MIN_REMAINING_M:
+            if len(waypoints) > 1:
+                flight_path["waypointList"] = [
+                    wp for wp in waypoints if _to_int(wp.get("waypointID")) != current_waypoint_id
+                ]
+                if emit:
+                    emit(
+                        f"[ATTACK][UAV] Sweep resume dropped waypoint {current_waypoint_id} "
+                        f"(remaining={remaining:.1f}m)."
+                    )
+                return True
+            return False
+
+        bearing = _bearing_between(
+            prev_coord["latitude"],
+            prev_coord["longitude"],
+            current_coord["latitude"],
+            current_coord["longitude"],
+        )
+        new_coord = _project_coordinate(prev_coord, bearing, cut_dist)
+        if not new_coord:
+            return False
+        alt = _normalize_altitude_value(current_coord.get("altitude"))
+        if alt is None:
+            alt = _normalize_altitude_value(agent_coord.get("altitude"))
+        if alt is not None:
+            new_coord["altitude"] = alt
+        current_wp["coordinate"] = new_coord
+        if emit:
+            emit(
+                f"[ATTACK][UAV] Sweep resume trimmed waypoint {current_waypoint_id} "
+                f"(cut={cut_dist:.1f}m, remaining={remaining:.1f}m)."
+            )
+        return True
+
+    # Fallback: advance from current position toward the waypoint.
+    distance_to_wp = _haversine_distance_m(agent_coord, current_coord)
+    if distance_to_wp is None or distance_to_wp < SWEEP_TRIM_MIN_SEGMENT_M:
+        return False
+    cut_dist = min(distance_to_wp, lead_dist)
+    if cut_dist < SWEEP_TRIM_MIN_SEGMENT_M:
+        return False
+    bearing = _bearing_between(
+        agent_coord["latitude"],
+        agent_coord["longitude"],
+        current_coord["latitude"],
+        current_coord["longitude"],
+    )
+    new_coord = _project_coordinate(agent_coord, bearing, cut_dist)
+    if not new_coord:
+        return False
+    alt = _normalize_altitude_value(current_coord.get("altitude"))
+    if alt is None:
+        alt = _normalize_altitude_value(agent_coord.get("altitude"))
+    if alt is not None:
+        new_coord["altitude"] = alt
+    current_wp["coordinate"] = new_coord
+    if emit:
+        emit(
+            f"[ATTACK][UAV] Sweep resume advanced waypoint {current_waypoint_id} "
+            f"by {cut_dist:.1f}m from current position."
+        )
+    return True
 
 
 def _json_safe(value: Any) -> Any:
@@ -969,41 +1138,10 @@ def _build_uav_attack_tracking_package(
     if target_coord_norm.get("altitude") is None:
         target_coord_norm["altitude"] = _normalize_altitude_value(agent_coord.get("altitude")) or 700
 
-    approach_coord = None
-    if force_start_at_current:
-        approach_coord = {
-            "latitude": agent_coord["latitude"],
-            "longitude": agent_coord["longitude"],
-        }
-    else:
-        heading = state.get("heading")
-        approach_coord = _project_coordinate(agent_coord, heading, ATTACK_ENTRY_OFFSET_METERS)
-        if approach_coord is None:
-            try:
-                bearing = _bearing_between(
-                    agent_coord["latitude"],
-                    agent_coord["longitude"],
-                    target_coord_norm["latitude"],
-                    target_coord_norm["longitude"],
-                )
-                approach_coord = _project_coordinate(agent_coord, bearing, ATTACK_ENTRY_OFFSET_METERS)
-            except Exception:
-                approach_coord = None
-        if approach_coord is None:
-            approach_coord = {
-                "latitude": agent_coord["latitude"],
-                "longitude": agent_coord["longitude"],
-            }
-    approach_alt = _normalize_altitude_value(agent_coord.get("altitude"))
-    if approach_alt is None:
-        approach_alt = _normalize_altitude_value(target_coord_norm.get("altitude")) or 700
-    approach_coord["altitude"] = approach_alt
-
     attack_path_id = _next_path_id(descriptor["aircraft_id"])
     resume_path_id = _next_path_id(descriptor["aircraft_id"])
     tracking_individual_id = _next_individual_mission_id()
     resume_individual_id = _next_individual_mission_id()
-    approach_wp_id = _next_waypoint_id()
     target_wp_id = _next_waypoint_id()
 
     original_entry = deepcopy(target_mission_template)
@@ -1034,11 +1172,6 @@ def _build_uav_attack_tracking_package(
             "autoZoomIn": True,
             "coordinateList": [
                 {
-                    "latitude": approach_coord["latitude"],
-                    "longitude": approach_coord["longitude"],
-                    "altitude": approach_coord["altitude"],
-                },
-                {
                     "latitude": target_coord_norm["latitude"],
                     "longitude": target_coord_norm["longitude"],
                     "altitude": target_coord_norm["altitude"],
@@ -1064,6 +1197,17 @@ def _build_uav_attack_tracking_package(
         current_waypoint_id=artifacts.current_waypoint_id,
         previous_waypoint_id=artifacts.previous_waypoint_id,
     )
+    _trim_resume_sweep_progress(
+        resume_fp_data,
+        original_waypoints=original_resume_waypoints,
+        current_waypoint_id=artifacts.current_waypoint_id,
+        previous_waypoint_id=artifacts.previous_waypoint_id,
+        agent_coord=agent_coord,
+        agent_speed=_to_float(state.get("speed")),
+        mission_info=mission_resume.get("individualMissionInfo") or {},
+        lead_seconds=SWEEP_TRIM_LEAD_SECONDS,
+        emit=emit,
+    )
     resume_waypoints = resume_fp_data.get("waypointList") or []
     if not resume_waypoints and original_resume_waypoints:
         resume_fp_data["waypointList"] = original_resume_waypoints
@@ -1075,43 +1219,15 @@ def _build_uav_attack_tracking_package(
     resume_fp_data["aircraftID"] = descriptor["aircraft_id"]
     resume_fp_data["individualMissionID"] = resume_individual_id
 
-    approach_pass_type = 1 if force_start_at_current else 2
-    approach_loiter_time = 0 if force_start_at_current else 30
-    approach_wp = {
-        "waypointID": approach_wp_id,
-        "coordinate": {
-            "latitude": approach_coord["latitude"],
-            "longitude": approach_coord["longitude"],
-            "altitude": approach_coord["altitude"],
-        },
-        "speed": 35.0,
-        "eta": 0 if force_start_at_current else 25,
-        "ecf": 0.0,
-        "nextWaypointID": target_wp_id,
-        "waypointPassType": approach_pass_type,
-        "filmingProperty": {
-            "fieldOfView": 10.0,
-            "sensorType": 1,
-            "operationMode": 1,
-            "coordinateOrientation": {
-                "coordinate": {
-                    "latitude": target_coord_norm["latitude"],
-                    "longitude": target_coord_norm["longitude"],
-                    "altitude": target_coord_norm.get("altitude") or 0,
-                }
-            },
-        },
-    }
-    if approach_pass_type == 2 and approach_loiter_time > 0:
-        approach_wp["loiterProperty"] = {
-            "radius": 200,
-            "direction": 1,
-            "time": approach_loiter_time,
-            "speed": 30,
-        }
+    resume_start_wp_id = None
+    if resume_waypoints:
+        try:
+            resume_start_wp_id = int(resume_waypoints[0].get("waypointID"))
+        except Exception:
+            resume_start_wp_id = None
 
     target_eta = int(tracking_eta_s) if isinstance(tracking_eta_s, int) and tracking_eta_s >= 0 else 30
-    target_loiter_time = target_eta if force_start_at_current else 300
+    target_loiter_time = target_eta
 
     target_wp = {
         "waypointID": target_wp_id,
@@ -1123,7 +1239,7 @@ def _build_uav_attack_tracking_package(
         "speed": 30.0,
         "eta": target_eta,
         "ecf": 0.0,
-        "nextWaypointID": 0,
+        "nextWaypointID": int(resume_start_wp_id) if resume_start_wp_id is not None else 0,
         "waypointPassType": 2,
         "filmingProperty": {
             "fieldOfView": 5.0,
@@ -1148,6 +1264,8 @@ def _build_uav_attack_tracking_package(
     if descriptor.get("target_id") is not None:
         filming = target_wp.get("filmingProperty") or {}
         filming["autoTracking"] = {"targetID": descriptor.get("target_id")}
+        if "coordinateOrientation" in filming:
+            del filming["coordinateOrientation"]
         target_wp["filmingProperty"] = filming
 
     tracking_fp_data = {
@@ -1157,7 +1275,7 @@ def _build_uav_attack_tracking_package(
         "aircraftID": descriptor["aircraft_id"],
         "individualMissionID": tracking_individual_id,
         "isFormationFlight": fp_data.get("isFormationFlight", False),
-        "waypointList": [approach_wp, target_wp],
+        "waypointList": [target_wp],
     }
 
     imp_data["individualMissionPackageID"] = new_imp_id
@@ -1192,7 +1310,6 @@ def _build_uav_attack_tracking_package(
         "tracking": {
             "individualMissionID": tracking_individual_id,
             "pathID": attack_path_id,
-            "approachWaypointID": approach_wp_id,
             "targetWaypointID": target_wp_id,
         },
         "resume": {
@@ -1328,7 +1445,14 @@ def _build_lah_attack_package(
     template_wp = deepcopy((fp_data.get("lahWaypointList") or [None])[0]) if fp_data.get("lahWaypointList") else _default_lah_waypoint_template()
 
     entry_wp = _build_lah_waypoint_from_template(template_wp, entry_wp_id, entry_coord, attack_wp_id, mark_attack=False, target_id=None)
-    attack_wp = _build_lah_waypoint_from_template(template_wp, attack_wp_id, attack_coord_norm, 0, mark_attack=True, target_id=descriptor.get("target_id"))
+    attack_wp = _build_lah_waypoint_from_template(
+        template_wp,
+        attack_wp_id,
+        attack_coord_norm,
+        egress_start_wp_id,
+        mark_attack=True,
+        target_id=descriptor.get("target_id"),
+    )
     egress_start_wp = _build_lah_waypoint_from_template(template_wp, egress_start_wp_id, attack_coord_norm, egress_end_wp_id, mark_attack=False, target_id=None)
     egress_end_wp = _build_lah_waypoint_from_template(template_wp, egress_end_wp_id, final_coord, 0, mark_attack=False, target_id=None)
 

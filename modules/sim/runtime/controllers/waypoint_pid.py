@@ -49,6 +49,7 @@ class WaypointTarget:
     wp_id: int | None = None
     hover_time: float | None = None
     loiter: dict | None = None
+    attack: dict | None = None
     input_mission_id: int | None = None
     individual_mission_id: int | None = None
     path_id: int | None = None
@@ -156,6 +157,7 @@ class WaypointPIDController:
                 wp_id = wp.get("wp_id")
                 hover_time = wp.get("hover_time")
                 loiter = wp.get("loiter")
+                attack = wp.get("attack")
                 input_mission_id = wp.get("input_mission_id")
                 individual_mission_id = wp.get("individual_mission_id")
                 path_id = wp.get("path_id")
@@ -168,6 +170,7 @@ class WaypointPIDController:
                             wp_id=int(wp_id) if wp_id is not None else None,
                             hover_time=float(hover_time) if hover_time is not None else None,
                             loiter=loiter,
+                            attack=attack if isinstance(attack, dict) else None,
                             input_mission_id=int(input_mission_id) if input_mission_id is not None else None,
                             individual_mission_id=int(individual_mission_id)
                             if individual_mission_id is not None
@@ -234,6 +237,9 @@ class WaypointPIDController:
         self.force_hover = False
         self.is_hovering = False
         self.hover_timer = 0.0
+        self.just_advanced = False
+        self.advance_reason = None
+        self.advance_reason: str | None = None
         self.is_loitering = True
         self.loiter_timer = math.inf
         self.loiter_center = (tx, ty, tz)
@@ -258,6 +264,8 @@ class WaypointPIDController:
         return wrap_deg(math.degrees(math.atan2(-dy, dx)))
 
     def _advance_wp(self):
+        prev_loitering = bool(self.is_loitering)
+        prev_hovering = bool(self.is_hovering)
         self.curr_idx += 1
         self.yaw_int = 0.0
         self.alt_int = 0.0
@@ -266,6 +274,13 @@ class WaypointPIDController:
         self.hover_timer = 0.0
         self.is_loitering = False
         self.loiter_timer = 0.0
+        self.just_advanced = True
+        if prev_loitering:
+            self.advance_reason = "loiter"
+        elif prev_hovering:
+            self.advance_reason = "hover"
+        else:
+            self.advance_reason = "move"
         if self.curr_idx >= len(self.targets):
             self.finished = True
             self._apply_hold()
@@ -296,6 +311,7 @@ class WaypointPIDController:
             self.finished = True
             self._apply_hold()
             return False
+        self.just_advanced = False
 
         target = self.targets[self.curr_idx]
         uav = self.uav
@@ -327,8 +343,12 @@ class WaypointPIDController:
                 self.force_hover = False
                 self._advance_wp()
                 return not self.finished
-            self.uav.s.u = 0.0
-            uav.cmd_throttle = 0.0
+            if self.allow_hover:
+                speed_ratio = uav.s.u / max(1.0, self.speed_target)
+                decel_cmd = -clamp(speed_ratio, 0.2, 1.0) if uav.s.u > 0.5 else 0.0
+                uav.cmd_throttle = decel_cmd
+            else:
+                uav.cmd_throttle = 0.0
             uav.cmd_yaw_rate = clamp(-uav.s.r * 0.5, -uav.p.max_yaw_rate_dps, uav.p.max_yaw_rate_dps)
             alt_err = tz - uav.s.z
             uav.cmd_pitch_rate = clamp(alt_err * gains.pitch_rate, -uav.p.max_pitch_rate_dps, uav.p.max_pitch_rate_dps)
@@ -399,8 +419,12 @@ class WaypointPIDController:
                     self.is_hovering = False
                     self._advance_wp()
                     return not self.finished
-                self.uav.s.u = 0.0
-                uav.cmd_throttle = 0.0
+                if self.allow_hover:
+                    speed_ratio = uav.s.u / max(1.0, self.speed_target)
+                    decel_cmd = -clamp(speed_ratio, 0.2, 1.0) if uav.s.u > 0.5 else 0.0
+                    uav.cmd_throttle = decel_cmd
+                else:
+                    uav.cmd_throttle = 0.0
                 uav.cmd_yaw_rate = clamp(-uav.s.r * 0.5, -uav.p.max_yaw_rate_dps, uav.p.max_yaw_rate_dps)
                 alt_err = tz - uav.s.z
                 uav.cmd_pitch_rate = clamp(alt_err * gains.pitch_rate, -uav.p.max_pitch_rate_dps, uav.p.max_pitch_rate_dps)
@@ -444,13 +468,21 @@ class WaypointPIDController:
 
         target_speed = target.speed if target.speed is not None else self.speed_target
         local_speed_target = target_speed * clamp(dist_xy / 300.0, 0.5, 1.0)
+        if self.allow_hover:
+            try:
+                self.uav.p.max_speed = max(float(target_speed), float(self.uav.p.min_speed))
+            except Exception:
+                pass
         speed_err = local_speed_target - uav.s.u
         self.speed_int = clamp(self.speed_int + speed_err * dt, -self.speed_int_max, self.speed_int_max)
         alt_bias = dz * gains.throttle_alt
-        uav.cmd_throttle = clamp(
-            speed_err * gains.throttle + self.speed_int * gains.throttle_i + alt_bias,
-            -1.0,
-            1.0,
-        )
+        if self.allow_hover:
+            # Avoid stalling rotorcraft on large descents; keep forward motion.
+            alt_bias = clamp(alt_bias, -0.3, 0.3)
+
+        throttle_cmd = speed_err * gains.throttle + self.speed_int * gains.throttle_i + alt_bias
+        if self.allow_hover and dist_xy > self.pos_tol:
+            throttle_cmd = max(throttle_cmd, 0.05)
+        uav.cmd_throttle = clamp(throttle_cmd, -1.0, 1.0)
 
         return True

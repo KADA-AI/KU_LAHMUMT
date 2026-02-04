@@ -66,6 +66,26 @@ const applySimState = (status, simEntry) => {
   if (Number.isFinite(heading)) {
     agent.velocity.heading = heading;
   }
+  const fuel = Number(simEntry.fuel);
+  if (Number.isFinite(fuel)) {
+    agent.fuel = fuel;
+  }
+  const simHealth = Number(simEntry.health);
+  if (Number.isFinite(simHealth)) {
+    agent.health = simHealth;
+  } else if (typeof simEntry.alive === "boolean") {
+    agent.health = simEntry.alive ? 1 : 2;
+  }
+  if (agent.isUnmanned) {
+    const flightMode = Number(simEntry.flightMode);
+    if (Number.isFinite(flightMode)) {
+      agent.unmannedInfo.flightMode = flightMode;
+    }
+    const onMission = Number(simEntry.onMission);
+    if (Number.isFinite(onMission)) {
+      agent.unmannedInfo.onMission = onMission;
+    }
+  }
   return status;
 };
 

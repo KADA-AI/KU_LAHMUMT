@@ -49,35 +49,8 @@ class PIDGains:
 
 
 # Straight-line smoothness (oscillation) penalty config
-# NOTE: 5Hz 환경에서는 1 step당 heading 변화가 12deg를 넘는 경우가 꽤 있어서
-#       기존 12deg gate가 있으면 "큰" 지그재그를 패널티에서 놓치는 경우가 생김.
-OSC_TURN_MAX_DEG = 25.0
+OSC_TURN_MAX_DEG = 12.0
 OSC_TURN_DIST_MULT = 1.5
-
-
-# -----------------------------
-# Guidance / anti-oscillation knobs (non-tunable)
-# -----------------------------
-# cross-track 오차가 이 값 이하이면, 라인(구간) 방향을 그대로 유지해서
-# 잔떨림(노이즈 추종)과 톱니 모양 경로를 줄인다.
-XTRACK_DEADBAND_M = 8.0
-
-# lookahead가 너무 작으면(특히 dt가 큰 경우) 지그재그가 생기기 쉬움.
-# 최소 lookahead를 "한번 업데이트에서 이동하는 거리"의 N배 이상으로 강제.
-LOOKAHEAD_MIN_STEPS = 4.0
-
-# yaw 에러 deadband (deg). 너무 작은 에러는 0으로 취급해 dithering 방지.
-YAW_ERR_DEADBAND_DEG = 0.8
-
-# yaw rate 댐핑. cmd_yaw_rate에서 현재 yaw rate(r)를 빼서 감쇠를 준다.
-# (단위: cmd_yaw_rate[dps] = ... - r[dps] * YAW_RATE_DAMP)
-YAW_RATE_DAMP = 0.35
-
-# yaw I항이 활성화되는 영역 (deg). 큰 에러에서는 I항을 죽여 overshoot/limit-cycle 감소.
-YAW_I_ACTIVE_ERR_DEG = 25.0
-
-# I항 누설(anti-windup 보조). 통합을 멈추는 동안 서서히 0으로 돌아가게.
-YAW_INT_LEAK = 0.05
 
 
 # -----------------------------
@@ -185,94 +158,59 @@ def simulate_waypoints(
 
     while t < total_time and curr_idx < len(wp_list):
         tx, ty, tz = wp_list[curr_idx]
+
+        # Previous waypoint (segment start) for altitude profiling
+        prev_idx = max(curr_idx - 1, 0)
+        px, py, pz = wp_list[prev_idx]
+
         dx = tx - uav.s.x
         dy = ty - uav.s.y
-        dz = tz - uav.s.z
         dist_xy = math.hypot(dx, dy)
 
-        if dist_xy < pos_tol and abs(dz) < pos_tol * 0.6:
+        # Altitude error to the target waypoint altitude (for reach checks)
+        dz_wp = tz - uav.s.z
+
+        # Reference altitude on the current segment (linear in along-track progress)
+        z_ref = tz
+        seg_dx = tx - px
+        seg_dy = ty - py
+        seg_norm2 = seg_dx * seg_dx + seg_dy * seg_dy
+        if seg_norm2 > 1e-6:
+            rel_x = uav.s.x - px
+            rel_y = uav.s.y - py
+            s = (rel_x * seg_dx + rel_y * seg_dy) / seg_norm2
+            s = clamp(s, 0.0, 1.0)
+            z_ref = pz + s * (tz - pz)
+
+        # Use the segment reference altitude for control (prevents early dive/climb)
+        dz = z_ref - uav.s.z
+
+        if dist_xy < pos_tol and abs(dz_wp) < pos_tol * 0.6:
             curr_idx += 1
             yaw_int = 0.0
             alt_int = 0.0
             speed_int = 0.0
             continue
 
-        # -------------------------------------------------
-        # Guidance: "현재 위치 -> WP" 단순 pure pursuit는 5Hz에서 톱니형(limit-cycle)
-        #          지그재그가 자주 생긴다.
-        #          1) 구간(이전 WP -> 현재 WP) 위에 carrot(lookahead) 점을 잡고
-        #          2) cross-track deadband를 둬서 작은 오차는 라인 방향 유지
-        # -------------------------------------------------
-        eff_lookahead = max(float(gains.lookahead_m), max(0.0, float(uav.s.u)) * dt * LOOKAHEAD_MIN_STEPS)
-
-        if curr_idx > 0:
-            sx, sy, _ = wp_list[curr_idx - 1]
-            ex, ey, _ = wp_list[curr_idx]
-            vx = float(ex - sx)
-            vy = float(ey - sy)
-            seg_len = math.hypot(vx, vy)
-            if seg_len > 1e-6:
-                # projection of current position onto segment
-                px = float(uav.s.x - sx)
-                py = float(uav.s.y - sy)
-                t_proj = (px * vx + py * vy) / (seg_len * seg_len)
-                t_clamp = clamp(t_proj, 0.0, 1.0)
-                cx = float(sx + t_clamp * vx)
-                cy = float(sy + t_clamp * vy)
-                xtrack = math.hypot(float(uav.s.x - cx), float(uav.s.y - cy))
-
-                # carrot point on the segment
-                t_carrot = clamp(t_clamp + eff_lookahead / seg_len, 0.0, 1.0)
-                lx = float(sx + t_carrot * vx)
-                ly = float(sy + t_carrot * vy)
-
-                path_yaw = _heading_to_target(vx, vy)
-                if xtrack <= XTRACK_DEADBAND_M:
-                    desired_yaw = path_yaw
-                else:
-                    desired_yaw = _heading_to_target(lx - uav.s.x, ly - uav.s.y)
-            else:
-                desired_yaw = _heading_to_target(dx, dy)
+        if dist_xy > 1e-3 and gains.lookahead_m > 0.0:
+            lx = uav.s.x + dx / dist_xy * gains.lookahead_m
+            ly = uav.s.y + dy / dist_xy * gains.lookahead_m
+            desired_yaw = _heading_to_target(lx - uav.s.x, ly - uav.s.y)
         else:
-            # 첫 WP까지는 기존 로직 유지
-            if dist_xy > 1e-3 and eff_lookahead > 0.0:
-                lx = uav.s.x + dx / dist_xy * eff_lookahead
-                ly = uav.s.y + dy / dist_xy * eff_lookahead
-                desired_yaw = _heading_to_target(lx - uav.s.x, ly - uav.s.y)
-            else:
-                desired_yaw = _heading_to_target(dx, dy)
+            desired_yaw = _heading_to_target(dx, dy)
 
-        freeze_yaw = dist_xy < gains.freeze_yaw_dist and abs(dz) > pos_tol * gains.freeze_alt_ratio
+        freeze_yaw = dist_xy < gains.freeze_yaw_dist and abs(dz_wp) > pos_tol * gains.freeze_alt_ratio
         if freeze_yaw:
             uav.cmd_yaw_rate = clamp(-uav.s.r * 0.5, -uav.p.max_yaw_rate_dps, uav.p.max_yaw_rate_dps)
         else:
             yaw_err = ((desired_yaw - uav.s.yaw + 540.0) % 360.0) - 180.0
             yaw_err = clamp(yaw_err, -60.0, 60.0)
-            if abs(yaw_err) < YAW_ERR_DEADBAND_DEG:
-                yaw_err = 0.0
-
-            # yaw rate damping을 항상 넣어서 5Hz에서 생기는 limit-cycle을 줄인다.
-            # cmd_yaw_rate[dps] = P*yaw_err[deg] + I*yaw_int + (-D*r[dps])
-            pd = yaw_err * gains.yaw - float(uav.s.r) * YAW_RATE_DAMP
-
-            # Anti-windup: saturate일 때는 I항 적분을 제한
-            cmd_unsat = pd + yaw_int * gains.yaw_i
-            max_yaw = float(uav.p.max_yaw_rate_dps)
-
-            if abs(yaw_err) < YAW_I_ACTIVE_ERR_DEG and float(gains.yaw_i) > 0.0:
-                if abs(cmd_unsat) < max_yaw - eps:
-                    yaw_int = yaw_int + yaw_err * dt
-                else:
-                    # saturation인데 에러가 saturation을 풀 방향이면 적분 허용
-                    if (cmd_unsat > max_yaw and yaw_err < 0.0) or (cmd_unsat < -max_yaw and yaw_err > 0.0):
-                        yaw_int = yaw_int + yaw_err * dt
-                    else:
-                        yaw_int = yaw_int * (1.0 - YAW_INT_LEAK * dt)
-            else:
-                yaw_int = yaw_int * (1.0 - YAW_INT_LEAK * dt)
-
-            yaw_int = clamp(yaw_int, -yaw_int_max, yaw_int_max)
-            uav.cmd_yaw_rate = clamp(pd + yaw_int * gains.yaw_i, -max_yaw, max_yaw)
+            yaw_int = clamp(yaw_int + yaw_err * dt, -yaw_int_max, yaw_int_max)
+            uav.cmd_yaw_rate = clamp(
+                yaw_err * gains.yaw + yaw_int * gains.yaw_i,
+                -uav.p.max_yaw_rate_dps,
+                uav.p.max_yaw_rate_dps,
+            )
 
         desired_pitch = clamp(
             dz * gains.alt_pitch,

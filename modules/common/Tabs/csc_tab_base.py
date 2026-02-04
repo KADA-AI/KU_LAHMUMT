@@ -1,6 +1,7 @@
 # /mnt/data/csc_tab_base.py
 from __future__ import annotations
 from datetime import datetime
+from collections import deque
 import time
 from typing import Optional, Sequence, Tuple, Dict
 
@@ -12,7 +13,7 @@ import json
 import re
 import os
 
-from PyQt5.QtGui import QColor
+from PyQt5.QtGui import QColor, QTextCursor
 from PyQt5.QtCore import Qt, QTimer
 try:
     from push_center import push_message
@@ -34,6 +35,10 @@ class CSCTabBase(QWidget):
     # 서브클래스에서 오버라이드할 상수 -----------------
     HISTORY_LIMIT: int = 50
     HISTORY_SEPARATOR: str = "=" * 64
+    LOG_ENTRY_LIMIT: int | None = None
+    LOG_PAYLOAD_MAX_CHARS: int | None = None
+    LOG_PAYLOAD_TRUNC_SUFFIX: str = " ...(truncated)"
+    LOG_FLUSH_INTERVAL_MS: int | None = None
 
     TITLE: str = "CSC"
     PUSH_MESSAGES: Sequence[Tuple[str, str]] = ()
@@ -663,6 +668,136 @@ class CSCTabBase(QWidget):
                     pass
                 break
 
+    def _truncate_payload_text(self, text: str) -> str:
+        max_chars = getattr(self, "LOG_PAYLOAD_MAX_CHARS", None)
+        if max_chars is None:
+            return text
+        try:
+            max_chars = int(max_chars)
+        except Exception:
+            return text
+        if max_chars <= 0:
+            return ""
+        if len(text) <= max_chars:
+            return text
+        suffix = getattr(self, "LOG_PAYLOAD_TRUNC_SUFFIX", " ...(truncated)")
+        return text[:max_chars] + suffix
+
+    def _append_log_entries_batch(self, log_w: QTextEdit, entries: Sequence[str]) -> None:
+        limit = getattr(self, "LOG_ENTRY_LIMIT", None)
+        if limit is None:
+            for line in entries:
+                log_w.append(line)
+            return
+        try:
+            limit = int(limit)
+        except Exception:
+            for line in entries:
+                log_w.append(line)
+            return
+        if limit <= 0:
+            return
+        buf = getattr(log_w, "_entry_buffer", None)
+        if buf is None or getattr(log_w, "_entry_buffer_limit", None) != limit:
+            buf = deque(maxlen=limit)
+            setattr(log_w, "_entry_buffer", buf)
+            setattr(log_w, "_entry_buffer_limit", limit)
+        for line in entries:
+            buf.append(line)
+        log_w.setPlainText("\n".join(buf))
+        try:
+            log_w.moveCursor(QTextCursor.End)
+        except Exception:
+            pass
+
+    def _flush_log_queue(self, log_w: QTextEdit) -> None:
+        pending = getattr(log_w, "_pending_entries", None)
+        if not pending:
+            return
+        entries = list(pending)
+        pending.clear()
+        self._append_log_entries_batch(log_w, entries)
+
+    def _append_log_entry(self, log_w: QTextEdit, line: str) -> None:
+        flush_ms = getattr(self, "LOG_FLUSH_INTERVAL_MS", None)
+        if flush_ms is None:
+            self._append_log_entries_batch(log_w, [line])
+            return
+        try:
+            flush_ms = int(flush_ms)
+        except Exception:
+            flush_ms = 0
+        if flush_ms <= 0:
+            self._append_log_entries_batch(log_w, [line])
+            return
+        pending = getattr(log_w, "_pending_entries", None)
+        if pending is None:
+            pending = []
+            setattr(log_w, "_pending_entries", pending)
+        pending.append(line)
+        timer = getattr(log_w, "_flush_timer", None)
+        if timer is None:
+            timer = QTimer(log_w)
+            timer.setSingleShot(True)
+            timer.timeout.connect(lambda w=log_w: self._flush_log_queue(w))
+            setattr(log_w, "_flush_timer", timer)
+        if not timer.isActive():
+            timer.start(flush_ms)
+
+    def _decode_payload_for_log(self, raw: bytes, msg_id: str) -> str:
+        max_chars = getattr(self, "LOG_PAYLOAD_MAX_CHARS", None)
+        max_chars_int = None
+        if max_chars is not None:
+            try:
+                max_chars_int = int(max_chars)
+            except Exception:
+                max_chars_int = None
+
+        raw_for_decode = raw
+        truncated_raw = False
+        msg_id_norm = str(msg_id).strip()
+        if max_chars_int is not None and max_chars_int > 0 and msg_id_norm != "0102":
+            max_bytes = max_chars_int * 4
+            if max_bytes > 0 and len(raw) > max_bytes:
+                raw_for_decode = raw[:max_bytes]
+                truncated_raw = True
+
+        decoded = raw_for_decode.decode(errors="ignore")
+        if msg_id_norm == "0102":
+            from collections import OrderedDict
+            m = re.search(r"\{.*\}", decoded, flags=re.S)
+            if m:
+                try:
+                    obj = json.loads(m.group(0))
+                    payload = OrderedDict()
+                    ts_val  = obj.get("timestamp", obj.get("Timestamp", None))
+                    st_val  = obj.get("status",    obj.get("Status",    None))
+                    src_val = (
+                        obj.get("source",
+                            obj.get("Source",
+                                obj.get("SourceModuleName",
+                                    obj.get("requestModuleName", None)))))
+                    if ts_val is not None:
+                        payload["timestamp"] = ts_val
+                    if st_val is not None:
+                        payload["status"] = st_val
+                    if src_val is not None:
+                        payload["source"] = src_val
+                    payload.pop("sent", None)
+                    new_json = json.dumps(payload, ensure_ascii=False)
+                    decoded = decoded[:m.start()] + new_json + decoded[m.end():]
+                except Exception:
+                    pass
+
+        decoded = self._truncate_payload_text(decoded)
+        if truncated_raw:
+            suffix = getattr(self, "LOG_PAYLOAD_TRUNC_SUFFIX", " ...(truncated)")
+            if decoded and not decoded.endswith(suffix):
+                decoded += suffix
+            elif not decoded:
+                decoded = suffix
+        return decoded
+
     def _write_log(self,
                 log_w: QTextEdit,
                 tag: str,
@@ -673,37 +808,13 @@ class CSCTabBase(QWidget):
 
         if raw:
             try:
-                decoded = raw.decode(errors="ignore")
-                if str(msg_id).strip() == "0102":
-                    from collections import OrderedDict
-                    m = re.search(r"\{.*\}", decoded, flags=re.S)
-                    if m:
-                        try:
-                            obj = json.loads(m.group(0))
-                            payload = OrderedDict()
-                            ts_val  = obj.get("timestamp", obj.get("Timestamp", None))
-                            st_val  = obj.get("status",    obj.get("Status",    None))
-                            src_val = (
-                                obj.get("source",
-                                    obj.get("Source",
-                                        obj.get("SourceModuleName",
-                                            obj.get("requestModuleName", None)))))
-                            if ts_val is not None:
-                                payload["timestamp"] = ts_val
-                            if st_val is not None:
-                                payload["status"] = st_val
-                            if src_val is not None:
-                                payload["source"] = src_val
-                            payload.pop("sent", None)
-                            new_json = json.dumps(payload, ensure_ascii=False)
-                            decoded = decoded[:m.start()] + new_json + decoded[m.end():]
-                        except Exception:
-                            pass
-                line += f"\n{decoded}"
+                decoded = self._decode_payload_for_log(raw, str(msg_id))
+                if decoded:
+                    line += f"\n{decoded}"
             except Exception:
                 line += " (binary)"
 
-        log_w.append(line)
+        self._append_log_entry(log_w, line)
 
     # ────────────────────────────────────────────────────────────────
     # ────────────────────────────────────────────────────────────────

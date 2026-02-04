@@ -4,15 +4,15 @@ const store = new Map();
 let activeAgent = null;
 
 const DEFAULT_UI_STATE = {
-  health: 0,
+  health: 1,
   fuelConsumption: 1.0,
-  payloadHealth: 0,
+  payloadHealth: 1,
   fuelWarning: 0,
   flightMode: 0,
   onMission: 0,
   currentWaypointID: 0,
   targetID: 0,
-  weapons: { type1: 0, type2: 0, type3: 0 },
+  weapons: { type1: 5, type2: 10, type3: 100 },
   datalink: { uav1: true, uav2: true, uav3: true },
   sensor: { operationalMode: 0, sensorType: 0, fov: 60 },
 };

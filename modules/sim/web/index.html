@@ -410,6 +410,15 @@
       &gt;
     </button>
     <button
+      id="left-side-toggle"
+      class="side-panel-left-toggle"
+      type="button"
+      aria-expanded="true"
+      title="Toggle left panel"
+    >
+      ▶
+    </button>
+    <button
       id="right-side-toggle"
       class="side-panel-right-toggle"
       type="button"
@@ -418,11 +427,22 @@
     >
       &lt;
     </button>
-<div id="right-panel" class="side-panel" aria-hidden="true">
+    <div id="right-panel" class="side-panel" aria-hidden="true">
       <div class="side-panel-header">
         <span class="side-panel-title">0401 DATA</span>
       </div>
       <div class="side-panel-body"></div>
+    </div>
+    <div id="left-side-panel" class="side-panel-left" aria-hidden="true">
+      <div class="side-panel-left-header">
+        <span class="side-panel-left-title">LEFT GUI</span>
+      </div>
+      <div class="side-panel-left-body">
+        <div class="data-empty">
+          <div class="data-empty-title">좌측 패널</div>
+          <div class="data-empty-sub">추가 예정</div>
+        </div>
+      </div>
     </div>
     <div id="right-side-panel" class="side-panel-right" aria-hidden="true">
       <div class="side-panel-right-header">
@@ -487,6 +507,26 @@
             </div>
             <pre id="io-modal-body" class="io-modal-body"></pre>
           </div>
+        </div>
+      </div>
+    </div>
+    <div id="mission-option-modal" class="mission-option-modal" aria-hidden="true">
+      <div class="mission-option-shell" role="dialog" aria-modal="true">
+        <div class="mission-option-header">
+          <div class="mission-option-header-left">
+            <div class="mission-option-title" data-option-title>0701 임무 선택</div>
+            <div class="mission-option-sub" data-option-time>수신: -</div>
+          </div>
+          <div class="mission-option-header-right">
+            <div class="mission-option-auto" data-option-auto>자동 실행: -</div>
+            <button type="button" class="mission-option-close" data-option-close>닫기</button>
+          </div>
+        </div>
+        <div class="mission-option-body" data-option-list></div>
+        <div class="mission-option-footer">
+          <button type="button" class="mission-option-keep" data-option-keep>
+            현재 임무 유지
+          </button>
         </div>
       </div>
     </div>

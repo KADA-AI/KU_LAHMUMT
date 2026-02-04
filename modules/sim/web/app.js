@@ -11,13 +11,15 @@ import { initMissionPanel } from "./js/controls_mission.js";
 import { initScenarioPanel } from "./js/controls_scenario.js";
 import { init0401Panel } from "./js/panel_0401.js";
 import { initRightSidePanel } from "./js/controls_sidepanel_right.js";
+import { initLeftSidePanel } from "./js/controls_sidepanel_left.js";
 import { initIntegrationPanel } from "./js/integration_panel.js";
+import { initMissionOptionPopup } from "./js/mission_option_popup.js";
 import { initMissionPaths } from "./js/mission_paths.js";
 import { initVehicleMarkers } from "./js/vehicle_markers.js";
 import { initTargetMarkers } from "./js/target_markers.js";
 import { initProjectileMarkers } from "./js/projectile_markers.js";
 import { initImpactEffects } from "./js/impact_effects.js";
-import { getAgentCoordinate } from "./js/agent_store.js";
+import { getAgentCoordinate, getUiState, updateUiField } from "./js/agent_store.js";
 import { logStatus } from "./js/status_log.js";
 import { initSimClient } from "./js/sim_client.js";
 
@@ -183,6 +185,18 @@ import { initSimClient } from "./js/sim_client.js";
   const simClient = initSimClient();
   simClient.startPolling();
   window.simClient = simClient;
+  simClient.subscribe((state) => {
+    const vehicles = state?.vehicles || {};
+    Object.entries(vehicles).forEach(([label, entry]) => {
+      if (!entry || entry.alive !== false) {
+        return;
+      }
+      const ui = getUiState(label);
+      if (ui && Number(ui.health) !== 2) {
+        updateUiField(label, "health", 2);
+      }
+    });
+  });
   initPlaybackControls();
   initAgentPanel();
   initSidePanel();
@@ -190,7 +204,9 @@ import { initSimClient } from "./js/sim_client.js";
   initScenarioPanel(map);
   init0401Panel();
   initRightSidePanel();
+  initLeftSidePanel();
   initIntegrationPanel();
+  initMissionOptionPopup();
   const missionPaths = initMissionPaths(map);
   window.missionPathLoader = missionPaths.loadFromResponse;
   window.loadMissionPathsFromServer = missionPaths.loadFromServer;

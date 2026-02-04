@@ -154,6 +154,9 @@ export const initPlaybackControls = () => {
       } else if (sim && typeof sim.reset === "function") {
         sim.reset();
       }
+      if (sim && typeof sim.resetIntegration === "function") {
+        sim.resetIntegration();
+      }
       if (typeof window.clearMissionData === "function") {
         window.clearMissionData();
       }

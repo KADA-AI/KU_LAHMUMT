@@ -26,9 +26,18 @@ from ..config import (
 )
 from ..integration.integration_service import IntegrationService
 from ..mission.mission_loader import load_flight_paths
+from ..mission.mission_plan_loader import build_mission_plan_payload
 from ..runtime.sim_service import SimulationService
 from ..map.dem_tiles import load_dem_provider
 from ..map.mbtiles import MBTiles
+
+
+def _agent_label_from_aircraft(aircraft_id: int) -> Optional[str]:
+    if 1 <= aircraft_id <= 3:
+        return f"LAH{aircraft_id}"
+    if 4 <= aircraft_id <= 6:
+        return f"UAV{aircraft_id - 3}"
+    return None
 
 
 class MapHTTPServer(ThreadingHTTPServer):
@@ -229,6 +238,10 @@ class MapRequestHandler(BaseHTTPRequestHandler):
             result = integration.generate(msg_id)
             self._send_json(result)
             return
+        if path == "/api/integration/reset":
+            result = integration.reset_state()
+            self._send_json(result)
+            return
         if path == "/api/integration/send_custom":
             msg_id = (body or {}).get("msgId")
             payload = (body or {}).get("body")
@@ -244,13 +257,53 @@ class MapRequestHandler(BaseHTTPRequestHandler):
         self._send_json({"ok": False, "error": "Not found"}, HTTPStatus.NOT_FOUND)
 
     def _serve_mission_post(self, path: str) -> None:
-        if path != "/api/mission/load":
-            self._send_json({"ok": False, "error": "Not found"}, HTTPStatus.NOT_FOUND)
+        if path == "/api/mission/load":
+            body = self._read_json()
+            base_path = (body or {}).get("path", "")
+            result = load_flight_paths(str(base_path), project_root=Path(__file__).resolve().parents[3])
+            self._send_json(result)
             return
-        body = self._read_json()
-        base_path = (body or {}).get("path", "")
-        result = load_flight_paths(str(base_path), project_root=Path(__file__).resolve().parents[3])
-        self._send_json(result)
+        if path == "/api/mission/plan_load":
+            body = self._read_json()
+            mission_plan_id = (body or {}).get("missionPlanID") or (body or {}).get("missionPlanId")
+            raw = body or {}
+            if any(key in raw for key in ("preserveState", "preserve_state", "keepState", "keep_state")):
+                preserve_state = bool(
+                    raw.get("preserveState")
+                    or raw.get("preserve_state")
+                    or raw.get("keepState")
+                    or raw.get("keep_state")
+                )
+            else:
+                preserve_state = True
+            try:
+                mission_plan_id = int(mission_plan_id)
+            except Exception:
+                mission_plan_id = None
+            if mission_plan_id is None:
+                self._send_json({"ok": False, "error": "missionPlanID required"}, HTTPStatus.BAD_REQUEST)
+                return
+            sim = getattr(self.server, "sim", None)
+            if sim is None:
+                self._send_json({"ok": False, "error": "Simulation unavailable"}, HTTPStatus.SERVICE_UNAVAILABLE)
+                return
+            plan_result = build_mission_plan_payload(mission_plan_id)
+            if not plan_result.get("ok"):
+                self._send_json(plan_result, HTTPStatus.BAD_REQUEST)
+                return
+            payload = dict(plan_result.get("payload") or {})
+            if preserve_state:
+                payload["preserveState"] = True
+            sim_result = sim.load_mission(payload)
+            ok = bool(sim_result.get("ok"))
+            response = dict(plan_result)
+            response["ok"] = ok
+            response["sim"] = sim_result
+            if not ok and sim_result.get("error"):
+                response["error"] = sim_result.get("error")
+            self._send_json(response)
+            return
+        self._send_json({"ok": False, "error": "Not found"}, HTTPStatus.NOT_FOUND)
 
     def _serve_sim_get(self, path: str) -> None:
         sim = getattr(self.server, "sim", None)
@@ -320,6 +373,44 @@ class MapRequestHandler(BaseHTTPRequestHandler):
                         aircraft_id = idx + 3
             advanced = sim.advance_input_mission(aircraft_id)
             self._send_json({"ok": True, "advanced": advanced})
+            return
+        if path == "/api/sim/agent_state":
+            payload = body or {}
+            label = None
+            agent = payload.get("agent") or payload.get("label")
+            if isinstance(agent, str) and agent.strip():
+                label = agent.strip().upper()
+            aircraft_id = None
+            if label is None:
+                for key in ("aircraftId", "aircraftID"):
+                    if key in payload:
+                        try:
+                            aircraft_id = int(payload.get(key))
+                        except Exception:
+                            aircraft_id = None
+                        break
+                if aircraft_id is not None:
+                    label = _agent_label_from_aircraft(aircraft_id)
+            result = sim.update_agent_state(label or "", payload)
+            self._send_json(result)
+            return
+        if path == "/api/sim/force_command":
+            payload = body or {}
+            aircraft_id = payload.get("aircraftID") or payload.get("aircraftId")
+            mandatory_type = payload.get("mandatoryType")
+            try:
+                aircraft_id = int(aircraft_id)
+            except Exception:
+                aircraft_id = None
+            try:
+                mandatory_type = int(mandatory_type)
+            except Exception:
+                mandatory_type = 0
+            if aircraft_id is None:
+                self._send_json({"ok": False, "error": "aircraftID required"})
+                return
+            result = sim.apply_force_command(aircraft_id, mandatory_type)
+            self._send_json(result)
             return
         if path == "/api/sim/play":
             self._send_json(sim.play())

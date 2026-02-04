@@ -12,6 +12,10 @@ from .csc_tab_base import CSCTabBase, _now_ms_since_2000
 
 class MissionMonitoringTab(CSCTabBase):
     TITLE = "임무 모니터링 CSC (MSM)"
+    HISTORY_LIMIT = 10
+    LOG_ENTRY_LIMIT = 10
+    LOG_PAYLOAD_MAX_CHARS = 2000
+    LOG_FLUSH_INTERVAL_MS = 200
     PUSH_MESSAGES = (
         ("0001", "공지"),
         ("0102", "모듈 상태 정보"),

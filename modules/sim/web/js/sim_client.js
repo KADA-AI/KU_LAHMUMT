@@ -9,8 +9,11 @@ const CLEAR_ENDPOINT = "/api/sim/clear";
 const RESET_ENDPOINT = "/api/sim/reset";
 const SPEED_ENDPOINT = "/api/sim/speed";
 const NEXT_MISSION_ENDPOINT = "/api/sim/next_mission";
+const AGENT_STATE_ENDPOINT = "/api/sim/agent_state";
+const FORCE_COMMAND_ENDPOINT = "/api/sim/force_command";
 const TARGET_ADD_ENDPOINT = "/api/sim/targets/add";
 const TARGET_CLEAR_ENDPOINT = "/api/sim/targets/clear";
+const INTEGRATION_RESET_ENDPOINT = "/api/integration/reset";
 
 const fetchJson = async (url, options) => {
   const response = await fetch(url, options);
@@ -267,6 +270,32 @@ export const initSimClient = () => {
     }
   };
 
+  const setAgentState = async (payload) => {
+    try {
+      return await fetchJson(AGENT_STATE_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload || {}),
+      });
+    } catch (err) {
+      logStatus(`SIM agent update failed: ${err.message}`, { level: "error", ttlMs: 4000 });
+      return { ok: false, error: err.message };
+    }
+  };
+
+  const forceCommand = async (payload) => {
+    try {
+      return await fetchJson(FORCE_COMMAND_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload || {}),
+      });
+    } catch (err) {
+      logStatus(`SIM force command failed: ${err.message}`, { level: "error", ttlMs: 4000 });
+      return { ok: false, error: err.message };
+    }
+  };
+
   const addTarget = async (payload) => {
     try {
       const result = await fetchJson(TARGET_ADD_ENDPOINT, {
@@ -289,6 +318,15 @@ export const initSimClient = () => {
       return await fetchJson(TARGET_CLEAR_ENDPOINT, { method: "POST" });
     } catch (err) {
       logStatus(`SIM target clear failed: ${err.message}`, { level: "error", ttlMs: 5000 });
+      return { ok: false, error: err.message };
+    }
+  };
+
+  const resetIntegration = async () => {
+    try {
+      return await fetchJson(INTEGRATION_RESET_ENDPOINT, { method: "POST" });
+    } catch (err) {
+      logStatus(`INT reset failed: ${err.message}`, { level: "warn", ttlMs: 3000 });
       return { ok: false, error: err.message };
     }
   };
@@ -325,8 +363,11 @@ export const initSimClient = () => {
     reset,
     setSpeed,
     nextMission,
+    setAgentState,
+    forceCommand,
     addTarget,
     clearTargets,
+    resetIntegration,
     subscribe,
     getState: () => lastState,
   };

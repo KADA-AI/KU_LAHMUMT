@@ -1104,10 +1104,27 @@ def build_flight_plans(
         leaders = sorted(set(bucket.get("leader") or []))
         followers = sorted(set(bucket.get("follower") or []))
         formation_group_sorted[key] = {"leader": leaders, "follower": followers}
-        if leaders:
+        preferred = None
+        for cid in (4, 5, 6):
+            if cid in leaders or cid in followers:
+                preferred = cid
+                break
+        if preferred is not None:
+            formation_leaders[key] = preferred
+        elif leaders:
             formation_leaders[key] = leaders[0]
         elif followers:
             formation_leaders[key] = followers[0]
+
+    formation_followers: list[tuple[int, dict]] = []
+
+    def _apply_formation_filming(wplist: list[OrderedDict]) -> None:
+        for wp in wplist:
+            wp["filmingProperty"] = _mk_filming(
+                operation_mode=OPMODE_HOLD,
+                sensor=SENSOR_EO_IR,
+                fov=31.2,
+            )
 
     # ────────────────────────── 1) 미션 → 패킷 ──────────────────────────
     for miss in missions:
@@ -1139,31 +1156,39 @@ def build_flight_plans(
             formation_role = "follower"
             legacy_form = True
 
-        if formation_key is not None and formation_role is not None:
-            leader_id = formation_leaders.get(formation_key)
-            followers_all = (formation_group_sorted.get(formation_key) or {}).get("follower") or []
+        leader_id = formation_leaders.get(formation_key) if formation_key is not None else None
+        followers_all = (formation_group_sorted.get(formation_key) or {}).get("follower") or []
+        if leader_id is not None:
+            if aid == leader_id:
+                formation_role = "leader"
+            elif formation_role is None and aid in followers_all:
+                formation_role = "follower"
+
+        if leader_id is not None and formation_role == "follower" and aid != leader_id:
             followers = [fid for fid in followers_all if fid != leader_id]
-            if leader_id is not None and formation_role == "follower" and aid != leader_id:
-                follower_idx = followers.index(aid) if aid in followers else 0
-                dx, dy, dz = formation_offsets[min(follower_idx, len(formation_offsets) - 1)]
-                formation_info = OrderedDict([
-                    ("leaderAircraftID", int(leader_id)),
-                    ("formation", OrderedDict([
-                        ("dX", int(dx)),
-                        ("dY", int(dy)),
-                        ("dZ", int(dz)),
-                    ])),
-                ])
-                formation_is_flight = True
-                formation_allow_empty = True
-                packets.append({
-                    "pathID": miss["pathID"],
-                    "aircraftID": aid,
-                    "wplist": [],
-                    "isFormationFlight": True,
-                    "formationInfo": formation_info,
-                })
-                continue
+            follower_idx = followers.index(aid) if aid in followers else 0
+            dx, dy, dz = formation_offsets[min(follower_idx, len(formation_offsets) - 1)]
+            formation_info = OrderedDict([
+                ("leaderAircraftID", int(leader_id)),
+                ("formation", OrderedDict([
+                    ("dX", int(dx)),
+                    ("dY", int(dy)),
+                    ("dZ", int(dz)),
+                ])),
+            ])
+            formation_is_flight = True
+            formation_allow_empty = True
+            packet = {
+                "pathID": miss["pathID"],
+                "aircraftID": aid,
+                "wplist": [],
+                "isFormationFlight": True,
+                "formationInfo": formation_info,
+                "_formation_key": formation_key,
+            }
+            packets.append(packet)
+            formation_followers.append((formation_key, packet))
+            continue
 
         formation_line_leader = legacy_form and formation_key is not None and formation_leaders.get(formation_key) == aid and mtype in (3, 4, 6)
 
@@ -1490,6 +1515,19 @@ def build_flight_plans(
                         )),
                     ]))
 
+        if leader_id is not None and aid == leader_id:
+            formation_info = OrderedDict([
+                ("leaderAircraftID", int(leader_id)),
+                ("formation", OrderedDict([
+                    ("dX", 0),
+                    ("dY", 0),
+                    ("dZ", 0),
+                ])),
+            ])
+            formation_is_flight = True
+            if wplist:
+                _apply_formation_filming(wplist)
+
         # 1-C. 패킷 저장
         if wplist or formation_allow_empty:
             packet = {
@@ -1500,6 +1538,7 @@ def build_flight_plans(
             if formation_info:
                 packet["formationInfo"] = formation_info
                 packet["isFormationFlight"] = bool(formation_is_flight)
+                packet["_formation_key"] = formation_key
             if mtype in (3, 4, 6) and is_area_mission:
                 packet["_is_area"] = True
             if full_sweep_coords:
@@ -1507,6 +1546,22 @@ def build_flight_plans(
                 packet["fullSweepSearchSpeed"] = full_sweep_speed
                 packet["fullSweepInterpPoints"] = full_sweep_interp_points
             packets.append(packet)
+
+    if formation_followers:
+        leader_wplist_by_key: dict[int, list[OrderedDict]] = {}
+        for pkt in packets:
+            fkey = pkt.get("_formation_key")
+            if fkey is None:
+                continue
+            leader_id = formation_leaders.get(fkey)
+            if leader_id is None:
+                continue
+            if int(pkt.get("aircraftID", 0)) == int(leader_id) and pkt.get("wplist"):
+                leader_wplist_by_key[int(fkey)] = pkt["wplist"]
+        for fkey, fpkt in formation_followers:
+            leader_wplist = leader_wplist_by_key.get(int(fkey))
+            if leader_wplist:
+                fpkt["wplist"] = deepcopy(leader_wplist)
 
     # ────────────────────────── 3) WP ID · 링크 · ECF ────────────────
     prev_tail_by_aircraft: Dict[int, dict] = {}

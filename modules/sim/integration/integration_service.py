@@ -59,9 +59,11 @@ def _safe_json(obj: Any) -> Any:
 
 def _fmt_ts(ts: float) -> str:
     try:
-        return datetime.fromtimestamp(ts).strftime("%H:%M:%S")
+        base = datetime.fromtimestamp(ts)
+        centis = int((float(ts) * 100.0) % 100.0)
+        return f"{base.strftime('%H:%M:%S')}:{centis:02d}"
     except Exception:
-        return "--:--:--"
+        return "--:--:--:--"
 
 
 def _fmt_since(seconds: float) -> str:
@@ -450,6 +452,24 @@ class IntegrationService:
                 "logs": {"tx": list(self.tx_log), "rx": list(self.rx_log)},
                 "timestamp": _now_ms_2000(),
             }
+
+    def reset_state(self) -> dict:
+        with self._lock:
+            for sender in list(self._periodic_senders.values()):
+                try:
+                    sender.stop()
+                except Exception:
+                    pass
+            self._periodic_senders = {}
+            self.tx_log.clear()
+            self.rx_log.clear()
+            self.tx_payload = {}
+            self.rx_payload = {}
+            self.tx_times = {}
+            self.rx_times = {}
+            self.tx_counts = {}
+            self.rx_counts = {}
+        return {"ok": True}
 
     def shutdown(self) -> None:
         with self._lock:
