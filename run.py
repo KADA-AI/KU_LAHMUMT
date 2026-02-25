@@ -4,7 +4,7 @@
 # -------------------------------------------------------------
 
 from __future__ import annotations
-import os, sys, subprocess, threading, json
+import os, sys, subprocess, threading, json, shutil, time
 from datetime import datetime, timezone
 os.environ["KU_ROLE"] = "decision"
 from pathlib import Path
@@ -12,7 +12,7 @@ from typing import Dict, List, Tuple
 
 from PyQt5.QtCore import qInstallMessageHandler, QtMsgType, QObject, pyqtSignal, QTimer, QMetaObject, Qt, Q_ARG, pyqtSlot
 from PyQt5.QtGui import QCursor, QTextCursor
-from PyQt5.QtWidgets import QApplication, QTextEdit, QPlainTextEdit
+from PyQt5.QtWidgets import QApplication, QTextEdit, QPlainTextEdit, QMessageBox
 
 from modules.common import db_paths
 try:
@@ -28,6 +28,13 @@ except ModuleNotFoundError:
 def _debug_log(message: str) -> None:
     # Debug logging disabled to avoid creating log files
     return
+
+
+_EPOCH2000_MS = 946_684_800_000
+
+
+def _now_ms_since_2000() -> int:
+    return int(time.time() * 1000) - _EPOCH2000_MS
 
 # -------------------------------------------------------------
 # Qt 경고 필터 (선택)
@@ -978,6 +985,101 @@ class DashboardOrchestrator(QObject):
             except Exception:
                 pass
 
+    def _send_system_mode_0101(self, mode: int) -> bool:
+        """Send 0101 directly from dashboard process."""
+        try:
+            from push_center import push_message
+        except Exception as exc:
+            self._safe_log(f"[OPS] 0101 sender import failed: {exc}")
+            return False
+        body = {
+            "Timestamp": _now_ms_since_2000(),
+            "SystemMode": int(mode),
+            "Source": "INF",
+        }
+        try:
+            ok = bool(push_message("0101", NodeMessenger, body_dict=body))
+            self._safe_log(f"[OPS] 0101 sent: mode={int(mode)} ok={ok}")
+            return ok
+        except Exception as exc:
+            self._safe_log(f"[OPS] 0101 send failed: {exc}")
+            return False
+
+    def _copy_0201_0203_payloads(self) -> tuple[int, str, str]:
+        """Copy latest 0201/0203 source files to active DB and return (count, summary, scenario)."""
+        src_root = db_paths.PROJECT_ROOT / "Logs"
+        tasks = [
+            ("0201", src_root / "InputMissionPlan", db_paths.get_db_subpath("InputMissionPlan")),
+            ("0203", src_root / "MissionReferenceInfo", db_paths.get_db_subpath("MissionReferenceInfo")),
+        ]
+        messages: list[str] = []
+        total = 0
+        for code, src_dir, dest_dir in tasks:
+            src_dir = Path(src_dir)
+            dest_dir = Path(dest_dir)
+            if not src_dir.exists():
+                messages.append(f"{code}: source missing ({src_dir})")
+                continue
+            count = 0
+            for path in src_dir.rglob("*"):
+                if not path.is_file():
+                    continue
+                target = dest_dir / path.relative_to(src_dir)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(path, target)
+                count += 1
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            messages.append(f"{code}: copied {count} files -> {dest_dir}")
+            total += count
+
+        info = db_paths.get_info()
+        scenario = info.get("scenario_dir") or "(scenario unknown)"
+        summary = "\n".join(messages) if messages else "No files copied."
+        return total, summary, scenario
+
+    def _handle_overwrite_020x_sequence(self) -> None:
+        """
+        Sequence required by ops:
+        1) standby (0101 mode=1) + 1s
+        2) overwrite 0201/0203 + 1s
+        3) initial plan mode (0101 mode=2)
+        """
+        self._set_mode_text_all("대기모드")
+        try:
+            self.win._broadcast_ctrl({"cmd": "mode", "text": "standby"})
+            self.win._broadcast_ctrl({"cmd": "system_mode", "mode": 1})
+        except Exception:
+            pass
+        self._safe_log("[OPS] overwrite sequence step1/3: standby mode request (system_mode=1 via INF GUI)")
+
+        def _step2_copy():
+            try:
+                total, summary, scenario = self._copy_0201_0203_payloads()
+            except Exception as exc:
+                self._safe_log(f"[OPS] overwrite sequence step2/3 failed: {exc}")
+                QMessageBox.critical(self.win, "0201/0203 overwrite", f"Copy failed.\n{exc}")
+                return
+
+            if total > 0:
+                self._safe_log(f"[OPS] overwrite sequence step2/3: copy done ({total} files) -> {scenario}")
+                QMessageBox.information(self.win, "0201/0203 overwrite", f"{summary}\n\nscenario: {scenario}")
+            else:
+                self._safe_log("[OPS] overwrite sequence step2/3: no source files")
+                QMessageBox.warning(self.win, "0201/0203 overwrite", f"No files copied.\n{summary}\n\nscenario: {scenario}")
+
+            QTimer.singleShot(1000, _step3_init_plan)
+
+        def _step3_init_plan():
+            self._set_mode_text_all("초기임무계획")
+            try:
+                self.win._broadcast_ctrl({"cmd": "mode", "text": "initplan"})
+                self.win._broadcast_ctrl({"cmd": "system_mode", "mode": 2})
+            except Exception:
+                pass
+            self._safe_log("[OPS] overwrite sequence step3/3: initial plan mode request (system_mode=2 via INF GUI)")
+
+        QTimer.singleShot(1000, _step2_copy)
+
     def trigger_initial_plan_pipeline(self, reason: str = "초기임무재계획") -> None:
         normalized_reason = str(reason or "초기임무재계획")
         self._safe_log(
@@ -1053,6 +1155,15 @@ class DashboardOrchestrator(QObject):
         except Exception:
             script_basename = script_alias
         env.pop("KU_WINDOW_OFFSET", None)
+
+        # Keep DL replan trigger OFF in monitoring module.
+        # (Inference stays ON for GUI risk visualization.)
+        if script_basename in ("monitoring_gui.py", "test_monitoring.py"):
+            env["MSM_DNN_ENABLE"] = "0"
+            env["MSM_DNN_VIS_ENABLE"] = "1"
+            env["MSM_DNN_REPLAN_ENABLE"] = "0"
+            env["MSM_DNN_DEBUG"] = "0"
+            env["MSM_DNN_REPLAN_DISABLE"] = "1"
 
         try: self._safe_log(f"[RUN] {script_basename} @ {script}")
         except Exception: pass
@@ -1184,6 +1295,16 @@ def main():
     win.show()
     _position_window_at_cursor(app, win)
     orch = DashboardOrchestrator(win)
+    btn_overwrite = getattr(win, "btn_overwrite_020x", None)
+    if btn_overwrite is not None and hasattr(btn_overwrite, "clicked"):
+        try:
+            btn_overwrite.clicked.disconnect()
+        except Exception:
+            pass
+        try:
+            btn_overwrite.clicked.connect(orch._handle_overwrite_020x_sequence)
+        except Exception:
+            pass
     QTimer.singleShot(800, orch._launch_all_guis)
     sys.exit(app.exec_())
 

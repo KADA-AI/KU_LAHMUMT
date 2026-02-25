@@ -82,7 +82,7 @@ class OptionPayloadBuilder:
     templates: Sequence[dict[str, int]] = field(
         default_factory=lambda: [
             {"survivalRate": 0, "timeContraction": 0, "recogEffectiveness": 0},
-            {"survivalRate": -1, "timeContraction": 0, "recogEffectiveness": 1},
+            {"survivalRate": -1, "timeContraction": -1, "recogEffectiveness": 1},
             {"survivalRate": 0, "timeContraction": 1, "recogEffectiveness": -1},
         ]
     )

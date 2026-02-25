@@ -53,6 +53,7 @@ class WaypointTarget:
     input_mission_id: int | None = None
     individual_mission_id: int | None = None
     path_id: int | None = None
+    pass_type: int | None = None
 
 
 def _merge_gains(data: dict, fallback: PIDGains) -> PIDGains:
@@ -138,6 +139,7 @@ class WaypointPIDController:
         name: str | None = None,
         ground_clearance: float = 60.0,
         allow_hover: bool = False,
+        hold_on_complete: bool = False,
     ):
         self.uav = uav
         self.gains = gains or DEFAULT_TUNED_GAINS
@@ -161,6 +163,7 @@ class WaypointPIDController:
                 input_mission_id = wp.get("input_mission_id")
                 individual_mission_id = wp.get("individual_mission_id")
                 path_id = wp.get("path_id")
+                pass_type = wp.get("pass_type")
                 if isinstance(pos, (list, tuple)) and len(pos) == 3:
                     self.targets.append(
                         WaypointTarget(
@@ -176,6 +179,7 @@ class WaypointPIDController:
                             if individual_mission_id is not None
                             else None,
                             path_id=int(path_id) if path_id is not None else None,
+                            pass_type=int(pass_type) if pass_type is not None else None,
                         )
                     )
             elif isinstance(wp, (list, tuple)) and len(wp) == 3:
@@ -190,6 +194,7 @@ class WaypointPIDController:
         self.input_ids: set[int] = set()
         self.default_loiter_radius = 160.0 if self.allow_hover else 300.0
         self.force_hover = False
+        self.hold_on_complete = bool(hold_on_complete)
 
         self.yaw_int = 0.0
         self.alt_int = 0.0
@@ -206,6 +211,7 @@ class WaypointPIDController:
         self.loiter_speed = 0.0
         self.loiter_dir = 1.0
         self.loiter_angle = 0.0
+        self.loiter_angle_locked = False
 
     def set_block_indices(self, block_indices: dict[int, int] | None = None) -> None:
         self.block_indices = dict(block_indices or {})
@@ -259,6 +265,7 @@ class WaypointPIDController:
         direction = (loiter_prop or {}).get("direction", 1)
         self.loiter_dir = -1.0 if direction == 1 else 1.0
         self.loiter_angle = math.atan2(self.uav.s.y - ty, self.uav.s.x - tx)
+        self.loiter_angle_locked = True
 
     def _heading_to_target(self, dx: float, dy: float) -> float:
         return wrap_deg(math.degrees(math.atan2(-dy, dx)))
@@ -274,6 +281,7 @@ class WaypointPIDController:
         self.hover_timer = 0.0
         self.is_loitering = False
         self.loiter_timer = 0.0
+        self.loiter_angle_locked = False
         self.just_advanced = True
         if prev_loitering:
             self.advance_reason = "loiter"
@@ -283,6 +291,23 @@ class WaypointPIDController:
             self.advance_reason = "move"
         if self.curr_idx >= len(self.targets):
             self.finished = True
+            if self.hold_on_complete and self.targets:
+                last_idx = max(0, len(self.targets) - 1)
+                self.curr_idx = last_idx
+                last = self.targets[last_idx]
+                self.is_loitering = True
+                self.loiter_timer = math.inf
+                self.loiter_center = (float(last.pos[0]), float(last.pos[1]), float(last.pos[2]))
+                self.loiter_radius = self.default_loiter_radius
+                self.loiter_speed = last.speed or self.speed_target
+            self.loiter_dir = 1.0
+            self.loiter_angle = math.atan2(
+                self.uav.s.y - float(last.pos[1]),
+                self.uav.s.x - float(last.pos[0]),
+            )
+            self.loiter_angle_locked = True
+            self.advance_reason = "loiter"
+            return
             self._apply_hold()
             print(f"[pid-autopilot:{self.name}] waypoint mission complete.")
 
@@ -293,14 +318,14 @@ class WaypointPIDController:
         self.uav.cmd_throttle = -0.2
 
     def current_target(self) -> WaypointTarget | None:
-        if self.finished or not self.targets:
+        if (self.finished and not self.is_loitering) or not self.targets:
             return None
         if self.curr_idx >= len(self.targets):
             return None
         return self.targets[self.curr_idx]
 
     def update(self, dt: float, dem=None, wall_dt: float | None = None) -> bool:
-        if self.finished or not self.targets:
+        if (self.finished and not self.is_loitering) or not self.targets:
             return False
 
         if wall_dt is None:
@@ -329,6 +354,40 @@ class WaypointPIDController:
         dy = ty - self.uav.s.y
         dz = tz - self.uav.s.z
         dist_xy = math.hypot(dx, dy)
+
+        if not self.blocked and not self.is_loitering and int(target.pass_type or 0) == 2:
+            loiter_prop = target.loiter if isinstance(target.loiter, dict) else None
+            if loiter_prop is None:
+                loiter_prop = {
+                    "radius": self.default_loiter_radius,
+                    "direction": 1,
+                    "time": 30.0,
+                    "speed": target.speed or self.speed_target,
+                }
+                target.loiter = loiter_prop
+            try:
+                loiter_time = float(loiter_prop.get("time", 0.0) or 0.0)
+            except Exception:
+                loiter_time = 0.0
+            if loiter_time <= 0.0:
+                loiter_time = 30.0
+            self.is_loitering = True
+            self.loiter_timer = loiter_time
+            self.loiter_center = (tx, ty, tz)
+            try:
+                self.loiter_radius = float(loiter_prop.get("radius", 0.0) or 0.0)
+            except Exception:
+                self.loiter_radius = 0.0
+            if self.loiter_radius <= 1.0:
+                self.loiter_radius = self.default_loiter_radius
+            try:
+                self.loiter_speed = float(loiter_prop.get("speed", 0.0) or (target.speed or self.speed_target))
+            except Exception:
+                self.loiter_speed = target.speed or self.speed_target
+            direction = loiter_prop.get("direction", 1)
+            self.loiter_dir = -1.0 if direction == 1 else 1.0
+            self.loiter_angle = math.atan2(uav.s.y - ty, uav.s.x - tx)
+            self.loiter_angle_locked = True
 
         target_hover = float(target.hover_time) if (self.allow_hover and target and target.hover_time) else 0.0
         if self.blocked and (self.allow_hover or self.force_hover):
@@ -373,16 +432,27 @@ class WaypointPIDController:
             dz = tz - uav.s.z
             dist_xy = math.hypot(dx, dy)
 
+        entered_loiter = False
         if not self.is_loitering and dist_xy < self.pos_tol and abs(dz) < self.pos_tol * 0.6:
             if not self.blocked and self.curr_idx in self.block_indices:
                 self._enter_block(tx, ty, tz, target)
             loiter_prop = target.loiter if isinstance(target.loiter, dict) else None
+            if loiter_prop is None and int(target.pass_type or 0) == 2:
+                loiter_prop = {
+                    "radius": self.default_loiter_radius,
+                    "direction": 1,
+                    "time": 30.0,
+                    "speed": target.speed or self.speed_target,
+                }
+                target.loiter = loiter_prop
             loiter_time = 0.0
             if loiter_prop and not self.blocked:
                 try:
                     loiter_time = float(loiter_prop.get("time", 0.0) or 0.0)
                 except Exception:
                     loiter_time = 0.0
+                if loiter_time <= 0.0 and int(target.pass_type or 0) == 2:
+                    loiter_time = 30.0
             if loiter_time > 0.0 and loiter_prop:
                 self.is_loitering = True
                 self.loiter_timer = loiter_time
@@ -398,6 +468,7 @@ class WaypointPIDController:
                 direction = loiter_prop.get("direction", 1)
                 self.loiter_dir = -1.0 if direction == 1 else 1.0
                 self.loiter_angle = math.atan2(uav.s.y - ty, uav.s.x - tx)
+                self.loiter_angle_locked = True
                 radius = max(1.0, self.loiter_radius)
                 speed = max(0.0, self.loiter_speed if self.loiter_speed > 0 else (target.speed or self.speed_target))
                 ang_rate = speed / radius
@@ -409,6 +480,7 @@ class WaypointPIDController:
                 dy = ty - uav.s.y
                 dz = tz - uav.s.z
                 dist_xy = math.hypot(dx, dy)
+                entered_loiter = True
             if self.allow_hover and target_hover > 0.0:
                 if not self.is_hovering:
                     self.hover_timer = target_hover
@@ -430,7 +502,7 @@ class WaypointPIDController:
                 uav.cmd_pitch_rate = clamp(alt_err * gains.pitch_rate, -uav.p.max_pitch_rate_dps, uav.p.max_pitch_rate_dps)
                 uav.cmd_roll_rate = clamp(-uav.s.roll * 1.5, -uav.p.max_roll_rate_dps, uav.p.max_roll_rate_dps)
                 return True
-            if not self.blocked:
+            if not self.blocked and not entered_loiter:
                 self._advance_wp()
                 return not self.finished
 

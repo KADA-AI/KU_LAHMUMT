@@ -113,6 +113,7 @@ class PriorMissionReplanCoordinator:
 
     OPTION_LABEL = "선행임무 반영"
     REPLAN_LEVEL = 4
+    DL_RISK_REPLAN_LEVEL = 5
 
     def __init__(
         self,
@@ -216,6 +217,58 @@ class PriorMissionReplanCoordinator:
             )
 
         return dispatch_payloads, logs
+
+    def on_risk_update(
+        self,
+        risk_score: float,
+        *,
+        system_mode: int | None,
+        current_mission_plan_id: int | None,
+        risky_aircraft_ids: list[int] | None = None,
+    ) -> tuple[list[dict[str, Any]], list[str]]:
+        """Handle DL-based risk updates and emit level-5 0902 requests."""
+        logs: list[str] = []
+        if system_mode not in (3, 4):
+            return [], logs
+        if risk_score <= 0.5:
+            return [], logs
+
+        now_ts = int(self._now_ms())
+        mission_plan_id = self._allocate_plan_id(now_ts)
+
+        risky_ids_str = ",".join(map(str, sorted(risky_aircraft_ids))) if risky_aircraft_ids else "Unknown"
+        reason = f"Risk analysis: high risk detected (Score: {risk_score:.2f}, AC: {risky_ids_str})"
+
+        mission_ids = collect_input_mission_ids()
+        if not mission_ids:
+            mission_ids = [0]
+        input_models = [{"inputMissionID": int(mid)} for mid in mission_ids]
+
+        option_block = [
+            {
+                "optionID": 1,
+                "optionName": "Risk Avoidance",
+                "missionPlanID": int(mission_plan_id),
+            }
+        ]
+        payload_0902: dict[str, Any] = {
+            "timestamp": now_ts,
+            "source": "MSM",
+            "replanRequestTime": {"replanRequestTimestamp": now_ts},
+            "replanLevel": int(self.DL_RISK_REPLAN_LEVEL),
+            "replanRequest": reason,
+            "inputMissionIDList": input_models,
+            "priorMissionList": [],
+            "pendingOptionList": option_block,
+            "replanDetail": {
+                "sourceMissionPlanID": current_mission_plan_id,
+                "riskScore": float(risk_score),
+                "riskyAircraftIDList": [int(aid) for aid in (risky_aircraft_ids or [])],
+                "timestamp": now_ts,
+            },
+        }
+        logs.append(f"[DL] High Risk ({risk_score:.2f}, AC:{risky_ids_str}) -> dispatching 0902")
+        return [payload_0902], logs
 
     # ------------------------------------------------------------------
     # Internal helpers

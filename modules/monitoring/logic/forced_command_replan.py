@@ -271,9 +271,9 @@ class ForcedCommandReplanCoordinator:
                     available = availability_check(int(aircraft_id))
                 except Exception:
                     available = None
-                if available is False:
+                if available is True:
                     logs.append(
-                        "[0802] hold expired but aircraft unavailable -> skip replan"
+                        "[0802] hold expired but aircraft available -> skip delayed replan"
                         f" (aircraftID={aircraft_id})"
                     )
                     self._state.hold_state_by_aircraft.pop(int(aircraft_id), None)

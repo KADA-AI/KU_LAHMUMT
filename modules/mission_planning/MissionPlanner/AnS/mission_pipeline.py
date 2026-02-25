@@ -945,7 +945,6 @@ def split_mission_into_subareas(
     mission_id  = input_m["inputMissionID"]
     md          = input_m["missionDetail"]
     subs: list[dict] = []
-
     # ── corridor형 (1·4·5) ───────────────────────────────
     if mtype in (1, 4, 5, 7):
         for seg in md["lineList"]:
@@ -974,6 +973,18 @@ def split_mission_into_subareas(
             r.update({"inputMissionType": mtype, "MissionID": mission_id})
             r["bearing_deg"] = bearing_move     # 기록: 실제 스윕 방향
             r["splitBearing_deg"] = bearing_split
+            if isinstance(prev_pt, dict):
+                r["prevPoint"] = {
+                    "latitude": float(prev_pt.get("latitude", center["latitude"])),
+                    "longitude": float(prev_pt.get("longitude", center["longitude"])),
+                    "altitude": int(round(float(prev_pt.get("altitude", 0) or 0))),
+                }
+            else:
+                r["prevPoint"] = {
+                    "latitude": float(center["latitude"]),
+                    "longitude": float(center["longitude"]),
+                    "altitude": 0,
+                }
             subs.append(r)
     else:
         raise ValueError(f"Unknown inputMissionType {mtype}")
@@ -1216,7 +1227,8 @@ def run_divide_and_pattern(
         cmpk_path: str,
         ref_path: str,
         out_dir: str,
-        log: Callable[[str], None] = print
+        log: Callable[[str], None] = print,
+        option_code: int | None = None,
 ) -> List[str]:
     t_start = time.perf_counter()
     t_load = time.perf_counter()
@@ -1402,6 +1414,20 @@ def run_divide_and_pattern(
     log(f"       │ distance: {np.mean(_ms(t_dist))    :6.1f}  / p95 {np.percentile(_ms(t_dist),95)   :6.1f}")
     log("       └───────────────────────────────")
 
+    # 정찰 특화(option=4): 영역 임무는 직하방 패턴(3)으로 강제
+    if option_code == 4:
+        forced = 0
+        for area in env.processed_missions:
+            try:
+                input_type = int(area.get("inputMissionType", 0))
+            except Exception:
+                input_type = 0
+            if input_type in (2, 3, 6):
+                area["patternType"] = 3
+                forced += 1
+        if forced > 0:
+            log(f"[OPTION] 정찰 특화 적용: area patternType -> 3 (count={forced})")
+
     # ──────────────────────────────────────────────────────────
     # 5. 예상시간 기반 PuLP 스케줄링 (변경 없음)
     # ──────────────────────────────────────────────────────────
@@ -1520,6 +1546,8 @@ def run_divide_and_pattern(
                                "priorMissionID": 0},
             "individualMissionInfo": info,
             "pathID": next_path_id(int(a_id[3:])),
+            "bearing_deg": area.get("bearing_deg"),
+            "prevPoint": area.get("prevPoint"),
         })
 
     for path, obj in zip(imp_paths, imp_objs):

@@ -33,6 +33,7 @@ qInstallMessageHandler(_qt_silent_handler)
 # ───────── 경로 부트스트랩 ─────────
 from modules.common.status_reporter import send_status_ok
 from modules.common.fusion_files import copy_file_with_retry
+from modules.common.ctrl_listener import start_ctrl_listener, env_ctrl_port
 
 _EPOCH2000_MS = 946_684_800_000
 def _now_ms_since_2000() -> int:
@@ -164,6 +165,15 @@ class MainWindow(QMainWindow):
         # 신호 연결
         self.ctrl_payload.connect(self._handle_ctrl_payload)
         self.log_sig.connect(self._append_log_line)
+
+        # CTRL(UDP) listener: dashboard broadcast -> UI thread
+        self._ctrl_thread = None
+        try:
+            port = env_ctrl_port(45984)
+            self._ctrl_thread = start_ctrl_listener(port, lambda payload: self.ctrl_payload.emit(payload))
+            self._append_log_line(f"[CTRL] listener started @ 127.0.0.1:{port}")
+        except Exception as e:
+            self._append_log_line(f"[CTRL] listener start failed: {e}")
 
         # BUS 초기화 + 테스트 단축키
         threading.Thread(target=self._rx_setup, daemon=True).start()
@@ -399,7 +409,13 @@ class MainWindow(QMainWindow):
         import time
         try: cmd = str(payload.get("cmd") or "").lower()
         except Exception: return
-        key = f"{cmd}:{payload.get('text') or payload.get('status')}"
+        if cmd == "system_mode":
+            token = payload.get("mode")
+        elif cmd == "mode":
+            token = payload.get("text")
+        else:
+            token = payload.get("status")
+        key = f"{cmd}:{token}"
         now = time.monotonic(); last = self._last_ctrl_ts.get(key, 0.0)
         if (now - last) < 1.0: return
         self._last_ctrl_ts[key] = now
@@ -442,6 +458,32 @@ class MainWindow(QMainWindow):
         - SystemMode: int (0~3)
         - Source: 'INF'
         """
+        # Primary path: send exactly like GUI operation on 0101 row.
+        try:
+            mode = int(mode)
+        except Exception:
+            mode = 2
+        try:
+            tab = getattr(self, "_tab", None)
+            row = int(tab._find_tx_row("0101")) if tab and hasattr(tab, "_find_tx_row") else -1
+            if row >= 0 and hasattr(tab, "_send_system_mode"):
+                combo = getattr(tab, "_mode_combo", None)
+                if combo is not None:
+                    for i in range(combo.count()):
+                        try:
+                            if int(combo.itemData(i)) == mode:
+                                if combo.currentIndex() != i:
+                                    combo.setCurrentIndex(i)
+                                break
+                        except Exception:
+                            continue
+                tab._send_system_mode(row, mode)
+                self._append_log_line(f"시스템운용모드(0101) GUI 전송: {mode}")
+                return
+        except Exception as e:
+            self._append_log_line(f"[WARN] 0101 GUI 경로 실패 -> direct push fallback: {e}")
+
+        # Fallback path: direct push
         try:
             from push_center import push_message
             body = {

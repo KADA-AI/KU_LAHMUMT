@@ -139,7 +139,7 @@ class CollabReexecuteCoordinator:
             self._state.last_dispatched_signature = None
             package_id, timestamp = self._state.required_new_key or (None, None)
             logs.append(
-                "[REEXEC] execute=2 received -> waiting for updated 0201"
+                "[REEXEC] execute=2 received -> waiting for next 0201 arrival"
                 f" (package={package_id}, timestamp={timestamp})"
             )
             return logs
@@ -155,7 +155,12 @@ class CollabReexecuteCoordinator:
         self._state.required_new_signature = self._state.last_input_signature
         return logs
 
-    def on_input_plan(self, payload: object | None) -> tuple[dict[str, Any] | None, list[str]]:
+    def on_input_plan(
+        self,
+        payload: object | None,
+        *,
+        has_new_arrival: bool = True,
+    ) -> tuple[dict[str, Any] | None, list[str]]:
         logs: list[str] = []
         plan = parse_payload(payload)
         if not plan:
@@ -174,22 +179,19 @@ class CollabReexecuteCoordinator:
         if not self._state.pending or self._state.inflight:
             return None, logs
 
-        required_key = self._state.required_new_key
-        if (
-            required_key is not None
-            and current_key == required_key
-            and self._state.required_new_signature is not None
-            and current_signature == self._state.required_new_signature
-        ):
+        if not has_new_arrival:
             if not self._state.wait_logged:
                 logs.append(
-                    "[REEXEC] execute=2 mode active -> still waiting for a newer 0201"
+                    "[REEXEC] execute=2 mode active -> waiting for next 0201 arrival"
                 )
                 self._state.wait_logged = True
+            return None, logs
 
         if (
             self._state.last_dispatched_signature is not None
             and current_signature == self._state.last_dispatched_signature
+            and self._state.last_dispatched_key is not None
+            and current_key == self._state.last_dispatched_key
         ):
             return None, logs
 
@@ -205,7 +207,7 @@ class CollabReexecuteCoordinator:
         self._state.required_new_signature = current_signature
         self._state.wait_logged = False
         logs.append(
-            "[REEXEC] updated 0201 detected -> dispatching 0902 replan request"
+            "[REEXEC] next 0201 arrival detected -> dispatching 0902 replan request"
             f" (package={package_id}, timestamp={timestamp})"
         )
         return replan_payload, logs

@@ -28,7 +28,29 @@ export const initSimClient = () => {
   let frameQueue = [];
   let draining = false;
   let suspendRender = typeof document !== "undefined" ? document.hidden : false;
+  let lastSpeedFactor = null;
+  let speedRampTimer = null;
+  let speedRampSeq = 0;
+  let skipHistoryOnce = false;
+  let catchUpMode = false;
+  let forceCatchUp = false;
   const subscribers = new Set();
+  const SPEED_RAMP_SEQUENCE = [10, 8, 6, 4, 2, 1];
+  const SPEED_RAMP_INTERVAL_MS = 200;
+
+  const resetQueueToState = (state, backtrack = 0) => {
+    frameQueue = [];
+    draining = false;
+    skipHistoryOnce = true;
+    const nextStep = Number(state?.step);
+    if (Number.isFinite(nextStep)) {
+      const rollback = Number.isFinite(backtrack) ? Math.max(0, Number(backtrack)) : 0;
+      lastStep = Math.max(0, nextStep - rollback);
+    }
+    if (!suspendRender && state) {
+      updateMarkers(state);
+    }
+  };
 
   const notify = () => {
     subscribers.forEach((cb) => {
@@ -74,6 +96,26 @@ export const initSimClient = () => {
     }
   };
 
+  const downsampleHistory = (history, speedFactor) => {
+    if (!Array.isArray(history) || history.length <= 1) {
+      return history || [];
+    }
+    const speed = Number(speedFactor);
+    if (!Number.isFinite(speed) || speed <= 1) {
+      return history;
+    }
+    const step = Math.max(2, Math.round(speed));
+    const sampled = [];
+    for (let i = 0; i < history.length; i += step) {
+      sampled.push(history[i]);
+    }
+    const last = history[history.length - 1];
+    if (sampled[sampled.length - 1] !== last) {
+      sampled.push(last);
+    }
+    return sampled;
+  };
+
   const enqueueFrames = (frames) => {
     if (!Array.isArray(frames) || frames.length === 0) {
       return;
@@ -92,11 +134,18 @@ export const initSimClient = () => {
       return;
     }
     if (!frameQueue.length) {
+      if (catchUpMode) {
+        catchUpMode = false;
+        skipHistoryOnce = true;
+      }
       draining = false;
       return;
     }
     const size = frameQueue.length;
-    const batch = size > 600 ? 6 : size > 300 ? 4 : size > 120 ? 2 : 1;
+    let batch = size > 600 ? 6 : size > 300 ? 4 : size > 120 ? 2 : 1;
+    if (catchUpMode) {
+      batch = size > 600 ? 14 : size > 300 ? 10 : size > 120 ? 6 : size > 40 ? 3 : 2;
+    }
     for (let i = 0; i < batch && frameQueue.length; i += 1) {
       const frame = frameQueue.shift();
       updateMarkers(frame);
@@ -108,15 +157,69 @@ export const initSimClient = () => {
     try {
       const query = Number.isFinite(lastStep) ? `?since=${lastStep}` : "";
       const state = await fetchJson(`${STATE_ENDPOINT}${query}`, { method: "GET" });
+      if (catchUpMode) {
+        const speed = Number(state?.latest?.speedFactor ?? state?.speedFactor);
+        if (Number.isFinite(speed)) {
+          lastSpeedFactor = speed;
+        }
+        if (!frameQueue.length) {
+          catchUpMode = false;
+          skipHistoryOnce = true;
+        }
+        return;
+      }
       if (state && Array.isArray(state.history)) {
+        if (skipHistoryOnce) {
+          const speed = Number(state.latest?.speedFactor);
+          if (Number.isFinite(speed)) {
+            lastSpeedFactor = speed;
+          }
+          const latest =
+            state.latest ||
+            (state.history.length ? state.history[state.history.length - 1] : null);
+          if (latest) {
+            lastState = latest;
+            if (!suspendRender) {
+              updateMarkers(latest);
+            }
+            if (Number.isFinite(latest?.step)) {
+              lastStep = latest.step;
+            }
+          }
+          frameQueue = [];
+          draining = false;
+          skipHistoryOnce = false;
+          notify();
+          return;
+        }
+        let shouldCatchUp = false;
+        const speed = Number(state.latest?.speedFactor);
+        if (Number.isFinite(speed)) {
+          if (lastSpeedFactor !== null && speed !== lastSpeedFactor) {
+            if (speed < lastSpeedFactor) {
+              shouldCatchUp = true;
+            } else {
+              resetQueueToState(state.latest || state, 10);
+            }
+          }
+          lastSpeedFactor = speed;
+        }
+        if (forceCatchUp) {
+          shouldCatchUp = true;
+        }
         if (state.history.length) {
           if (!suspendRender) {
-            enqueueFrames(state.history.map((frame) => ({ ok: true, ...frame })));
+            const historySpeed = Number.isFinite(speed) ? speed : lastSpeedFactor;
+            const sampled = downsampleHistory(state.history, historySpeed);
+            enqueueFrames(sampled.map((frame) => ({ ok: true, ...frame })));
           }
           const last = state.history[state.history.length - 1];
           if (Number.isFinite(last?.step)) {
             lastStep = last.step;
           }
+        }
+        if (shouldCatchUp && frameQueue.length) {
+          catchUpMode = true;
         }
         if (state.latest) {
           lastState = state.latest;
@@ -137,8 +240,44 @@ export const initSimClient = () => {
             updateMarkers(state.latest);
           }
         }
+        if (forceCatchUp) {
+          forceCatchUp = false;
+        }
         notify();
         return;
+      }
+      const speed = Number(state?.speedFactor);
+      if (skipHistoryOnce) {
+        if (Number.isFinite(speed)) {
+          lastSpeedFactor = speed;
+        }
+        lastState = state;
+        if (!suspendRender) {
+          updateMarkers(state);
+        }
+        if (Number.isFinite(state?.step)) {
+          lastStep = state.step;
+        }
+        frameQueue = [];
+        draining = false;
+        skipHistoryOnce = false;
+        notify();
+        return;
+      }
+      if (Number.isFinite(speed)) {
+        if (lastSpeedFactor !== null && speed !== lastSpeedFactor) {
+          if (speed < lastSpeedFactor) {
+            if (frameQueue.length) {
+              catchUpMode = true;
+            }
+          } else {
+            resetQueueToState(state, 10);
+          }
+        }
+        lastSpeedFactor = speed;
+      }
+      if (forceCatchUp) {
+        forceCatchUp = false;
       }
       lastState = state;
       if (!suspendRender) {
@@ -167,6 +306,25 @@ export const initSimClient = () => {
       pollTimer = null;
     }
   };
+
+  if (typeof document !== "undefined") {
+    document.addEventListener("visibilitychange", () => {
+      suspendRender = document.hidden;
+      if (suspendRender) {
+        frameQueue = [];
+        draining = false;
+        stopPolling();
+        return;
+      }
+      skipHistoryOnce = true;
+      frameQueue = [];
+      draining = false;
+      if (lastState) {
+        updateMarkers(lastState);
+      }
+      startPolling();
+    });
+  }
 
   const setMission = async (payload) => {
     try {
@@ -236,20 +394,90 @@ export const initSimClient = () => {
   };
 
   const setSpeed = async (speed) => {
-    try {
-      const result = await fetchJson(SPEED_ENDPOINT, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ speed }),
-      });
-      if (!result.ok) {
-        throw new Error(result.error || "speed set failed");
+    const applySpeed = async (nextSpeed) => {
+      try {
+        const result = await fetchJson(SPEED_ENDPOINT, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ speed: nextSpeed }),
+        });
+        if (!result.ok) {
+          throw new Error(result.error || "speed set failed");
+        }
+        if (Number.isFinite(result.speedFactor)) {
+          lastSpeedFactor = result.speedFactor;
+        }
+        return result;
+      } catch (err) {
+        logStatus(`SIM speed failed: ${err.message}`, { level: "error", ttlMs: 5000 });
+        return { ok: false, error: err.message };
       }
-      return result;
-    } catch (err) {
-      logStatus(`SIM speed failed: ${err.message}`, { level: "error", ttlMs: 5000 });
-      return { ok: false, error: err.message };
+    };
+
+    const cancelRamp = () => {
+      speedRampSeq += 1;
+      if (speedRampTimer) {
+        clearTimeout(speedRampTimer);
+        speedRampTimer = null;
+      }
+    };
+
+    const buildRampSteps = (fromSpeed, toSpeed) => {
+      if (!Number.isFinite(fromSpeed) || !Number.isFinite(toSpeed) || toSpeed >= fromSpeed) {
+        return [toSpeed];
+      }
+      const steps = [];
+      for (const step of SPEED_RAMP_SEQUENCE) {
+        if (step < fromSpeed && step > toSpeed) {
+          steps.push(step);
+        }
+      }
+      steps.push(toSpeed);
+      return steps;
+    };
+
+    const startRamp = (steps) => {
+      if (!steps.length) {
+        return Promise.resolve({ ok: true, speedFactor: speed });
+      }
+      cancelRamp();
+      const seq = speedRampSeq;
+      const queue = steps.slice();
+      const first = queue.shift();
+      const advance = () => {
+        if (seq !== speedRampSeq) {
+          return;
+        }
+        if (!queue.length) {
+          speedRampTimer = null;
+          return;
+        }
+        speedRampTimer = setTimeout(async () => {
+          if (seq !== speedRampSeq) {
+            return;
+          }
+          const next = queue.shift();
+          await applySpeed(next);
+          advance();
+        }, SPEED_RAMP_INTERVAL_MS);
+      };
+      return applySpeed(first).finally(advance);
+    };
+
+    const numericSpeed = Number(speed);
+    if (!Number.isFinite(numericSpeed)) {
+      return { ok: false, error: "invalid speed" };
     }
+    const current = Number.isFinite(lastSpeedFactor)
+      ? lastSpeedFactor
+      : Number(lastState?.speedFactor);
+    if (Number.isFinite(current) && numericSpeed < current) {
+      forceCatchUp = true;
+      const rampSteps = buildRampSteps(current, numericSpeed);
+      return startRamp(rampSteps);
+    }
+    cancelRamp();
+    return applySpeed(numericSpeed);
   };
 
   const nextMission = async (payload) => {
@@ -338,19 +566,6 @@ export const initSimClient = () => {
     subscribers.add(cb);
     return () => subscribers.delete(cb);
   };
-
-  if (typeof document !== "undefined") {
-    document.addEventListener("visibilitychange", () => {
-      suspendRender = document.hidden;
-      if (!suspendRender) {
-        frameQueue = [];
-        draining = false;
-        if (lastState) {
-          updateMarkers(lastState);
-        }
-      }
-    });
-  }
 
   return {
     startPolling,

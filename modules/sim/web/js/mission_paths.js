@@ -8,11 +8,17 @@ const AGENTS = ["LAH1", "LAH2", "LAH3", "UAV1", "UAV2", "UAV3"];
 const DEFAULT_ALPHA = 0.8;
 const SELECT_ALPHA = 0.8;
 const DIM_ALPHA = 0.12;
+const DONE_ALPHA = 0.28;
+const DONE_SELECT_ALPHA = 0.34;
+const DONE_DIM_ALPHA = 0.08;
 
 const PATH_WIDTH_PX = 2.5;
 const WAYPOINT_SIZE_PX = 10;
 const WAYPOINT_ALPHA = 0.9;
 const WAYPOINT_DIM_ALPHA = 0.25;
+const WAYPOINT_DONE_ALPHA = 0.3;
+const WAYPOINT_DONE_SELECT_ALPHA = 0.35;
+const WAYPOINT_DONE_DIM_ALPHA = 0.1;
 const WAYPOINT_Z_OFFSET_M = 4.0;
 const WAYPOINT_LABEL_Z_OFFSET_M = 14.0;
 const WAYPOINT_LABEL_FONT_SIZE = 12;
@@ -171,6 +177,7 @@ const buildGeoFeature = (feature, colors) => ({
   properties: {
     agent: feature.agent,
     pathId: feature.pathId,
+    isDone: feature.isDone ? 1 : 0,
     aircraftId: feature.aircraftId,
     points: feature.points,
     altMin: feature.altMin,
@@ -561,7 +568,9 @@ export const initMissionPaths = (map) => {
   const legendItems = Array.from(document.querySelectorAll(".mission-legend-item"));
   const colors = getAgentColors();
   const agentLayers = new Map();
+  const doneAgentLayers = new Map();
   const waypointLayers = new Map();
+  const doneWaypointLayers = new Map();
   let labelContainer = null;
   const labelElements = new Map();
   let waypointLabelEntries = [];
@@ -626,6 +635,7 @@ export const initMissionPaths = (map) => {
       labelContainer.appendChild(el);
       labelElements.set(key, el);
     }
+    el.dataset.done = entry.isDone ? "1" : "0";
     el.textContent = entry.label || `WP${idx}`;
     el.style.color = color || "#e7eddc";
     return el;
@@ -658,11 +668,18 @@ export const initMissionPaths = (map) => {
     const hasSelection = Boolean(selectedAgent);
     labelElements.forEach((el) => {
       const agent = el.dataset.agent || "";
-      const alpha = hasSelection
+      const isDone = el.dataset.done === "1";
+      const activeAlpha = hasSelection
         ? agent === selectedAgent
           ? WAYPOINT_ALPHA
           : WAYPOINT_DIM_ALPHA
         : WAYPOINT_ALPHA;
+      const doneAlpha = hasSelection
+        ? agent === selectedAgent
+          ? WAYPOINT_DONE_SELECT_ALPHA
+          : WAYPOINT_DONE_DIM_ALPHA
+        : WAYPOINT_DONE_ALPHA;
+      const alpha = isDone ? doneAlpha : activeAlpha;
       el.style.opacity = String(alpha);
     });
   };
@@ -869,31 +886,46 @@ export const initMissionPaths = (map) => {
 
   const ensure3dLayers = () => {
     AGENTS.forEach((agent) => {
-      const layerId = `mission-paths-3d-${agent.toLowerCase()}`;
-      if (map.getLayer(layerId)) {
-        return;
+      const doneLayerId = `mission-paths-3d-${agent.toLowerCase()}-done`;
+      if (!map.getLayer(doneLayerId)) {
+        const doneLayer = createLineLayer3d(
+          doneLayerId,
+          colors[agent] || "#e7eddc",
+          "TRIANGLES",
+          PATH_WIDTH_PX,
+        );
+        map.addLayer(doneLayer);
+        doneAgentLayers.set(agent, doneLayer);
       }
-      const layer = createLineLayer3d(
-        layerId,
-        colors[agent] || "#e7eddc",
-        "TRIANGLES",
-        PATH_WIDTH_PX,
-      );
-      map.addLayer(layer);
-      agentLayers.set(agent, layer);
+      const activeLayerId = `mission-paths-3d-${agent.toLowerCase()}`;
+      if (!map.getLayer(activeLayerId)) {
+        const activeLayer = createLineLayer3d(
+          activeLayerId,
+          colors[agent] || "#e7eddc",
+          "TRIANGLES",
+          PATH_WIDTH_PX,
+        );
+        map.addLayer(activeLayer);
+        agentLayers.set(agent, activeLayer);
+      }
     });
     const waypointSize = WAYPOINT_SIZE_PX * (window.devicePixelRatio || 1);
     AGENTS.forEach((agent) => {
-      const layerId = `mission-waypoints-3d-${agent.toLowerCase()}`;
-      if (map.getLayer(layerId)) {
-        return;
+      const doneLayerId = `mission-waypoints-3d-${agent.toLowerCase()}-done`;
+      if (!map.getLayer(doneLayerId)) {
+        const doneLayer = createPointLayer3d(doneLayerId, colors[agent] || "#e7eddc", waypointSize);
+        map.addLayer(doneLayer);
+        doneWaypointLayers.set(agent, doneLayer);
       }
-      const layer = createPointLayer3d(layerId, colors[agent] || "#e7eddc", waypointSize);
-      map.addLayer(layer);
-      waypointLayers.set(agent, layer);
-      if (!labelHookLayer) {
-        layer._renderHook = updateWaypointLabelPositions;
-        labelHookLayer = layer;
+      const activeLayerId = `mission-waypoints-3d-${agent.toLowerCase()}`;
+      if (!map.getLayer(activeLayerId)) {
+        const activeLayer = createPointLayer3d(activeLayerId, colors[agent] || "#e7eddc", waypointSize);
+        map.addLayer(activeLayer);
+        waypointLayers.set(agent, activeLayer);
+        if (!labelHookLayer) {
+          activeLayer._renderHook = updateWaypointLabelPositions;
+          labelHookLayer = activeLayer;
+        }
       }
     });
   };
@@ -913,16 +945,22 @@ export const initMissionPaths = (map) => {
   const update3dPositions = () => {
     if (!features.length) {
       agentLayers.forEach((layer) => layer.updatePositions([]));
+      doneAgentLayers.forEach((layer) => layer.updatePositions([]));
       waypointLayers.forEach((layer) => layer.updatePositions([]));
+      doneWaypointLayers.forEach((layer) => layer.updatePositions([]));
       clearWaypointLabels();
       logStatus("", { key: "mission-debug" });
       return;
     }
     const positionsByAgent = new Map();
+    const donePositionsByAgent = new Map();
     const waypointPositionsByAgent = new Map();
+    const doneWaypointPositionsByAgent = new Map();
     const labelEntries = [];
     AGENTS.forEach((agent) => positionsByAgent.set(agent, []));
+    AGENTS.forEach((agent) => donePositionsByAgent.set(agent, []));
     AGENTS.forEach((agent) => waypointPositionsByAgent.set(agent, []));
+    AGENTS.forEach((agent) => doneWaypointPositionsByAgent.set(agent, []));
     const getTerrainElevation = (lon, lat) => {
       if (typeof map.queryTerrainElevation !== "function") {
         return 0;
@@ -955,7 +993,10 @@ export const initMissionPaths = (map) => {
       return positions;
     };
     features.forEach((feature) => {
-      const target = positionsByAgent.get(feature.agent);
+      const isDone = Boolean(feature && feature.isDone);
+      const target = isDone
+        ? donePositionsByAgent.get(feature.agent)
+        : positionsByAgent.get(feature.agent);
       if (!target) {
         return;
       }
@@ -963,7 +1004,9 @@ export const initMissionPaths = (map) => {
       if (segmentPositions.length) {
         target.push(...segmentPositions);
       }
-      const waypointTarget = waypointPositionsByAgent.get(feature.agent);
+      const waypointTarget = isDone
+        ? doneWaypointPositionsByAgent.get(feature.agent)
+        : waypointPositionsByAgent.get(feature.agent);
       if (waypointTarget) {
         const waypointPositions = buildWaypointPositions(feature.coords, feature.alts);
         if (waypointPositions.length) {
@@ -996,6 +1039,7 @@ export const initMissionPaths = (map) => {
             agent: feature.agent,
             idx: labelId,
             label: `WP${labelId}`,
+            isDone,
             coord: merc,
           });
         });
@@ -1015,9 +1059,33 @@ export const initMissionPaths = (map) => {
         totalLineCount += layer._lineCount;
       }
     });
+    donePositionsByAgent.forEach((positions, agent) => {
+      const layer = doneAgentLayers.get(agent);
+      if (!layer) {
+        return;
+      }
+      layer.setVisible(Boolean(positions.length));
+      layer.updatePositions(positions);
+      totalPositions += positions.length;
+      if (Number.isFinite(layer._lineCount)) {
+        totalLineCount += layer._lineCount;
+      }
+    });
     const waypointSize = WAYPOINT_SIZE_PX * (window.devicePixelRatio || 1);
     waypointPositionsByAgent.forEach((positions, agent) => {
       const layer = waypointLayers.get(agent);
+      if (!layer) {
+        return;
+      }
+      if (typeof layer.setColor === "function") {
+        layer.setColor(colors[agent] || "#e7eddc");
+      }
+      layer.setVisible(Boolean(positions.length));
+      layer.setSize(waypointSize);
+      layer.updatePositions(positions);
+    });
+    doneWaypointPositionsByAgent.forEach((positions, agent) => {
+      const layer = doneWaypointLayers.get(agent);
       if (!layer) {
         return;
       }
@@ -1058,12 +1126,28 @@ export const initMissionPaths = (map) => {
         : DEFAULT_ALPHA;
       layer.setAlpha(alpha);
     });
+    doneAgentLayers.forEach((layer, agent) => {
+      const alpha = hasSelection
+        ? agent === selectedAgent
+          ? DONE_SELECT_ALPHA
+          : DONE_DIM_ALPHA
+        : DONE_ALPHA;
+      layer.setAlpha(alpha);
+    });
     waypointLayers.forEach((layer, agent) => {
       const alpha = hasSelection
         ? agent === selectedAgent
           ? WAYPOINT_ALPHA
           : WAYPOINT_DIM_ALPHA
         : WAYPOINT_ALPHA;
+      layer.setAlpha(alpha);
+    });
+    doneWaypointLayers.forEach((layer, agent) => {
+      const alpha = hasSelection
+        ? agent === selectedAgent
+          ? WAYPOINT_DONE_SELECT_ALPHA
+          : WAYPOINT_DONE_DIM_ALPHA
+        : WAYPOINT_DONE_ALPHA;
       layer.setAlpha(alpha);
     });
     updateWaypointLabelVisibility();
@@ -1097,6 +1181,7 @@ export const initMissionPaths = (map) => {
       const html = `
         <div style="font-size:12px;font-weight:700;margin-bottom:4px;">${agent || "PATH"}</div>
         <div style="font-size:11px;color:#333;">Path ${props.pathId ?? "-"}</div>
+        <div style="font-size:11px;color:#333;">Status ${Number(props.isDone) === 1 ? "Done" : "Active"}</div>
         <div style="font-size:11px;color:#333;">Points ${props.points ?? "-"}</div>
         <div style="font-size:11px;color:#333;">${formatAltRange(props.altMin, props.altMax)}</div>
       `;

@@ -12,6 +12,7 @@ if _ROOT_STR not in sys.path:
     sys.path.insert(0, _ROOT_STR)
 
 from modules.common import db_paths
+from modules.mission_planning.json_io import write_json
 
 
 def _json_safe(value: Any) -> Any:
@@ -127,7 +128,7 @@ class MissionPlanRunLog:
             payload["logPath"] = str(path)
             try:
                 path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+                write_json(path, payload, pretty=True, ensure_ascii=False, skip_if_unchanged=False)
                 written.append(str(path))
             except Exception:
                 continue

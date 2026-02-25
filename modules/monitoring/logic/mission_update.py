@@ -252,11 +252,21 @@ def extract_0401_agent_states(payload: object | None) -> tuple[int | None, list[
                     return _coerce_float(container.get(key))
         return None
 
+    def _extract_fuel_warning(item: dict[str, Any], info: object) -> int | None:
+        for container in (info, item):
+            if not isinstance(container, dict):
+                continue
+            for key in ("fuelWarning", "FuelWarning", "fuel_warning"):
+                if key in container:
+                    return _coerce_int(container.get(key))
+        return None
+
     for item in raw_list:
         if not isinstance(item, dict):
             continue
         unmanned_info = item.get("unmannedInfo") or item.get("UnmannedInfo") or {}
         fuel_val = _extract_fuel(item, unmanned_info)
+        fuel_warning = _extract_fuel_warning(item, unmanned_info)
         states.append(
             {
                 "aircraft_id": _coerce_int(item.get("aircraftID") or item.get("AircraftID")),
@@ -266,8 +276,20 @@ def extract_0401_agent_states(payload: object | None) -> tuple[int | None, list[
                 "current_waypoint_id": _extract_current_waypoint(item, unmanned_info),
                 "on_mission": _extract_on_mission(item, unmanned_info),
                 "fuel_liters": fuel_val,
+                "fuel_warning": fuel_warning,
             }
         )
+    if ts is None:
+        # Some simulators omit top-level 0401 timestamp; fall back to the
+        # latest per-agent signal time to keep progress in simulation time.
+        inferred_ts: int | None = None
+        for state in states:
+            value = _coerce_int(state.get("last_signal_time"))
+            if value is None or value <= 0:
+                continue
+            if inferred_ts is None or value > inferred_ts:
+                inferred_ts = int(value)
+        ts = inferred_ts
     return ts, states
 
 
@@ -381,6 +403,7 @@ def build_uav_mission_view(
             is_done = bool(mission.get("isDone"))
             raw_etas: list[float] = []
             waypoint_defs: list[dict[str, Any]] = []
+            sweep_point_count = 0
             is_formation_flight = False
             formation_leader_id: int | None = None
             if path_id is not None:
@@ -404,6 +427,13 @@ def build_uav_mission_view(
                         wid = _coerce_int(wp.get("waypointID"))
                         if wid is None:
                             continue
+                        fp = wp.get("filmingProperty") or {}
+                        if isinstance(fp, dict):
+                            line_search = fp.get("lineSearch") or {}
+                            if isinstance(line_search, dict):
+                                coords = line_search.get("coordinateList") or []
+                                if isinstance(coords, list):
+                                    sweep_point_count += len(coords)
                         waypoint_ids.append(wid)
                         eta_val = wp.get("eta")
                         if eta_val is None:
@@ -461,6 +491,7 @@ def build_uav_mission_view(
                     "skip_pending": bool(is_formation_follower),
                     "is_formation_flight": bool(is_formation_flight),
                     "formation_leader_id": formation_leader_id,
+                    "sweep_point_count": int(sweep_point_count),
                 }
             )
 
@@ -568,6 +599,39 @@ def mark_input_mission_done(
     if not changed:
         return False
     return save_db_json("InputMissionPlan", package_id, payload, db_root=db_root)
+
+
+def mark_waypoints_done(
+    path_id: int | None,
+    waypoint_ids: Iterable[int] | None,
+    *,
+    db_root: Path | str | None = None,
+) -> bool:
+    if path_id is None or not waypoint_ids:
+        return False
+    payload = load_db_json("FlightPath", path_id, db_root=db_root)
+    if not payload:
+        return False
+    changed = False
+    id_set = {int(wid) for wid in waypoint_ids if wid is not None}
+    if not id_set:
+        return False
+    for key in ("waypointList", "lahWaypointList"):
+        waypoints = payload.get(key)
+        if not isinstance(waypoints, list):
+            continue
+        for wp in waypoints:
+            if not isinstance(wp, dict):
+                continue
+            wid = _coerce_int(wp.get("waypointID"))
+            if wid is None or wid not in id_set:
+                continue
+            if not wp.get("isDone"):
+                wp["isDone"] = True
+                changed = True
+    if not changed:
+        return False
+    return save_db_json("FlightPath", path_id, payload, db_root=db_root)
 
 
 def mark_individual_mission_undone(

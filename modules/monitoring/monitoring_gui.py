@@ -161,6 +161,12 @@ from modules.monitoring.logic.target_detection_replan import TargetDetectionCoor
 from modules.monitoring.utils.vehicle_status import write_vehicle_status
 from Tabs.csc_tab_base import _now_ms_since_2000
 
+try:
+    from modules.monitoring.logic.risk_analysis import RealTimeInferrer, evaluate_risk_thresholds
+except Exception:
+    RealTimeInferrer = None
+    evaluate_risk_thresholds = None
+
 
 def _ensure_fusion_configs():
     cands = [
@@ -241,7 +247,16 @@ class MainWindow(QMainWindow):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.setWindowTitle("모니터링(MSM)")
-        self.resize(1100, 700)
+        default_w, default_h = 1100, 700
+        try:
+            screen = QApplication.primaryScreen()
+            if screen is not None:
+                geom = screen.availableGeometry()
+                default_w = min(default_w, int(geom.width() * 0.96))
+                default_h = min(default_h, int(geom.height() * 0.90))
+        except Exception:
+            pass
+        self.resize(default_w, default_h)
 
         self._power_on = True
         self._auto_initplan_triggered = False
@@ -257,6 +272,18 @@ class MainWindow(QMainWindow):
         self._availability_base_ids: set[int] = set()
         self._forced_availability_override: dict[int, bool] = {}
         self._availability_seen: bool = False
+        self._dl_enabled = False
+        self._dl_visual_enabled = False
+        self._dl_debug = False
+        self._dl_inferrer = None
+        self._dl_status = "INIT"
+        self._dl_last_data_ts = 0.0
+        self._dl_last_infer_ts = 0.0
+        self._dl_last_status_log_ts = 0.0
+        self._dl_replan_enabled = False
+        self._dl_replan_last_ts = 0.0
+        self._dl_timer = None
+        self._dl_lock = threading.Lock()
 
         tabs = QTabWidget()
         self._tab = MissionMonitoringTab(messenger=NodeMessenger)
@@ -264,6 +291,7 @@ class MainWindow(QMainWindow):
         self._viz_tab = MonitoringVisualizationTab()
         self._viz_tab.set_recommend_callback(self._on_0503_recommend)
         self._viz_tab.set_notice_callback(self._on_notice)
+        self._viz_tab.set_log_callback(self._append_log_line)
         self._reexecute_coord = CollabReexecuteCoordinator(
             now_fn=_now_ms_since_2000,
             logger=self._append_log_line,
@@ -355,6 +383,7 @@ class MainWindow(QMainWindow):
         self._install_0803_listener()
         self._start_0803_rx_poller()
         self._start_forced_hold_timer()
+        self._init_dl_inference()
 
     def _append_log_line(self, text: str) -> None:
         try:
@@ -367,6 +396,283 @@ class MainWindow(QMainWindow):
             print(text)
         except Exception:
             pass
+
+    def _update_dl_visual_panel(self, **kwargs) -> None:
+        viz = getattr(self, "_viz_tab", None)
+        if viz is None or not hasattr(viz, "update_dl_panel"):
+            return
+        try:
+            viz.update_dl_panel(**kwargs)
+        except Exception:
+            pass
+
+    def _env_true(self, key: str) -> bool:
+        return os.getenv(key, "").strip().lower() in {"1", "true", "yes", "y", "on"}
+
+    def _init_dl_inference(self) -> None:
+        self._dl_visual_enabled = self._env_true("MSM_DNN_VIS_ENABLE")
+        self._dl_enabled = (
+            self._env_true("MSM_DNN_ENABLE")
+            or self._env_true("MSM_DNN_DEBUG")
+            or self._dl_visual_enabled
+        )
+        self._dl_debug = self._env_true("MSM_DNN_DEBUG")
+        self._dl_replan_enabled = self._env_true("MSM_DNN_REPLAN_ENABLE")
+        if not self._dl_replan_enabled and self._dl_enabled:
+            self._dl_replan_enabled = not self._env_true("MSM_DNN_REPLAN_DISABLE")
+        self._update_dl_visual_panel(
+            status="DISABLED",
+            enabled=self._dl_enabled,
+            replan_enabled=self._dl_replan_enabled,
+            buffer_len=0,
+            min_buffer=0,
+            base_ready=False,
+        )
+        if not self._dl_enabled:
+            return
+        if RealTimeInferrer is None:
+            self._append_log_line("[DL] RealTimeInferrer import failed (torch missing?)")
+            self._update_dl_visual_panel(
+                status="UNAVAILABLE",
+                enabled=True,
+                replan_enabled=False,
+            )
+            return
+
+        model_dir = Path(__file__).resolve().parent / "models" / "checkpoints"
+        context_path = str(model_dir / "mission_context.pt")
+        model_path = str(model_dir / "main_model.pth")
+        try:
+            self._dl_inferrer = RealTimeInferrer(context_path, model_path)
+            self._append_log_line("[DL] DNN inferrer initialized")
+            min_buffer = 0
+            base_ready = False
+            try:
+                min_buffer = int(getattr(self._dl_inferrer, "min_buffer_size", 0) or 0)
+            except Exception:
+                min_buffer = 0
+            try:
+                base_ready = getattr(self._dl_inferrer, "base_coord", None) is not None
+            except Exception:
+                base_ready = False
+            self._update_dl_visual_panel(
+                status="WARMUP",
+                enabled=True,
+                replan_enabled=self._dl_replan_enabled,
+                buffer_len=0,
+                min_buffer=min_buffer,
+                base_ready=base_ready,
+            )
+        except Exception as exc:
+            self._append_log_line(f"[DL] DNN init failed: {exc}")
+            self._dl_inferrer = None
+            self._update_dl_visual_panel(
+                status="ERROR",
+                enabled=True,
+                replan_enabled=False,
+            )
+            return
+
+        self._dl_timer = QTimer(self)
+        self._dl_timer.setInterval(1000)
+        self._dl_timer.timeout.connect(self._tick_dl_status)
+        self._dl_timer.start()
+
+    def _update_dl_inference(self, raw_body: dict | None) -> None:
+        if not self._dl_enabled or self._dl_inferrer is None or not isinstance(raw_body, dict):
+            return
+        if self._current_mission_plan_id is None and not getattr(self._dl_inferrer, "mission_file", None):
+            return
+        if not self._dl_lock.acquire(blocking=False):
+            return
+        try:
+            now = time.time()
+            self._dl_last_data_ts = now
+            if self._current_mission_plan_id is not None:
+                try:
+                    mp_path = mission_plan_json_path(self._current_mission_plan_id)
+                    if mp_path:
+                        self._dl_inferrer.mission_file = str(mp_path)
+                except Exception:
+                    pass
+            mean, std = self._dl_inferrer.infer_one_step(raw_body)
+            if mean:
+                self._dl_last_infer_ts = now
+                risky_indices: list[int] = []
+                if self._dl_debug:
+                    mean_dbg = [round(float(v), 3) for v in mean]
+                    std_dbg = [round(float(v), 3) for v in (std or [])]
+                    self._append_log_line(f"[DL] risk mean={mean_dbg} std={std_dbg}")
+                if evaluate_risk_thresholds:
+                    risky_indices = evaluate_risk_thresholds(mean, std)
+                    if self._dl_debug:
+                        self._append_log_line(f"[DL] risk indices={risky_indices}")
+                    if risky_indices:
+                        self._maybe_trigger_dl_replan(mean, risky_indices, raw_body)
+                aircraft_ids: list[int] = []
+                try:
+                    agents = sorted(
+                        raw_body.get("agentStateList", []),
+                        key=lambda x: x.get("aircraftID", 0),
+                    )
+                    for agent in agents[:6]:
+                        aid = agent.get("aircraftID")
+                        if aid is None:
+                            continue
+                        aircraft_ids.append(int(aid))
+                except Exception:
+                    aircraft_ids = []
+                if not aircraft_ids:
+                    aircraft_ids = [1, 2, 3, 4, 5, 6]
+                msg_ts = None
+                try:
+                    msg_ts = int(raw_body.get("timestamp"))
+                except Exception:
+                    msg_ts = None
+                self._update_dl_visual_panel(
+                    status=self._dl_status or "RUNNING",
+                    enabled=self._dl_enabled,
+                    replan_enabled=self._dl_replan_enabled,
+                    mean=mean,
+                    std=std or [],
+                    risky_indices=risky_indices,
+                    aircraft_ids=aircraft_ids,
+                    timestamp_ms=msg_ts,
+                )
+        except Exception as exc:
+            self._append_log_line(f"[DL] inference error: {exc}")
+        finally:
+            self._dl_lock.release()
+
+    def _maybe_trigger_dl_replan(self, mean, risky_indices, raw_body: dict) -> None:
+        if not self._dl_replan_enabled:
+            if self._dl_debug:
+                self._append_log_line("[DL] replan disabled")
+            return
+        if self._system_mode_code not in (3, 4):
+            if self._dl_debug:
+                self._append_log_line(
+                    f"[DL] replan skipped: mode={self._system_mode_code} (need 3/4)"
+                )
+            return
+
+        now = time.time()
+        cooldown = float(os.getenv("MSM_DNN_REPLAN_COOLDOWN_SEC", "10"))
+        if self._dl_replan_last_ts and (now - self._dl_replan_last_ts) < cooldown:
+            if self._dl_debug:
+                elapsed = now - self._dl_replan_last_ts
+                self._append_log_line(
+                    f"[DL] replan cooldown active ({elapsed:.1f}s/{cooldown}s)"
+                )
+            return
+
+        risk_score = 0.0
+        try:
+            risk_score = float(max(mean)) if mean else 0.0
+        except Exception:
+            risk_score = 0.0
+
+        risky_aircraft_ids: list[int] = []
+        try:
+            agents = sorted(
+                raw_body.get("agentStateList", []),
+                key=lambda x: x.get("aircraftID", 0),
+            )
+            for idx in risky_indices:
+                if idx < len(agents):
+                    try:
+                        risky_aircraft_ids.append(int(agents[idx].get("aircraftID")))
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        coord = getattr(self, "_prior_mission_coord", None)
+        if coord is None:
+            return
+        payloads, logs = coord.on_risk_update(
+            risk_score,
+            system_mode=self._system_mode_code,
+            current_mission_plan_id=self._current_mission_plan_id,
+            risky_aircraft_ids=risky_aircraft_ids,
+        )
+        for line in logs:
+            self._append_log_line(line)
+        for body in payloads:
+            if isinstance(body, dict):
+                self._send_0902(body)
+        if payloads:
+            self._dl_replan_last_ts = now
+
+    def _tick_dl_status(self) -> None:
+        if not self._dl_enabled or self._dl_inferrer is None:
+            return
+        now = time.time()
+        hb_sec = float(os.getenv("MSM_DNN_HEARTBEAT_SEC", "5"))
+        no_data_sec = float(os.getenv("MSM_DNN_NO_DATA_SEC", "10"))
+        status_log_sec = float(os.getenv("MSM_DNN_STATUS_LOG_SEC", "5"))
+
+        buffer_len = 0
+        min_buffer = 0
+        base_ready = True
+        if hasattr(self._dl_inferrer, "buffer"):
+            try:
+                buffer_len = len(self._dl_inferrer.buffer)
+            except Exception:
+                buffer_len = 0
+        if hasattr(self._dl_inferrer, "min_buffer_size"):
+            try:
+                min_buffer = int(self._dl_inferrer.min_buffer_size)
+            except Exception:
+                min_buffer = 0
+        if hasattr(self._dl_inferrer, "base_coord"):
+            base_ready = self._dl_inferrer.base_coord is not None
+
+        if self._dl_last_data_ts == 0.0 or (now - self._dl_last_data_ts) > no_data_sec:
+            status = "NO_DATA"
+        elif not base_ready or (min_buffer and buffer_len < min_buffer):
+            status = "WARMUP"
+        elif self._dl_last_infer_ts and (now - self._dl_last_infer_ts) <= hb_sec:
+            status = "RUNNING"
+        else:
+            status = "STALE"
+
+        if status != self._dl_status:
+            self._dl_status = status
+            self._append_log_line(f"[DL] realtime status -> {status}")
+            self._dl_last_status_log_ts = now
+        elif self._dl_debug and (now - self._dl_last_status_log_ts) >= status_log_sec:
+            data_age = now - self._dl_last_data_ts if self._dl_last_data_ts else -1
+            infer_age = now - self._dl_last_infer_ts if self._dl_last_infer_ts else -1
+            self._append_log_line(
+                "[DL] heartbeat: "
+                f"status={status}, last_data={data_age:.1f}s, last_infer={infer_age:.1f}s, "
+                f"buffer={buffer_len}/{min_buffer}, base_ready={base_ready}"
+            )
+            self._dl_last_status_log_ts = now
+
+        data_age = None
+        infer_age = None
+        try:
+            if self._dl_last_data_ts:
+                data_age = max(0.0, now - self._dl_last_data_ts)
+        except Exception:
+            data_age = None
+        try:
+            if self._dl_last_infer_ts:
+                infer_age = max(0.0, now - self._dl_last_infer_ts)
+        except Exception:
+            infer_age = None
+        self._update_dl_visual_panel(
+            status=self._dl_status,
+            enabled=self._dl_enabled,
+            replan_enabled=self._dl_replan_enabled,
+            data_age_sec=data_age,
+            infer_age_sec=infer_age,
+            buffer_len=buffer_len,
+            min_buffer=min_buffer,
+            base_ready=base_ready,
+        )
 
     def _on_tab_changed(self, index: int) -> None:
         viz = getattr(self, "_viz_tab", None)
@@ -437,6 +743,12 @@ class MainWindow(QMainWindow):
             pass
 
     def _update_0501_state(self, mode_code: int | None) -> None:
+        viz = getattr(self, "_viz_tab", None)
+        if viz is not None and hasattr(viz, "set_system_mode"):
+            try:
+                viz.set_system_mode(mode_code)
+            except Exception:
+                pass
         if mode_code == 3:
             self._start_0501_sender()
         else:
@@ -462,7 +774,15 @@ class MainWindow(QMainWindow):
         viz = getattr(self, "_viz_tab", None)
         if viz is None or not hasattr(viz, "build_0501_payload"):
             return
-        payload = viz.build_0501_payload(timestamp_ms=_now_ms_since_2000(), source="MSM")
+        ts_for_0501 = None
+        try:
+            if hasattr(viz, "get_latest_status_timestamp_ms"):
+                ts_for_0501 = viz.get_latest_status_timestamp_ms()
+        except Exception:
+            ts_for_0501 = None
+        if ts_for_0501 is None:
+            ts_for_0501 = _now_ms_since_2000()
+        payload = viz.build_0501_payload(timestamp_ms=ts_for_0501, source="MSM")
         if not payload:
             return
         try:
@@ -882,8 +1202,18 @@ class MainWindow(QMainWindow):
         availability = self._availability_state_for(aid)
         return availability is False
 
+    def _is_aircraft_in_current_plan(self, aircraft_id: int) -> bool:
+        try:
+            aid = int(aircraft_id)
+        except Exception:
+            return False
+        plan_aircraft = self._current_plan_aircraft_ids()
+        if not plan_aircraft:
+            return True
+        return aid in plan_aircraft
+
     def _forced_hold_availability(self, aircraft_id: int) -> bool | None:
-        """Return False to block delayed replan when aircraft is known unavailable."""
+        """Return current availability state for delayed-hold replan decisions."""
         if self._is_aircraft_unavailable(aircraft_id):
             return False
         return True
@@ -1088,11 +1418,18 @@ class MainWindow(QMainWindow):
                 raw_latest = self._unwrap_payload(payload)
                 if raw_latest:
                     self._last_0402_raw = raw_latest
+                try:
+                    payload_ms = self._latest_payload_ms(payload)
+                except Exception:
+                    payload_ms = None
+                if payload_ms is not None:
+                    self._last_0402_ms = int(payload_ms)
+                elif raw_latest:
                     try:
                         self._last_0402_ms = int(time.time() * 1000)
                     except Exception:
                         pass
-                self._on_rx_0402(payload)
+                self._on_rx_0402(raw_latest if raw_latest else payload)
             except Exception:
                 pass
 
@@ -1296,7 +1633,7 @@ class MainWindow(QMainWindow):
         self._clear_pending_0702()
         return True
 
-    def _on_rx_0201(self, payload: object | None) -> None:
+    def _on_rx_0201(self, payload: object | None, *, is_new_arrival: bool = True) -> None:
         available_ids = collect_available_aircraft_ids(payload)
         self._availability_base_ids = {int(aid) for aid in available_ids or []}
         self._availability_seen = True
@@ -1309,7 +1646,10 @@ class MainWindow(QMainWindow):
                     reexecute_active = bool(coord.is_active())
                 except Exception:
                     reexecute_active = False
-                replan_payload, logs = coord.on_input_plan(payload)
+                replan_payload, logs = coord.on_input_plan(
+                    payload,
+                    has_new_arrival=bool(is_new_arrival),
+                )
                 for line in logs:
                     self._append_log_line(line)
                 if replan_payload:
@@ -1366,6 +1706,7 @@ class MainWindow(QMainWindow):
             self._append_log_line(f"[0902] prior-mission-on-0202 error: {exc}")
 
     def _on_rx_0401(self, payload: object | None) -> None:
+        raw_body = None
         try:
             raw_body = parse_payload(payload)
             if not raw_body:
@@ -1374,6 +1715,10 @@ class MainWindow(QMainWindow):
                 agent_status_snapshot.save_agent_status_snapshot(raw_body)
         except Exception as exc:
             self._append_log_line(f"[0401] snapshot save failed: {exc}")
+        try:
+            self._update_dl_inference(raw_body)
+        except Exception:
+            pass
         ts, states = extract_0401_agent_states(payload)
         fuel_state_map: dict[int, str] = {}
         try:
@@ -1467,10 +1812,16 @@ class MainWindow(QMainWindow):
                 aid_int = int(aircraft_id) if aircraft_id is not None else None
             except Exception:
                 aid_int = None
-            if aid_int is None or self._is_aircraft_unavailable(int(aid_int)):
+            if aid_int is None:
                 _send_unavailable_notice(mandatory_type, aid_int)
                 self._append_log_line(
-                    "[0802] command ignored: aircraft not available or not in plan"
+                    "[0802] command ignored: invalid aircraft id"
+                )
+                return
+            if not self._is_aircraft_in_current_plan(int(aid_int)):
+                _send_unavailable_notice(mandatory_type, aid_int)
+                self._append_log_line(
+                    "[0802] command ignored: aircraft not in current plan"
                 )
                 return
             viz = getattr(self, "_viz_tab", None)
@@ -1861,7 +2212,7 @@ class MainWindow(QMainWindow):
             self._last_0201_raw = raw_latest
             if latest_ms is not None:
                 self._last_0201_ms = int(latest_ms)
-            self._on_rx_0201(raw_latest)
+            self._on_rx_0201(raw_latest, is_new_arrival=bool(new_arrival))
         except Exception:
             pass
 
@@ -1948,6 +2299,10 @@ class MainWindow(QMainWindow):
             last_ms = getattr(self, "_last_0402_ms", None)
             new_arrival = latest_ms is not None and (last_ms is None or latest_ms > last_ms)
             same_payload = self._last_0402_raw is not None and raw_latest == self._last_0402_raw
+            # If message timestamp is not newer, treat it as already handled
+            # even when raw representation differs between listener/poller paths.
+            if latest_ms is not None and last_ms is not None and latest_ms <= last_ms:
+                return
             if (not new_arrival) and same_payload:
                 return
             if same_payload and new_arrival:

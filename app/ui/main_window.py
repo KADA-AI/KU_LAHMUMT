@@ -782,48 +782,67 @@ class MainWindow(QMainWindow):
                     pass
 
     def _handle_overwrite_020x(self) -> None:
-        try:
-            src_root = db_paths.PROJECT_ROOT / "Logs"
-            tasks = [
-                ("0201", src_root / "InputMissionPlan", db_paths.get_db_subpath("InputMissionPlan")),
-                ("0203", src_root / "MissionReferenceInfo", db_paths.get_db_subpath("MissionReferenceInfo")),
-            ]
-            messages = []
-            total = 0
-            for code, src_dir, dest_dir in tasks:
-                src_dir = Path(src_dir)
-                dest_dir = Path(dest_dir)
-                if not src_dir.exists():
-                    messages.append(f"{code}: 원본 없음 ({src_dir})")
-                    continue
-                count = 0
-                for path in src_dir.rglob("*"):
-                    if not path.is_file():
+        # Step 1: standby + system mode(0101) request through INF
+        self._set_all_module_modes("대기모드")
+        self._broadcast_ctrl({"cmd": "mode", "text": "standby"})
+        self._broadcast_ctrl({"cmd": "system_mode", "mode": 1})
+        self._log_to_modules("[RUN] overwrite sequence: step1 standby (system_mode=1)")
+
+        def _step2_overwrite():
+            try:
+                src_root = db_paths.PROJECT_ROOT / "Logs"
+                tasks = [
+                    ("0201", src_root / "InputMissionPlan", db_paths.get_db_subpath("InputMissionPlan")),
+                    ("0203", src_root / "MissionReferenceInfo", db_paths.get_db_subpath("MissionReferenceInfo")),
+                ]
+                messages = []
+                total = 0
+                for code, src_dir, dest_dir in tasks:
+                    src_dir = Path(src_dir)
+                    dest_dir = Path(dest_dir)
+                    if not src_dir.exists():
+                        messages.append(f"{code}: source missing ({src_dir})")
                         continue
-                    target = dest_dir / path.relative_to(src_dir)
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(path, target)
-                    count += 1
-                dest_dir.mkdir(parents=True, exist_ok=True)
-                messages.append(f"{code}: {count}개 복사 → {dest_dir}")
-                total += count
+                    count = 0
+                    for path in src_dir.rglob("*"):
+                        if not path.is_file():
+                            continue
+                        target = dest_dir / path.relative_to(src_dir)
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(path, target)
+                        count += 1
+                    dest_dir.mkdir(parents=True, exist_ok=True)
+                    messages.append(f"{code}: copied {count} files -> {dest_dir}")
+                    total += count
 
-            info = db_paths.get_info()
-            scenario = info.get("scenario_dir") or "(시나리오 미지정)"
-            summary = "\n".join(messages) if messages else "복사된 파일이 없습니다."
+                info = db_paths.get_info()
+                scenario = info.get("scenario_dir") or "(scenario unknown)"
+                summary = "\n".join(messages) if messages else "No files copied."
 
-            if total > 0:
-                self._log_to_modules(f"[RUN] 0201/0203 덮어쓰기 완료 ({total} files) → {scenario}")
-                self._debug_log(f'overwrite 020x copied={total} scenario={scenario}')
-                QMessageBox.information(self, "0201/0203 덮어쓰기", f"{summary}\n\n시나리오: {scenario}")
-            else:
-                self._log_to_modules("[RUN] 0201/0203 덮어쓰기를 수행했으나 복사할 파일이 없습니다.")
-                self._debug_log(f'overwrite 020x no files scenario={scenario}')
-                QMessageBox.warning(self, "0201/0203 덮어쓰기", f"복사할 파일이 없습니다.\n{summary}\n\n시나리오: {scenario}")
-        except Exception as exc:
-            self._log_to_modules(f"[RUN] 0201/0203 덮어쓰기 실패: {exc}")
-            self._debug_log(f'overwrite 020x error={exc}')
-            QMessageBox.critical(self, "0201/0203 덮어쓰기", f"복사 중 오류가 발생했습니다.\n{exc}")
+                if total > 0:
+                    self._log_to_modules(f"[RUN] 0201/0203 overwrite done ({total} files) -> {scenario}")
+                    self._debug_log(f"overwrite 020x copied={total} scenario={scenario}")
+                    QMessageBox.information(self, "0201/0203 overwrite", f"{summary}\n\nscenario: {scenario}")
+                else:
+                    self._log_to_modules("[RUN] 0201/0203 overwrite: no source files copied.")
+                    self._debug_log(f"overwrite 020x no files scenario={scenario}")
+                    QMessageBox.warning(self, "0201/0203 overwrite", f"No files copied.\n{summary}\n\nscenario: {scenario}")
+
+                # Step 3 after 1 second
+                QTimer.singleShot(1000, _step3_initial_plan)
+            except Exception as exc:
+                self._log_to_modules(f"[RUN] 0201/0203 overwrite failed: {exc}")
+                self._debug_log(f"overwrite 020x error={exc}")
+                QMessageBox.critical(self, "0201/0203 overwrite", f"Copy failed.\n{exc}")
+
+        def _step3_initial_plan():
+            self._set_all_module_modes("초기임무계획")
+            self._broadcast_ctrl({"cmd": "mode", "text": "initplan"})
+            self._broadcast_ctrl({"cmd": "system_mode", "mode": 2})
+            self._log_to_modules("[RUN] overwrite sequence: step3 initial-plan mode (system_mode=2)")
+
+        # Step 2 after 1 second
+        QTimer.singleShot(1000, _step2_overwrite)
 
     def _add_placeholder(self, grid: QGridLayout, zone_key: str) -> None:
         placeholder = Card("", self)
@@ -969,3 +988,4 @@ class MainWindow(QMainWindow):
         mod, direc = self._demo_seq[self._demo_idx]
         self._pulse(mod, direc)
         self._demo_idx = (self._demo_idx + 1) % len(self._demo_seq)
+

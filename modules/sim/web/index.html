@@ -279,14 +279,6 @@
               <option value="target">표적</option>
             </select>
           </div>
-          <div class="scenario-row scenario-row-coord" data-scn-coord-block>
-            <label class="scenario-label">Lat / Lon / Alt</label>
-            <div class="scenario-coord">
-              <input id="scn-0202-lat" class="scenario-input" type="number" step="0.000001" />
-              <input id="scn-0202-lon" class="scenario-input" type="number" step="0.000001" />
-              <input id="scn-0202-alt" class="scenario-input" type="number" step="1" value="1000" />
-            </div>
-          </div>
           <div class="scenario-row scenario-row-target is-hidden" data-scn-target-block>
             <label class="scenario-label" for="scn-0202-target-id">Target ID</label>
             <input id="scn-0202-target-id" class="scenario-input" type="number" step="1" value="0" />
@@ -526,6 +518,32 @@
         <div class="mission-option-footer">
           <button type="button" class="mission-option-keep" data-option-keep>
             현재 임무 유지
+          </button>
+        </div>
+      </div>
+    </div>
+    <div id="mission-recommend-modal" class="mission-option-modal mission-recommend-modal" aria-hidden="true">
+      <div class="mission-option-shell mission-recommend-shell" role="dialog" aria-modal="true">
+        <div class="mission-option-header">
+          <div class="mission-option-header-left">
+            <div class="mission-option-title" data-recommend-title>0503 협업기저임무 완료</div>
+            <div class="mission-option-sub" data-recommend-time>수신: -</div>
+          </div>
+          <div class="mission-option-header-right">
+            <div class="mission-option-auto" data-recommend-state>systemRecommend: -</div>
+            <button type="button" class="mission-option-close" data-recommend-close>닫기</button>
+          </div>
+        </div>
+        <div class="mission-recommend-body" data-recommend-body>다음 행동을 선택하세요.</div>
+        <div class="mission-option-footer mission-recommend-footer">
+          <button type="button" class="mission-option-keep mission-recommend-next" data-recommend-next>
+            Next Mission
+          </button>
+          <button type="button" class="mission-option-keep mission-recommend-repeat" data-recommend-repeat>
+            Repeat Mission
+          </button>
+          <button type="button" class="mission-option-keep mission-recommend-ok is-hidden" data-recommend-ok>
+            확인
           </button>
         </div>
       </div>

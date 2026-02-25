@@ -6,6 +6,22 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 
+def _coerce_bool(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return bool(int(value))
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in ("1", "true", "yes", "y", "on"):
+            return True
+        if lowered in ("0", "false", "no", "n", "off"):
+            return False
+    return default
+
+
 def _resolve_path(path_str: str, root: Path) -> Path:
     if not path_str:
         return root
@@ -119,6 +135,7 @@ def load_flight_paths(base_path: str, *, project_root: Path) -> Dict[str, Any]:
         altitudes: List[float] = []
         alts: List[Optional[float]] = []
         wp_ids: List[Optional[int]] = []
+        wp_done_flags: List[bool] = []
         for wp in _extract_waypoints(data):
             if not isinstance(wp, dict):
                 continue
@@ -133,6 +150,7 @@ def load_flight_paths(base_path: str, *, project_root: Path) -> Dict[str, Any]:
                 wp_id = None
             coords.append([lon, lat])
             wp_ids.append(wp_id)
+            wp_done_flags.append(_coerce_bool(wp.get("isDone") or wp.get("IsDone"), False))
             if alt is not None:
                 altitudes.append(alt)
                 alts.append(alt)
@@ -147,6 +165,7 @@ def load_flight_paths(base_path: str, *, project_root: Path) -> Dict[str, Any]:
             "agent": agent,
             "aircraftId": aircraft_id,
             "pathId": path_id,
+            "isDone": bool(wp_done_flags and all(wp_done_flags)),
             "points": len(coords),
             "coords": coords,
             "alts": alts,

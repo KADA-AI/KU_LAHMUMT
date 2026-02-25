@@ -25,6 +25,7 @@ from mission_planning_gui_env import (
 )
 from mission_planning_pipeline_logging import PipelineLogManager
 from mission_plan_file_logger import MissionPlanFileLogger
+from modules.mission_planning.json_io import write_json
 
 PROJECT_ROOT, COMMON_DIR = _bootstrap_paths(Path(__file__))
 _TEMP_DIR = PROJECT_ROOT / "temp"
@@ -524,6 +525,10 @@ class MainWindow(QMainWindow):
         self._option_id_counter = 0
         self._bus_ready = False
         self._attack_delivery_buffer: list[dict] = []
+        self._hb_0102_enabled = False
+        self._hb_0102_interval_sec = 0.2  # 5Hz
+        self._hb_0102_stop = threading.Event()
+        self._hb_0102_thread: Optional[threading.Thread] = None
 
         reset_latest_inputs()
         self._last_logged_input_ids = {"0201": None, "0203": None}
@@ -793,6 +798,126 @@ class MainWindow(QMainWindow):
 
 
     # ───────── 모니터링(대시보드) 전송 훅 ─────────
+    def _find_tx_row(self, code: str) -> int:
+        tab = getattr(self, "_tab", None)
+        tbl = getattr(tab, "tbl_tx", None) if tab else None
+        if tbl is None:
+            return -1
+        try:
+            needle = str(code).strip()
+            for r in range(tbl.rowCount()):
+                it = tbl.item(r, 0)
+                if it and it.text().strip() == needle:
+                    return r
+        except Exception:
+            return -1
+        return -1
+
+    def _set_0102_tx_state(self, running: bool) -> None:
+        try:
+            row = self._find_tx_row("0102")
+            if row < 0:
+                return
+            state_item = self._tab.tbl_tx.item(row, 2)
+            if state_item is None:
+                return
+            if running:
+                state_item.setText("주기송신(5Hz/HB)")
+                state_item.setForeground(QColor("blue"))
+            else:
+                state_item.setText("전송 정지")
+        except Exception:
+            pass
+
+    def _start_0102_heartbeat_worker_if_needed(self) -> None:
+        th = getattr(self, "_hb_0102_thread", None)
+        if th is not None and th.is_alive():
+            return
+        self._hb_0102_stop.clear()
+        self._hb_0102_thread = threading.Thread(
+            target=self._run_0102_heartbeat_worker,
+            name="MMR-0102-HB",
+            daemon=True,
+        )
+        self._hb_0102_thread.start()
+
+    def _run_0102_heartbeat_worker(self) -> None:
+        try:
+            from push_center import push_message
+        except Exception as exc:
+            try:
+                self.log_sig.emit(f"[ERR] 0102 heartbeat import failed: {exc}")
+            except Exception:
+                pass
+            return
+
+        interval = float(getattr(self, "_hb_0102_interval_sec", 0.2) or 0.2)
+        next_due = time.monotonic() + interval
+        last_warn = 0.0
+
+        while not self._hb_0102_stop.is_set():
+            if not self._hb_0102_enabled:
+                self._hb_0102_stop.wait(0.1)
+                next_due = time.monotonic() + interval
+                continue
+            if not self._power_on:
+                self._hb_0102_stop.wait(0.1)
+                next_due = time.monotonic() + interval
+                continue
+            if not getattr(self, "_bus_ready", False):
+                self._hb_0102_stop.wait(0.1)
+                next_due = time.monotonic() + interval
+                continue
+
+            now = time.monotonic()
+            if now < next_due:
+                self._hb_0102_stop.wait(min(0.05, next_due - now))
+                continue
+
+            # 큰 지연이 발생한 경우 burst 전송 대신 다음 주기로 재정렬한다.
+            if now - next_due > interval:
+                next_due = now + interval
+            else:
+                next_due += interval
+
+            try:
+                body = {
+                    "timestamp": _now_ms_since_2000(),
+                    "source": "MMR",
+                    "status": 1,
+                }
+                push_message("0102", NodeMessenger, body_dict=body)
+                self._self_check_sent = True
+            except Exception as exc:
+                # heartbeat 실패 로그는 저주기로만 남겨서 GUI 이벤트 큐 과부하를 막는다.
+                if (now - last_warn) >= 5.0:
+                    try:
+                        self.log_sig.emit(f"[WARN] 0102 heartbeat send failed: {exc}")
+                    except Exception:
+                        pass
+                    last_warn = now
+                next_due = time.monotonic() + max(interval, 0.5)
+
+    def _set_0102_heartbeat_enabled(self, enabled: bool) -> None:
+        self._hb_0102_enabled = bool(enabled)
+        if self._hb_0102_enabled:
+            self._start_0102_heartbeat_worker_if_needed()
+            self._set_0102_tx_state(True)
+        else:
+            self._set_0102_tx_state(False)
+
+    def _stop_tab_periodic_0102_if_running(self) -> None:
+        try:
+            tab = self._tab
+            timers = getattr(tab, "periodic_timers", {})
+            timer = timers.get("0102")
+            if timer is not None:
+                timer.stop()
+                timer.deleteLater()
+                del timers["0102"]
+        except Exception:
+            pass
+
     def _install_0301_override(self):
         tab = getattr(self, "_tab", None)
         if not tab or not hasattr(tab, "_on_tx_button_clicked") or hasattr(self, "_tx_override_installed"):
@@ -808,6 +933,10 @@ class MainWindow(QMainWindow):
                     code = item.text().strip()
             except Exception:
                 code = ""
+
+            if code == "0102":
+                self._ensure_0102(not bool(getattr(self, "_hb_0102_enabled", False)))
+                return
 
             if code == "0301":
                 plan_ids: list[int] = []
@@ -1052,6 +1181,9 @@ class MainWindow(QMainWindow):
         )
         d0303_module.POINT_FOV_DEG = _get_float(
             "point_fov_deg", float(getattr(d0303_module, "POINT_FOV_DEG", 0.0))
+        )
+        d0303_module.AREA_NADIR_FOV_DEG = _get_float(
+            "area_nadir_fov_deg", float(getattr(d0303_module, "AREA_NADIR_FOV_DEG", 31.2))
         )
         d0303_module.ENTRY_HOLD_FOV_DEG = _get_float(
             "entry_hold_fov_deg", float(getattr(d0303_module, "ENTRY_HOLD_FOV_DEG", 0.0))
@@ -1309,6 +1441,7 @@ class MainWindow(QMainWindow):
                 except Exception: pass
             try: timers.clear()
             except Exception: pass
+            self._set_0102_heartbeat_enabled(False)
             self._append_log_line("[POWER] periodic TX 정지")
         except Exception:
             pass
@@ -1359,6 +1492,10 @@ class MainWindow(QMainWindow):
                     continue
                 delay = base_delay + idx * 200
                 QTimer.singleShot(delay, lambda pid=mpid: self._push_0903(pid))
+                # 선행임무(force-direct)에서는 자동 인가가 누락되지 않도록
+                # 0702(ignore=2)를 함께 송신해 적용 경로를 이중화한다.
+                if force_direct:
+                    QTimer.singleShot(delay + 250, lambda pid=mpid: self._push_0702_auto_apply(pid))
                 scheduled = True
             if not scheduled:
                 self._append_log_line("[WARN] No valid missionPlanID for 0903 push")
@@ -1635,6 +1772,42 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self.log_sig.emit(f"[ERR] 0903 push failed: {e}")
 
+    def _push_0702_auto_apply(self, mission_plan_id):
+        try:
+            from push_center import push_message
+        except Exception as e:
+            self.log_sig.emit(f"[ERR] 0702 push unavailable: {e}")
+            return
+
+        try:
+            mpid = int(mission_plan_id)
+        except Exception:
+            self.log_sig.emit(f"[WARN] 0702 auto-apply skipped: invalid missionPlanID={mission_plan_id}")
+            return
+        if mpid <= 0:
+            self.log_sig.emit(f"[WARN] 0702 auto-apply skipped: invalid missionPlanID={mission_plan_id}")
+            return
+
+        body = {
+            "timestamp": _now_ms_since_2000(),
+            "source": "MMR",
+            "ignore": 2,
+            "missionPlanID": mpid,
+        }
+        try:
+            push_message("0702", NodeMessenger, body_dict=body)
+            self.log_sig.emit(f"[0702][AUTO] ignore=2 sent (missionPlanID={mpid})")
+            try:
+                raw = json.dumps(body, ensure_ascii=False).encode("utf-8", "ignore")
+            except Exception:
+                raw = None
+            try:
+                self._tab.mark_sent(_z4("0702"), raw)
+            except Exception:
+                pass
+        except Exception as e:
+            self.log_sig.emit(f"[ERR] 0702 auto-apply push failed: {e}")
+
 
     def _allocate_option_ids(self, count: int) -> list[int]:
         ids: list[int] = []
@@ -1778,28 +1951,12 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(300, self._start_0102_stream)
             return False
         try:
-            tab = self._tab; tbl = tab.tbl_tx
-            target_row = -1
-            for r in range(tbl.rowCount()):
-                it = tbl.item(r, 0)
-                if it and it.text().strip() == "0102":
-                    target_row = r; break
-            if target_row < 0:
+            if self._find_tx_row("0102") < 0:
                 self._append_log_line("[CTRL] TX 테이블에 0102 행이 없음"); return False
-            running = "0102" in getattr(tab, "periodic_timers", {})
-            if (on and not running) or ((not on) and running):
-                try:
-                    btn = tbl.cellWidget(target_row, 3)
-                    if btn is not None and hasattr(btn, "click"):
-                        btn.click(); return True
-                except Exception:
-                    pass
-                try:
-                    if hasattr(tab, "_on_tx_button_clicked"):
-                        tab._on_tx_button_clicked(target_row); return True
-                except Exception:
-                    pass
-                self._send_self_check_0102(status=1 if on else 0); return True
+            # 0102는 GUI QTimer 대신 별도 heartbeat 스레드로 유지한다.
+            # 재계획 중 UI 이벤트 큐가 밀려도 0102 공백이 생기지 않도록 한다.
+            self._stop_tab_periodic_0102_if_running()
+            self._set_0102_heartbeat_enabled(bool(on))
             return True
         except Exception as e:
             self._append_log_line(f"[CTRL] 0102 토글 처리 실패: {e}"); return False
@@ -2568,7 +2725,7 @@ class MainWindow(QMainWindow):
                         payload_copy = dict(payload_0201)
                         payload_copy.setdefault("inputMissionPackageID", latest_cmpk_id)
                         try:
-                            candidate.write_text(json.dumps(payload_copy, ensure_ascii=False, indent=2), encoding="utf-8")
+                            write_json(candidate, payload_copy, pretty=True, ensure_ascii=False, skip_if_unchanged=True)
                             cmpk_path = candidate
                             ctx['inputMissionPackageID'] = latest_cmpk_id
                             self.log_sig.emit(f"[STEP 0] Materialized latest 0201 ID {latest_cmpk_id} from cache payload ({candidate.name})")
@@ -2614,7 +2771,7 @@ class MainWindow(QMainWindow):
                         payload_copy = dict(payload_0203)
                         payload_copy.setdefault("missionReferencePackageID", latest_mrpk_id)
                         try:
-                            candidate.write_text(json.dumps(payload_copy, ensure_ascii=False, indent=2), encoding="utf-8")
+                            write_json(candidate, payload_copy, pretty=True, ensure_ascii=False, skip_if_unchanged=True)
                             mrpk_path = candidate
                             ctx['missionReferencePackageID'] = latest_mrpk_id
                             self.log_sig.emit(f"[STEP 0] Materialized latest 0203 ID {latest_mrpk_id} from cache payload ({candidate.name})")
@@ -2951,6 +3108,71 @@ class MainWindow(QMainWindow):
                     except Exception:
                         continue
 
+            def _filter_input_missions_payload(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+                mission_list_local = payload.get("inputMissionList") if isinstance(payload, dict) else None
+                if not isinstance(mission_list_local, list):
+                    return None
+
+                filtered_list: List[Dict[str, Any]] = []
+                removed_ids: list[str] = []
+                converted_ids: list[str] = []
+                width_adjusted_ids: list[str] = []
+                active_ids: list[int] = []
+
+                for mission in mission_list_local:
+                    if not isinstance(mission, dict):
+                        continue
+                    mid_raw = mission.get("inputMissionID")
+                    try:
+                        mid_int = int(mid_raw)
+                    except Exception:
+                        mid_int = None
+                    if mission_whitelist and (mid_int is None or mid_int not in mission_whitelist):
+                        removed_ids.append(str(mid_raw))
+                        continue
+                    if bool(mission.get("isDone")):
+                        removed_ids.append(str(mid_raw))
+                        continue
+
+                    mtype = mission.get("inputMissionType")
+                    if not isinstance(mtype, int) or mtype == 0:
+                        detail = mission.get("missionDetail") or {}
+                        if detail.get("lineList"):
+                            mission["inputMissionType"] = 1
+                            mtype = 1
+                            converted_ids.append(f"{mid_raw}->1")
+                        elif detail.get("areaList"):
+                            mission["inputMissionType"] = 2
+                            mtype = 2
+                            converted_ids.append(f"{mid_raw}->2")
+                        else:
+                            removed_ids.append(str(mid_raw))
+                            continue
+
+                    if mtype in (1, 7):
+                        detail = mission.get("missionDetail") or {}
+                        for entry in detail.get("lineList") or []:
+                            try:
+                                width_val = float(entry.get("width", 0))
+                            except Exception:
+                                width_val = 0.0
+                            if width_val <= 0:
+                                entry["width"] = 1 if mtype == 7 else 1000
+                                width_adjusted_ids.append(str(mid_raw))
+
+                    filtered_list.append(mission)
+                    if mid_int is not None:
+                        active_ids.append(mid_int)
+
+                return {
+                    "filtered_list": filtered_list,
+                    "removed_ids": removed_ids,
+                    "converted_ids": converted_ids,
+                    "width_adjusted_ids": width_adjusted_ids,
+                    "active_ids": active_ids,
+                    "original_count": len(mission_list_local),
+                }
+
             filtered_cmpk_path = cmpk_path
             mission_list = cmpk_data.get("inputMissionList") if isinstance(cmpk_data, dict) else None
             if isinstance(mission_list, list):
@@ -3042,6 +3264,12 @@ class MainWindow(QMainWindow):
                         )
             else:
                 self.log_sig.emit("[WARN] 0201 payload missing valid inputMissionList; continuing without filtering")
+
+            filtered_cmpk_cache: Dict[str, Path] = {}
+            try:
+                filtered_cmpk_cache[str(Path(cmpk_path).resolve())] = Path(cmpk_path)
+            except Exception:
+                filtered_cmpk_cache[str(cmpk_path)] = Path(cmpk_path)
 
             ctx['cmpk_path'] = str(cmpk_path)
             ctx['mrpk_path'] = str(mrpk_path)
@@ -3191,6 +3419,95 @@ class MainWindow(QMainWindow):
                         f"[variant {variant_no}] 선행임무 0201 적용: {cmpk_source_path.name}"
                     )
 
+                try:
+                    source_key = str(Path(cmpk_source_path).resolve())
+                except Exception:
+                    source_key = str(cmpk_source_path)
+                cached_filtered = filtered_cmpk_cache.get(source_key)
+                if cached_filtered is not None:
+                    cmpk_source_path = cached_filtered
+                else:
+                    try:
+                        cmpk_variant_data = json.loads(Path(cmpk_source_path).read_text(encoding="utf-8"))
+                    except Exception as exc:
+                        self.log_sig.emit(
+                            f"[ERR] [variant {variant_no}] 0201 소스 로드 실패: {cmpk_source_path} ({exc})"
+                        )
+                        _record_issue(
+                            "variant_0201_load_failed",
+                            f"variant {variant_no} failed to load source 0201",
+                            detail={"path": str(cmpk_source_path), "error": str(exc), "variant": variant_no},
+                        )
+                        self._plan_status = "임무계획 실패"
+                        self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
+                        return
+
+                    filtered_result = _filter_input_missions_payload(cmpk_variant_data)
+                    if filtered_result is not None:
+                        v_filtered = filtered_result.get("filtered_list") or []
+                        v_removed = filtered_result.get("removed_ids") or []
+                        v_converted = filtered_result.get("converted_ids") or []
+                        v_width = filtered_result.get("width_adjusted_ids") or []
+                        v_active = filtered_result.get("active_ids") or []
+                        v_original_count = int(filtered_result.get("original_count") or 0)
+
+                        if not v_filtered:
+                            self.log_sig.emit(
+                                f"[WARN] [variant {variant_no}] 필터 후 유효 임무 없음 (source={Path(cmpk_source_path).name})"
+                            )
+                            plan_log_status = "skipped"
+                            _record_issue(
+                                "variant_0201_filter_empty",
+                                f"variant {variant_no} filtered 0201 has no missions",
+                                detail={
+                                    "variant": variant_no,
+                                    "path": str(cmpk_source_path),
+                                    "removed": v_removed,
+                                    "mission_whitelist": sorted(mission_whitelist) if mission_whitelist else [],
+                                },
+                                status="skipped",
+                            )
+                            plan_log_summary.update(
+                                {
+                                    "stop_reason": "variant_0201_filter_empty",
+                                    "variant": variant_no,
+                                    "source_path": str(cmpk_source_path),
+                                }
+                            )
+                            self._plan_status = "replan_skipped"
+                            self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
+                            return
+
+                        needs_variant_filter = (
+                            len(v_filtered) != v_original_count
+                            or bool(v_converted)
+                            or bool(v_width)
+                            or (mission_whitelist and set(v_active) != mission_whitelist)
+                        )
+                        if needs_variant_filter:
+                            cmpk_variant_data["inputMissionList"] = v_filtered
+                            filtered_dir = out_root_base / "_filtered"
+                            filtered_dir.mkdir(parents=True, exist_ok=True)
+                            variant_filtered_path = filtered_dir / f"{Path(cmpk_source_path).stem}_v{variant_no:02d}.json"
+                            try:
+                                variant_filtered_path.write_text(
+                                    json.dumps(cmpk_variant_data, ensure_ascii=False, indent=2),
+                                    encoding="utf-8",
+                                )
+                                cmpk_source_path = variant_filtered_path
+                                removed_summary = ", ".join(v_removed) if v_removed else "-"
+                                converted_summary = ", ".join(v_converted) if v_converted else "-"
+                                width_summary = ", ".join(v_width) if v_width else "-"
+                                self.log_sig.emit(
+                                    f"[variant {variant_no}] 0201 필터 적용 "
+                                    f"(removed={removed_summary}, converted={converted_summary}, widthAdjusted={width_summary})"
+                                )
+                            except Exception as exc:
+                                self.log_sig.emit(
+                                    f"[WARN] [variant {variant_no}] 필터된 0201 저장 실패: {exc}"
+                                )
+                    filtered_cmpk_cache[source_key] = Path(cmpk_source_path)
+
                 iter_out_root = out_root_base / f'variant_{variant_no:02d}'
                 if iter_out_root.exists():
                     shutil.rmtree(iter_out_root)
@@ -3203,7 +3520,8 @@ class MainWindow(QMainWindow):
                     str(cmpk_source_path),
                     str(mrpk_path),
                     str(iter_out_root),
-                    log=lambda msg, n=variant_no: self.log_sig.emit(f"[variant {n}] {msg}")
+                    log=lambda msg, n=variant_no: self.log_sig.emit(f"[variant {n}] {msg}"),
+                    option_code=int(option_code),
                 )
                 if not imp_paths:
                     self.log_sig.emit(f"[ERR] IMP generation failed (variant={variant_no})")
@@ -3281,12 +3599,13 @@ class MainWindow(QMainWindow):
                         wp_alloc,
                         uav_cruise_speed,
                         turn_step_deg=uav_turn_step,
+                        ref0203=mrpk_data,
                     )
                     return plans, (time.perf_counter() - start) * 1000.0
 
                 def _build_0304():
                     start = time.perf_counter()
-                    plans = d0304.build_lah_flight_plans_fixed(manned, cruise_speed=30.0, wp_alloc=wp_alloc)
+                    plans = d0304.build_lah_flight_plans_fixed(manned, cruise_speed=15.0, wp_alloc=wp_alloc)
                     return plans, (time.perf_counter() - start) * 1000.0
 
                 flight_plans_0303: list[dict] = []
@@ -3473,7 +3792,7 @@ class MainWindow(QMainWindow):
                         generated_imp_ids.add(int(imp_id))
                     except Exception:
                         pass
-                    (dir_imp / f"{int(imp_id)}.json").write_text(json.dumps(pkg, indent=2, ensure_ascii=False), encoding='utf-8')
+                    write_json(dir_imp / f"{int(imp_id)}.json", pkg, pretty=True, ensure_ascii=False, skip_if_unchanged=True)
                 total_imp_files += len(imp_pkgs)
                 step_ms = (time.perf_counter() - step_t0) * 1000.0
                 self.log_sig.emit(
@@ -3486,7 +3805,7 @@ class MainWindow(QMainWindow):
                         pid = fp.get('pathID')
                         if pid is None:
                             continue
-                        (target_dir / f"{int(pid)}.json").write_text(json.dumps(fp, indent=2, ensure_ascii=False), encoding='utf-8')
+                        write_json(target_dir / f"{int(pid)}.json", fp, pretty=True, ensure_ascii=False, skip_if_unchanged=True)
                         try:
                             stored_path_ids.add(int(pid))
                         except Exception:
@@ -3505,7 +3824,7 @@ class MainWindow(QMainWindow):
 
                 step_t0 = time.perf_counter()
                 mp_json["planningTime"] = float((time.perf_counter() - variant_start) * 1000.0)
-                (dir_mp / f"{plan_id}.json").write_text(json.dumps(mp_json, indent=2, ensure_ascii=False), encoding='utf-8')
+                write_json(dir_mp / f"{plan_id}.json", mp_json, pretty=True, ensure_ascii=False, skip_if_unchanged=True)
                 step_ms = (time.perf_counter() - step_t0) * 1000.0
                 self.log_sig.emit(
                     f"[TIME] write_0301 (variant={variant_no}): {step_ms:.1f} ms"
@@ -3882,14 +4201,25 @@ class MainWindow(QMainWindow):
         self._last_mission_plan_id = generated_plan_ids[0] if generated_plan_ids else None
         self.visual_refresh.emit()
 
-        try:
-            input_pkg_id_int = int(ctx.get("inputMissionPackageID"))
-        except Exception:
-            input_pkg_id_int = None
-        try:
-            ref_pkg_id_int = int(ctx.get("missionReferencePackageID"))
-        except Exception:
-            ref_pkg_id_int = None
+        # delivery를 먼저 큐잉한다. (이후 메타/GUI 갱신 중 예외가 나도 0903 누락 방지)
+        self._deliver_prior_direct_now(
+            generated_plan_ids,
+            reason,
+            option_names=option_names,
+            option_meta=plan_meta_map,
+        )
+
+        def _to_optional_int(value: Any) -> Optional[int]:
+            if value is None:
+                return None
+            try:
+                iv = int(value)
+            except Exception:
+                return None
+            return iv if iv > 0 else None
+
+        input_pkg_id_int = _to_optional_int(ctx.get("inputMissionPackageID"))
+        ref_pkg_id_int = _to_optional_int(ctx.get("missionReferencePackageID"))
 
         plan_id_set = {int(pid) for pid in generated_plan_ids if pid is not None}
         imp_id_set = {int(val) for val in result.generated_imp_ids if val is not None}
@@ -3909,13 +4239,6 @@ class MainWindow(QMainWindow):
             plan_state=self._plan_status,
         )
 
-        self._schedule_plan_delivery(
-            generated_plan_ids,
-            option_names,
-            reason,
-            plan_meta_map,
-            force_direct_update=True,
-        )
         self.log_sig.emit(
             f"[PRIOR] Prior mission pipeline complete (planIds={generated_plan_ids}, log={result.log_path})"
         )
@@ -3930,8 +4253,43 @@ class MainWindow(QMainWindow):
             )
         return summary
 
+    def _deliver_prior_direct_now(
+        self,
+        plan_ids: List[int],
+        reason: str,
+        *,
+        option_names: Optional[List[str]] = None,
+        option_meta: Optional[Dict[int, Dict[str, Any]]] = None,
+    ) -> None:
+        valid_ids: List[int] = []
+        for value in plan_ids or []:
+            try:
+                pid = int(value)
+            except Exception:
+                continue
+            if pid > 0 and pid not in valid_ids:
+                valid_ids.append(pid)
+        if not valid_ids:
+            self.log_sig.emit("[PRIOR][DELIVERY] skipped: no valid missionPlanID")
+            return
+
+        self.log_sig.emit(
+            f"[PRIOR][DELIVERY] direct push start (planIds={', '.join(str(v) for v in valid_ids)})"
+        )
+        # GUI 전송 경로(0301 버튼 경유 + 0903 순차 푸시)를 그대로 사용한다.
+        # force_direct_update=True 이면 0901/0701을 건너뛰고 0903(+0702 fallback)만 송신한다.
+        self._schedule_plan_delivery(
+            valid_ids,
+            list(option_names or []),
+            reason,
+            dict(option_meta or {}),
+            force_direct_update=True,
+        )
+
     def closeEvent(self, event):
         try:
+            self._hb_0102_enabled = False
+            self._hb_0102_stop.set()
             for msg_id, handler in getattr(self, "_input_listener_refs", []):
                 unregister_listener(msg_id, handler)
         except Exception:

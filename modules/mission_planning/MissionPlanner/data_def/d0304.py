@@ -128,7 +128,7 @@ def build_lah_flight_plans_from_mrpk(
     missions: List[dict],
     mrpk: dict,
     *,
-    cruise_speed: float = 30.0,
+    cruise_speed: float = 15.0,
     wp_interval_m: float = WP_INTERVAL_M,
     wp_alloc: _WPAllocator | None = None,
 ) -> List[dict]:
@@ -263,7 +263,7 @@ def build_lah_flight_plans_from_mrpk(
 def build_lah_flight_plans_fixed(
     missions: List[dict],
     *,
-    cruise_speed: float = 30.0,
+    cruise_speed: float = 15.0,
     wp_interval_m: float = WP_INTERVAL_M,
     wp_alloc: _WPAllocator | None = None,
 ) -> List[dict]:

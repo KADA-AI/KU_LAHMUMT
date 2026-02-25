@@ -292,6 +292,122 @@ class _Dlg0802_MandatoryCommand(QDialog):
         }
 
 
+class _Dlg0503_SystemRecommend(QDialog):
+    """0503(협업기저임무 완료) 수신 시, Next/Repeat 를 빠르게 선택하는 다이얼로그."""
+
+    ACTION_CANCEL = 0
+    ACTION_NEXT = 1
+    ACTION_REPEAT = 2
+
+    def __init__(
+        self,
+        parent=None,
+        *,
+        system_recommend: int | None = None,
+        current_input_id: int | None = None,
+        next_input_id: int | None = None,
+    ):
+        super().__init__(parent)
+        self.setModal(True)
+        self.setObjectName("Dlg0503Recommend")
+        self.setWindowTitle("Mission Recommend (0503)")
+        self.setMinimumWidth(520)
+        try:
+            self.setWindowFlag(Qt.WindowContextHelpButtonHint, False)
+        except Exception:
+            pass
+
+        rec_map = {
+            1: "1: 다음 협업기저임무 추천",
+            2: "2: 현재 협업기저임무 재수행 추천",
+            3: "3: 모든 협업기저임무 완료",
+        }
+        rec_text = rec_map.get(int(system_recommend)) if system_recommend is not None else None
+        if not rec_text:
+            rec_text = f"systemRecommend={system_recommend}" if system_recommend is not None else "systemRecommend=unknown"
+
+        title = QLabel("협업기저임무 완료")
+        title.setObjectName("Title")
+        subtitle = QLabel(f"(0503) {rec_text}")
+        subtitle.setObjectName("Subtitle")
+
+        if current_input_id is not None and next_input_id is not None:
+            body_txt = f"현재 임무: {current_input_id}\n다음 임무: {next_input_id}"
+        elif current_input_id is not None:
+            body_txt = f"현재 임무: {current_input_id}"
+        else:
+            body_txt = "다음 행동을 선택하세요."
+        body = QLabel(body_txt)
+        body.setObjectName("Body")
+        body.setWordWrap(True)
+
+        btn_next = QPushButton("Next Mission\n(0803 execute=1)")
+        btn_next.setObjectName("NextBtn")
+        btn_repeat = QPushButton("Repeat Mission\n(0803 execute=2)")
+        btn_repeat.setObjectName("RepeatBtn")
+
+        # 추천 행동 강조/기본 포커스
+        try:
+            if int(system_recommend) == 2:
+                btn_repeat.setProperty("recommended", True)
+                btn_repeat.setDefault(True)
+            else:
+                btn_next.setProperty("recommended", True)
+                btn_next.setDefault(True)
+        except Exception:
+            btn_next.setDefault(True)
+
+        btn_next.clicked.connect(lambda: self.done(self.ACTION_NEXT))
+        btn_repeat.clicked.connect(lambda: self.done(self.ACTION_REPEAT))
+
+        btn_row = QWidget(self)
+        btn_lay = QHBoxLayout(btn_row)
+        btn_lay.setContentsMargins(0, 0, 0, 0)
+        btn_lay.setSpacing(12)
+        btn_lay.addWidget(btn_next)
+        btn_lay.addWidget(btn_repeat)
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(18, 18, 18, 16)
+        lay.setSpacing(10)
+        lay.addWidget(title)
+        lay.addWidget(subtitle)
+        lay.addSpacing(4)
+        lay.addWidget(body)
+        lay.addSpacing(12)
+        lay.addWidget(btn_row)
+
+        # 미니멀 QSS(기존 Scenario GUI 기능은 유지하고, 빠른 선택만 제공)
+        self.setStyleSheet(
+            """
+            #Dlg0503Recommend {
+                background: #0b1220;
+                border: 1px solid rgba(148,163,184,0.25);
+                border-radius: 14px;
+            }
+            QLabel#Title { color: #e5e7eb; font-size: 18px; font-weight: 700; }
+            QLabel#Subtitle { color: #93c5fd; font-size: 12px; }
+            QLabel#Body { color: #cbd5e1; font-size: 12px; line-height: 1.35; }
+            QPushButton {
+                border: 1px solid rgba(148,163,184,0.25);
+                border-radius: 12px;
+                padding: 12px 14px;
+                font-weight: 700;
+                color: #e5e7eb;
+                background: rgba(15,23,42,0.65);
+            }
+            QPushButton#NextBtn { background: rgba(37,99,235,0.92); border: 1px solid rgba(37,99,235,1.0); }
+            QPushButton#NextBtn:hover { background: rgba(29,78,216,0.95); }
+            QPushButton#RepeatBtn { background: rgba(14,165,233,0.92); border: 1px solid rgba(14,165,233,1.0); }
+            QPushButton#RepeatBtn:hover { background: rgba(2,132,199,0.95); }
+            QPushButton[recommended="true"] { border: 2px solid rgba(251,191,36,0.95); }
+            """
+        )
+
+    def reject(self) -> None:
+        self.done(self.ACTION_CANCEL)
+
+
 # ───────── 0401 이동 미니맵 위젯 ─────────
 class _MiniMap(QWidget):
     def __init__(self, parent=None):
@@ -1863,6 +1979,65 @@ class _ReplayManager(QObject):
         self._emit_message("0401", body, row)
         return finished
 
+    def _prompt_0503_recommend(self, system_recommend: int) -> None:
+        """
+        0503(systemRecommend) 수신 시 Sim에서 빠르게 Next/Repeat 선택.
+
+        - overlay(replay) 모드면: 기존 Scenario GUI 동작(overlay advance/repeat)을 그대로 수행
+        - overlay 미사용이면: 0803만 전송
+        """
+        if self._awaiting_user:
+            return
+
+        current_id = self._overlay.current_input_id() if self._overlay_active else None
+        next_id = self._overlay.peek_next_input_id() if self._overlay_active else None
+
+        # replay 모드에서 이미 마지막 입력임무라면, 기존 로직과 동일하게 완료 시뮬레이션으로 전환
+        if self._overlay_active and next_id is None:
+            self._overlay_active = False
+            self._awaiting_user = False
+            self._start_completion_sim()
+            if callable(self._log):
+                self._log("[REPLAY] Last input mission reached; start completion 0401 simulation")
+            return
+
+        self._awaiting_user = True
+        dlg = _Dlg0503_SystemRecommend(
+            self._tab,
+            system_recommend=int(system_recommend),
+            current_input_id=current_id,
+            next_input_id=next_id,
+        )
+        action = int(dlg.exec_())
+
+        if action == _Dlg0503_SystemRecommend.ACTION_NEXT:
+            self._push_0803(1)
+            self._awaiting_user = False
+            if self._overlay_active:
+                new_id = self._overlay.advance_to_next_input()
+                if new_id is None:
+                    self._overlay_active = False
+                    if callable(self._log):
+                        self._log("[REPLAY] 모든 협업기저임무 재생 완료")
+                    return
+                if callable(self._log):
+                    self._log(f"[REPLAY] 협업기저임무 {new_id} 재생 시작")
+                self._schedule_next_overlay_row(initial=True)
+            return
+
+        if action == _Dlg0503_SystemRecommend.ACTION_REPEAT:
+            self._push_0803(2)
+            self._awaiting_user = False
+            if self._overlay_active:
+                if not self.repeat_current_input():
+                    if callable(self._log):
+                        self._log("[REPLAY] repeat unavailable; stopping replay")
+                    self.stop()
+            return
+
+        # cancel/close: 대기 해제(기존 Scenario GUI는 그대로, 사용자는 좌측 버튼으로 0803 수동 전송 가능)
+        self._awaiting_user = False
+
     def _prompt_next_input_mission(self):
         if not self._overlay_active:
             return
@@ -2186,7 +2361,7 @@ class MainWindow(QMainWindow):
         if rec_val == 3:
             QTimer.singleShot(0, lambda: QMessageBox.information(self, "Mission Complete", "All input missions completed."))
             return
-        QTimer.singleShot(0, self._replay._prompt_next_input_mission)
+        QTimer.singleShot(0, lambda rv=rec_val: self._replay._prompt_0503_recommend(rv))
 
     def _handle_ctrl_payload(self, payload: dict):
         try: cmd = str(payload.get("cmd") or "")

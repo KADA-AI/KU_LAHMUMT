@@ -4,6 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+_ON_MISSION_STARTUP_GUARD_MS = 10000
+
 
 def _coerce_int(value: object) -> int | None:
     try:
@@ -43,6 +45,7 @@ class MissionMeta:
     aircraft_id: int
     input_id: int | None
     package_id: int | None
+    path_id: int | None
     planned_seconds: float
     waypoint_ids: list[int]
     waypoint_eta_cumulative: dict[int, float]
@@ -63,7 +66,27 @@ class MissionProgressState:
 
 class MissionProgressTracker:
     def __init__(self) -> None:
+        self._system_mode_code: int | None = None
+        self._on_mission_startup_guard_requested: bool = False
+        self._on_mission_startup_guard_pending: set[int] = set()
+        self._on_mission_startup_guard_first_wp: dict[int, int | None] = {}
+        self._on_mission_startup_guard_baselined: set[int] = set()
+        self._on_mission_startup_guard_start_ms: dict[int, int] = {}
         self.reset({})
+
+    def set_system_mode(self, mode_code: int | None) -> None:
+        mode = _coerce_int(mode_code)
+        prev = self._system_mode_code
+        self._system_mode_code = mode
+        if mode == 3:
+            if prev != 3:
+                self._on_mission_startup_guard_requested = True
+                self._arm_on_mission_startup_guard()
+                if self._on_mission_startup_guard_pending:
+                    self._on_mission_startup_guard_requested = False
+            return
+        self._on_mission_startup_guard_requested = False
+        self._clear_on_mission_startup_guard()
 
     def reset(self, view: dict[str, Any] | None) -> None:
         self._mission_meta: dict[int, MissionMeta] = {}
@@ -74,11 +97,16 @@ class MissionProgressTracker:
         self._input_mission_ids: list[int] = []
         self._aircraft_current_mission: dict[int, int | None] = {}
         self._mission_to_package: dict[int, int | None] = {}
+        self._last_completed_idx: dict[int, int] = {}
         self._completed_mission_ids: set[int] = set()
         self._completed_input_ids: set[int] = set()
         self._last_timestamp_ms: int | None = None
         self._paused_aircraft: set[int] = set()
         self._aircraft_hold_mission: dict[int, int] = {}
+        self._formation_followers: dict[int, dict[str, int | None]] = {}
+        self._formation_followers_map: dict[int, int | None] = {}
+        self._leader_mission_by_aircraft_input: dict[tuple[int, int], int] = {}
+        self._waypoint_state: dict[int, dict[int, str]] = {}
 
         if not view:
             return
@@ -111,9 +139,13 @@ class MissionProgressTracker:
                 mission_id = _coerce_int(mission.get("individual_mission_id"))
                 if mission_id is None:
                     continue
-                if mission.get("skip_progress"):
-                    continue
                 input_id = _coerce_int(mission.get("input_id"))
+                formation_leader_id = _coerce_int(mission.get("formation_leader_id"))
+                is_formation_follower = bool(mission.get("skip_progress"))
+                if not is_formation_follower:
+                    if formation_leader_id is not None and int(formation_leader_id) != int(aircraft_id):
+                        is_formation_follower = True
+                path_id = _coerce_int(mission.get("path_id"))
                 planned_seconds = _coerce_float(mission.get("eta_seconds")) or 0.0
                 waypoint_ids: list[int] = []
                 raw_etas: list[float] = []
@@ -191,6 +223,7 @@ class MissionProgressTracker:
                     aircraft_id=aircraft_id,
                     input_id=input_id,
                     package_id=package_id,
+                    path_id=path_id,
                     planned_seconds=planned_seconds,
                     waypoint_ids=waypoint_ids,
                     waypoint_eta_cumulative=waypoint_eta_cumulative,
@@ -198,9 +231,22 @@ class MissionProgressTracker:
                 )
                 self._mission_meta[mission_id] = meta
                 self._mission_to_package[mission_id] = package_id
+                self._last_completed_idx.setdefault(mission_id, -1)
+                self._waypoint_state[mission_id] = {
+                    int(wid): "pending" for wid in waypoint_ids
+                }
                 self._aircraft_missions[aircraft_id].append(mission_id)
                 if input_id is not None:
                     self._input_to_missions.setdefault(input_id, []).append(mission_id)
+                if is_formation_follower:
+                    if formation_leader_id is not None:
+                        self._formation_followers[mission_id] = {
+                            "leader_aircraft_id": int(formation_leader_id),
+                            "input_id": int(input_id) if input_id is not None else None,
+                        }
+                else:
+                    if input_id is not None:
+                        self._leader_mission_by_aircraft_input[(aircraft_id, int(input_id))] = mission_id
                 for wid in waypoint_ids:
                     self._waypoint_to_mission.setdefault(aircraft_id, {})
                     self._waypoint_to_mission[aircraft_id].setdefault(wid, mission_id)
@@ -211,8 +257,30 @@ class MissionProgressTracker:
                         elapsed_seconds=float(planned_seconds),
                     )
                     self._completed_mission_ids.add(mission_id)
+                    if waypoint_ids:
+                        self._last_completed_idx[mission_id] = len(waypoint_ids) - 1
                 else:
                     self._progress_state.setdefault(mission_id, MissionProgressState())
+
+        if self._formation_followers:
+            for follower_id, info in self._formation_followers.items():
+                leader_id = None
+                leader_aircraft = info.get("leader_aircraft_id")
+                input_id = info.get("input_id")
+                if leader_aircraft is not None and input_id is not None:
+                    leader_id = self._leader_mission_by_aircraft_input.get(
+                        (int(leader_aircraft), int(input_id))
+                    )
+                self._formation_followers_map[follower_id] = leader_id
+
+        if self._system_mode_code == 3:
+            # Re-arm guard on every mission-view reset (e.g. 0702 ignore=2 plan switch)
+            # so stale/transient onMission=2 does not immediately trigger execute-ready flow.
+            self._arm_on_mission_startup_guard()
+            self._on_mission_startup_guard_requested = False
+        else:
+            self._on_mission_startup_guard_requested = False
+            self._clear_on_mission_startup_guard()
 
     def update(
         self,
@@ -220,10 +288,16 @@ class MissionProgressTracker:
         agent_states: list[dict[str, Any]] | None,
     ) -> dict[str, Any]:
         new_completed_individual: list[dict[str, int | None]] = []
+        new_completed_waypoints: list[dict[str, Any]] = []
         if timestamp_ms is not None:
             self._last_timestamp_ms = int(timestamp_ms)
         if not agent_states:
-            return self._build_snapshot(timestamp_ms, new_completed_individual, [])
+            return self._build_snapshot(
+                timestamp_ms,
+                new_completed_individual,
+                [],
+                new_completed_waypoints,
+            )
 
         for state in agent_states:
             if not isinstance(state, dict):
@@ -237,6 +311,12 @@ class MissionProgressTracker:
             if current_wp is not None and current_wp <= 0:
                 current_wp = None
             on_mission = _coerce_int(state.get("on_mission"))
+            on_mission = self._filter_startup_on_mission(
+                aircraft_id=aircraft_id,
+                current_wp=current_wp,
+                on_mission=on_mission,
+                timestamp_ms=timestamp_ms,
+            )
             mission_id = self._resolve_mission_for_waypoint(aircraft_id, current_wp)
             if mission_id is None:
                 mission_id = self._aircraft_current_mission.get(aircraft_id)
@@ -247,6 +327,20 @@ class MissionProgressTracker:
                 continue
 
             prev_mission_id = self._aircraft_current_mission.get(aircraft_id)
+            wp_map = self._waypoint_to_mission.get(aircraft_id, {})
+            has_direct_wp_match = (
+                current_wp is not None
+                and int(wp_map.get(int(current_wp), -1)) == int(mission_id)
+            )
+            if on_mission != 2 and has_direct_wp_match:
+                self._complete_prior_missions_on_waypoint_jump(
+                    aircraft_id=aircraft_id,
+                    prev_mission_id=prev_mission_id,
+                    current_mission_id=mission_id,
+                    timestamp_ms=timestamp_ms,
+                    out_completed_individual=new_completed_individual,
+                    out_waypoint_updates=new_completed_waypoints,
+                )
             hold_id: int | None = None
             if on_mission == 2:
                 prev_id = self._aircraft_current_mission.get(aircraft_id)
@@ -257,6 +351,8 @@ class MissionProgressTracker:
                 self._aircraft_hold_mission.pop(aircraft_id, None)
 
             state_obj = self._progress_state.setdefault(mission_id, MissionProgressState())
+            prev_wp_id = state_obj.current_waypoint_id
+            self._mark_waypoint_reached(mission_id, current_wp)
             if timestamp_ms is not None:
                 ts_int = int(timestamp_ms)
                 if prev_mission_id is not None and prev_mission_id != mission_id:
@@ -285,10 +381,112 @@ class MissionProgressTracker:
                             "package_id": self._mission_to_package.get(mission_id),
                         }
                     )
+            self._record_waypoint_completion(
+                mission_id,
+                current_wp,
+                prev_wp_id,
+                on_mission,
+                new_completed_waypoints,
+            )
 
+        formation_map = self._sync_formation_followers(timestamp_ms, new_completed_individual)
         new_completed_input: list[int] = []
-        snapshot = self._build_snapshot(timestamp_ms, new_completed_individual, new_completed_input)
+        snapshot = self._build_snapshot(
+            timestamp_ms,
+            new_completed_individual,
+            new_completed_input,
+            new_completed_waypoints,
+            formation_map=formation_map,
+        )
         return snapshot
+
+    def _complete_prior_missions_on_waypoint_jump(
+        self,
+        *,
+        aircraft_id: int,
+        prev_mission_id: int | None,
+        current_mission_id: int | None,
+        timestamp_ms: int | None,
+        out_completed_individual: list[dict[str, int | None]],
+        out_waypoint_updates: list[dict[str, Any]],
+    ) -> None:
+        if prev_mission_id is None or current_mission_id is None:
+            return
+        prev_id = int(prev_mission_id)
+        cur_id = int(current_mission_id)
+        if prev_id == cur_id:
+            return
+        missions = self._aircraft_missions.get(int(aircraft_id)) or []
+        if not missions:
+            return
+        try:
+            prev_idx = missions.index(prev_id)
+            cur_idx = missions.index(cur_id)
+        except ValueError:
+            return
+        prev_meta = self._mission_meta.get(prev_id)
+        cur_meta = self._mission_meta.get(cur_id)
+        if prev_meta is None or cur_meta is None:
+            return
+        prev_state = self._progress_state.get(prev_id)
+        # Guard against false positives right after replan:
+        # if previous mission has never actually started, do not force-complete it.
+        if prev_state is not None and not prev_state.done:
+            if prev_state.current_waypoint_id is None and float(prev_state.completed_seconds or 0.0) <= 0.0:
+                return
+        if prev_meta.input_id is not None and cur_meta.input_id is not None:
+            if int(prev_meta.input_id) != int(cur_meta.input_id):
+                return
+        # If waypoint jumped forward to a later individual mission, treat previous mission blocks as passed.
+        if cur_idx <= prev_idx:
+            return
+        for mission_id in missions[prev_idx:cur_idx]:
+            self._force_complete_mission(
+                mission_id=int(mission_id),
+                timestamp_ms=timestamp_ms,
+                out_completed_individual=out_completed_individual,
+                out_waypoint_updates=out_waypoint_updates,
+            )
+
+    def _force_complete_mission(
+        self,
+        *,
+        mission_id: int,
+        timestamp_ms: int | None,
+        out_completed_individual: list[dict[str, int | None]],
+        out_waypoint_updates: list[dict[str, Any]],
+    ) -> None:
+        meta = self._mission_meta.get(int(mission_id))
+        if meta is None:
+            return
+        state = self._progress_state.setdefault(int(mission_id), MissionProgressState())
+        if state.done:
+            return
+        if meta.waypoint_ids:
+            last_wp = int(meta.waypoint_ids[-1])
+            state.current_waypoint_id = last_wp
+            self._record_waypoint_completion(
+                int(mission_id),
+                last_wp,
+                state.current_waypoint_id,
+                2,
+                out_waypoint_updates,
+            )
+            self._last_completed_idx[int(mission_id)] = len(meta.waypoint_ids) - 1
+        state.done = True
+        state.awaiting_execute = False
+        state.paused = False
+        state.completed_seconds = float(max(state.completed_seconds, max(0.0, meta.planned_seconds)))
+        if timestamp_ms is not None:
+            state.segment_start_ms = int(timestamp_ms)
+            state.last_update_ms = int(timestamp_ms)
+        self._completed_mission_ids.add(int(mission_id))
+        out_completed_individual.append(
+            {
+                "mission_id": int(mission_id),
+                "package_id": self._mission_to_package.get(int(mission_id)),
+            }
+        )
 
     def get_active_input_id(self) -> int | None:
         active_counts: dict[int, int] = {}
@@ -364,6 +562,11 @@ class MissionProgressTracker:
             state.elapsed_seconds = 0.0
             state.last_update_ms = None
             self._completed_mission_ids.discard(mission_id)
+            meta = self._mission_meta.get(mission_id)
+            if meta is not None:
+                self._waypoint_state[mission_id] = {
+                    int(wid): "pending" for wid in meta.waypoint_ids
+                }
 
     def pause_aircraft(self, aircraft_id: int | None, timestamp_ms: int | None) -> None:
         if aircraft_id is None:
@@ -405,6 +608,113 @@ class MissionProgressTracker:
             if timestamp_ms is not None:
                 state.segment_start_ms = int(timestamp_ms)
         self._paused_aircraft.discard(aid)
+
+    def _sync_formation_followers(
+        self,
+        timestamp_ms: int | None,
+        new_completed_individual: list[dict[str, int | None]],
+    ) -> dict[int, int]:
+        if not self._formation_followers:
+            return {}
+        resolved: dict[int, int] = {}
+        for follower_id, info in self._formation_followers.items():
+            leader_id = self._formation_followers_map.get(follower_id)
+            if leader_id is None:
+                leader_aircraft = info.get("leader_aircraft_id")
+                if leader_aircraft is not None:
+                    leader_id = self._aircraft_current_mission.get(int(leader_aircraft))
+                    if leader_id is None:
+                        leader_list = self._aircraft_missions.get(int(leader_aircraft)) or []
+                        leader_id = leader_list[0] if leader_list else None
+                if leader_id is None:
+                    continue
+                resolved[follower_id] = int(leader_id)
+            leader_state = self._progress_state.get(int(leader_id))
+            if leader_state is None:
+                continue
+            follower_state = self._progress_state.setdefault(
+                int(follower_id), MissionProgressState()
+            )
+            if leader_state.done and not follower_state.done:
+                follower_state.done = True
+                follower_state.awaiting_execute = False
+                meta = self._mission_meta.get(int(follower_id))
+                if meta is not None:
+                    follower_state.completed_seconds = float(
+                        max(follower_state.completed_seconds, meta.planned_seconds)
+                    )
+                if timestamp_ms is not None:
+                    follower_state.segment_start_ms = int(timestamp_ms)
+                self._completed_mission_ids.add(int(follower_id))
+                new_completed_individual.append(
+                    {
+                        "mission_id": int(follower_id),
+                        "package_id": self._mission_to_package.get(int(follower_id)),
+                    }
+                )
+        return resolved
+
+    def _arm_on_mission_startup_guard(self) -> None:
+        # Some simulators can momentarily publish onMission=2 right after
+        # mode-3 entry, before mission execution actually starts.
+        self._on_mission_startup_guard_pending = set(self._aircraft_missions.keys())
+        self._on_mission_startup_guard_first_wp = {
+            int(aid): None for aid in self._on_mission_startup_guard_pending
+        }
+        self._on_mission_startup_guard_baselined = set()
+        self._on_mission_startup_guard_start_ms = {}
+
+    def _clear_on_mission_startup_guard(self) -> None:
+        self._on_mission_startup_guard_pending = set()
+        self._on_mission_startup_guard_first_wp = {}
+        self._on_mission_startup_guard_baselined = set()
+        self._on_mission_startup_guard_start_ms = {}
+
+    def _release_on_mission_startup_guard(self, aircraft_id: int) -> None:
+        aid = int(aircraft_id)
+        self._on_mission_startup_guard_pending.discard(aid)
+        self._on_mission_startup_guard_first_wp.pop(aid, None)
+        self._on_mission_startup_guard_baselined.discard(aid)
+        self._on_mission_startup_guard_start_ms.pop(aid, None)
+
+    def _filter_startup_on_mission(
+        self,
+        *,
+        aircraft_id: int,
+        current_wp: int | None,
+        on_mission: int | None,
+        timestamp_ms: int | None,
+    ) -> int | None:
+        if self._system_mode_code != 3:
+            return on_mission
+        aid = int(aircraft_id)
+        if aid not in self._on_mission_startup_guard_pending:
+            return on_mission
+
+        if timestamp_ms is not None:
+            ts_int = int(timestamp_ms)
+            start_ms = self._on_mission_startup_guard_start_ms.get(aid)
+            if start_ms is None:
+                self._on_mission_startup_guard_start_ms[aid] = ts_int
+            elif ts_int >= start_ms and (ts_int - start_ms) >= _ON_MISSION_STARTUP_GUARD_MS:
+                self._release_on_mission_startup_guard(aid)
+                return on_mission
+
+        if aid not in self._on_mission_startup_guard_baselined:
+            self._on_mission_startup_guard_first_wp[aid] = current_wp
+            self._on_mission_startup_guard_baselined.add(aid)
+        else:
+            first_wp = self._on_mission_startup_guard_first_wp.get(aid)
+            if current_wp is not None and current_wp != first_wp:
+                self._release_on_mission_startup_guard(aid)
+                return on_mission
+
+        if on_mission is None:
+            return None
+        if int(on_mission) != 2:
+            self._release_on_mission_startup_guard(aid)
+            return on_mission
+        return None
 
     def _resolve_mission_for_waypoint(self, aircraft_id: int, waypoint_id: int | None) -> int | None:
         if waypoint_id is None:
@@ -543,6 +853,9 @@ class MissionProgressTracker:
         timestamp_ms: int | None,
         new_completed_individual: list[dict[str, int | None]],
         new_completed_input: list[int],
+        new_completed_waypoints: list[dict[str, Any]],
+        *,
+        formation_map: dict[int, int] | None = None,
     ) -> dict[str, Any]:
         mission_progress: dict[int, dict[str, Any]] = {}
         for mission_id, meta in self._mission_meta.items():
@@ -575,7 +888,33 @@ class MissionProgressTracker:
                 "awaiting_execute": bool(state.awaiting_execute),
                 "input_id": meta.input_id,
                 "aircraft_id": meta.aircraft_id,
+                "waypoint_status": self._serialize_waypoint_status(mission_id, meta),
             }
+
+        if formation_map:
+            for follower_id, leader_id in formation_map.items():
+                leader_prog = mission_progress.get(int(leader_id))
+                if not isinstance(leader_prog, dict):
+                    continue
+                follower_prog = mission_progress.get(int(follower_id))
+                if not isinstance(follower_prog, dict):
+                    follower_prog = {}
+                    meta = self._mission_meta.get(int(follower_id))
+                    if meta is not None:
+                        follower_prog["input_id"] = meta.input_id
+                        follower_prog["aircraft_id"] = meta.aircraft_id
+                    mission_progress[int(follower_id)] = follower_prog
+                for key in (
+                    "progress_percent",
+                    "actual_seconds",
+                    "actual_seconds_real",
+                    "planned_seconds",
+                    "done",
+                    "awaiting_execute",
+                    "waypoint_status",
+                ):
+                    if key in leader_prog:
+                        follower_prog[key] = leader_prog[key]
 
         package_progress: dict[int, dict[str, Any]] = {}
         for aircraft_id, mission_ids in self._aircraft_missions.items():
@@ -614,7 +953,96 @@ class MissionProgressTracker:
             "plan_progress": plan_progress,
             "new_completed_individual": new_completed_individual,
             "new_completed_input": new_completed_input,
+            "new_completed_waypoints": new_completed_waypoints,
         }
+
+    def _record_waypoint_completion(
+        self,
+        mission_id: int,
+        current_wp: int | None,
+        prev_wp: int | None,
+        on_mission: int | None,
+        out_updates: list[dict[str, Any]],
+    ) -> None:
+        meta = self._mission_meta.get(mission_id)
+        if meta is None or not meta.waypoint_ids:
+            return
+        current_idx = None
+        if current_wp is not None and current_wp in meta.waypoint_index:
+            current_idx = meta.waypoint_index.get(int(current_wp))
+        last_completed = self._last_completed_idx.get(mission_id, -1)
+        if on_mission == 2:
+            target_completed = len(meta.waypoint_ids) - 1
+        else:
+            if current_idx is None:
+                return
+            target_completed = int(current_idx) - 1
+        if target_completed <= last_completed:
+            return
+        if meta.path_id is None:
+            return
+        start_idx = max(0, last_completed + 1)
+        end_idx = max(start_idx, target_completed + 1)
+        completed_ids = meta.waypoint_ids[start_idx:end_idx]
+        if not completed_ids:
+            return
+        for wid in completed_ids:
+            self._mark_waypoint_skipped(mission_id, int(wid))
+        out_updates.append(
+            {
+                "mission_id": mission_id,
+                "path_id": meta.path_id,
+                "waypoint_ids": completed_ids,
+            }
+        )
+        self._last_completed_idx[mission_id] = target_completed
+
+    def _mark_waypoint_reached(self, mission_id: int, waypoint_id: int | None) -> None:
+        if waypoint_id is None:
+            return
+        meta = self._mission_meta.get(int(mission_id))
+        if meta is None:
+            return
+        wid = int(waypoint_id)
+        if wid not in meta.waypoint_index:
+            return
+        state = self._waypoint_state.setdefault(
+            int(mission_id),
+            {int(v): "pending" for v in meta.waypoint_ids},
+        )
+        state[wid] = "reached"
+
+    def _mark_waypoint_skipped(self, mission_id: int, waypoint_id: int) -> None:
+        meta = self._mission_meta.get(int(mission_id))
+        if meta is None:
+            return
+        wid = int(waypoint_id)
+        if wid not in meta.waypoint_index:
+            return
+        state = self._waypoint_state.setdefault(
+            int(mission_id),
+            {int(v): "pending" for v in meta.waypoint_ids},
+        )
+        if state.get(wid) == "reached":
+            return
+        state[wid] = "skipped"
+
+    def _serialize_waypoint_status(
+        self,
+        mission_id: int,
+        meta: MissionMeta,
+    ) -> list[dict[str, Any]]:
+        state = self._waypoint_state.setdefault(
+            int(mission_id),
+            {int(v): "pending" for v in meta.waypoint_ids},
+        )
+        items: list[dict[str, Any]] = []
+        for wid in meta.waypoint_ids:
+            status = str(state.get(int(wid)) or "pending")
+            if status not in ("pending", "reached", "skipped"):
+                status = "pending"
+            items.append({"waypoint_id": int(wid), "status": status})
+        return items
 
     def _aggregate_progress(
         self,

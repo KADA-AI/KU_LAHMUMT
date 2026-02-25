@@ -1,13 +1,14 @@
 ﻿# -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import os
+import threading
 from typing import Any, Callable
 
 from modules.monitoring.logic.init_replan import allocate_mission_plan_ids, collect_input_mission_ids
 from modules.monitoring.logic.mission_update import load_db_json
 from modules.monitoring.logic.target_info import (
     update_target_info_from_0402,
-    mark_targets_as_used,
     save_target_info,
 )
 try:
@@ -68,7 +69,8 @@ def _collect_active_watchers(info: dict[str, Any]) -> set[int]:
             continue
         if entry.get("isDestroyed"):
             continue
-        if _coerce_int(entry.get("isIgnored")) == 1:
+        is_ignored = _coerce_int(entry.get("isIgnored"))
+        if is_ignored is not None and is_ignored != 0:
             continue
         watcher_id = _coerce_int(entry.get("watcherID"))
         if watcher_id is not None:
@@ -178,17 +180,100 @@ def _is_actionable_target_entry(key: str, entry: dict[str, Any]) -> bool:
     target_id = _coerce_int(entry.get("targetID"))
     if target_id is None:
         return False
-    if _coerce_int(entry.get("isUsed")) == 1:
+    is_used = _coerce_int(entry.get("isUsed"))
+    if is_used is not None and is_used != 0:
         return False
-    if _coerce_int(entry.get("isIgnored")) == 1:
+    is_ignored = _coerce_int(entry.get("isIgnored"))
+    if is_ignored is not None and is_ignored != 0:
         return False
     if bool(entry.get("isDestroyed")):
         return False
     return True
 
 
+def _target_is_blocked_by_state(info: dict[str, Any], target_id: int) -> bool:
+    target_map = info.get("targetList") if isinstance(info, dict) else None
+    if not isinstance(target_map, dict):
+        return False
+    for entry in target_map.values():
+        if not isinstance(entry, dict):
+            continue
+        if _coerce_int(entry.get("targetID")) != int(target_id):
+            continue
+        is_used = _coerce_int(entry.get("isUsed"))
+        if is_used is not None and is_used != 0:
+            return True
+        is_ignored = _coerce_int(entry.get("isIgnored"))
+        if is_ignored is not None and is_ignored != 0:
+            return True
+        if bool(entry.get("isDestroyed")):
+            return True
+    return False
+
+
+def _mark_target_used_in_info(
+    info: dict[str, Any],
+    *,
+    key: str,
+    target_id: int,
+    watcher_id: int | None,
+) -> bool:
+    target_map = info.get("targetList") if isinstance(info, dict) else None
+    if not isinstance(target_map, dict):
+        return False
+
+    changed = False
+    candidate_keys: list[str] = []
+    if key:
+        candidate_keys.append(str(key))
+    if watcher_id is not None:
+        candidate_keys.append(f"{int(target_id)}-{int(watcher_id)}")
+    candidate_keys.append(str(int(target_id)))
+
+    seen: set[str] = set()
+    for key_str in candidate_keys:
+        if not key_str or key_str in seen:
+            continue
+        seen.add(key_str)
+        target_entry = target_map.get(key_str)
+        if isinstance(target_entry, dict) and _coerce_int(target_entry.get("isUsed")) != 1:
+            target_entry["isUsed"] = 1
+            changed = True
+
+    for target_entry in target_map.values():
+        if not isinstance(target_entry, dict):
+            continue
+        if _coerce_int(target_entry.get("targetID")) != int(target_id):
+            continue
+        if _coerce_int(target_entry.get("isUsed")) != 1:
+            target_entry["isUsed"] = 1
+            changed = True
+    return changed
+
+
+def _dedupe_candidates_by_target_id(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    best_by_target: dict[int, tuple[tuple[int, int, int, int], dict[str, Any]]] = {}
+    for entry in candidates:
+        if not isinstance(entry, dict):
+            continue
+        target_id = _coerce_int(entry.get("targetID"))
+        if target_id is None:
+            continue
+        priority = (
+            1 if _coerce_int(entry.get("watcherID")) is not None else 0,
+            1 if bool(entry.get("targetInFrame")) else 0,
+            1 if isinstance(entry.get("coordinate"), dict) else 0,
+            _extract_target_timestamp(entry) or -1,
+        )
+        current = best_by_target.get(target_id)
+        if current is None or priority > current[0]:
+            best_by_target[target_id] = (priority, dict(entry))
+    return [item[1] for item in best_by_target.values()]
+
+
 class TargetDetectionCoordinator:
     REPLAN_LEVEL = 2
+    REPLAN_COOLDOWN_MS = int(os.getenv("MSM_0402_REPLAN_COOLDOWN_MS", "10000"))
 
     def __init__(
         self,
@@ -198,7 +283,8 @@ class TargetDetectionCoordinator:
     ) -> None:
         self._now_ms = now_fn
         self._log = logger
-        self._target_trigger_history: dict[str, int] = {}
+        self._target_trigger_history: dict[int, int] = {}
+        self._lock = threading.Lock()
 
     def _log_line(self, text: str) -> None:
         if self._log:
@@ -235,162 +321,161 @@ class TargetDetectionCoordinator:
         system_mode: int | None,
         current_mission_plan_id: int | None,
     ) -> tuple[list[dict[str, Any]], list[str]]:
-        logs: list[str] = []
-        info, new_detections = update_target_info_from_0402(payload)
+        with self._lock:
+            logs: list[str] = []
+            now_ts = int(self._now_ms())
+            info, new_detections = update_target_info_from_0402(payload)
 
-        if new_detections:
-            logs.append(f"[0402] new detections: {len(new_detections)}")
+            if new_detections:
+                logs.append(f"[0402] new detections: {len(new_detections)}")
 
-        candidates: list[dict[str, Any]] = []
-        if new_detections:
-            target_map = info.get("targetList") if isinstance(info, dict) else {}
-            for raw in new_detections:
-                key = str(raw.get("key") or "")
-                if not key:
-                    continue
-                entry = None
-                if isinstance(target_map, dict):
-                    entry = target_map.get(key)
-                if not isinstance(entry, dict):
-                    entry = dict(raw)
-                else:
-                    entry = dict(entry)
-                entry["key"] = key
-                candidates.append(entry)
-        else:
-            key, entry = self._pick_candidate(info, [])
-            if key and isinstance(entry, dict):
-                entry.setdefault("key", key)
-                candidates.append(entry)
+            candidates: list[dict[str, Any]] = []
+            if new_detections:
+                target_map = info.get("targetList") if isinstance(info, dict) else {}
+                for raw in new_detections:
+                    key = str(raw.get("key") or "")
+                    if not key:
+                        continue
+                    entry = None
+                    if isinstance(target_map, dict):
+                        entry = target_map.get(key)
+                    if not isinstance(entry, dict):
+                        entry = dict(raw)
+                    else:
+                        entry = dict(entry)
+                    entry["key"] = key
+                    candidates.append(entry)
+            else:
+                key, entry = self._pick_candidate(info, [])
+                if key and isinstance(entry, dict):
+                    entry.setdefault("key", key)
+                    candidates.append(entry)
 
-        if not candidates:
-            return [], logs
+            if not candidates:
+                return [], logs
 
-        if system_mode not in (3, 4):
-            logs.append(f"[0402] replan skipped: mode={system_mode} (need 3/4)")
-            return [], logs
+            deduped = _dedupe_candidates_by_target_id(candidates)
+            if len(deduped) != len(candidates):
+                logs.append(f"[0402] candidate dedupe by targetID: {len(candidates)} -> {len(deduped)}")
+            candidates = deduped
 
-        mission_ids, package_id = self._collect_pending_input_ids(current_mission_plan_id)
-        if not mission_ids:
-            mission_ids = collect_input_mission_ids()
+            if system_mode not in (3, 4):
+                logs.append(f"[0402] replan skipped: mode={system_mode} (need 3/4)")
+                return [], logs
 
-        used_manned = get_used_manned_ids(package_id)
-        available_slots = sum(1 for aid in ATTACK_MANNED_IDS if aid not in used_manned)
-        if available_slots <= 0:
-            logs.append(
-                f"[0402] replan skipped: attack slots exhausted (inputMissionPackageID={package_id})"
-            )
+            mission_ids, package_id = self._collect_pending_input_ids(current_mission_plan_id)
+            if not mission_ids:
+                mission_ids = collect_input_mission_ids()
+
+            used_manned = get_used_manned_ids(package_id)
+            available_slots = sum(1 for aid in ATTACK_MANNED_IDS if aid not in used_manned)
+            if available_slots <= 0:
+                logs.append(
+                    f"[0402] replan skipped: attack slots exhausted (inputMissionPackageID={package_id})"
+                )
+                for entry in candidates:
+                    target_id = _coerce_int(entry.get("targetID"))
+                    if target_id is not None:
+                        self._target_trigger_history[target_id] = now_ts
+                return [], logs
+
+            if len(candidates) > available_slots:
+                logs.append(
+                    f"[0402] target replan limited by attack slots ({available_slots}/{len(candidates)})"
+                )
+                candidates = candidates[:available_slots]
+
+            used_watchers = _collect_active_watchers(info)
+            payloads: list[dict[str, Any]] = []
+            updated_info = False
+
             for entry in candidates:
                 key = str(entry.get("key") or "")
-                last_updated = _extract_target_timestamp(entry)
-                if key and last_updated is not None:
-                    self._target_trigger_history[key] = last_updated
-            return [], logs
-
-        if len(candidates) > available_slots:
-            logs.append(
-                f"[0402] target replan limited by attack slots ({available_slots}/{len(candidates)})"
-            )
-            candidates = candidates[:available_slots]
-
-        used_watchers = _collect_active_watchers(info)
-        payloads: list[dict[str, Any]] = []
-        updated_info = False
-
-        for entry in candidates:
-            key = str(entry.get("key") or "")
-            if not key or not isinstance(entry, dict):
-                continue
-            last_updated = _extract_target_timestamp(entry)
-            if last_updated is not None:
-                prev_ts = self._target_trigger_history.get(key)
-                if prev_ts is not None and last_updated <= prev_ts:
+                if not key or not isinstance(entry, dict):
+                    continue
+                target_id = _coerce_int(entry.get("targetID"))
+                if target_id is None:
+                    continue
+                if _target_is_blocked_by_state(info, target_id):
+                    continue
+                prev_ts = self._target_trigger_history.get(target_id)
+                if prev_ts is not None and (now_ts - prev_ts) < self.REPLAN_COOLDOWN_MS:
                     continue
 
-            target_id = _coerce_int(entry.get("targetID"))
-            if target_id is None:
-                continue
+                watcher_id = _assign_watcher_id(entry, used_watchers)
+                entry["watcherID"] = watcher_id
+                key, changed = _sync_target_watcher(info, key, entry)
+                if changed:
+                    updated_info = True
+                    entry["key"] = key
 
-            watcher_id = _assign_watcher_id(entry, used_watchers)
-            entry["watcherID"] = watcher_id
-            key, changed = _sync_target_watcher(info, key, entry)
-            if changed:
-                updated_info = True
-                entry["key"] = key
+                if watcher_id is None:
+                    logs.append(f"[0402] watcher unavailable; skip targetID={target_id}")
+                    self._target_trigger_history[target_id] = now_ts
+                    continue
 
-            if watcher_id is None:
-                logs.append(f"[0402] watcher unavailable; skip targetID={target_id}")
-                if last_updated is not None:
-                    self._target_trigger_history[key] = last_updated
-                continue
+                target_type = _coerce_int(entry.get("targetType"))
+                reason_text = _format_target_reason(watcher_id, target_type, target_id)
 
-            target_type = _coerce_int(entry.get("targetType"))
-            reason_text = _format_target_reason(watcher_id, target_type, target_id)
+                plan_ids = allocate_mission_plan_ids(len(OPTION_PRESETS))
+                if not plan_ids:
+                    logs.append("[0402] missionPlanID allocation failed; skip")
+                    continue
 
-            plan_ids = allocate_mission_plan_ids(len(OPTION_PRESETS))
-            if not plan_ids:
-                logs.append("[0402] missionPlanID allocation failed; skip")
-                continue
-
-            pending_options: list[dict[str, Any]] = []
-            for (option_id, name), plan_id in zip(OPTION_PRESETS, plan_ids):
-                pending_options.append(
-                    {
-                        "optionID": int(option_id),
-                        "optionName": str(name),
-                        "missionPlanID": int(plan_id),
-                    }
-                )
-
-            detail_payload = {
-                "trigger": "0402",
-                "targetKey": key,
-                "targetID": target_id,
-                "watcherID": watcher_id,
-                "targetType": target_type,
-                "threat": entry.get("threat"),
-                "targetInFrame": entry.get("targetInFrame"),
-                "coordinate": entry.get("coordinate"),
-                "preferredOptionCount": len(OPTION_PRESETS),
-                "snapshot": entry,
-            }
-
-            ts = int(self._now_ms())
-            payload_0902: dict[str, Any] = {
-                "timestamp": ts,
-                "source": "MSM",
-                "inputMissionPackageID": int(package_id) if package_id is not None else 0,
-                "replanRequestTime": {"replanRequestTimestamp": ts},
-                "replanLevel": int(self.REPLAN_LEVEL),
-                "replanRequest": reason_text,
-                "inputMissionIDList": [{"inputMissionID": int(mid)} for mid in mission_ids],
-                "pendingOptionList": pending_options,
-                "replanDetail": detail_payload,
-            }
-
-            payloads.append(payload_0902)
-            self._target_trigger_history[key] = last_updated or ts
-            try:
-                mark_targets_as_used(
-                    [
+                pending_options: list[dict[str, Any]] = []
+                for (option_id, name), plan_id in zip(OPTION_PRESETS, plan_ids):
+                    pending_options.append(
                         {
-                            "key": key,
-                            "targetID": target_id,
-                            "watcherID": watcher_id,
+                            "optionID": int(option_id),
+                            "optionName": str(name),
+                            "missionPlanID": int(plan_id),
                         }
-                    ]
-                )
-            except Exception:
-                pass
-            logs.append(f"[0402] target replan prepared: key={key}, targetID={target_id}")
+                    )
 
-        if updated_info:
-            try:
-                save_target_info(info)
-            except Exception:
-                pass
+                detail_payload = {
+                    "trigger": "0402",
+                    "targetKey": key,
+                    "targetID": target_id,
+                    "watcherID": watcher_id,
+                    "targetType": target_type,
+                    "threat": entry.get("threat"),
+                    "targetInFrame": entry.get("targetInFrame"),
+                    "coordinate": entry.get("coordinate"),
+                    "preferredOptionCount": len(OPTION_PRESETS),
+                    "snapshot": entry,
+                }
 
-        return payloads, logs
+                ts = now_ts
+                payload_0902: dict[str, Any] = {
+                    "timestamp": ts,
+                    "source": "MSM",
+                    "inputMissionPackageID": int(package_id) if package_id is not None else 0,
+                    "replanRequestTime": {"replanRequestTimestamp": ts},
+                    "replanLevel": int(self.REPLAN_LEVEL),
+                    "replanRequest": reason_text,
+                    "inputMissionIDList": [{"inputMissionID": int(mid)} for mid in mission_ids],
+                    "pendingOptionList": pending_options,
+                    "replanDetail": detail_payload,
+                }
+
+                payloads.append(payload_0902)
+                self._target_trigger_history[target_id] = ts
+                if _mark_target_used_in_info(
+                    info,
+                    key=key,
+                    target_id=target_id,
+                    watcher_id=watcher_id,
+                ):
+                    updated_info = True
+                logs.append(f"[0402] target replan prepared: key={key}, targetID={target_id}")
+
+            if updated_info:
+                try:
+                    save_target_info(info)
+                except Exception as exc:
+                    logs.append(f"[0402] targetInfo save failed: {exc}")
+
+            return payloads, logs
 
     def _collect_pending_input_ids(
         self, current_mission_plan_id: int | None

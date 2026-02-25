@@ -2,6 +2,7 @@
 
 const SEND_CUSTOM_ENDPOINT = "/api/integration/send_custom";
 const EPOCH_2000 = Date.UTC(2000, 0, 1, 0, 0, 0, 0);
+const DEFAULT_PRIOR_ALT = 1000;
 
 const nowMs2000 = () => Date.now() - EPOCH_2000;
 
@@ -96,6 +97,7 @@ export const initScenarioPanel = (map) => {
   let enemySelection = null;
   let overlayMode = null;
   let overlayAlt = null;
+  let last0202Coord = null;
 
   const overlayTexts = {
     prior: {
@@ -250,16 +252,8 @@ export const initScenarioPanel = (map) => {
         ? altOverride
         : overlayAlt !== null
           ? overlayAlt
-          : num(alt0202?.value, 0) ?? 0;
+          : last0202Coord?.alt ?? (num(alt0202?.value, DEFAULT_PRIOR_ALT) ?? DEFAULT_PRIOR_ALT);
     overlayCoord.textContent = `Lat ${lngLat.lat.toFixed(6)} / Lon ${lngLat.lng.toFixed(6)} / Alt ${Math.round(alt)}`;
-  };
-
-  const updateCoordInputs = (lngLat) => {
-    if (!lat0202 || !lon0202) {
-      return;
-    }
-    lat0202.value = lngLat.lat.toFixed(6);
-    lon0202.value = lngLat.lng.toFixed(6);
   };
 
   const layoutEnemyPicker = () => {
@@ -340,9 +334,16 @@ export const initScenarioPanel = (map) => {
         ],
       };
     }
-    const lat = overrideCoord?.lat ?? num(lat0202?.value, null);
-    const lon = overrideCoord?.lon ?? num(lon0202?.value, null);
-    const alt = overrideCoord?.alt ?? num(alt0202?.value, 0);
+    const coord =
+      overrideCoord ??
+      last0202Coord ?? {
+        lat: num(lat0202?.value, null),
+        lon: num(lon0202?.value, null),
+        alt: num(alt0202?.value, DEFAULT_PRIOR_ALT),
+      };
+    const lat = coord?.lat;
+    const lon = coord?.lon;
+    const alt = coord?.alt;
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
       return null;
     }
@@ -365,13 +366,25 @@ export const initScenarioPanel = (map) => {
     };
   };
 
+  const bumpPriorMissionId = () => {
+    if (!missionId0202) {
+      return;
+    }
+    const current = Math.max(1, Math.trunc(num(missionId0202.value, 1) || 1));
+    missionId0202.value = String(current + 1);
+  };
+
   const handleSend0202 = async (overrideCoord) => {
     const body = build0202Body(overrideCoord);
     if (!body) {
       logStatus("0202 좌표가 비어 있습니다.", { level: "warn" });
       return false;
     }
-    return sendCustom("0202", body, "0202");
+    const ok = await sendCustom("0202", body, "0202");
+    if (ok) {
+      bumpPriorMissionId();
+    }
+    return ok;
   };
 
   const handleSend0801 = async () => {
@@ -565,9 +578,11 @@ export const initScenarioPanel = (map) => {
       event.originalEvent.stopPropagation();
     }
     pending = true;
-    const alt = num(alt0202?.value, 0) ?? 0;
+    const alt = Number.isFinite(last0202Coord?.alt)
+      ? last0202Coord.alt
+      : num(alt0202?.value, DEFAULT_PRIOR_ALT) ?? DEFAULT_PRIOR_ALT;
     const override = { lat: event.lngLat.lat, lon: event.lngLat.lng, alt };
-    updateCoordInputs(event.lngLat);
+    last0202Coord = override;
     const ok = await handleSend0202(override);
     pending = false;
     if (ok) {

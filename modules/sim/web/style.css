@@ -2353,3 +2353,34 @@ body {
   border: 1px dashed rgba(255, 255, 255, 0.15);
   border-radius: 12px;
 }
+
+.mission-recommend-shell {
+  width: min(640px, 92vw);
+  max-height: 70vh;
+}
+
+.mission-recommend-body {
+  padding: 22px 20px 18px;
+  color: #e6edf7;
+  font-size: 15px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.mission-recommend-footer {
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.mission-recommend-footer .mission-option-keep {
+  min-width: 180px;
+}
+
+.mission-recommend-footer .mission-option-keep.is-recommend {
+  border-color: rgba(120, 200, 255, 0.8);
+  box-shadow: 0 0 0 2px rgba(120, 200, 255, 0.15);
+}
+
+.mission-recommend-footer .mission-option-keep.is-hidden {
+  display: none;
+}

@@ -74,6 +74,11 @@ def _to_bool(value: Any) -> Optional[bool]:
     return None
 
 
+def _normalize_flag(value: Any) -> int:
+    iv = _to_int(value)
+    return 1 if iv is not None and iv != 0 else 0
+
+
 def _iterable(value: Any) -> Iterable[Any]:
     if value is None:
         return []
@@ -201,8 +206,8 @@ def _serialize_target(
         "isDestroyed": entry.get("isDestroyed"),
         "targetInFrame": entry.get("targetInFrame"),
         "threat": entry.get("threat"),
-        "isUsed": existing.get("isUsed", 0),
-        "isIgnored": existing.get("isIgnored", 0),
+        "isUsed": _normalize_flag(existing.get("isUsed", 0)),
+        "isIgnored": _normalize_flag(existing.get("isIgnored", 0)),
     }
     if first_detected is not None:
         serialized["firstDetected"] = first_detected
@@ -283,8 +288,8 @@ def _upsert_roi_entry(
         "watcherID": watcher_id,
         "coordinate": coordinate,
         "fov": roi_entry.get("fov"),
-        "isUsed": existing.get("isUsed", roi_entry.get("isUsed", 0)),
-        "isIgnored": existing.get("isIgnored", roi_entry.get("isIgnored", 0)),
+        "isUsed": _normalize_flag(existing.get("isUsed", roi_entry.get("isUsed", 0))),
+        "isIgnored": _normalize_flag(existing.get("isIgnored", roi_entry.get("isIgnored", 0))),
     }
     target_map[key] = serialized
 
@@ -388,7 +393,10 @@ def load_target_info() -> Dict[str, Any]:
     normalized: Dict[str, Dict[str, Any]] = {}
     for key, value in merged.get("targetList", {}).items():
         if isinstance(value, dict):
-            normalized[str(key)] = dict(value)
+            normalized_entry = dict(value)
+            normalized_entry["isUsed"] = _normalize_flag(normalized_entry.get("isUsed", 0))
+            normalized_entry["isIgnored"] = _normalize_flag(normalized_entry.get("isIgnored", 0))
+            normalized[str(key)] = normalized_entry
     merged["targetList"] = normalized
     return merged
 
@@ -449,16 +457,33 @@ def update_target_info_from_0402(message: Any) -> Tuple[Dict[str, Any], List[Dic
             target_id = entry.get("targetID")
             serialized["targetID"] = target_id
 
+            # Preserve usage/ignore flags across watcher/key changes for the same targetID.
+            if target_id is not None:
+                for prev_entry in tracking_map.values():
+                    if not isinstance(prev_entry, dict):
+                        continue
+                    if _to_int(prev_entry.get("targetID")) != _to_int(target_id):
+                        continue
+                    if _normalize_flag(prev_entry.get("isUsed")) == 1:
+                        serialized["isUsed"] = 1
+                    if _normalize_flag(prev_entry.get("isIgnored")) == 1:
+                        serialized["isIgnored"] = 1
+                    if (
+                        _to_int(serialized.get("isUsed")) == 1
+                        and _to_int(serialized.get("isIgnored")) == 1
+                    ):
+                        break
+
             existed_before = key in tracking_map
             if not existed_before and target_id is not None:
                 handled_elsewhere = False
                 for prev_entry in tracking_map.values():
                     if not isinstance(prev_entry, dict):
                         continue
-                    if prev_entry.get("targetID") != target_id:
+                    if _to_int(prev_entry.get("targetID")) != _to_int(target_id):
                         continue
-                    prev_used = _to_int(prev_entry.get("isUsed"))
-                    prev_ignored = _to_int(prev_entry.get("isIgnored"))
+                    prev_used = _normalize_flag(prev_entry.get("isUsed"))
+                    prev_ignored = _normalize_flag(prev_entry.get("isIgnored"))
                     if prev_used == 1 or prev_ignored == 1:
                         handled_elsewhere = True
                         break

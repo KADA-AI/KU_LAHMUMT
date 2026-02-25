@@ -14,6 +14,7 @@ import { initRightSidePanel } from "./js/controls_sidepanel_right.js";
 import { initLeftSidePanel } from "./js/controls_sidepanel_left.js";
 import { initIntegrationPanel } from "./js/integration_panel.js";
 import { initMissionOptionPopup } from "./js/mission_option_popup.js";
+import { initMissionRecommendPopup } from "./js/mission_recommend_popup.js";
 import { initMissionPaths } from "./js/mission_paths.js";
 import { initVehicleMarkers } from "./js/vehicle_markers.js";
 import { initTargetMarkers } from "./js/target_markers.js";
@@ -47,6 +48,8 @@ import { initSimClient } from "./js/sim_client.js";
     maxPitch: 85,
     attributionControl: false,
   });
+
+  initMissionRecommendPopup();
 
   let initialView = null;
 

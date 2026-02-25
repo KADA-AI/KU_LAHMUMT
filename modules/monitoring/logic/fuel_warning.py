@@ -58,6 +58,42 @@ def fuel_state_from_liters(
     return "green", 0
 
 
+def fuel_state_from_warning_code(fuel_warning: int | None) -> tuple[str, int]:
+    """Map 0401 fuelWarning code to (state_text, 0504 fuelLevel)."""
+    code = _coerce_int(fuel_warning)
+    if code == 3:
+        return "red", 2
+    if code == 2:
+        return "yellow", 1
+    if code == 1:
+        return "green", 0
+    if code == 0:
+        return "unknown", 0
+    return "unknown", 0
+
+
+def resolve_fuel_state(
+    *,
+    fuel_liters: float | None,
+    fuel_warning: int | None,
+    capacity_liters: float,
+) -> tuple[str, int]:
+    """Resolve final fuel state from liters-threshold and 0401 fuelWarning code."""
+    liters_state, liters_level = fuel_state_from_liters(
+        fuel_liters,
+        capacity_liters=capacity_liters,
+    )
+    warning_state, warning_level = fuel_state_from_warning_code(fuel_warning)
+    level = max(int(liters_level), int(warning_level))
+    if level >= 2:
+        return "red", 2
+    if level == 1:
+        return "yellow", 1
+    if liters_state == "green" or warning_state == "green":
+        return "green", 0
+    return "unknown", 0
+
+
 class FuelWarningCoordinator:
     """Deduping coordinator for 0504 fuel warnings and UI status."""
 
@@ -98,9 +134,17 @@ class FuelWarningCoordinator:
             aircraft_id = _coerce_int(state.get("aircraft_id"))
             if aircraft_id is None:
                 continue
-            fuel_liters = _coerce_float(state.get("fuel_liters") or state.get("fuel"))
-            state_text, fuel_level = fuel_state_from_liters(
-                fuel_liters,
+            fuel_raw = state.get("fuel_liters")
+            if fuel_raw is None:
+                fuel_raw = state.get("fuel")
+            fuel_liters = _coerce_float(fuel_raw)
+            fuel_warning_raw = state.get("fuel_warning")
+            if fuel_warning_raw is None:
+                fuel_warning_raw = state.get("fuelWarning")
+            fuel_warning = _coerce_int(fuel_warning_raw)
+            state_text, fuel_level = resolve_fuel_state(
+                fuel_liters=fuel_liters,
+                fuel_warning=fuel_warning,
                 capacity_liters=self.capacity_liters,
             )
             state_map[int(aircraft_id)] = state_text

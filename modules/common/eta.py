@@ -116,7 +116,18 @@ def _time_from_prev_to_curr_s(prev: Waypoint,
     coords = line.get("coordinateList") if isinstance(line, dict) else None
 
     # 속도 결정: lineSearch.searchSpeed > prev.speed > default
-    v_mps = _to_mps(line.get("searchSpeed")) if isinstance(line, dict) else None
+    # lineSearch.searchSpeed is produced by MissionPlanner in m/s.
+    # Use it as-is (do not apply km/h auto-conversion heuristics).
+    v_mps = None
+    if isinstance(line, dict):
+        try:
+            raw_search_speed = line.get("searchSpeed")
+            if raw_search_speed is not None:
+                parsed_speed = float(raw_search_speed)
+                if parsed_speed > 0:
+                    v_mps = parsed_speed
+        except Exception:
+            v_mps = None
     if not v_mps:
         v_mps = _to_mps(prev.get("speed")) or default_speed_mps
 

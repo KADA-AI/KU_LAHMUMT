@@ -14,6 +14,22 @@ def _coerce_int(value: Any) -> int | None:
         return None
 
 
+def _coerce_bool(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return bool(int(value))
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in ("1", "true", "yes", "y", "on"):
+            return True
+        if lowered in ("0", "false", "no", "n", "off"):
+            return False
+    return default
+
+
 def _load_json(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
@@ -147,10 +163,13 @@ def _latest_reference_info(folder: Path) -> dict[str, Any]:
 
 def build_features_from_flight_paths(
     flight_paths: Iterable[dict[str, Any]],
+    *,
+    done_path_ids: set[int] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     features: list[dict[str, Any]] = []
     agent_counts: dict[str, int] = {}
     feature_id = 1
+    done_paths = done_path_ids or set()
 
     for entry in flight_paths:
         if not isinstance(entry, dict):
@@ -206,6 +225,7 @@ def build_features_from_flight_paths(
             "agent": agent,
             "aircraftId": aircraft_id,
             "pathId": path_id,
+            "isDone": bool(path_id is not None and path_id in done_paths),
             "points": len(coords),
             "coords": coords,
             "alts": alts,
@@ -302,7 +322,29 @@ def build_mission_plan_payload(
     if not isinstance(take_over_list, list):
         take_over_list = []
 
-    features, agent_counts = build_features_from_flight_paths(flight_paths)
+    path_done_map: dict[int, bool] = {}
+    for plan in individual_plans:
+        if not isinstance(plan, dict):
+            continue
+        for mission in plan.get("individualMissionList") or []:
+            if not isinstance(mission, dict):
+                continue
+            pid = _coerce_int(mission.get("pathID") or mission.get("PathID"))
+            if pid is not None:
+                mission_done = _coerce_bool(mission.get("isDone"), False)
+                prev_done = path_done_map.get(pid)
+                if prev_done is None:
+                    path_done_map[pid] = mission_done
+                else:
+                    # If one mission referencing this path is active, keep it active.
+                    path_done_map[pid] = bool(prev_done and mission_done)
+
+    done_path_ids = {pid for pid, is_done in path_done_map.items() if is_done}
+
+    features, agent_counts = build_features_from_flight_paths(
+        flight_paths,
+        done_path_ids=done_path_ids,
+    )
 
     payload = {
         "flightPaths": flight_paths,
