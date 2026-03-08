@@ -4,7 +4,7 @@ import json
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
-    QComboBox, QWidget
+    QComboBox, QHeaderView, QSizePolicy, QWidget
 )
 
 from .csc_tab_base import CSCTabBase, _now_ms_since_2000
@@ -117,12 +117,14 @@ class ManageInfo(CSCTabBase):
         level_name = {1: "YELLOW", 2: "RED"}.get(level, "UNKNOWN")
         aid = body.get("aircraftID", "-")
         try:
-            self.log_rx.append(f"[0504] Fuel warning: {level_name} (level={level}) - UAV {aid}")
+            self.append_log(f"[0504] Fuel warning: {level_name} (level={level}) - UAV {aid}")
         except Exception:
             pass
 
     def __init__(self, *, messenger, parent: Optional[QWidget] = None):
         super().__init__(messenger=messenger, parent=parent)
+        self.tbl_tx.setHorizontalHeaderLabels(["Message ID", "Message Name", "상태", "설정", "데이터"])
+        self.tbl_rx.setHorizontalHeaderLabels(["Message ID", "Message Name", "상태", "데이터"])
         self._mode_combo: Optional[QComboBox] = None
         self._current_system_mode: int = 0
         self._system_mode_row: int = self._find_tx_row("0101")
@@ -143,15 +145,23 @@ class ManageInfo(CSCTabBase):
         if row < 0:
             return
 
+        # 0101 행은 버튼 대신 모드 콤보가 들어가므로 action 열을 별도로 넓힌다.
+        header = self.tbl_tx.horizontalHeader()
+        header.setSectionResizeMode(3, QHeaderView.Fixed)
+        self.tbl_tx.setColumnWidth(3, 148)
+        self.tbl_tx.setColumnWidth(4, 84)
+
         # 행 높이만 살짝 확보(테이블이 작아도 콤보는 안정적으로 보임)
-        self.tbl_tx.setRowHeight(row, max(28, self.tbl_tx.rowHeight(row)))
+        self.tbl_tx.setRowHeight(row, max(40, self.tbl_tx.rowHeight(row)))
 
         combo = QComboBox(self.tbl_tx)
         combo.setFocusPolicy(Qt.StrongFocus)
         combo.setEditable(False)
         combo.setMaxVisibleItems(6)
         combo.setSizeAdjustPolicy(QComboBox.AdjustToContentsOnFirstShow)
-        combo.setMinimumWidth(110)
+        combo.setMinimumWidth(138)
+        combo.setMaximumHeight(34)
+        combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         # 한국어 라벨 ↔ 모드값 매핑
         # 0: 초기화, 1: 대기, 2: 계획, 3: 임무

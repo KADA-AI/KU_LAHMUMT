@@ -1,4 +1,4 @@
-# modules/common/receive/message0901_receiver.py
+﻿# modules/common/receive/message0901_receiver.py
 # auto-generated at 2025-08-24T16:37:13.118869+00:00
 
 from dll_files.nFusionImports import *            # IFusionReceive, IsLocal, IsSingletone
@@ -22,7 +22,7 @@ def _project_root_for_recv_file(__file_path: str):
     from pathlib import Path
     return Path(__file_path).resolve().parents[3]
 
-_CACHE_FALLBACK_0901 = os.path.join(_project_root_for_recv_file(__file__), "database", "cache", "latest_0901.json")
+_CACHE_FALLBACK_0901 = os.path.join(_project_root_for_recv_file(__file__), "temp", "database", "cache", "latest_0901.json")
 
 def _cache_file_0901() -> str:
     """Return the cache path for 0901, aligned with the active scenario DB when possible."""
@@ -42,7 +42,7 @@ def _db_dir_for(msgid: str, __file_path: str) -> str:
         return str(_project_root_for_recv_file(__file_path))
     if env_root:
         return str(Path(env_root) / name)
-    return str(_project_root_for_recv_file(__file_path) / "database" / name)
+    return str(_project_root_for_recv_file(__file_path) / "temp" / "database" / name)
 
 def _try_save_received(msgid: str, data_obj):
     try:
@@ -122,3 +122,4 @@ class RequestOptionInfoReceiver_0901(IFusionReceive[RequestOptionInfo], IsLocal,
         except Exception:
             print("[ERROR][Receive-0901] traceback ↓↓↓")
             traceback.print_exc(file=sys.stderr)
+

@@ -1,4 +1,4 @@
-# modules/common/receive/message0402_receiver.py
+﻿# modules/common/receive/message0402_receiver.py
 # rewritten at 2025-09-18
 
 from dll_files.nFusionImports import *            # IFusionReceive, IsLocal, IsSingletone
@@ -44,7 +44,7 @@ def _db_dir_for(msgid: str, __file_path: str) -> str:
         return str(_project_root_for_recv_file(__file_path))
     if env_root:
         return str(Path(env_root) / name)
-    return str(_project_root_for_recv_file(__file_path) / "database" / name)
+    return str(_project_root_for_recv_file(__file_path) / "temp" / "database" / name)
 
 def _try_save_received(msgid: str, data_obj):
     try:
@@ -176,3 +176,4 @@ class SituationAwarenessInfoReceiver_0402(IFusionReceive[SituationAwarenessInfo]
         except Exception:
             print("[ERROR][Receive-0402] traceback ↓↓↓")
             traceback.print_exc(file=sys.stderr)
+

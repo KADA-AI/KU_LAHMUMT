@@ -1020,6 +1020,7 @@ class MonitoringVisualizationTab(QWidget):
             self._handle_execute_next()
             return
         if execute == 2:
+            self._handle_execute_repeat()
             if callable(self._reexecute_callback):
                 try:
                     self._reexecute_callback(execute)
@@ -1033,103 +1034,26 @@ class MonitoringVisualizationTab(QWidget):
         if not view:
             return
         input_missions = view.get("input_missions") or []
-        next_pending_id = self._first_pending_id(input_missions, "input_mission_id")
-        if next_pending_id is None:
-            target_input_id = self._resolve_current_input_id(input_missions)
-            if callable(self._recommend_callback):
-                try:
-                    self._recommend_callback(3, target_input_id)
-                except Exception:
-                    pass
+        current_input_id = self._pick_current_input_id(input_missions)
+        if current_input_id is not None and not self._is_input_done(input_missions, int(current_input_id)):
+            self._force_complete_input_mission(view, int(current_input_id))
+        target_input_id = self._pick_next_input_id(input_missions, current_input_id)
+        if target_input_id is None:
             if callable(self._notice_callback):
                 try:
-                    self._notice_callback("다음 임무가 없습니다")
+                    self._notice_callback("다음 협업기저임무가 없습니다")
                 except Exception:
                     pass
             snapshot = self._progress_tracker.update(None, None)
             self._apply_progress_snapshot(snapshot)
             return
-        current_input_id = self._last_progress_input_id
-        if current_input_id is None:
-            current_input_id = self._progress_tracker.get_active_input_id()
-        if current_input_id is None:
-            current_input_id = self._last_active_input_id
-        if current_input_id is None:
-            current_input_id = self._resolve_current_input_id(input_missions)
-        if current_input_id is None:
-            return
-        current_done = False
-        for item in input_missions:
-            if not isinstance(item, dict):
-                continue
-            if item.get("input_mission_id") == current_input_id:
-                current_done = bool(item.get("is_done"))
-                break
-        if current_done:
-            try:
-                if int(current_input_id) != int(next_pending_id):
-                    current_input_id = int(next_pending_id)
-                    current_done = False
-            except Exception:
-                current_input_id = next_pending_id
-                current_done = False
-            if current_done:
-                snapshot = self._progress_tracker.update(None, None)
-                self._apply_progress_snapshot(snapshot)
-                return
 
-        for item in input_missions:
-            if not isinstance(item, dict):
-                continue
-            if item.get("input_mission_id") == current_input_id:
-                item["is_done"] = True
-
-        fallback_completed: list[dict[str, int | None]] = []
-        mission_ids: list[int] = []
-        for entry in view.get("uav_entries") or []:
-            package_id = entry.get("individual_mission_package_id")
-            for mission in entry.get("missions") or []:
-                if not isinstance(mission, dict):
-                    continue
-                if mission.get("input_id") != current_input_id:
-                    continue
-                mission_id = mission.get("individual_mission_id")
-                if mission_id is None:
-                    continue
-                mission["is_done"] = True
-                try:
-                    mission_ids.append(int(mission_id))
-                except Exception:
-                    continue
-                fallback_completed.append(
-                    {
-                        "mission_id": int(mission_id),
-                        "package_id": package_id,
-                    }
-                )
-
-        completed = self._progress_tracker.force_complete_input(current_input_id)
-        if not completed and mission_ids:
-            completed = self._progress_tracker.force_complete_missions(mission_ids)
-        completed_map: dict[int, int | None] = {}
-        for item in completed + fallback_completed:
-            mission_id = item.get("mission_id") if isinstance(item, dict) else None
-            if mission_id is None:
-                continue
-            completed_map[int(mission_id)] = item.get("package_id")
-
-        input_package_id = view.get("input_mission_package_id")
-        mark_input_mission_done(input_package_id, current_input_id)
-        for mission_id, package_id in completed_map.items():
-            mark_individual_mission_done(package_id, mission_id)
-
-        self._last_forced_input_id = current_input_id
-        self._last_forced_mission_ids = sorted(completed_map.keys())
-        try:
-            self._forced_completion_inputs.add(int(current_input_id))
-        except Exception:
-            pass
-
+        if (
+            target_input_id != current_input_id
+            and self._is_input_done(input_missions, target_input_id)
+        ):
+            self._repeat_input_mission(view, int(target_input_id))
+        self._last_active_input_id = int(target_input_id)
         snapshot = self._progress_tracker.update(None, None)
         self._apply_progress_snapshot(snapshot)
 
@@ -1147,10 +1071,171 @@ class MonitoringVisualizationTab(QWidget):
         if target_input_id is None:
             return
 
-        self._repeat_input_mission(view, target_input_id)
+        if self._is_input_done(input_missions, int(target_input_id)):
+            self._repeat_input_mission(view, int(target_input_id))
 
         snapshot = self._progress_tracker.update(None, None)
         self._apply_progress_snapshot(snapshot)
+
+    def _pick_current_input_id(self, input_missions: list[dict]) -> int | None:
+        current_input_id = self._progress_tracker.get_active_input_id()
+        if current_input_id is None:
+            current_input_id = self._last_progress_input_id
+        if current_input_id is None:
+            current_input_id = self._last_active_input_id
+        if current_input_id is None:
+            current_input_id = self._resolve_current_input_id(input_missions)
+        try:
+            return int(current_input_id) if current_input_id is not None else None
+        except Exception:
+            return None
+
+    def _pick_next_input_id(self, input_missions: list[dict], current_input_id: int | None) -> int | None:
+        ordered_ids: list[int] = []
+        for item in input_missions:
+            if not isinstance(item, dict):
+                continue
+            value = item.get("input_mission_id")
+            try:
+                value_int = int(value) if value is not None else None
+            except Exception:
+                value_int = None
+            if value_int is None:
+                continue
+            if value_int not in ordered_ids:
+                ordered_ids.append(value_int)
+        if not ordered_ids:
+            return None
+        if current_input_id is None:
+            next_pending = self._first_pending_id(input_missions, "input_mission_id")
+            if next_pending is not None:
+                return int(next_pending)
+            return int(ordered_ids[0])
+        try:
+            idx = ordered_ids.index(int(current_input_id))
+        except Exception:
+            next_pending = self._first_pending_id(input_missions, "input_mission_id")
+            if next_pending is not None:
+                return int(next_pending)
+            return int(ordered_ids[0])
+        next_idx = idx + 1
+        if 0 <= next_idx < len(ordered_ids):
+            return int(ordered_ids[next_idx])
+        return None
+
+    @staticmethod
+    def _is_input_done(input_missions: list[dict], input_id: int) -> bool:
+        for item in input_missions:
+            if not isinstance(item, dict):
+                continue
+            value = item.get("input_mission_id")
+            try:
+                value_int = int(value) if value is not None else None
+            except Exception:
+                value_int = None
+            if value_int is None or int(value_int) != int(input_id):
+                continue
+            return bool(item.get("is_done"))
+        return False
+
+    def _force_complete_input_mission(self, view: dict, input_id: int) -> None:
+        completed = self._progress_tracker.force_complete_input(input_id)
+        input_package_id = view.get("input_mission_package_id")
+        mark_input_mission_done(input_package_id, input_id)
+
+        completed_mission_ids: set[int] = set()
+        for item in completed:
+            if not isinstance(item, dict):
+                continue
+            mission_id = item.get("mission_id")
+            package_id = item.get("package_id")
+            try:
+                mission_id_int = int(mission_id) if mission_id is not None else None
+            except Exception:
+                mission_id_int = None
+            if mission_id_int is None:
+                continue
+            completed_mission_ids.add(mission_id_int)
+            mark_individual_mission_done(package_id, mission_id_int)
+
+        for item in view.get("input_missions") or []:
+            if not isinstance(item, dict):
+                continue
+            value = item.get("input_mission_id")
+            try:
+                value_int = int(value) if value is not None else None
+            except Exception:
+                value_int = None
+            if value_int is None or int(value_int) != int(input_id):
+                continue
+            item["is_done"] = True
+            item["progress_percent"] = 100
+
+        for entry in view.get("uav_entries") or []:
+            for mission in entry.get("missions") or []:
+                if not isinstance(mission, dict):
+                    continue
+                input_value = mission.get("input_id")
+                try:
+                    input_value_int = int(input_value) if input_value is not None else None
+                except Exception:
+                    input_value_int = None
+                if input_value_int is None or int(input_value_int) != int(input_id):
+                    continue
+                mission_id = mission.get("individual_mission_id")
+                try:
+                    mission_id_int = int(mission_id) if mission_id is not None else None
+                except Exception:
+                    mission_id_int = None
+                if mission_id_int is None:
+                    continue
+                completed_mission_ids.add(mission_id_int)
+                mission["is_done"] = True
+                mission["progress_percent"] = 100
+                waypoint_ids = mission.get("waypoint_ids") or []
+                path_id = mission.get("path_id")
+                mark_waypoints_done(path_id, waypoint_ids)
+                status_list = mission.get("waypoint_status")
+                if isinstance(status_list, list):
+                    for wp in status_list:
+                        if not isinstance(wp, dict):
+                            continue
+                        status = str(wp.get("status") or "pending")
+                        if status != "reached":
+                            wp["status"] = "skipped"
+
+        self._forced_completion_inputs.add(int(input_id))
+        self._last_forced_input_id = int(input_id)
+        self._last_forced_mission_ids = sorted(completed_mission_ids)
+        try:
+            self._sent_0503_pending_inputs.discard(int(input_id))
+        except Exception:
+            pass
+        try:
+            new_pending: list[int] = []
+            for pid in self._pending_completion_inputs:
+                try:
+                    if int(pid) == int(input_id):
+                        continue
+                except Exception:
+                    pass
+                new_pending.append(pid)
+            self._pending_completion_inputs = new_pending
+        except Exception:
+            self._pending_completion_inputs = []
+        try:
+            new_pending_execute: list[int] = []
+            for pid in self._pending_execute_inputs:
+                try:
+                    if int(pid) == int(input_id):
+                        continue
+                except Exception:
+                    pass
+                new_pending_execute.append(pid)
+            self._pending_execute_inputs = new_pending_execute
+        except Exception:
+            self._pending_execute_inputs = []
+        self._sent_final_completion = False
 
     def _repeat_input_mission(self, view: dict, input_id: int) -> None:
         input_package_id = view.get("input_mission_package_id")

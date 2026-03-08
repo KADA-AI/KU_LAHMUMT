@@ -1,4 +1,4 @@
-# modules/common/make_message_push.py
+﻿# modules/common/make_message_push.py
 # msg_**** 스키마를 스캔해 C# 모델로 매핑하는 push 모듈을 자동 생성합니다.
 # 사용법:
 #   python -m modules.common.make_message_push            # 모든 msg_**** 대상 일괄 생성
@@ -337,7 +337,7 @@ def _db_dir_for(msgid: str, __file_path: str) -> str:
         return str(target)
     except Exception:
         base = _project_root_for_push_file(__file_path)
-        return str(base / "database" / name)
+        return str(base / "temp" / "database" / name)
 
 def _list_numeric_ids(dirname: str, prefix_first_char: str | None = None) -> list[int]:
     import os, glob
@@ -609,7 +609,7 @@ def _emit_push_code(msgid: str, reg: Registry, root_type: str) -> str:
             def _get_dir_0201() -> str:
                 env_root = os.getenv("KU_MISSION_DB_ROOT")
                 if env_root: return str(Path(env_root) / "InputMissionPlan")
-                return str(_project_root() / "database" / "InputMissionPlan")
+                return str(_project_root() / "temp" / "database" / "InputMissionPlan")
 
             def _list_ids_0201() -> list:
                 ids = []
@@ -630,7 +630,7 @@ def _emit_push_code(msgid: str, reg: Registry, root_type: str) -> str:
             def _get_dir_0301() -> str:
                 env_root = os.getenv("KU_MISSION_DB_ROOT")
                 if env_root: return str(Path(env_root) / "MissionPlan")
-                return str(_project_root() / "database" / "MissionPlan")
+                return str(_project_root() / "temp" / "database" / "MissionPlan")
 
             def _list_ids_0301() -> list:
                 ids = []
@@ -651,7 +651,7 @@ def _emit_push_code(msgid: str, reg: Registry, root_type: str) -> str:
             def _get_dir_0304() -> str:
                 env_root = os.getenv("KU_MISSION_DB_ROOT")
                 if env_root: return str(Path(env_root) / "FlightPath")
-                return str(_project_root() / "database" / "FlightPath")
+                return str(_project_root() / "temp" / "database" / "FlightPath")
 
             def _list_ids_0304() -> list:
                 ids = []
@@ -743,3 +743,4 @@ def main(argv: List[str]) -> int:
 
 if __name__ == "__main__":
     sys.exit(main(sys.argv))
+

@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+
+.vscode/
+
+Logs/
+database/mission_output/
+temp/
+modules_bkup/
+modules/mission_planning/MissionPlanner/temp/
+
+resource/*.mbtiles
+test_mission_planning/resource/*.tif
+test_mission_planning/**/temp/
+
+~$*.xlsx
+~$*.pptx

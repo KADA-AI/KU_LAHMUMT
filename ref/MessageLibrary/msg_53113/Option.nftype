@@ -1,0 +1,13 @@
+uint optionID
+bool recommend
+uint optionName
+int survivalRate
+int timeContraction
+int recogEffectiveness
+int fuelWarning
+uint distance
+uint target
+uint uavMissionPlanIDListN
+UAVMissionPlanID[] uavMissionPlanIDList
+uint lahMissionPlanIDListN
+LAHMissionPlanID[] lahMissionPlanIDList

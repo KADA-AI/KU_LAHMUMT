@@ -4,6 +4,7 @@ import math
 from typing import Any, Callable
 
 from .BF import BFPlanner
+from .area_nadir_planner import build_nadir_overflight_coords
 
 try:
     from modules.mission_planning.MissionPlanner.data_def.coord_transform import llh_to_xy, xy_to_llh
@@ -90,6 +91,18 @@ def build_nadir_bf_overflight_coords(
         planner.fov = float(fov_deg)
 
     full_path_xyh, runtime_fov = planner.plan()
+    if not full_path_xyh:
+        fallback_coords = build_nadir_overflight_coords(
+            polygon_llh=polygon_llh,
+            anchor_llh=anchor_llh,
+            bearing_deg=bearing_deg,
+            separation_m=float(separation_m or cruise_alt_m),
+            fov_deg=float(fov_deg or planner.fov),
+            min_segment_m=float(min_segment_m),
+            spacing_margin=float(spacing_margin),
+            altitude_fn=altitude_fn,
+        )
+        return fallback_coords, float(fov_deg or planner.fov)
 
     coords: list[dict] = []
     for x, y, _h in full_path_xyh:

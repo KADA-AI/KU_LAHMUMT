@@ -15,6 +15,7 @@ for _p in (_ROOT, _ROOT / "modules", _ROOT / "modules" / "common"):
 
 from modules.common.qt_env import ensure_qt_platform
 ensure_qt_platform()
+from modules.common.gui_style import load_shared_stylesheet, polish_tabs, position_window_from_env
 
 from PyQt5.QtCore import (
     qInstallMessageHandler, QtMsgType, pyqtSignal, QTimer, Qt, QEvent, QObject, QRect
@@ -285,6 +286,7 @@ class MainWindow(QMainWindow):
 
         # 탭
         tabs = QTabWidget()
+        polish_tabs(tabs)
         self._tab = DecisionSupportTab(messenger=NodeMessenger, owner=self)
 
         # 0102 바디 오버라이드: 항상 MOB 고정형 생성
@@ -297,14 +299,19 @@ class MainWindow(QMainWindow):
         tabs.addTab(self._tab, "의사결정지원 CSC")
 
         # 상단 모드 슬라이더
-        top = QWidget(); top_layout = QHBoxLayout(top)
-        top_layout.setContentsMargins(8,4,8,4); top_layout.addStretch(1)
+        top = QWidget()
+        top.setObjectName("TopBar")
+        top_layout = QHBoxLayout(top)
+        top_layout.setContentsMargins(4, 2, 4, 2)
+        top_layout.setSpacing(12)
+        top_layout.addStretch(1)
         self.mode_slider = QSlider(Qt.Horizontal)
         self.mode_slider.setRange(0, 3); self.mode_slider.setSingleStep(1)
         self.mode_slider.setTickInterval(1); self.mode_slider.setTickPosition(QSlider.TicksBelow)
         self.mode_slider.setFixedWidth(420)
         self.mode_slider.valueChanged.connect(self._on_mode_slider_changed)
         slider_wrap = QWidget()
+        slider_wrap.setObjectName("ModePanel")
         slider_layout = QVBoxLayout(slider_wrap)
         slider_layout.setContentsMargins(0, 0, 0, 0)
         slider_layout.setSpacing(2)
@@ -315,13 +322,18 @@ class MainWindow(QMainWindow):
             slider_wrap,
         )
         slider_layout.addWidget(self.mode_hint, 0, Qt.AlignHCenter)
-        self.mode_now = QLabel("초기화 모드"); self.mode_now.setStyleSheet("font-weight:600; padding-left:8px;")
+        self.mode_now = QLabel("초기화 모드")
+        self.mode_now.setObjectName("ModeStatusLabel")
         self.mode_now.setFixedWidth(140)
         self.mode_now.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        lbl = QLabel("모드:"); lbl.setStyleSheet("color:#789; padding-right:6px;")
+        lbl = QLabel("모드:")
+        lbl.setObjectName("ModeCaptionLabel")
         top_layout.addWidget(lbl); top_layout.addWidget(slider_wrap); top_layout.addWidget(self.mode_now)
 
-        center = QWidget(); v = QVBoxLayout(center); v.setContentsMargins(0,0,0,0)
+        center = QWidget()
+        v = QVBoxLayout(center)
+        v.setContentsMargins(12, 12, 12, 12)
+        v.setSpacing(10)
         v.addWidget(top); v.addWidget(tabs)
         self.setCentralWidget(center)
 
@@ -889,8 +901,10 @@ class MainWindow(QMainWindow):
 # ───────── 엔트리 포인트 ─────────
 def _main():
     app = QApplication(sys.argv)
+    load_shared_stylesheet(app, PROJECT_ROOT)
     win = MainWindow()
     win.show()
+    position_window_from_env(app, win)
     return app.exec_()
 
 

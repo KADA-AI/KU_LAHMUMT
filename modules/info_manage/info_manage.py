@@ -13,6 +13,7 @@ for _p in (_ROOT, _ROOT / "modules", _ROOT / "modules" / "common"):
         sys.path.insert(0, _ps)
 from modules.common.qt_env import ensure_qt_platform
 ensure_qt_platform()
+from modules.common.gui_style import load_shared_stylesheet, polish_tabs, position_window_from_env
 
 from PyQt5.QtCore import (
     qInstallMessageHandler, QtMsgType, pyqtSignal, QTimer, Qt, QEvent, QObject
@@ -143,6 +144,7 @@ class MainWindow(QMainWindow):
         self._last_ctrl_ts = {}   # 디듀프
 
         tabs = QTabWidget()
+        polish_tabs(tabs)
         self._tab = ManageInfo(messenger=NodeMessenger)
 
         # 0102 바디 고정 오버라이드: Timestamp/Status/Source(INF)
@@ -156,7 +158,12 @@ class MainWindow(QMainWindow):
 
         self.mode_slider = None
         self.mode_now = None
-        self.setCentralWidget(tabs)
+        center = QWidget(self)
+        center_layout = QVBoxLayout(center)
+        center_layout.setContentsMargins(12, 12, 12, 12)
+        center_layout.setSpacing(10)
+        center_layout.addWidget(tabs)
+        self.setCentralWidget(center)
 
         # 초기 실행 시 곧바로 초기화 모드로 설정
         self._set_mode_slider_by_text("초기화 모드")
@@ -499,8 +506,10 @@ class MainWindow(QMainWindow):
 # ───────── 엔트리 ─────────
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    load_shared_stylesheet(app, PROJECT_ROOT)
     win = MainWindow()
     win.show()
+    position_window_from_env(app, win)
     sys.exit(app.exec_())
 
 

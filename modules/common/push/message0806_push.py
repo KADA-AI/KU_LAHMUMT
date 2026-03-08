@@ -1,4 +1,4 @@
-# modules/common/push/message0806_push.py
+﻿# modules/common/push/message0806_push.py
 # auto-generated at 2025-08-24T20:13:14.040862+00:00
 
 
@@ -104,7 +104,7 @@ def _db_dir_for(msgid: str, __file_path: str) -> str:
     name = DB_DIR_RULES.get(msgid, f"msg_{msgid}")
     if env_root:
         return str(Path(env_root) / name)
-    return str(_project_root_for_push_file(__file_path) / "database" / name)
+    return str(_project_root_for_push_file(__file_path) / "temp" / "database" / name)
 
 def _list_numeric_ids(dirname: str, prefix_first_char: str | None = None) -> list[int]:
     import os, glob
@@ -186,3 +186,4 @@ def make_random_and_push(node_messenger) -> bytes:
         if wl and isinstance(body, dict):
             body = _select_tx_fields(body, wl)
         return make_and_push(body, node_messenger)
+

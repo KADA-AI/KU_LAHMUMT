@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import inspect
 from typing import List, Tuple
 
 try:
@@ -18,13 +19,18 @@ def plan_route_dtatrim(
     heading_tol_deg: float,
 ) -> List[dict]:
     """DTA + autopilot sim + heading tolerance simplification."""
-    return UAVMissionPlanner.plan_route_only(
-        input_lla,
-        cruise_speed=cruise_speed,
-        heading_tol_deg=heading_tol_deg,
-        insert_turn_waypoints=False,
-        store=False,
-    )
+    kwargs = {
+        "cruise_speed": cruise_speed,
+        "heading_tol_deg": heading_tol_deg,
+        "store": False,
+    }
+    try:
+        sig = inspect.signature(UAVMissionPlanner.plan_route_only)
+        if "insert_turn_waypoints" in sig.parameters:
+            kwargs["insert_turn_waypoints"] = False
+    except Exception:
+        pass
+    return UAVMissionPlanner.plan_route_only(input_lla, **kwargs)
 
 
 def plan_route_linear(

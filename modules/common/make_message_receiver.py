@@ -1,4 +1,4 @@
-# modules/common/make_message_receiver.py
+﻿# modules/common/make_message_receiver.py
 # msg_**** 스키마를 스캔해 C# 모델(IFusionReceive[T])용 receiver 모듈을 자동 생성합니다.
 # 사용법:
 #   python -m modules.common.make_message_receiver            # 모든 msg_**** 대상 일괄 생성
@@ -364,7 +364,7 @@ def _emit_receiver_code(msgid: str, reg: Registry, root_type: str) -> str:
             return str(_project_root_for_recv_file(__file_path))
         if env_root:
             return str(Path(env_root) / name)
-        return str(_project_root_for_recv_file(__file_path) / "database" / name)
+        return str(_project_root_for_recv_file(__file_path) / "temp" / "database" / name)
 
     def _try_save_received(msgid: str, data_obj):
         try:
@@ -579,3 +579,4 @@ def main(argv: List[str]) -> int:
 
 if __name__ == "__main__":
     sys.exit(main(sys.argv))
+

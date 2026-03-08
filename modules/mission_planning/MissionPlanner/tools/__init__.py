@@ -1,1 +1,1 @@
-"""MissionVisualizer package."""
+"""MissionPlanner auxiliary tools package."""

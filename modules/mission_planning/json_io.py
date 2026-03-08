@@ -1,76 +1,27 @@
-# -*- coding: utf-8 -*-
+"""Backward-compatible wrapper for mission-planning JSON I/O helpers."""
+
 from __future__ import annotations
 
-import json
+import sys
+from importlib import import_module
 from pathlib import Path
-from typing import Any
 
-try:
-    import orjson as _orjson
-except Exception:  # pragma: no cover - optional dependency
-    _orjson = None
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_PROJECT_ROOT_STR = str(_PROJECT_ROOT)
+if _PROJECT_ROOT_STR not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT_STR)
 
+_MODULE = import_module("modules.mission_planning.runtime.json_io")
+for _name, _value in vars(_MODULE).items():
+    if _name.startswith("__") and _name.endswith("__"):
+        continue
+    globals()[_name] = _value
 
-def dumps_json(
-    data: Any,
-    *,
-    pretty: bool = True,
-    ensure_ascii: bool = False,
-    sort_keys: bool = False,
-) -> bytes:
-    if _orjson is not None:
-        option = 0
-        if pretty:
-            option |= _orjson.OPT_INDENT_2
-        if sort_keys:
-            option |= _orjson.OPT_SORT_KEYS
-        if ensure_ascii:
-            option |= _orjson.OPT_ESCAPE_UNICODE
-        return _orjson.dumps(data, option=option)
-
-    if pretty:
-        text = json.dumps(
-            data,
-            ensure_ascii=ensure_ascii,
-            indent=2,
-            sort_keys=sort_keys,
-        )
-    else:
-        text = json.dumps(
-            data,
-            ensure_ascii=ensure_ascii,
-            separators=(",", ":"),
-            sort_keys=sort_keys,
-        )
-    return text.encode("utf-8")
-
-
-def write_json(
-    path: Path,
-    data: Any,
-    *,
-    pretty: bool = True,
-    ensure_ascii: bool = False,
-    sort_keys: bool = False,
-    skip_if_unchanged: bool = True,
-) -> bool:
-    payload = dumps_json(
-        data,
-        pretty=pretty,
-        ensure_ascii=ensure_ascii,
-        sort_keys=sort_keys,
-    )
-
-    if skip_if_unchanged and path.exists():
-        try:
-            if path.stat().st_size == len(payload):
-                if path.read_bytes() == payload:
-                    return False
-        except Exception:
-            pass
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_suffix(path.suffix + ".tmp")
-    tmp_path.write_bytes(payload)
-    tmp_path.replace(path)
-    return True
+if hasattr(_MODULE, "__all__"):
+    __all__ = list(_MODULE.__all__)
+else:
+    __all__ = [
+        _name
+        for _name in vars(_MODULE).keys()
+        if not (_name.startswith("__") and _name.endswith("__"))
+    ]

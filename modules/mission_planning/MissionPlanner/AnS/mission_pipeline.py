@@ -1,6 +1,7 @@
 # mission_pipeline.py
 
 from __future__ import annotations
+import concurrent.futures
 import random
 import string
 import os, json, math, shutil, time
@@ -1414,19 +1415,9 @@ def run_divide_and_pattern(
     log(f"       │ distance: {np.mean(_ms(t_dist))    :6.1f}  / p95 {np.percentile(_ms(t_dist),95)   :6.1f}")
     log("       └───────────────────────────────")
 
-    # 정찰 특화(option=4): 영역 임무는 직하방 패턴(3)으로 강제
+    # 정찰특화(option=4)도 별도 패턴 강제를 하지 않고 기본 계획 로직을 그대로 사용한다.
     if option_code == 4:
-        forced = 0
-        for area in env.processed_missions:
-            try:
-                input_type = int(area.get("inputMissionType", 0))
-            except Exception:
-                input_type = 0
-            if input_type in (2, 3, 6):
-                area["patternType"] = 3
-                forced += 1
-        if forced > 0:
-            log(f"[OPTION] 정찰 특화 적용: area patternType -> 3 (count={forced})")
+        log("[OPTION] 정찰특화: pattern 강제 없음 (기본 계획 로직과 동일)")
 
     # ──────────────────────────────────────────────────────────
     # 5. 예상시간 기반 PuLP 스케줄링 (변경 없음)
@@ -1616,14 +1607,26 @@ def build_mission_plan_0301(cmpk_path, mrpk_path, imp_paths, mp_out_path, missio
     mrpk_id = mrpk.get("missionReferencePackageID") or mrpk.get("inputMissionPackageID") or "MRPK0000"
 
     # ── aircraftList 구성 ───────────────────────────────
-    aircraft_list = []
-    for imp_path in imp_paths:
+    def _load_imp_aircraft(imp_path):
         with open(imp_path, "r", encoding="utf-8") as f:
             imp = json.load(f)
-        aircraft_list.append({
+        return {
             "aircraftID": imp["aircraftID"],
             "individualMissionPackageID": imp["individualMissionPackageID"],
-        })
+        }
+
+    if len(imp_paths) <= 1:
+        aircraft_list = [_load_imp_aircraft(path) for path in imp_paths]
+    else:
+        aircraft_list = [None] * len(imp_paths)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(6, len(imp_paths)), thread_name_prefix="MP0301") as executor:
+            futures = {
+                executor.submit(_load_imp_aircraft, path): idx
+                for idx, path in enumerate(imp_paths)
+            }
+            for future in concurrent.futures.as_completed(futures):
+                aircraft_list[futures[future]] = future.result()
+        aircraft_list = [row for row in aircraft_list if row is not None]
 
     # ── MissionPlan(0301) 빌드 ───────────────────────────
     plan_id = _as_uint32(mission_plan_id) if mission_plan_id is not None else _next_counter("missionPlanID", 700_000_001)
@@ -1642,3 +1645,46 @@ def build_mission_plan_0301(cmpk_path, mrpk_path, imp_paths, mp_out_path, missio
     }
 
     write_json(mp_out_path, mission_plan)
+    return mission_plan
+
+
+# --- Enhanced planning pipeline override -------------------------------------
+try:
+    from ..planning_enhanced import run_enhanced_divide_and_pattern as _run_enhanced_divide_and_pattern
+except Exception:
+    try:
+        from planning_enhanced import run_enhanced_divide_and_pattern as _run_enhanced_divide_and_pattern  # type: ignore
+    except Exception:
+        _run_enhanced_divide_and_pattern = None
+
+
+def run_divide_and_pattern(
+    cmpk_path: str,
+    ref_path: str,
+    out_dir: str,
+    log: Callable[[str], None] = print,
+    option_code: int | None = None,
+) -> List[str]:
+    """Production entrypoint kept stable; implementation is delegated to the enhanced pipeline."""
+    global _LAST_DIVIDE_AND_PATTERN_METRICS
+    t0 = time.perf_counter()
+    if _run_enhanced_divide_and_pattern is None:
+        raise RuntimeError('enhanced mission planning pipeline import failed')
+    paths = _run_enhanced_divide_and_pattern(
+        cmpk_path=cmpk_path,
+        ref_path=ref_path,
+        out_dir=out_dir,
+        log=log,
+        option_code=option_code,
+    )
+    total_s = time.perf_counter() - t0
+    _LAST_DIVIDE_AND_PATTERN_METRICS = {
+        'load_s': 0.0,
+        'lah_save_s': 0.0,
+        'split_s': 0.0,
+        'rl_s': 0.0,
+        'pulp_s': 0.0,
+        'uav_imp_s': 0.0,
+        'total_s': float(total_s),
+    }
+    return paths

@@ -20,6 +20,7 @@ for _p in (_ROOT, _ROOT / "modules", _ROOT / "modules" / "common"):
 
 from modules.common.qt_env import ensure_qt_platform
 ensure_qt_platform()
+from modules.common.gui_style import load_shared_stylesheet, polish_tabs, position_window_from_env
 
 from PyQt5.QtCore import qInstallMessageHandler, QtMsgType, QTimer, Qt, QEvent, QObject, QRect
 from PyQt5.QtGui import QPainter, QColor, QFontMetrics, QFont
@@ -157,6 +158,7 @@ from modules.monitoring.logic.fuel_warning import FuelWarningCoordinator
 from modules.monitoring.logic.forced_command_replan import ForcedCommandReplanCoordinator
 from modules.monitoring.logic.input_refresh_replan import InputRefreshReplanCoordinator
 from modules.monitoring.logic.prior_mission_replan import PriorMissionReplanCoordinator
+from modules.monitoring.logic.rtb_replan import RtbReplanCoordinator
 from modules.monitoring.logic.target_detection_replan import TargetDetectionCoordinator
 from modules.monitoring.utils.vehicle_status import write_vehicle_status
 from Tabs.csc_tab_base import _now_ms_since_2000
@@ -271,6 +273,7 @@ class MainWindow(QMainWindow):
         self._sent_0502_plans: set[int] = set()
         self._availability_base_ids: set[int] = set()
         self._forced_availability_override: dict[int, bool] = {}
+        self._rtb_availability_override: dict[int, bool] = {}
         self._availability_seen: bool = False
         self._dl_enabled = False
         self._dl_visual_enabled = False
@@ -286,6 +289,7 @@ class MainWindow(QMainWindow):
         self._dl_lock = threading.Lock()
 
         tabs = QTabWidget()
+        polish_tabs(tabs)
         self._tab = MissionMonitoringTab(messenger=NodeMessenger)
         self._csc_tab_index = tabs.addTab(self._tab, "모니터링 CSC")
         self._viz_tab = MonitoringVisualizationTab()
@@ -313,13 +317,19 @@ class MainWindow(QMainWindow):
             now_fn=_now_ms_since_2000,
             logger=self._append_log_line,
         )
+        self._rtb_replan_coord = RtbReplanCoordinator(
+            now_fn=_now_ms_since_2000,
+            logger=self._append_log_line,
+        )
         self._viz_tab_index = tabs.addTab(self._viz_tab, "모니터링 시각화")
         tabs.currentChanged.connect(self._on_tab_changed)
         self._on_tab_changed(tabs.currentIndex())
 
         top = QWidget()
+        top.setObjectName("TopBar")
         top_layout = QHBoxLayout(top)
-        top_layout.setContentsMargins(8, 4, 8, 4)
+        top_layout.setContentsMargins(4, 2, 4, 2)
+        top_layout.setSpacing(12)
         top_layout.addStretch(1)
         self.mode_slider = QSlider(Qt.Horizontal)
         self.mode_slider.setRange(0, 3)
@@ -329,6 +339,7 @@ class MainWindow(QMainWindow):
         self.mode_slider.setFixedWidth(420)
         self.mode_slider.valueChanged.connect(self._on_mode_slider_changed)
         slider_wrap = QWidget()
+        slider_wrap.setObjectName("ModePanel")
         slider_layout = QVBoxLayout(slider_wrap)
         slider_layout.setContentsMargins(0, 0, 0, 0)
         slider_layout.setSpacing(2)
@@ -340,18 +351,19 @@ class MainWindow(QMainWindow):
         )
         slider_layout.addWidget(self.mode_hint, 0, Qt.AlignHCenter)
         self.mode_now = QLabel("초기화 모드")
-        self.mode_now.setStyleSheet("font-weight:600; padding-left:8px;")
+        self.mode_now.setObjectName("ModeStatusLabel")
         self.mode_now.setFixedWidth(140)
         self.mode_now.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         lbl = QLabel("모드:")
-        lbl.setStyleSheet("color:#789; padding-right:6px;")
+        lbl.setObjectName("ModeCaptionLabel")
         top_layout.addWidget(lbl)
         top_layout.addWidget(slider_wrap)
         top_layout.addWidget(self.mode_now)
 
         center = QWidget()
         vbox = QVBoxLayout(center)
-        vbox.setContentsMargins(0, 0, 0, 0)
+        vbox.setContentsMargins(12, 12, 12, 12)
+        vbox.setSpacing(10)
         vbox.addWidget(top)
         vbox.addWidget(tabs)
         self.setCentralWidget(center)
@@ -1164,7 +1176,7 @@ class MainWindow(QMainWindow):
 
     def _effective_available_ids(self) -> set[int]:
         base = set(int(v) for v in (self._availability_base_ids or set()))
-        overrides = dict(self._forced_availability_override or {})
+        overrides = self._availability_overrides()
         if not base and not overrides:
             return set()
         effective = set(base)
@@ -1181,7 +1193,7 @@ class MainWindow(QMainWindow):
 
     def _availability_state_for(self, aircraft_id: int) -> bool | None:
         """Return True/False when availability is known; None when unknown."""
-        overrides = dict(self._forced_availability_override or {})
+        overrides = self._availability_overrides()
         if aircraft_id in overrides:
             return bool(overrides[aircraft_id])
         base = set(int(v) for v in (self._availability_base_ids or set()))
@@ -1217,6 +1229,20 @@ class MainWindow(QMainWindow):
         if self._is_aircraft_unavailable(aircraft_id):
             return False
         return True
+
+    def _availability_overrides(self) -> dict[int, bool]:
+        merged: dict[int, bool] = {}
+        for source in (
+            dict(self._forced_availability_override or {}),
+            dict(self._rtb_availability_override or {}),
+        ):
+            for aid, value in source.items():
+                try:
+                    aid_int = int(aid)
+                except Exception:
+                    continue
+                merged[aid_int] = bool(value)
+        return merged
 
     def _send_0001_notice(self, contents: str) -> None:
         text = str(contents or "").strip()
@@ -1752,8 +1778,25 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         try:
-            if self._forced_availability_override:
-                self._apply_forced_availability(stage="0802")
+            rtb_coord = getattr(self, "_rtb_replan_coord", None)
+            if rtb_coord is not None:
+                replan_payloads, logs = rtb_coord.on_agent_states(
+                    states,
+                    system_mode=self._system_mode_code,
+                    current_mission_plan_id=self._current_mission_plan_id,
+                    aircraft_filter=self._is_aircraft_in_current_plan,
+                )
+                for line in logs:
+                    self._append_log_line(line)
+                self._rtb_availability_override = rtb_coord.get_availability_overrides()
+                for body in replan_payloads:
+                    if isinstance(body, dict):
+                        self._send_0902(body)
+        except Exception as exc:
+            self._append_log_line(f"[0902] rtb-on-0401 error: {exc}")
+        try:
+            if self._forced_availability_override or self._rtb_availability_override:
+                self._apply_forced_availability(stage="0401")
         except Exception:
             pass
 
@@ -2399,7 +2442,7 @@ class MainWindow(QMainWindow):
 
     def _apply_forced_availability(self, *, stage: str) -> None:
         base = set(int(v) for v in (self._availability_base_ids or set()))
-        overrides = dict(self._forced_availability_override or {})
+        overrides = self._availability_overrides()
         effective = set(base)
         for aid, forced_available in overrides.items():
             try:
@@ -2420,7 +2463,12 @@ class MainWindow(QMainWindow):
         viz = getattr(self, "_viz_tab", None)
         if viz is None or not hasattr(viz, "update_availability"):
             return
-        stage_to_use = "0802" if overrides else stage
+        if self._forced_availability_override:
+            stage_to_use = "0802"
+        elif self._rtb_availability_override:
+            stage_to_use = "0401"
+        else:
+            stage_to_use = stage
         try:
             viz.update_availability(sorted(effective), stage=stage_to_use)
         except Exception:
@@ -2442,6 +2490,8 @@ class MainWindow(QMainWindow):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    load_shared_stylesheet(app, PROJECT_ROOT)
     win = MainWindow()
     win.show()
+    position_window_from_env(app, win)
     sys.exit(app.exec_())

@@ -2,30 +2,58 @@
 # mission_planning_gui.py – 임무 할당·계획수립 전용 GUI (S110 플로우 대응)
 from __future__ import annotations
 
-import sys, os, threading, json, re, time, shutil, copy
+import sys, os, threading, json, re, time, shutil, copy, traceback
 import concurrent.futures
 import folium
 os.environ["KU_ROLE"] = "mission"  # MMR
 from pathlib import Path
 from typing import Any, Dict, Optional, Set, List
 
-from mission_planning_attack_helpers import (
-    apply_attack_customizations,
-    build_attack_context_from_replan_detail,
-    compute_attack_waypoint,
-    load_attack_context,
-)
-from mission_planning_gui_env import (
-    _bootstrap_paths,
-    _ensure_fusion_configs,
-    _load_msglib_and_deps,
-    _now_ms_since_2000,
-    _sanitize_reason,
-    _z4,
-)
-from mission_planning_pipeline_logging import PipelineLogManager
-from mission_plan_file_logger import MissionPlanFileLogger
-from modules.mission_planning.json_io import write_json
+_SCRIPT_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_SCRIPT_PROJECT_ROOT_STR = str(_SCRIPT_PROJECT_ROOT)
+if _SCRIPT_PROJECT_ROOT_STR not in sys.path:
+    sys.path.insert(0, _SCRIPT_PROJECT_ROOT_STR)
+
+try:
+    from .mission_planning_attack_helpers import (
+        apply_attack_customizations,
+        build_attack_context_from_replan_detail,
+        compute_attack_waypoint,
+        load_attack_context,
+    )
+    from .mission_planning_gui_env import (
+        _bootstrap_paths,
+        _ensure_fusion_configs,
+        _load_msglib_and_deps,
+        _now_ms_since_2000,
+        _sanitize_reason,
+        _z4,
+    )
+    from .mission_planning_pipeline_logging import PipelineLogManager
+    from .mission_plan_file_logger import MissionPlanFileLogger
+    from .json_io import write_json
+    from .ui import MissionAlgoConfigTab
+    from .MissionPlanner.runtime_settings import load_runtime_settings, settings_path as runtime_settings_path
+except Exception:
+    from mission_planning_attack_helpers import (
+        apply_attack_customizations,
+        build_attack_context_from_replan_detail,
+        compute_attack_waypoint,
+        load_attack_context,
+    )
+    from mission_planning_gui_env import (
+        _bootstrap_paths,
+        _ensure_fusion_configs,
+        _load_msglib_and_deps,
+        _now_ms_since_2000,
+        _sanitize_reason,
+        _z4,
+    )
+    from mission_planning_pipeline_logging import PipelineLogManager
+    from mission_plan_file_logger import MissionPlanFileLogger
+    from json_io import write_json
+    from modules.mission_planning.ui import MissionAlgoConfigTab
+    from modules.mission_planning.MissionPlanner.runtime_settings import load_runtime_settings, settings_path as runtime_settings_path
 
 PROJECT_ROOT, COMMON_DIR = _bootstrap_paths(Path(__file__))
 _TEMP_DIR = PROJECT_ROOT / "temp"
@@ -37,6 +65,7 @@ def _ensure_temp_dir() -> Path:
 
 from modules.common.qt_env import ensure_qt_platform
 ensure_qt_platform()
+from modules.common.gui_style import load_shared_stylesheet, polish_tabs, position_window_from_env
 
 from PyQt5.QtCore import (
     qInstallMessageHandler, QtMsgType, pyqtSignal, QTimer, Qt, QEvent, QObject, QUrl, QRect
@@ -139,17 +168,28 @@ from modules.common.option_codes import (
     option_code_to_label,
 )
 from receive_center import register_listener, unregister_listener   # ★ 0101 모드 수신 리스너
-from latest_input_cache import (
-    reset_latest_inputs,
-    update_from_payload as cache_update_from_payload,
-    get_latest_package_id,
-    get_latest_snapshot,
-    describe_latest_ids,
-    resolve_path_from_cache,
-)
-from prior_mission_pipeline import run_prior_mission_pipeline
-from attack_plan_pipeline import run_attack_plan_pipeline
-from mission_planning_log_tab import MissionPlanningLogTab
+try:
+    from .latest_input_cache import (
+        reset_latest_inputs,
+        update_from_payload as cache_update_from_payload,
+        get_latest_package_id,
+        get_latest_snapshot,
+        describe_latest_ids,
+        resolve_path_from_cache,
+    )
+    from .prior_mission_pipeline import run_prior_mission_pipeline
+    from .attack_plan_pipeline import run_attack_plan_pipeline
+except Exception:
+    from latest_input_cache import (
+        reset_latest_inputs,
+        update_from_payload as cache_update_from_payload,
+        get_latest_package_id,
+        get_latest_snapshot,
+        describe_latest_ids,
+        resolve_path_from_cache,
+    )
+    from prior_mission_pipeline import run_prior_mission_pipeline
+    from attack_plan_pipeline import run_attack_plan_pipeline
 
 # ───────── nFusion 설정/라이선스 정규화 + MessageLibrary 로드 ─────────
 from dll_files.nFusionImports import *  # FusionNodeIoc, NodeMessenger, clr 등
@@ -537,6 +577,7 @@ class MainWindow(QMainWindow):
 
         # ── 중앙 탭(AssignmentPlanningTab)
         tabs = QTabWidget()
+        polish_tabs(tabs)
         self._tab = AssignmentPlanningTab(messenger=NodeMessenger)
         self._tab.set_replan_callback(self._handle_replan_received)
 
@@ -548,15 +589,13 @@ class MainWindow(QMainWindow):
         self._install_power_gate_hooks()       # Power OFF 가드
         self._install_0301_override()          # 0301 전송 커스텀
         tabs.addTab(self._tab, "임무 할당·계획수립 CSC")
-        self._log_tab = MissionPlanningLogTab()
-        tabs.addTab(self._log_tab, "임무계획 Log")
-        self._visual_tab = MissionVisualizationTab(
-            plan_id_provider=lambda: getattr(self, "_last_mission_plan_ids", []) or [],
-            db_root_provider=db_paths.get_active_db_root,
-            log_cb=self.log_sig.emit,
-            parent=self,
+        self._algo_tab = MissionAlgoConfigTab(
+            runtime_settings_path(),
+            on_apply=self._on_algo_settings_applied,
         )
-        tabs.addTab(self._visual_tab, "임무 시각화")
+        tabs.addTab(self._algo_tab, "알고리즘 설정")
+        self._log_tab = None
+        self._visual_tab = None
         self._pipeline_logger = PipelineLogManager(
             emit_callback=self.pipeline_log_sig.emit,
             log_tab_provider=lambda: getattr(self, "_log_tab", None),
@@ -566,14 +605,16 @@ class MainWindow(QMainWindow):
         self._active_plan_log_run = None
         self._log_file_path: Optional[Path] = None
         self._init_gui_log_file_sink()
+        self._on_algo_settings_applied()
 
         # ── 상단 모드 슬라이더
-        top = QWidget(); top_layout = QHBoxLayout(top)
-        top_layout.setContentsMargins(8, 4, 8, 4)
+        top = QWidget()
+        top.setObjectName("TopBar")
+        top_layout = QHBoxLayout(top)
+        top_layout.setContentsMargins(4, 2, 4, 2)
+        top_layout.setSpacing(12)
         self._latest_input_label = QLabel("0201/0203 \uc218\uc2e0 \ud604\ud669")
-        self._latest_input_label.setStyleSheet(
-            "color:#123; background:#eef2ff; padding:6px 10px; border-radius:8px; border:1px solid #dce5ff;"
-        )
+        self._latest_input_label.setObjectName("InfoBadge")
         top_layout.addWidget(self._latest_input_label)
         top_layout.addStretch(1)
         self.mode_slider = QSlider(Qt.Horizontal)
@@ -584,6 +625,7 @@ class MainWindow(QMainWindow):
         self.mode_slider.setFixedWidth(420)
         self.mode_slider.valueChanged.connect(self._on_mode_slider_changed)
         slider_wrap = QWidget()
+        slider_wrap.setObjectName("ModePanel")
         slider_layout = QVBoxLayout(slider_wrap)
         slider_layout.setContentsMargins(0, 0, 0, 0)
         slider_layout.setSpacing(2)
@@ -594,14 +636,19 @@ class MainWindow(QMainWindow):
             slider_wrap,
         )
         slider_layout.addWidget(self.mode_hint, 0, Qt.AlignHCenter)
-        self.mode_now = QLabel("초기화 모드"); self.mode_now.setStyleSheet("font-weight:600; padding-left:8px;")
+        self.mode_now = QLabel("초기화 모드")
+        self.mode_now.setObjectName("ModeStatusLabel")
         self.mode_now.setFixedWidth(140)
         self.mode_now.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        lbl = QLabel("모드:"); lbl.setStyleSheet("color:#789; padding-right:6px;")
+        lbl = QLabel("모드:")
+        lbl.setObjectName("ModeCaptionLabel")
         top_layout.addWidget(lbl); top_layout.addWidget(slider_wrap); top_layout.addWidget(self.mode_now)
         self._refresh_input_banner()
 
-        center = QWidget(); v = QVBoxLayout(center); v.setContentsMargins(0, 0, 0, 0)
+        center = QWidget()
+        v = QVBoxLayout(center)
+        v.setContentsMargins(12, 12, 12, 12)
+        v.setSpacing(10)
         v.addWidget(top); v.addWidget(tabs)
         self.setCentralWidget(center)
 
@@ -614,7 +661,6 @@ class MainWindow(QMainWindow):
         self.log_sig.connect(self._append_log_line)
         self.pipeline_log_sig.connect(self._pipeline_logger.handle_event)
         self.start_push_seq.connect(self._start_push_sequence)
-        self.visual_refresh.connect(self._refresh_visual_tab)
         if self._log_file_path:
             self._append_log_line(f"[LOG] Mission planning log started: {self._log_file_path}")
 
@@ -1102,14 +1148,8 @@ class MainWindow(QMainWindow):
         return build_attack_context_from_replan_detail(detail)
 
     def _load_uav_params_from_store(self) -> Optional[Dict[str, Any]]:
-        path = PROJECT_ROOT / "modules" / "mission_planning" / "MissionPlanner" / "uav_params.json"
-        if not path.exists():
-            return None
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            return None
-        if not isinstance(payload, dict):
+        payload = load_runtime_settings()
+        if not isinstance(payload, dict) or not payload:
             return None
         return payload
 
@@ -1213,6 +1253,60 @@ class MainWindow(QMainWindow):
             fov_deg=fov_deg,
         )
 
+        # Keep one authoritative settings file by backfilling missing keys
+        # into modules/mission_planning/MissionPlanner/uav_params.json.
+        resolved_values = {
+            "cruise_speed_mps": float(cruise_speed),
+            "turn_step_deg": float(turn_step),
+            "default_sweep_separation_m": float(sweep_sep),
+            "area_sweep_mode": str(values.get("area_sweep_mode", "parallel") or "parallel"),
+            "search_speed_weight": float(search_weight),
+            "fov_deg": float(fov_deg),
+            "altitude_m": int(round(altitude)),
+            "sweep_entry_offset_m": float(d0303_module.SWEEP_ENTRY_OFFSET_M),
+            "sweep_merge_heading_deg": float(d0303_module.SWEEP_MERGE_HEADING_DEG),
+            "sweep_line_interp_points": int(d0303_module.SWEEP_LINE_INTERP_POINTS),
+            "min_sweep_len_m": float(d0303_module.MIN_SWEEP_LEN_M),
+            "min_route_spacing_m": float(d0303_module.MIN_ROUTE_SPACING_M),
+            "default_search_speed_multiplier": float(d0303_module.DEFAULT_SEARCH_SPEED_MULTIPLIER),
+            "point_fov_deg": float(d0303_module.POINT_FOV_DEG),
+            "area_nadir_fov_deg": float(d0303_module.AREA_NADIR_FOV_DEG),
+            "entry_hold_fov_deg": float(d0303_module.ENTRY_HOLD_FOV_DEG),
+            "entry_hold_gimbal_pitch": float(d0303_module.ENTRY_HOLD_GIMBAL_PITCH),
+            "entry_hold_gimbal_yaw": float(d0303_module.ENTRY_HOLD_GIMBAL_YAW),
+            "loiter_radius_m": float(d0303_module.LOITER_RADIUS_M),
+            "loiter_direction": int(d0303_module.LOITER_DIRECTION),
+            "loiter_time_s": float(d0303_module.LOITER_TIME_S),
+            "loiter_speed_mps": float(d0303_module.LOITER_SPEED_MPS),
+            "enhanced_area_review_enabled": bool(values.get("enhanced_area_review_enabled", True)),
+            "enhanced_area_review_max_segment_m": _get_float("enhanced_area_review_max_segment_m", 550.0),
+            "enhanced_auto_fov_from_db": (
+                False
+                if str(payload.get("preset_key") or "custom").strip().lower() == "custom"
+                else bool(values.get("enhanced_auto_fov_from_db", True))
+            ),
+        }
+        algo_key = str(payload.get("algo_key") or "")
+        if algo_key not in ("dtatrim", "algo2", "algo3"):
+            algo_key = "dtatrim"
+        flyover = payload.get("flyover")
+        if not isinstance(flyover, dict):
+            flyover = {}
+        preset_key = str(payload.get("preset_key") or "custom")
+        if preset_key not in ("bearing_par_sweep", "bearing_ver_sweep", "nadir_mode", "custom"):
+            preset_key = "custom"
+        normalized_payload = {
+            "preset_key": preset_key,
+            "algo_key": algo_key,
+            "values": resolved_values,
+            "flyover": flyover,
+        }
+        try:
+            path = runtime_settings_path()
+            path.write_text(json.dumps(normalized_payload, ensure_ascii=True, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
         if mp_config_module is not None:
             mp_config_module.DEFAULT_SWEEP_SEPARATION_M = float(sweep_sep)
             mp_config_module.SEARCH_SPEED_WEIGHT = float(search_weight)
@@ -1234,6 +1328,29 @@ class MainWindow(QMainWindow):
             )
 
         return cruise_speed, turn_step, True
+
+    def _on_algo_settings_applied(self, payload: Optional[Dict[str, Any]] = None) -> None:
+        try:
+            from data_def import d0303, search_speed
+            try:
+                import config as mp_config
+            except Exception:
+                mp_config = None
+            cruise, turn_step, loaded = self._apply_uav_params_from_store(
+                d0303,
+                mp_config_module=mp_config,
+                search_speed_module=search_speed,
+            )
+            if loaded:
+                self.log_sig.emit(
+                    "[CONFIG] 알고리즘 설정 적용 "
+                    f"(cruise={cruise:.1f}m/s, turn_step={turn_step:.1f}°, "
+                    f"preset={str((payload or {}).get('preset_key') or 'custom')}, "
+                    f"areaMode={str((payload or {}).get('values', {}).get('area_sweep_mode', 'parallel'))}, "
+                    f"autoFovDb={bool((payload or {}).get('values', {}).get('enhanced_auto_fov_from_db', True))})"
+                )
+        except Exception as exc:
+            self.log_sig.emit(f"[WARN] 알고리즘 설정 즉시 적용 실패: {exc}")
 
     def _compute_attack_waypoint(
         self, friendly: Dict[str, Any], target: Dict[str, Any], variant_no: int
@@ -1900,6 +2017,88 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self.log_sig.emit(f"[ERR] 0001 push failed: {exc}")
 
+    def _plan_file_notice(self, label: str, exc: Optional[BaseException]) -> str:
+        if isinstance(exc, FileNotFoundError):
+            return f"임무계획 실패: {label} 파일을 찾을 수 없습니다."
+        if isinstance(exc, PermissionError):
+            return f"임무계획 실패: {label} 파일에 접근할 수 없습니다."
+        if isinstance(exc, (json.JSONDecodeError, UnicodeDecodeError)):
+            return f"임무계획 실패: {label} 파일 형식이 올바르지 않습니다."
+        return f"임무계획 실패: {label} 파일을 읽을 수 없습니다."
+
+    def _build_plan_failure_notice(
+        self,
+        failure_code: str,
+        *,
+        exc: Optional[BaseException] = None,
+        detail: Optional[Dict[str, Any]] = None,
+        ctx: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        detail = detail or {}
+        ctx = ctx or {}
+
+        if failure_code == "0201_missing":
+            return "임무계획 실패: 0201 입력 임무 파일을 찾을 수 없습니다."
+        if failure_code == "0203_missing":
+            return "임무계획 실패: 0203 비행참조정보 파일을 찾을 수 없습니다."
+        if failure_code == "input_missing":
+            missing_labels: list[str] = []
+            if not detail.get("cmpk_path"):
+                missing_labels.append("0201 입력 임무")
+            if not detail.get("mrpk_path"):
+                missing_labels.append("0203 비행참조정보")
+            if missing_labels:
+                return "임무계획 실패: " + ", ".join(missing_labels) + " 파일을 찾을 수 없습니다."
+            return "임무계획 실패: 0201 또는 0203 입력 파일을 찾을 수 없습니다."
+        if failure_code == "0201_load_failed":
+            return self._plan_file_notice("0201 입력 임무", exc)
+        if failure_code == "0203_load_failed":
+            return self._plan_file_notice("0203 비행참조정보", exc)
+        if failure_code == "variant_0201_load_failed":
+            return self._plan_file_notice("옵션용 0201 입력 임무", exc)
+        if failure_code == "input_validation_failed":
+            errors = detail.get("errors") if isinstance(detail.get("errors"), list) else []
+            has_0201 = False
+            has_0203 = False
+            for item in errors:
+                key = str((item or {}).get("key") or "")
+                if key.startswith("inputMission") or key == "availableAircraftList" or key == "mainSensor":
+                    has_0201 = True
+                if key.startswith("takeOver") or key.startswith("handOver") or key.startswith("flightArea"):
+                    has_0203 = True
+            if has_0201 and has_0203:
+                return "임무계획 실패: 0201 및 0203 필수 데이터가 부족하거나 형식이 올바르지 않습니다."
+            if has_0201:
+                return "임무계획 실패: 0201 입력 임무 데이터가 부족하거나 형식이 올바르지 않습니다."
+            if has_0203:
+                return "임무계획 실패: 0203 비행참조정보 데이터가 부족하거나 형식이 올바르지 않습니다."
+            return "임무계획 실패: 입력 데이터가 부족하거나 형식이 올바르지 않습니다."
+        if failure_code in {"attack_pipeline_failed", "attack_finalize_failed", "attack_pipeline_empty"}:
+            return "임무계획 실패: 공격 재계획 생성 중 오류가 발생했습니다."
+        if failure_code == "imp_generation_failed":
+            return "임무계획 실패: 개별 임무 계획 생성 중 오류가 발생했습니다."
+        if failure_code == "flightpath_generation_failed":
+            return "임무계획 실패: 비행경로 생성에 실패했습니다."
+        if failure_code == "flightpath_missing_ids":
+            return "임무계획 실패: 일부 비행경로 데이터가 누락되어 임무계획을 완료할 수 없습니다."
+
+        if isinstance(exc, (ModuleNotFoundError, ImportError)):
+            return "임무계획 실패: 필수 라이브러리를 불러오지 못했습니다."
+        if isinstance(exc, FileNotFoundError):
+            return "임무계획 실패: 필요한 입력 파일을 찾을 수 없습니다."
+        if isinstance(exc, PermissionError):
+            return "임무계획 실패: 필요한 파일 또는 폴더에 접근할 수 없습니다."
+        if isinstance(exc, (json.JSONDecodeError, UnicodeDecodeError)):
+            return "임무계획 실패: 입력 파일 형식이 올바르지 않습니다."
+
+        try:
+            replan_level = int(ctx.get("replan_level", ctx.get("replanLevel", 0)))
+        except Exception:
+            replan_level = 0
+        if replan_level == 4:
+            return "임무계획 실패: 선행임무 재계획 처리 중 오류가 발생했습니다."
+        return "임무계획 실패: 임무계획 처리 중 오류가 발생했습니다."
+
     # ───────── 0102 폴백(일반적으론 send_status_ok 사용) ─────────
     def _send_self_check_0102(self, status: int = 1, _retry: int = 0):
         if not self._power_on:
@@ -2253,6 +2452,8 @@ class MainWindow(QMainWindow):
         plan_log = plan_run_log
         ctx: Dict[str, Any] = {}
         staged: Dict[str, Any] = {}
+        failure_notice_sent = False
+        reason = "init-plan"
         try:
             import os, json
             from pathlib import Path
@@ -2298,6 +2499,21 @@ class MainWindow(QMainWindow):
                         plan_log.add_issue(code, message=message or None, detail=detail)
                     plan_log.add_step(code, status or "error", detail=detail, message=message)
 
+            def _notify_failure_once(
+                code: str,
+                *,
+                exc: Optional[BaseException] = None,
+                detail: Optional[Dict[str, Any]] = None,
+            ) -> None:
+                nonlocal failure_notice_sent
+                if failure_notice_sent:
+                    return
+                notice = self._build_plan_failure_notice(code, exc=exc, detail=detail, ctx=ctx)
+                if not notice:
+                    return
+                self._push_0001_notice(notice)
+                failure_notice_sent = True
+
             self.log_sig.emit(f"[STEP 0] Replan pipeline start (reason={reason})")
             self._pipeline_logger.log_event(
                 session_id,
@@ -2337,6 +2553,58 @@ class MainWindow(QMainWindow):
                     filtered.pop("plan_ids", None)
                     filtered.pop("option_names", None)
                 return filtered
+
+            def _load_imp_package(imp_path: str | Path) -> tuple[int, dict]:
+                with open(imp_path, encoding="utf-8") as f:
+                    pkg = json.load(f)
+                aid = int(pkg.get("aircraftID", 0))
+                return aid, pkg
+
+            def _load_imp_packages(imp_paths: list[str]) -> list[tuple[int, dict]]:
+                if len(imp_paths) <= 1:
+                    return [_load_imp_package(path) for path in imp_paths]
+                loaded: list[tuple[int, dict] | None] = [None] * len(imp_paths)
+                with concurrent.futures.ThreadPoolExecutor(
+                    max_workers=min(6, len(imp_paths)),
+                    thread_name_prefix="LoadIMP",
+                ) as executor:
+                    futures = {
+                        executor.submit(_load_imp_package, path): idx
+                        for idx, path in enumerate(imp_paths)
+                    }
+                    for future in concurrent.futures.as_completed(futures):
+                        loaded[futures[future]] = future.result()
+                return [row for row in loaded if row is not None]
+
+            def _write_json_batch(rows: list[tuple[Path, Any]], *, pretty: bool = True) -> int:
+                if not rows:
+                    return 0
+
+                def _write_one(item: tuple[Path, Any]) -> bool:
+                    path, payload = item
+                    return bool(
+                        write_json(
+                            path,
+                            payload,
+                            pretty=pretty,
+                            ensure_ascii=False,
+                            skip_if_unchanged=True,
+                        )
+                    )
+
+                if len(rows) == 1:
+                    return 1 if _write_one(rows[0]) else 0
+
+                written = 0
+                with concurrent.futures.ThreadPoolExecutor(
+                    max_workers=min(8, len(rows)),
+                    thread_name_prefix="WriteJSON",
+                ) as executor:
+                    futures = [executor.submit(_write_one, row) for row in rows]
+                    for future in concurrent.futures.as_completed(futures):
+                        if future.result():
+                            written += 1
+                return written
 
             attack_option_indices = _collect_attack_option_indices(ctx)
             attack_ctx = _filter_context_by_indices(ctx, attack_option_indices) if attack_option_indices else ctx
@@ -2385,12 +2653,14 @@ class MainWindow(QMainWindow):
                                 session_id, "error", f"Attack finalize failed: {exc}"
                             )
                             _record_issue("attack_finalize_failed", f"Attack finalize failed: {exc}")
+                            _notify_failure_once("attack_finalize_failed", exc=exc)
                 except Exception as exc:
                     self._append_log_line(f"[ATTACK][ERR] pipeline failed: {exc}")
                     self._pipeline_logger.log_event(
                         session_id, "error", f"Attack pipeline failed: {exc}"
                     )
                     _record_issue("attack_pipeline_failed", f"Attack pipeline failed: {exc}")
+                    _notify_failure_once("attack_pipeline_failed", exc=exc)
 
             # 공격 옵션은 공격 파이프라인 결과만 사용 (일반 파이프라인에서 제외)
             if attack_option_indices:
@@ -2410,6 +2680,7 @@ class MainWindow(QMainWindow):
                             "Attack option requested but no attack plan was generated.",
                             status="error",
                         )
+                        _notify_failure_once("attack_pipeline_empty")
                     return
                 ctx = _filter_context_by_indices(ctx, keep_indices)
 
@@ -2739,6 +3010,7 @@ class MainWindow(QMainWindow):
                 failure_detail = {"latest_0201": latest_cmpk_id}
                 _record_issue("0201_missing", "latest 0201 missing", detail=failure_detail)
                 plan_log_summary.update({"stop_reason": "0201_missing", **failure_detail})
+                _notify_failure_once("0201_missing", detail=failure_detail)
                 self._plan_status = "임무계획 실패"
                 self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
                 return
@@ -2785,6 +3057,7 @@ class MainWindow(QMainWindow):
                 failure_detail = {"latest_0203": latest_mrpk_id}
                 _record_issue("0203_missing", "latest 0203 missing", detail=failure_detail)
                 plan_log_summary.update({"stop_reason": "0203_missing", **failure_detail})
+                _notify_failure_once("0203_missing", detail=failure_detail)
                 self._plan_status = "임무계획 실패"
                 self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
                 return
@@ -2802,8 +3075,10 @@ class MainWindow(QMainWindow):
                 _record_step("0203_resolved", "ok", detail={"path": str(mrpk_path), "latest_id": latest_mrpk_id})
             if not cmpk_path or not mrpk_path:
                 self.log_sig.emit('[ERR] Replan pipeline aborted: missing 0201/0203 input')
-                _record_issue("input_missing", "missing 0201/0203 input", detail= {"cmpk_path": str(cmpk_path) if cmpk_path else None, "mrpk_path": str(mrpk_path) if mrpk_path else None})
-                plan_log_summary.update({"stop_reason": "input_missing", "cmpk_path": str(cmpk_path) if cmpk_path else None, "mrpk_path": str(mrpk_path) if mrpk_path else None})
+                missing_detail = {"cmpk_path": str(cmpk_path) if cmpk_path else None, "mrpk_path": str(mrpk_path) if mrpk_path else None}
+                _record_issue("input_missing", "missing 0201/0203 input", detail=missing_detail)
+                plan_log_summary.update({"stop_reason": "input_missing", **missing_detail})
+                _notify_failure_once("input_missing", detail=missing_detail)
                 self._plan_status = "임무계획 실패"
                 self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
                 return
@@ -2817,6 +3092,7 @@ class MainWindow(QMainWindow):
                 self.log_sig.emit(f"[ERR] 0201 로드 실패: {exc}")
                 _record_issue("0201_load_failed", "failed to load 0201", detail={"path": str(cmpk_path), "error": str(exc)})
                 plan_log_summary.update({"stop_reason": "0201_load_failed", "cmpk_path": str(cmpk_path)})
+                _notify_failure_once("0201_load_failed", exc=exc, detail={"path": str(cmpk_path)})
                 self._plan_status = "임무계획 실패"
                 self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
                 return
@@ -2827,6 +3103,7 @@ class MainWindow(QMainWindow):
                 self.log_sig.emit(f"[ERR] 0203 로드 실패: {exc}")
                 _record_issue("0203_load_failed", "failed to load 0203", detail={"path": str(mrpk_path), "error": str(exc)})
                 plan_log_summary.update({"stop_reason": "0203_load_failed", "mrpk_path": str(mrpk_path)})
+                _notify_failure_once("0203_load_failed", exc=exc, detail={"path": str(mrpk_path)})
                 self._plan_status = "임무계획 실패"
                 self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
                 return
@@ -3078,10 +3355,11 @@ class MainWindow(QMainWindow):
                         f"0203 좌표누락(인계={len(bad_take)},반환={len(bad_hand)})"
                     )
                 if notice_parts:
-                    self._push_0001_notice("0201/0203 검증 실패: " + " | ".join(notice_parts))
+                    self.log_sig.emit("[ERR] 0201/0203 검증 실패 요약: " + " | ".join(notice_parts))
                 self.log_sig.emit("[ERR] 0201/0203 필수 데이터 부족 → 임무계획 중단")
                 _record_issue("input_validation_failed", "0201/0203 validation failed", detail={"errors": validation_errors})
                 plan_log_summary.update({"stop_reason": "input_validation_failed", "errors": validation_errors})
+                _notify_failure_once("input_validation_failed", detail={"errors": validation_errors})
                 self._plan_status = "임무계획 실패"
                 self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
                 return
@@ -3433,11 +3711,13 @@ class MainWindow(QMainWindow):
                         self.log_sig.emit(
                             f"[ERR] [variant {variant_no}] 0201 소스 로드 실패: {cmpk_source_path} ({exc})"
                         )
+                        detail_payload = {"path": str(cmpk_source_path), "error": str(exc), "variant": variant_no}
                         _record_issue(
                             "variant_0201_load_failed",
                             f"variant {variant_no} failed to load source 0201",
-                            detail={"path": str(cmpk_source_path), "error": str(exc), "variant": variant_no},
+                            detail=detail_payload,
                         )
+                        _notify_failure_once("variant_0201_load_failed", exc=exc, detail=detail_payload)
                         self._plan_status = "임무계획 실패"
                         self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
                         return
@@ -3527,6 +3807,7 @@ class MainWindow(QMainWindow):
                     self.log_sig.emit(f"[ERR] IMP generation failed (variant={variant_no})")
                     _record_issue("imp_generation_failed", f"IMP generation failed (variant={variant_no})", status="error")
                     plan_log_summary.update({"stop_reason": "imp_generation_failed", "variant": variant_no})
+                    _notify_failure_once("imp_generation_failed", detail={"variant": variant_no})
                     self._plan_status = "임무계획 실패"
                     self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
                     return
@@ -3538,9 +3819,15 @@ class MainWindow(QMainWindow):
 
                 step_t0 = time.perf_counter()
                 mp_tmp = iter_out_root / f"MissionPlan_{int(time.time()*1000)}.json"
-                build_mission_plan_0301(str(cmpk_source_path), str(mrpk_path), imp_paths, str(mp_tmp))
-                with mp_tmp.open(encoding='utf-8') as f:
-                    mp_json = json.load(f)
+                mp_json = build_mission_plan_0301(
+                    str(cmpk_source_path),
+                    str(mrpk_path),
+                    imp_paths,
+                    str(mp_tmp),
+                )
+                if not isinstance(mp_json, dict):
+                    with mp_tmp.open(encoding='utf-8') as f:
+                        mp_json = json.load(f)
                 imp_id_map = {a.get('aircraftID'): a.get('individualMissionPackageID') for a in mp_json.get('aircraftList', [])}
                 step_ms = (time.perf_counter() - step_t0) * 1000.0
                 self.log_sig.emit(
@@ -3550,10 +3837,8 @@ class MainWindow(QMainWindow):
 
                 step_t0 = time.perf_counter()
                 missions = []
-                for imp_path in imp_paths:
-                    with open(imp_path, encoding='utf-8') as f:
-                        pkg = json.load(f)
-                    aid = int(pkg.get('aircraftID', 0))
+                loaded_imp_packages = _load_imp_packages(list(imp_paths))
+                for aid, pkg in loaded_imp_packages:
                     for im in pkg.get('individualMissionList', []):
                         im_copy = dict(im)
                         im_copy['aircraftID'] = aid
@@ -3700,6 +3985,7 @@ class MainWindow(QMainWindow):
                     self.log_sig.emit(f"[ERR] FlightPath generation failed (variant={variant_no})")
                     _record_issue("flightpath_generation_failed", f"FlightPath generation failed (variant={variant_no})")
                     plan_log_summary.update({"stop_reason": "flightpath_generation_failed", "variant": variant_no})
+                    _notify_failure_once("flightpath_generation_failed", detail={"variant": variant_no})
                     return
                 self.log_sig.emit(f"[OK] FlightPath counts (variant={variant_no}): 0303={len(flight_plans_0303)} / 0304={len(flight_plans_0304)}")
 
@@ -3739,6 +4025,7 @@ class MainWindow(QMainWindow):
                     )
                     _record_issue("flightpath_missing_ids", f"missing pathID(s) {missing_summary}")
                     plan_log_summary.update({"stop_reason": "flightpath_missing_ids", "missing_paths": missing_summary})
+                    _notify_failure_once("flightpath_missing_ids", detail={"missing_paths": missing_summary, "variant": variant_no})
                     self._plan_status = "임무계획 실패"
                     self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
                     return
@@ -3784,6 +4071,7 @@ class MainWindow(QMainWindow):
                     f"[TIME] build_0302 (variant={variant_no}): {step_ms:.1f} ms, packages={len(imp_pkgs)}"
                 )
                 step_t0 = time.perf_counter()
+                imp_write_rows: list[tuple[Path, Any]] = []
                 for pkg in imp_pkgs:
                     imp_id = pkg.get('individualMissionPackageID') or pkg.get('individualMissionPlanPackageID')
                     if imp_id is None:
@@ -3792,7 +4080,8 @@ class MainWindow(QMainWindow):
                         generated_imp_ids.add(int(imp_id))
                     except Exception:
                         pass
-                    write_json(dir_imp / f"{int(imp_id)}.json", pkg, pretty=True, ensure_ascii=False, skip_if_unchanged=True)
+                    imp_write_rows.append((dir_imp / f"{int(imp_id)}.json", pkg))
+                _write_json_batch(imp_write_rows, pretty=True)
                 total_imp_files += len(imp_pkgs)
                 step_ms = (time.perf_counter() - step_t0) * 1000.0
                 self.log_sig.emit(
@@ -3800,18 +4089,18 @@ class MainWindow(QMainWindow):
                 )
 
                 def _dump_fp(target_dir, fps):
-                    count = 0
+                    rows: list[tuple[Path, Any]] = []
                     for fp in fps:
                         pid = fp.get('pathID')
                         if pid is None:
                             continue
-                        write_json(target_dir / f"{int(pid)}.json", fp, pretty=True, ensure_ascii=False, skip_if_unchanged=True)
+                        rows.append((target_dir / f"{int(pid)}.json", fp))
                         try:
                             stored_path_ids.add(int(pid))
                         except Exception:
                             pass
-                        count += 1
-                    return count
+                    _write_json_batch(rows, pretty=True)
+                    return len(rows)
 
                 step_t0 = time.perf_counter()
                 fp_count_0303 = _dump_fp(dir_fp, flight_plans_0303)
@@ -3930,6 +4219,12 @@ class MainWindow(QMainWindow):
 
         except Exception as exc:
             self.log_sig.emit(f"[ERR] Replan pipeline failed: {exc}")
+            try:
+                trace_text = traceback.format_exc().strip()
+                if trace_text:
+                    self.log_sig.emit("[TRACE] " + trace_text)
+            except Exception:
+                pass
             self._pipeline_logger.log_event(session_id, "error", f"Replan pipeline failed: {exc}")
             plan_log_status = "error"
             plan_log_stop_reason = plan_log_stop_reason or "exception"
@@ -3939,6 +4234,7 @@ class MainWindow(QMainWindow):
                 plan_log_summary.setdefault("exception", str(exc))
             except Exception:
                 pass
+            _notify_failure_once(plan_log_stop_reason or "exception", exc=exc, detail=dict(plan_log_summary))
         finally:
             self._initplan_running = False
             final_status = "success" if success else plan_log_status
@@ -4392,6 +4688,8 @@ class MainWindow(QMainWindow):
 # ───────── 엔트리 ─────────
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    load_shared_stylesheet(app, PROJECT_ROOT)
     win = MainWindow()
     win.show()
+    position_window_from_env(app, win)
     sys.exit(app.exec_())

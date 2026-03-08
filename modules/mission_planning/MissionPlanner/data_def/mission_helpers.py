@@ -128,7 +128,8 @@ def _candidate_tiles(lat: float, lon: float) -> Iterable[Path]:
             yield path
 
 
-def terrain_elev(lat: float, lon: float) -> float:
+@lru_cache(maxsize=65536)
+def _terrain_elev_cached(lat: float, lon: float) -> float:
     """지형(DEM)에서 가져온 GeoTIFF 고도(m). 없으면 0."""
     chosen_tile = None
     for path in _candidate_tiles(lat, lon):
@@ -158,6 +159,13 @@ def terrain_elev(lat: float, lon: float) -> float:
     if nodata is not None and math.isclose(value, nodata, abs_tol=1e-3):
         return 0.0
     return value
+
+
+def terrain_elev(lat: float, lon: float) -> float:
+    try:
+        return _terrain_elev_cached(float(lat), float(lon))
+    except Exception:
+        return 0.0
 
 def rand_coord() -> dict:
     """임의 좌표 (위·경·고도) 하나 생성"""

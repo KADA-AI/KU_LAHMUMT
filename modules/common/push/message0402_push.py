@@ -1,4 +1,4 @@
-# modules/common/push/message0402_push.py
+﻿# modules/common/push/message0402_push.py
 # rewritten at 2025-09-18
 
 import json, importlib
@@ -122,7 +122,7 @@ def _db_dir_for(msgid: str, __file_path: str) -> str:
     name = DB_DIR_RULES.get(msgid, f"msg_{msgid}")
     if env_root:
         return str(Path(env_root) / name)
-    return str(_project_root_for_push_file(__file_path) / "database" / name)
+    return str(_project_root_for_push_file(__file_path) / "temp" / "database" / name)
 
 def _list_numeric_ids(dirname: str, prefix_first_char: str | None = None) -> list[int]:
     import os, glob
@@ -262,3 +262,4 @@ def make_random_and_push(node_messenger) -> bytes:
         }
     body = _ensure_src_ts(body)
     return make_and_push(body, node_messenger)
+

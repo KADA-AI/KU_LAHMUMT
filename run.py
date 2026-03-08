@@ -531,26 +531,8 @@ class DashboardOrchestrator(QObject):
     # --------- UI 위젯 해결 ---------
 
     def _apply_dashboard_button_styles(self) -> None:
-        """Set the module shutdown button to green."""
-        green_style = "\n".join((
-            "QPushButton {",
-            "  background: #16a34a;",
-            "  color: white;",
-            "  border: none;",
-            "  border-radius: 8px;",
-            "  padding: 6px 12px;",
-            "}",
-            "QPushButton:hover { background: #15803d; }",
-            "QPushButton:pressed { background: #166534; }",
-        ))
-        targets = (getattr(self.win, "btn_module_shutdown", None),)
-        for btn in targets:
-            if btn is None:
-                continue
-            try:
-                btn.setStyleSheet(green_style)
-            except Exception:
-                pass
+        """Dashboard buttons are styled by the shared QSS."""
+        return
 
     def _resolve_widgets(self, win):
         log_edit = None
@@ -1154,7 +1136,14 @@ class DashboardOrchestrator(QObject):
             script_basename = script.name
         except Exception:
             script_basename = script_alias
-        env.pop("KU_WINDOW_OFFSET", None)
+        offset_map = {
+            "mission_planning_gui.py": "40,40",
+            "monitoring_gui.py": "130,90",
+            "test_monitoring.py": "130,90",
+            "decision_support_gui.py": "220,140",
+            "info_manage.py": "310,190",
+        }
+        env["KU_WINDOW_OFFSET"] = offset_map.get(script_basename, "40,40")
 
         # Keep DL replan trigger OFF in monitoring module.
         # (Inference stays ON for GUI risk visualization.)

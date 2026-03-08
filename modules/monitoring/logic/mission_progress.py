@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 _ON_MISSION_STARTUP_GUARD_MS = 10000
+_ON_MISSION_BLOCK_FLIGHT_MODES = {1, 2, 3}
 
 
 def _coerce_int(value: object) -> int | None:
@@ -317,6 +318,15 @@ class MissionProgressTracker:
                 on_mission=on_mission,
                 timestamp_ms=timestamp_ms,
             )
+            flight_mode = _coerce_int(state.get("flight_mode"))
+            if (
+                on_mission == 2
+                and flight_mode is not None
+                and int(flight_mode) in _ON_MISSION_BLOCK_FLIGHT_MODES
+            ):
+                # During auto takeoff/landing/handover-point transit,
+                # ignore transient onMission=2 so mission progress is not forced to 100%.
+                on_mission = None
             mission_id = self._resolve_mission_for_waypoint(aircraft_id, current_wp)
             if mission_id is None:
                 mission_id = self._aircraft_current_mission.get(aircraft_id)
@@ -537,6 +547,16 @@ class MissionProgressTracker:
                 state.completed_seconds = float(max(0.0, meta.planned_seconds))
                 if meta.waypoint_ids:
                     state.current_waypoint_id = int(meta.waypoint_ids[-1])
+                    waypoint_state = self._waypoint_state.setdefault(
+                        int(mission_id),
+                        {int(v): "pending" for v in meta.waypoint_ids},
+                    )
+                    for wid in meta.waypoint_ids:
+                        wid_int = int(wid)
+                        if waypoint_state.get(wid_int) == "reached":
+                            continue
+                        waypoint_state[wid_int] = "skipped"
+                    self._last_completed_idx[int(mission_id)] = len(meta.waypoint_ids) - 1
                 state.segment_start_ms = self._last_timestamp_ms
             self._completed_mission_ids.add(mission_id)
             completed.append({"mission_id": mission_id, "package_id": meta.package_id})
@@ -818,13 +838,18 @@ class MissionProgressTracker:
         if state.paused and on_mission != 2:
             return False
         if on_mission == 2:
-            state.awaiting_execute = True
+            if self._is_terminal_mission(int(mission_id)):
+                # Terminal missions should latch complete once onMission=2 is observed.
+                state.done = True
+                state.awaiting_execute = False
+            else:
+                state.awaiting_execute = True
             state.completed_seconds = float(max(state.completed_seconds, meta.planned_seconds))
             if current_wp is not None and current_wp in meta.waypoint_index:
                 state.current_waypoint_id = int(current_wp)
             if timestamp_ms is not None:
                 state.segment_start_ms = int(timestamp_ms)
-            return False
+            return bool(state.done)
         if on_mission is not None and state.awaiting_execute:
             state.awaiting_execute = False
         if current_wp is None:
@@ -847,6 +872,18 @@ class MissionProgressTracker:
         state.current_waypoint_id = int(current_wp)
         state.segment_start_ms = int(timestamp_ms) if timestamp_ms is not None else None
         return False
+
+    def _is_terminal_mission(self, mission_id: int) -> bool:
+        meta = self._mission_meta.get(int(mission_id))
+        if meta is None:
+            return False
+        missions = self._aircraft_missions.get(int(meta.aircraft_id)) or []
+        if not missions:
+            return False
+        try:
+            return int(missions[-1]) == int(mission_id)
+        except Exception:
+            return False
 
     def _build_snapshot(
         self,

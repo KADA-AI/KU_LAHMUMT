@@ -15,6 +15,7 @@ import os
 
 from PyQt5.QtGui import QColor, QTextCursor
 from PyQt5.QtCore import Qt, QTimer
+from modules.common.gui_style import polish_message_table
 try:
     from push_center import push_message
 except ModuleNotFoundError:
@@ -39,6 +40,7 @@ class CSCTabBase(QWidget):
     LOG_PAYLOAD_MAX_CHARS: int | None = None
     LOG_PAYLOAD_TRUNC_SUFFIX: str = " ...(truncated)"
     LOG_FLUSH_INTERVAL_MS: int | None = None
+    ENABLE_LOG_PANES: bool = False
 
     TITLE: str = "CSC"
     PUSH_MESSAGES: Sequence[Tuple[str, str]] = ()
@@ -118,29 +120,29 @@ class CSCTabBase(QWidget):
         self.log_tx = self._make_log()
         self.log_rx = self._make_log()
 
-
-        left = self._side("발신", self.tbl_tx, self.log_tx)
-        right = self._side("수신", self.tbl_rx, self.log_rx)
+        left = self._side("발신 데이터 목록", self.tbl_tx, self.log_tx)
+        right = self._side("수신 데이터 목록", self.tbl_rx, self.log_rx)
         body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(14)
         body.addWidget(left)
         body.addWidget(right)
 
         root = QVBoxLayout(self)
         title = QLabel(self.TITLE)
-        title.setStyleSheet("font-size:18px;font-weight:600;")
+        title.setStyleSheet("font-size:18px; font-weight:700; color:#0f172a; padding:2px 0 6px 0;")
         self._title_label = title
         root.addWidget(title)
         root.addLayout(body)
-        root.setContentsMargins(4, 4, 4, 4)
-        
+        root.setContentsMargins(12, 10, 12, 12)
+        root.setSpacing(12)
+
     def _make_table(self) -> QTableWidget:
         tbl = QTableWidget(0, 3)
         tbl.setHorizontalHeaderLabels(["Message ID", "Message Name", "상태"])
-        tbl.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        tbl.verticalHeader().setVisible(False)
         tbl.setEditTriggers(QTableWidget.NoEditTriggers)
         tbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        tbl.setStyleSheet("font-size:12px;")
+        polish_message_table(tbl)
         return tbl
 
     def _role_norm(self) -> str:
@@ -210,31 +212,32 @@ class CSCTabBase(QWidget):
     def _make_rx_table(self) -> QTableWidget:
         tbl = QTableWidget(0, 4)
         tbl.setHorizontalHeaderLabels(["Message ID", "Message Name", "상태", "데이터"])
-        tbl.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        tbl.verticalHeader().setVisible(False)
         tbl.setEditTriggers(QTableWidget.NoEditTriggers)
         tbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        tbl.setStyleSheet("font-size:12px;")
-        tbl.setColumnWidth(3, 60)
+        polish_message_table(tbl)
         return tbl
 
-    def _make_log(self) -> QTextEdit:
+    def _make_log(self) -> QTextEdit | None:
+        if not getattr(self, "ENABLE_LOG_PANES", False):
+            return None
         log = QTextEdit()
         log.setReadOnly(True)
-        log.setStyleSheet("border:1px solid #345; font-family:Consolas; font-size:11px;")
-        log.setPlaceholderText("▶ 로그가 출력됩니다…")
+        log.setPlaceholderText("message log")
         return log
 
-    def _side(self, caption: str, tbl: QTableWidget, log: QTextEdit) -> QWidget:
+    def _side(self, caption: str, tbl: QTableWidget, log: QTextEdit | None) -> QWidget:
         w = QWidget()
+        w.setObjectName("CscPanel")
         lay = QVBoxLayout(w)
-        lbl = QLabel(f"<b>{caption} 데이터 목록</b>")
-        lbl.setAlignment(Qt.AlignCenter)
-        lbl.setStyleSheet("font-size:14px;")
+        lbl = QLabel(caption)
+        lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        lbl.setObjectName("TableTitle")
         lay.addWidget(lbl)
-        lay.addWidget(tbl, 5)
-        lay.addWidget(log, 3)
+        lay.addWidget(tbl, 1)
+        if log is not None:
+            lay.addWidget(log, 0)
         lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(8)
         return w
 
     def _populate(self,
@@ -449,14 +452,13 @@ class CSCTabBase(QWidget):
         txt = QTextEdit()
         txt.setReadOnly(True)
         txt.setPlainText(text)
-        txt.setStyleSheet("font-family:Consolas; font-size:11px;")
         vbox.addWidget(txt)
 
         btns = QDialogButtonBox(QDialogButtonBox.Close)
         btns.rejected.connect(dlg.reject)
         vbox.addWidget(btns)
 
-        dlg.resize(540, 320)
+        dlg.resize(680, 420)
         dlg.exec_()
 
     def _on_tx_button_clicked(self, row: int):
@@ -465,16 +467,15 @@ class CSCTabBase(QWidget):
     def _make_tx_table(self) -> QTableWidget:
         tbl = QTableWidget(0, 5)
         tbl.setHorizontalHeaderLabels(["Message ID", "Message Name", "상태", "발신", "데이터"])
-        tbl.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        tbl.verticalHeader().setVisible(False)
         tbl.setEditTriggers(QTableWidget.NoEditTriggers)
         tbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        tbl.setStyleSheet("font-size:12px;")
-        tbl.setColumnWidth(3, 60)
-        tbl.setColumnWidth(4, 60)
+        polish_message_table(tbl)
         return tbl
 
-    # ──────────── Public API (메시지 완료) ───────────
+    def append_log(self, text: str) -> None:
+        if not getattr(self, "ENABLE_LOG_PANES", False):
+            return
+        self._write_log(self.log_rx, "INFO", "UI", str(text).encode("utf-8", "ignore"))
 
     def mark_sent(self, msg_id: str, raw: bytes | None = None):
         self._update_state(self.tbl_tx, msg_id, "발신 완료")
@@ -683,7 +684,9 @@ class CSCTabBase(QWidget):
         suffix = getattr(self, "LOG_PAYLOAD_TRUNC_SUFFIX", " ...(truncated)")
         return text[:max_chars] + suffix
 
-    def _append_log_entries_batch(self, log_w: QTextEdit, entries: Sequence[str]) -> None:
+    def _append_log_entries_batch(self, log_w: QTextEdit | None, entries: Sequence[str]) -> None:
+        if log_w is None:
+            return
         limit = getattr(self, "LOG_ENTRY_LIMIT", None)
         if limit is None:
             for line in entries:
@@ -710,7 +713,9 @@ class CSCTabBase(QWidget):
         except Exception:
             pass
 
-    def _flush_log_queue(self, log_w: QTextEdit) -> None:
+    def _flush_log_queue(self, log_w: QTextEdit | None) -> None:
+        if log_w is None:
+            return
         pending = getattr(log_w, "_pending_entries", None)
         if not pending:
             return
@@ -718,7 +723,9 @@ class CSCTabBase(QWidget):
         pending.clear()
         self._append_log_entries_batch(log_w, entries)
 
-    def _append_log_entry(self, log_w: QTextEdit, line: str) -> None:
+    def _append_log_entry(self, log_w: QTextEdit | None, line: str) -> None:
+        if log_w is None:
+            return
         flush_ms = getattr(self, "LOG_FLUSH_INTERVAL_MS", None)
         if flush_ms is None:
             self._append_log_entries_batch(log_w, [line])
@@ -799,10 +806,12 @@ class CSCTabBase(QWidget):
         return decoded
 
     def _write_log(self,
-                log_w: QTextEdit,
+                log_w: QTextEdit | None,
                 tag: str,
                 msg_id: str,
                 raw: bytes | None):
+        if log_w is None:
+            return
         ts = datetime.now().strftime("%H:%M:%S")
         line = f"[{ts}] {tag:<4} : {msg_id}"
 

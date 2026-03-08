@@ -1,4 +1,4 @@
-# modules/common/push/message0201_push.py
+﻿# modules/common/push/message0201_push.py
 # auto-generated at 2025-08-24T20:13:14.004841+00:00
 
 
@@ -109,7 +109,7 @@ def _db_dir_for(msgid: str, __file_path: str) -> str:
         return str(target)
     except Exception:
         base = _project_root_for_push_file(__file_path)
-        return str(base / "database" / name)
+        return str(base / "temp" / "database" / name)
 
 def _list_numeric_ids(dirname: str, prefix_first_char: str | None = None) -> list[int]:
     import os, glob
@@ -295,7 +295,7 @@ def _get_dir_0201() -> str:
     try:
         return str(db_paths.ensure_db_payload("InputMissionPlan"))
     except Exception:
-        return str(_project_root() / "database" / "InputMissionPlan")
+        return str(_project_root() / "temp" / "database" / "InputMissionPlan")
 
 def _list_ids_0201() -> list:
     ids = []
@@ -311,3 +311,4 @@ def make_from_db_and_push(node_messenger) -> bytes | None:
     pid = ids[-1]
     body = {"timestamp": _now_ms_2000(), "inputMissionPackageID": pid}
     return make_and_push(body, node_messenger)
+

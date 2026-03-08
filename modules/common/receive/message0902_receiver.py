@@ -1,4 +1,4 @@
-"""Fuel-warning aware ReplanRequest (0902) receiver with graceful CLR fallback."""
+﻿"""Fuel-warning aware ReplanRequest (0902) receiver with graceful CLR fallback."""
 
 from __future__ import annotations
 
@@ -70,7 +70,7 @@ def _db_dir_for(msgid: str, __file_path: str) -> str:
         return _project_root_for_recv_file(__file_path)
     if env_root:
         return str(Path(env_root) / name)
-    return str(Path(_project_root_for_recv_file(__file_path)) / "database" / name)
+    return str(Path(_project_root_for_recv_file(__file_path)) / "temp" / "database" / name)
 
 
 def _try_save_received(msgid: str, data_obj: Any) -> None:
@@ -284,3 +284,4 @@ else:
     )
 
 __all__ = ["ReplanRequestReceiver_0902", "HAS_CLR_REPLANREQUEST"]
+

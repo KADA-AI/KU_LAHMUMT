@@ -1,6 +1,7 @@
 ﻿# -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import math
 import os
 import threading
 from typing import Any, Callable
@@ -66,6 +67,9 @@ def _collect_active_watchers(info: dict[str, Any]) -> set[int]:
     used: set[int] = set()
     for entry in target_map.values():
         if not isinstance(entry, dict):
+            continue
+        target_id = _coerce_int(entry.get("targetID"))
+        if target_id is None or target_id <= 0:
             continue
         if entry.get("isDestroyed"):
             continue
@@ -174,11 +178,35 @@ def _extract_target_timestamp(entry: dict[str, Any]) -> int | None:
     return _coerce_int(entry.get("firstDetected"))
 
 
+def _coerce_float(value: object) -> float | None:
+    try:
+        fval = float(value)
+    except Exception:
+        return None
+    if not math.isfinite(fval):
+        return None
+    return fval
+
+
+def _has_actionable_coordinate(entry: dict[str, Any]) -> bool:
+    coord = entry.get("coordinate")
+    if not isinstance(coord, dict):
+        return False
+    lat = _coerce_float(coord.get("latitude"))
+    lon = _coerce_float(coord.get("longitude"))
+    if lat is None or lon is None:
+        return False
+    # Sentinel noise from 0402 payloads.
+    if abs(lat) < 1e-9 and abs(lon) < 1e-9:
+        return False
+    return True
+
+
 def _is_actionable_target_entry(key: str, entry: dict[str, Any]) -> bool:
     if key.startswith("unknown-"):
         return False
     target_id = _coerce_int(entry.get("targetID"))
-    if target_id is None:
+    if target_id is None or target_id <= 0:
         return False
     is_used = _coerce_int(entry.get("isUsed"))
     if is_used is not None and is_used != 0:
@@ -188,6 +216,8 @@ def _is_actionable_target_entry(key: str, entry: dict[str, Any]) -> bool:
         return False
     if bool(entry.get("isDestroyed")):
         return False
+    if not _has_actionable_coordinate(entry):
+        return False
     return True
 
 
@@ -195,6 +225,8 @@ def _target_is_blocked_by_state(info: dict[str, Any], target_id: int) -> bool:
     target_map = info.get("targetList") if isinstance(info, dict) else None
     if not isinstance(target_map, dict):
         return False
+    seen_alive = False
+    seen_destroyed = False
     for entry in target_map.values():
         if not isinstance(entry, dict):
             continue
@@ -206,9 +238,14 @@ def _target_is_blocked_by_state(info: dict[str, Any], target_id: int) -> bool:
         is_ignored = _coerce_int(entry.get("isIgnored"))
         if is_ignored is not None and is_ignored != 0:
             return True
-        if bool(entry.get("isDestroyed")):
-            return True
-    return False
+        is_destroyed = entry.get("isDestroyed")
+        if is_destroyed is True:
+            seen_destroyed = True
+        elif is_destroyed is False:
+            seen_alive = True
+    # If we have any alive view of the same target, do not block by stale
+    # destroyed snapshots from other watchers.
+    return seen_destroyed and not seen_alive
 
 
 def _mark_target_used_in_info(
@@ -354,10 +391,35 @@ class TargetDetectionCoordinator:
             if not candidates:
                 return [], logs
 
+            filtered_candidates: list[dict[str, Any]] = []
+            for entry in candidates:
+                if not isinstance(entry, dict):
+                    continue
+                key = str(entry.get("key") or "")
+                if not key:
+                    target_id = _coerce_int(entry.get("targetID"))
+                    if target_id is not None:
+                        key = str(target_id)
+                        entry["key"] = key
+                if not key:
+                    continue
+                if not _is_actionable_target_entry(key, entry):
+                    continue
+                filtered_candidates.append(entry)
+            if len(filtered_candidates) != len(candidates):
+                logs.append(
+                    f"[0402] actionable filter: {len(candidates)} -> {len(filtered_candidates)}"
+                )
+            candidates = filtered_candidates
+            if not candidates:
+                return [], logs
+
             deduped = _dedupe_candidates_by_target_id(candidates)
             if len(deduped) != len(candidates):
                 logs.append(f"[0402] candidate dedupe by targetID: {len(candidates)} -> {len(deduped)}")
             candidates = deduped
+            if not candidates:
+                return [], logs
 
             if system_mode not in (3, 4):
                 logs.append(f"[0402] replan skipped: mode={system_mode} (need 3/4)")
@@ -369,6 +431,7 @@ class TargetDetectionCoordinator:
 
             used_manned = get_used_manned_ids(package_id)
             available_slots = sum(1 for aid in ATTACK_MANNED_IDS if aid not in used_manned)
+            updated_info = False
             if available_slots <= 0:
                 logs.append(
                     f"[0402] replan skipped: attack slots exhausted (inputMissionPackageID={package_id})"
@@ -383,11 +446,30 @@ class TargetDetectionCoordinator:
                 logs.append(
                     f"[0402] target replan limited by attack slots ({available_slots}/{len(candidates)})"
                 )
+                overflow = candidates[available_slots:]
+                for entry in overflow:
+                    if not isinstance(entry, dict):
+                        continue
+                    target_id = _coerce_int(entry.get("targetID"))
+                    if target_id is None or target_id <= 0:
+                        continue
+                    key = str(entry.get("key") or target_id)
+                    watcher_id = _coerce_int(entry.get("watcherID"))
+                    self._target_trigger_history[target_id] = now_ts
+                    if _mark_target_used_in_info(
+                        info,
+                        key=key,
+                        target_id=target_id,
+                        watcher_id=watcher_id,
+                    ):
+                        updated_info = True
                 candidates = candidates[:available_slots]
+                logs.append(
+                    f"[0402] overflow targets marked used: {len(overflow)}"
+                )
 
             used_watchers = _collect_active_watchers(info)
             payloads: list[dict[str, Any]] = []
-            updated_info = False
 
             for entry in candidates:
                 key = str(entry.get("key") or "")

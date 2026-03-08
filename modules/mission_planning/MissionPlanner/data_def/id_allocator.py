@@ -234,6 +234,12 @@ def next_imp_id():                     return _next("individualMissionPackage")
 def next_individual_mission_id():      return _next("individualMission")
 def next_path_id(aircraft_id: int):    return _next("pathID", subkey=aircraft_id)
 def next_waypoint_id():                return _next("waypoint")
+def reserve_waypoint_block(count: int) -> int:
+    count_int = max(0, int(count or 0))
+    if count_int <= 0:
+        raise ValueError("count must be >= 1")
+    last_id = _next("waypoint", inc=count_int)
+    return int(last_id - count_int + 1)
 
 
 def _record_waypoint_usage(value: int) -> None:

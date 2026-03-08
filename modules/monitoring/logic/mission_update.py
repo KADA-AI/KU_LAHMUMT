@@ -243,6 +243,15 @@ def extract_0401_agent_states(payload: object | None) -> tuple[int | None, list[
                     return _coerce_int(container.get(key))
         return None
 
+    def _extract_flight_mode(item: dict[str, Any], info: object) -> int | None:
+        for container in (info, item):
+            if not isinstance(container, dict):
+                continue
+            for key in ("flightMode", "FlightMode"):
+                if key in container:
+                    return _coerce_int(container.get(key))
+        return None
+
     def _extract_fuel(item: dict[str, Any], info: object) -> float | None:
         for container in (item, info):
             if not isinstance(container, dict):
@@ -275,6 +284,7 @@ def extract_0401_agent_states(payload: object | None) -> tuple[int | None, list[
                 "is_unmanned": item.get("isUnmanned") or item.get("IsUnmanned"),
                 "current_waypoint_id": _extract_current_waypoint(item, unmanned_info),
                 "on_mission": _extract_on_mission(item, unmanned_info),
+                "flight_mode": _extract_flight_mode(item, unmanned_info),
                 "fuel_liters": fuel_val,
                 "fuel_warning": fuel_warning,
             }

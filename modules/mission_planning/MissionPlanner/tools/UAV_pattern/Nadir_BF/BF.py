@@ -121,6 +121,8 @@ class BFPlanner:
                 min(start[1], end[1]) <= pt[1] <= max(start[1], end[1]))
 
     def calculate_path_length(self, path, start, end):
+        if not path:
+            return float("inf")
         total = 0
         for i in range(0, len(path)-1, 2):
             total += math.dist(path[i], path[i+1])
@@ -232,6 +234,8 @@ class BFPlanner:
 
     def plan(self):
         _, _, segments = self.CPP_run_arrangement()
+        if not segments:
+            return [], self.fov
         full_path = []
         self.last_transition_points = []
         first = segments[0][0]

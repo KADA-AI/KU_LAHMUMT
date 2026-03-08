@@ -228,8 +228,7 @@ class MissionMonitoringTab(CSCTabBase):
 
     def _append_mode_log(self, msg: str):
         try:
-            # RECV 로그 창에 간단히 남김
-            self.log_rx.append(f"[MODE] {msg}")
+            self.append_log(f"[MODE] {msg}")
         except Exception:
             pass
 

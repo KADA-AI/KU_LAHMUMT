@@ -97,6 +97,17 @@ def _extract_coordinate(entry: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _extract_target_id(entry: dict[str, Any]) -> int | None:
+    orient = entry.get("targetOrientation") or {}
+    if not isinstance(orient, dict):
+        return None
+    for key in ("targetID", "TargetID", "targetId", "TargetId"):
+        value = _coerce_int(orient.get(key))
+        if value is not None and value > 0:
+            return value
+    return None
+
+
 MISSION_TYPE_LABELS: dict[int, str] = {
     1: "좌표지정",
     2: "표적추적",
@@ -158,22 +169,36 @@ class PriorMissionReplanCoordinator:
         for entry in entries:
             prior_id = int(entry["priorMissionID"])
             mission_type = int(entry["missionType"])
+            target_id = _extract_target_id(entry)
 
             last_ts = self._state.handled_prior_ts.get(prior_id)
             if last_ts is not None and int(message_ts) <= int(last_ts):
+                continue
+            if mission_type == 2 and target_id is None:
+                logs.append(
+                    f"[PRIOR] skip priorMissionID={prior_id}: "
+                    "missionType=2 requires targetOrientation.targetID"
+                )
                 continue
 
             now_ts = int(self._now_ms())
             mission_plan_id = self._allocate_plan_id(now_ts)
             reason = self._build_reason(mission_type)
             coordinate = _extract_coordinate(entry)
+            target_orientation_payload = (
+                {"targetID": int(target_id)} if target_id is not None else {}
+            )
+            coordinate_orientation_payload = (
+                {"coordinate": dict(coordinate)} if coordinate else {}
+            )
 
             detail_payload = {
                 "sourceMissionPlanID": current_mission_plan_id,
                 "priorMissionID": prior_id,
                 "missionType": mission_type,
                 "targetCoordinate": coordinate,
-                "targetOrientation": entry.get("targetOrientation") or {},
+                "targetOrientation": target_orientation_payload,
+                "targetID": int(target_id) if target_id is not None else None,
                 "timestamp": now_ts,
                 "rawEntry": entry.get("rawEntry") or {},
             }
@@ -191,12 +216,15 @@ class PriorMissionReplanCoordinator:
                     "missionPlanID": int(mission_plan_id),
                 }
             ]
-            prior_block = [
-                {
-                    "priorMissionID": prior_id,
-                    "missionType": mission_type,
-                }
-            ]
+            prior_item: dict[str, Any] = {
+                "priorMissionID": prior_id,
+                "missionType": mission_type,
+            }
+            if coordinate_orientation_payload:
+                prior_item["coordinateOrientation"] = coordinate_orientation_payload
+            if target_orientation_payload:
+                prior_item["targetOrientation"] = target_orientation_payload
+            prior_block = [prior_item]
 
             payload_0902: dict[str, Any] = {
                 "timestamp": now_ts,

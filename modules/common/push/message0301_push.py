@@ -1,4 +1,4 @@
-# modules/common/push/message0301_push.py
+﻿# modules/common/push/message0301_push.py
 # auto-generated at 2025-08-24T20:13:14.009940+00:00
 
 
@@ -104,7 +104,7 @@ def _db_dir_for(msgid: str, __file_path: str) -> str:
     name = DB_DIR_RULES.get(msgid, f"msg_{msgid}")
     if env_root:
         return str(Path(env_root) / name)
-    return str(_project_root_for_push_file(__file_path) / "database" / name)
+    return str(_project_root_for_push_file(__file_path) / "temp" / "database" / name)
 
 def _list_numeric_ids(dirname: str, prefix_first_char: str | None = None) -> list[int]:
     import os, glob
@@ -240,7 +240,7 @@ def _now_ms_2000() -> int:
 def _get_dir_0301() -> str:
     env_root = os.getenv("KU_MISSION_DB_ROOT")
     if env_root: return str(Path(env_root) / "MissionPlan")
-    return str(_project_root() / "database" / "MissionPlan")
+    return str(_project_root() / "temp" / "database" / "MissionPlan")
 
 def _list_ids_0301() -> list:
     ids = []
@@ -255,3 +255,4 @@ def make_from_db_and_push(node_messenger) -> bytes | None:
         body = {"timestamp": _now_ms_2000(), "missionPlanID": mid}
         logs.append(make_and_push(body, node_messenger))
     return b"\n".join(logs) if logs else None
+

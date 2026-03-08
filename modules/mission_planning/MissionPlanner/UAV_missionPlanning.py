@@ -22,6 +22,7 @@ UAV_missionPlanning.py
 
 from __future__ import annotations
 import math, json
+from functools import lru_cache
 from typing import List, Tuple
 
 try:
@@ -45,6 +46,16 @@ except Exception:
 
 Point = Tuple[float, float]
 Line  = Tuple[Point, Point]
+
+
+@lru_cache(maxsize=32)
+def _utm_transformers(zone: int, south: bool):
+    import pyproj
+
+    utm_code = f"+proj=utm +zone={zone} {'+south' if south else ''} +ellps=WGS84 +units=m +no_defs"
+    fwd = pyproj.Transformer.from_crs("EPSG:4326", utm_code, always_xy=True).transform
+    back = pyproj.Transformer.from_crs(utm_code, "EPSG:4326", always_xy=True).transform
+    return utm_code, fwd, back
 
 
 # ─────────────────────────────────────────────────────────
@@ -73,13 +84,10 @@ class UAVMissionPlanner:
         # ── 위·경도 → UTM 변환 ────────────────────────
         if crs == "lla":
             self._lla_mode = True
-            import pyproj
-            lat0, lon0 = waypoints[0]          # 첫 점 기준 zone 결정
+            lat0, lon0 = waypoints[0]          # ? ? ?? zone ??
             zone = int((lon0 + 180) // 6) + 1
             south = lat0 < 0
-            utm_code = f"+proj=utm +zone={zone} {'+south' if south else ''} +ellps=WGS84 +units=m +no_defs"
-            self._proj_fwd  = pyproj.Transformer.from_crs("EPSG:4326", utm_code, always_xy=True).transform
-            self._proj_back = pyproj.Transformer.from_crs(utm_code, "EPSG:4326", always_xy=True).transform
+            _utm_code, self._proj_fwd, self._proj_back = _utm_transformers(zone, south)
             waypoints_xy = [self._proj_fwd(lon, lat) for lat, lon in waypoints]
         else:
             self._lla_mode = False
@@ -349,7 +357,7 @@ class UAVMissionPlanner:
         • 위·경도 경유지를 받아 동역학 시뮬 → 직선/선회 구간 WP 단순화  
         • 선회 구간은 Fly-by DTA를 반영해 ‘미리 끊은’ 가상 WP(선회 진입/탈출)를 삽입
         """
-        import pyproj, math
+        import math
         if len(input_lla) < 2:
             raise ValueError("input_lla must contain at least 2 points")
 
@@ -357,9 +365,7 @@ class UAVMissionPlanner:
         lat0, lon0 = input_lla[0]
         zone   = int((lon0 + 180) // 6) + 1
         south  = lat0 < 0
-        utm    = f"+proj=utm +zone={zone} {'+south' if south else ''} +ellps=WGS84 +units=m +no_defs"
-        fwd  = pyproj.Transformer.from_crs("EPSG:4326", utm,  always_xy=True).transform
-        back = pyproj.Transformer.from_crs(utm,         "EPSG:4326", always_xy=True).transform
+        _utm, fwd, back = _utm_transformers(zone, south)
         pts_xy = [fwd(lon, lat) for lat, lon in input_lla]
 
         # ── ② ★ DTA 선회 진입/탈출 WP 삽입 ─────────────────
@@ -404,12 +410,10 @@ class UAVMissionPlanner:
             pts_xy = new_xy
 
         # ── ③ VerySimpleAutopilot 시뮬레이션(기존과 동일) ─────────
-        try:
-            from .simple_dynamics import SimpleUAV, VerySimpleAutopilot
-        except Exception:
-            from simple_dynamics import SimpleUAV, VerySimpleAutopilot  # type: ignore
+
         if len(pts_xy) == 2:
-            traj_x, traj_y = zip(*pts_xy)
+            simp_xy = [pts_xy[0], pts_xy[1]]
+            traj_xy = simp_xy[:] if store else None
         else:
             x0, y0 = pts_xy[0]; x1, y1 = pts_xy[1]
             hdg0 = math.degrees(math.atan2(-(y1 - y0), x1 - x0))
@@ -417,39 +421,48 @@ class UAVMissionPlanner:
             ap   = VerySimpleAutopilot(pts_xy, v_cruise=cruise_speed, arrival_tol=100)
 
             DT = 0.2
-            traj_x, traj_y = [uav.x], [uav.y]
+            simp_xy: list[tuple[float, float]] = [(uav.x, uav.y)]
+            traj_xy: list[tuple[float, float]] | None = [(uav.x, uav.y)] if store else None
+            tol = math.radians(heading_tol_deg)
+            have_ref = False
+            ref = 0.0
+            atan2 = math.atan2
+            wrap_pi = math.pi
             for _ in range(20000):
                 phi_cmd, v_cmd = ap.control(uav)
                 if ap.done: break
+                prev_x, prev_y = uav.x, uav.y
                 uav.step(DT, phi_cmd, v_cmd)
-                traj_x.append(uav.x); traj_y.append(uav.y)
-
-        # ── ④ 헤딩-기반 단순화 & ETA 계산 (기존 코드) ─────────────
-        tol = math.radians(heading_tol_deg)
-        def _hdg(i, j): return math.atan2(traj_y[j]-traj_y[i], traj_x[j]-traj_x[i])
-        simp = [0]; ref = _hdg(0, 1)
-        for k in range(2, len(traj_x)):
-            dh = abs((_hdg(k-1, k) - ref + math.pi) % (2*math.pi) - math.pi)
-            if dh > tol:
-                simp.append(k-1); ref = _hdg(k-1, k)
-        simp.append(len(traj_x)-1)
+                curr_x, curr_y = uav.x, uav.y
+                if traj_xy is not None:
+                    traj_xy.append((curr_x, curr_y))
+                seg_hdg = atan2(curr_y - prev_y, curr_x - prev_x)
+                if not have_ref:
+                    ref = seg_hdg
+                    have_ref = True
+                else:
+                    dh = abs((seg_hdg - ref + wrap_pi) % (2 * wrap_pi) - wrap_pi)
+                    if dh > tol:
+                        simp_xy.append((prev_x, prev_y))
+                        ref = seg_hdg
+            last_xy = (uav.x, uav.y)
+            if simp_xy[-1] != last_xy:
+                simp_xy.append(last_xy)
 
         wp_out: list[dict] = []
-        for idx, i_traj in enumerate(simp):
-            lat, lon = back(traj_x[i_traj], traj_y[i_traj])[::-1]
-            if idx == len(simp)-1:
+        for idx, (x_i, y_i) in enumerate(simp_xy):
+            lat, lon = back(x_i, y_i)[::-1]
+            if idx == len(simp_xy)-1:
                 seg_ms = 0
             else:
-                j = simp[idx+1]
-                seg_ms = math.hypot(traj_x[j]-traj_x[i_traj],
-                                    traj_y[j]-traj_y[i_traj]) / cruise_speed * 1000
+                x_j, y_j = simp_xy[idx+1]
+                seg_ms = math.hypot(x_j - x_i, y_j - y_i) / cruise_speed * 1000
             wp_out.append({"lat": round(lat,6), "lon": round(lon,6),
                         "eta_ms": int(round(seg_ms))})
 
-        # ── ⑤ (선택) 내부 시각화용 데이터 저장 ──────────────────
         if store:
             self.route_raw  = input_lla
-            self.route_traj = [back(x,y)[::-1] for x,y in zip(traj_x, traj_y)]
+            self.route_traj = [back(x,y)[::-1] for x,y in (traj_xy or simp_xy)]
             self.route_wp   = [(w["lat"], w["lon"]) for w in wp_out]
 
         return wp_out

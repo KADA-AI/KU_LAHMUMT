@@ -15,7 +15,7 @@ import os, sys, subprocess, json, socket, shutil
 from pathlib import Path
 from modules.common import db_paths
 
-APP_TITLE = "KU Mission Decision Support Dashboard (v1.0.0)"
+APP_TITLE = "KU Mission Decision Support Dashboard (v1.1.0)"
 REFERENCE_PDF_PATH = db_paths.PROJECT_ROOT / "ref" / "04. 모듈 간 인터페이스 설계-v7-20260116_175548.pdf"
 if not REFERENCE_PDF_PATH.exists():
     REFERENCE_PDF_PATH = db_paths.PROJECT_ROOT / "ref" / "04. 모듈 간 인터페이스 설계-v7-20250917_133206.pdf"
@@ -25,7 +25,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(APP_TITLE)
-        self.resize(900, 620)
+        self.resize(980, 700)
 
         self._db_path_line: QLineEdit = None
         self._scenario_root_line: QLineEdit = None
@@ -33,7 +33,7 @@ class MainWindow(QMainWindow):
         self._scenario_status_dot: Optional[QLabel] = None
         self._scenario_status_label: Optional[QLabel] = None
         self._version_notes: Optional[QPlainTextEdit] = None
-        self._version_notes_path: Path = db_paths.PROJECT_ROOT / "version_notes.txt"
+        self._version_notes_path: Path = db_paths.PROJECT_ROOT / "change_log.md"
 
         # Middleware widget references
         self._mw_name: QLineEdit = None
@@ -60,9 +60,9 @@ class MainWindow(QMainWindow):
     def _build_ui(self):
         root = QWidget(self)
         grid = QGridLayout(root)
-        grid.setContentsMargins(16, 12, 16, 12)
-        grid.setHorizontalSpacing(8)
-        grid.setVerticalSpacing(10)
+        grid.setContentsMargins(20, 16, 20, 16)
+        grid.setHorizontalSpacing(12)
+        grid.setVerticalSpacing(12)
 
         for r in range(GRID_ROWS):
             grid.setRowStretch(r, 1)
@@ -81,13 +81,14 @@ class MainWindow(QMainWindow):
         title_lbl.setObjectName("MainTitle")
         title_lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         title_layout.addWidget(title_lbl)
-        subtitle_lbl = QLabel("최근 업데이트 날짜 : 26-01-27", title_wrap)
+        subtitle_lbl = QLabel("최근 업데이트 날짜 : 26-03-09", title_wrap)
         subtitle_lbl.setObjectName("MainSubtitle")
         subtitle_lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         title_layout.addWidget(subtitle_lbl)
         self._add_zone(grid, title_wrap, "TITLE")
 
         btn_browse = QPushButton("DB 폴더 선택")
+        btn_browse.setObjectName("SecondaryButton")
         btn_browse.setMinimumHeight(28)
         btn_browse.setFixedWidth(140)
         btn_browse.clicked.connect(self._browse_db)
@@ -117,8 +118,10 @@ class MainWindow(QMainWindow):
         self.update_scenario_root(info.get("base_root"))
 
         path_container = QWidget(self)
+        path_container.setObjectName("Card")
+        path_container.setAttribute(Qt.WA_StyledBackground, True)
         path_layout = QVBoxLayout(path_container)
-        path_layout.setContentsMargins(6, 2, 6, 2)
+        path_layout.setContentsMargins(12, 10, 12, 10)
         path_layout.setSpacing(6)
         indicator_row = QHBoxLayout()
         indicator_row.setContentsMargins(0, 0, 0, 0)
@@ -164,12 +167,12 @@ class MainWindow(QMainWindow):
         try:
             return path.read_text(encoding="utf-8")
         except FileNotFoundError:
-            return f"[version notes missing] {path}"
+            return f"[change log missing] {path}"
         except Exception as exc:
-            return f"[version notes read failed] {path}: {exc}"
+            return f"[change log read failed] {path}: {exc}"
 
     def _build_version_notes(self) -> QWidget:
-        card = Card("Version Notes", self, dense=True)
+        card = Card("Change Log", self, dense=True)
         body = getattr(card, "body_layout", None)
         self._version_notes = QPlainTextEdit(self)
         self._version_notes.setObjectName("VersionNotes")
@@ -185,8 +188,10 @@ class MainWindow(QMainWindow):
     def _make_middleware_row(self) -> QWidget:
         """Build the inline middleware configuration row."""
         w = QWidget(self)
+        w.setObjectName("Card")
+        w.setAttribute(Qt.WA_StyledBackground, True)
         lay = QHBoxLayout(w)
-        lay.setContentsMargins(6, 0, 6, 0)
+        lay.setContentsMargins(12, 10, 12, 10)
         lay.setSpacing(10)
 
         lbl = QLabel("Middleware", self)
@@ -212,6 +217,7 @@ class MainWindow(QMainWindow):
         lay.addWidget(QLabel("External:", self));       lay.addWidget(self._mw_external)
 
         btn_apply = QPushButton("Apply", self)
+        btn_apply.setObjectName("SecondaryButton")
         btn_apply.setMinimumWidth(80)
         btn_apply.clicked.connect(self._apply_middleware)
         lay.addWidget(btn_apply, 0, Qt.AlignRight)
@@ -482,9 +488,19 @@ class MainWindow(QMainWindow):
             return
 
         try:
+            offset_map = {
+                "mission": "40,40",
+                "monitor": "130,90",
+                "decision": "220,140",
+                "info": "310,190",
+                "integration": "400,240",
+            }
+            env = os.environ.copy()
+            env["KU_WINDOW_OFFSET"] = offset_map.get(role, "40,40")
             self._debug_log(f'_launch_role resolved script={script}')
             proc = subprocess.Popen([sys.executable, str(script), *extra_args], cwd=str(root),
                                     shell=False,
+                                    env=env,
                                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             self._role_processes[role] = proc
             try:
@@ -613,11 +629,6 @@ class MainWindow(QMainWindow):
             self.btn_overwrite_020x = QPushButton("0201/0203 덮어쓰기", placeholder)
             self.btn_overwrite_020x.setObjectName("BtnOverwrite020x")
             self.btn_overwrite_020x.setMinimumHeight(32)
-            self.btn_overwrite_020x.setStyleSheet(
-                "QPushButton { background-color: #f97316; color: #ffffff; font-weight: 600; }"
-                "QPushButton:hover { background-color: #fb923c; }"
-                "QPushButton:pressed { background-color: #ea580c; }"
-            )
             self.btn_overwrite_020x.clicked.connect(self._handle_overwrite_020x)
             body.addWidget(self.btn_overwrite_020x)
 
@@ -625,11 +636,6 @@ class MainWindow(QMainWindow):
             self.btn_decision_reset = QPushButton("의사결정 SW 초기화", placeholder)
             self.btn_decision_reset.setObjectName("BtnDecisionReset")
             self.btn_decision_reset.setMinimumHeight(32)
-            self.btn_decision_reset.setStyleSheet(
-                "QPushButton { background-color: #111827; color: #f9fafb; font-weight: 600; }"
-                "QPushButton:hover { background-color: #1f2937; }"
-                "QPushButton:pressed { background-color: #0f172a; }"
-            )
             body.addWidget(self.btn_decision_reset)
 
             body.addStretch(1)

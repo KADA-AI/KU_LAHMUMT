@@ -9,7 +9,10 @@ try:
 except Exception:
     from UAV_missionPlanning import UAVMissionPlanner
 from .mission_helpers import now_ms_since_2000, terrain_elev
-from .id_allocator import next_waypoint_id as _next_waypoint_id
+from .id_allocator import (
+    next_waypoint_id as _next_waypoint_id,
+    reserve_waypoint_block as _reserve_waypoint_block,
+)
 
 def _sw_code(default: str = "MMR") -> str:
     """Resolve module code from KU_ROLE."""
@@ -23,7 +26,7 @@ def _sw_code(default: str = "MMR") -> str:
 WP_INTERVAL_M = 500.0        
 HOVER_HOLD_SEC = 10
 HOVER_LAST_SEC = 30
-Altitude_LAH = 300
+ALTITUDE_LAYERS_M = (610.0, 620.0, 630.0)
 
 def _lah_alt_agl(lat: float, lon: float, offset_m: float | int | None = None) -> int:
     try:
@@ -31,10 +34,37 @@ def _lah_alt_agl(lat: float, lon: float, offset_m: float | int | None = None) ->
     except Exception:
         ground = 0.0
     try:
-        offset = float(Altitude_LAH if offset_m is None else offset_m)
+        offset = float(ALTITUDE_LAYERS_M[0] if offset_m is None else offset_m)
     except Exception:
-        offset = float(Altitude_LAH)
+        offset = float(ALTITUDE_LAYERS_M[0])
     return int(round(ground + offset))
+
+
+def _aircraft_alt_offset_m(aid: int) -> float:
+    try:
+        idx = (int(aid) - 1) % len(ALTITUDE_LAYERS_M)
+    except Exception:
+        idx = 0
+    return float(ALTITUDE_LAYERS_M[idx])
+
+
+def _median_ground_m(points: list[tuple[float, float]]) -> float | None:
+    if not points:
+        return None
+    samples: list[float] = []
+    for lat, lon in points:
+        try:
+            samples.append(float(terrain_elev(lat, lon)))
+        except Exception:
+            continue
+    if not samples:
+        return None
+    samples.sort()
+    n = len(samples)
+    mid = n // 2
+    if n % 2:
+        return samples[mid]
+    return (samples[mid - 1] + samples[mid]) / 2.0
          
 _DEFAULT_WP_EXT = OrderedDict([
     ("hovering", OrderedDict([("time", 0)])),
@@ -199,13 +229,14 @@ def build_lah_flight_plans_from_mrpk(
     out_packets: List[dict] = []
     for pkt in base_packets:
         aid = pkt["aircraftID"]
+        aircraft_alt_offset = _aircraft_alt_offset_m(aid)
         wplist = pkt.get("lahWaypointList") or []
         if not wplist:
             continue
 
         # start
         st_lat, st_lon = start_map.get(aid, (wplist[0]["coordinate"]["latitude"], wplist[0]["coordinate"]["longitude"]))
-        start_alt = _lah_alt_agl(st_lat, st_lon, Altitude_LAH)
+        start_alt = _lah_alt_agl(st_lat, st_lon, aircraft_alt_offset)
         start = {"latitude": st_lat, "longitude": st_lon, "altitude": start_alt}
         eta_s = _dist_ms(start, wplist[0]["coordinate"])
         wp_start = _mk_wp(st_lat, st_lon, start["altitude"], eta_s)
@@ -217,14 +248,14 @@ def build_lah_flight_plans_from_mrpk(
             alt_e = _lah_alt_agl(
                 float(end["latitude"]),
                 float(end["longitude"]),
-                end.get("altitude", Altitude_LAH),
+                aircraft_alt_offset,
             )
         else:
             end   = wplist[-1]["coordinate"]
             alt_e = int(end.get("altitude", _lah_alt_agl(
                 float(end["latitude"]),
                 float(end["longitude"]),
-                Altitude_LAH,
+                aircraft_alt_offset,
             )))
         eta_e = _dist_ms(wplist[-1]["coordinate"], end)
         wp_rtb = _mk_wp(end["latitude"], end["longitude"], alt_e, eta_e)
@@ -232,11 +263,6 @@ def build_lah_flight_plans_from_mrpk(
         new_list = [wp_start] + [dict(w) for w in wplist] + [wp_rtb]
 
         # WaypointID 재할당 + next + ECF
-        for w in new_list:
-            w["waypointID"] = wp_alloc.alloc()
-        for i in range(len(new_list) - 1):
-            new_list[i]["nextWaypointID"] = new_list[i+1]["waypointID"]
-
         tot = sum(max(0, int(w.get("eta", 0))) for w in new_list) or 1
         acc = 0
         for w in new_list:
@@ -256,6 +282,18 @@ def build_lah_flight_plans_from_mrpk(
             ("aircraftID", aid),
             ("lahWaypointList", new_list),
         ]))
+
+    if getattr(wp_alloc, "_use_global", False):
+        total_wp_count = sum(len(pkt.get("lahWaypointList") or []) for pkt in out_packets)
+        if total_wp_count > 0:
+            wp_alloc = _WPAllocator(start=int(_reserve_waypoint_block(total_wp_count)))
+
+    for pkt in out_packets:
+        new_list = pkt.get("lahWaypointList") or []
+        for w in new_list:
+            w["waypointID"] = wp_alloc.alloc()
+        for i in range(len(new_list) - 1):
+            new_list[i]["nextWaypointID"] = new_list[i + 1]["waypointID"]
 
     _validate_lah_flight_plans(out_packets)
     return out_packets
@@ -296,6 +334,14 @@ def build_lah_flight_plans_fixed(
             coords = [_offset_coord(lat, lon, north_m=offset_north)
                       for lat, lon in coords]
 
+        aircraft_alt_offset = _aircraft_alt_offset_m(aid)
+        mission_ground_ref = _median_ground_m(coords)
+
+        def _mission_alt(lat: float, lon: float) -> int:
+            if mission_ground_ref is None:
+                return _lah_alt_agl(lat, lon, aircraft_alt_offset)
+            return int(round(float(mission_ground_ref) + float(aircraft_alt_offset)))
+
         wplist: List[OrderedDict] = []
 
         if len(coords) >= 2:
@@ -316,13 +362,12 @@ def build_lah_flight_plans_fixed(
                         cum_ms += prev
                     eta_ms = int(cum_ms)
                     ecf = 1.0 if idx == len(samples) - 1 else round(cum_ms / total_ms, 2)
-                    alt = _lah_alt_agl(
+                    alt = _mission_alt(
                         float(sample.get("lat", 0.0)),
                         float(sample.get("lon", 0.0)),
-                        Altitude_LAH,
                     )
                     wp = OrderedDict([
-                        ("waypointID", wp_alloc.alloc()),
+                        ("waypointID", 0),
                         ("isDone", False),
                         ("coordinate", {
                             "latitude":  round(float(sample.get("lat", 0.0)), 6),
@@ -351,9 +396,9 @@ def build_lah_flight_plans_fixed(
                 eta_ms = int(cum_len / cruise_speed * 1000) if idx else 0
                 ecf    = 1.0 if len(path) == 1 else round(cum_len / total_len, 2)
 
-                alt = _lah_alt_agl(lat, lon, Altitude_LAH)
+                alt = _mission_alt(lat, lon)
                 wp = OrderedDict([
-                    ("waypointID", wp_alloc.alloc()),
+                    ("waypointID", 0),
                     ("isDone", False),
                     ("coordinate", {
                         "latitude":  round(lat, 6),
@@ -367,8 +412,6 @@ def build_lah_flight_plans_fixed(
                 ])
                 wplist.append(wp)
 
-        for i in range(len(wplist) - 1):
-            wplist[i]["nextWaypointID"] = wplist[i + 1]["waypointID"]
         if wplist:
             for w in wplist:
                 w.setdefault("isDone", False)
@@ -385,6 +428,18 @@ def build_lah_flight_plans_fixed(
             ("aircraftID",  aid),
             ("lahWaypointList", wplist),
         ]))
+
+    if getattr(wp_alloc, "_use_global", False):
+        total_wp_count = sum(len(pkt.get("lahWaypointList") or []) for pkt in packets)
+        if total_wp_count > 0:
+            wp_alloc = _WPAllocator(start=int(_reserve_waypoint_block(total_wp_count)))
+
+    for pkt in packets:
+        wplist = pkt.get("lahWaypointList") or []
+        for w in wplist:
+            w["waypointID"] = wp_alloc.alloc()
+        for i in range(len(wplist) - 1):
+            wplist[i]["nextWaypointID"] = wplist[i + 1]["waypointID"]
 
     _validate_lah_flight_plans(packets)
     return packets

@@ -1,4 +1,4 @@
-# modules/common/receive/message0303_receiver.py
+﻿# modules/common/receive/message0303_receiver.py
 # auto-generated at 2025-08-24T16:37:13.090867+00:00
 
 from dll_files.nFusionImports import *            # IFusionReceive, IsLocal, IsSingletone
@@ -36,7 +36,7 @@ def _db_dir_for(msgid: str, __file_path: str) -> str:
         return str(_project_root_for_recv_file(__file_path))
     if env_root:
         return str(Path(env_root) / name)
-    return str(_project_root_for_recv_file(__file_path) / "database" / name)
+    return str(_project_root_for_recv_file(__file_path) / "temp" / "database" / name)
 
 def _try_save_received(msgid: str, data_obj):
     try:
@@ -248,3 +248,4 @@ class UAVFlightPlanReceiver_0303(IFusionReceive[UAVFlightPlan], IsLocal, IsSingl
         except Exception:
             print("[ERROR][Receive-0303] traceback ↓↓↓")
             traceback.print_exc(file=sys.stderr)
+
