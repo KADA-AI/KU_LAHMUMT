@@ -33,7 +33,11 @@ try:
     from .mission_plan_file_logger import MissionPlanFileLogger
     from .json_io import write_json
     from .ui import MissionAlgoConfigTab
-    from .MissionPlanner.runtime_settings import load_runtime_settings, settings_path as runtime_settings_path
+    from .MissionPlanner.runtime_settings import (
+        load_runtime_settings,
+        runtime_override as runtime_settings_override,
+        settings_path as runtime_settings_path,
+    )
 except Exception:
     from mission_planning_attack_helpers import (
         apply_attack_customizations,
@@ -53,7 +57,11 @@ except Exception:
     from mission_plan_file_logger import MissionPlanFileLogger
     from json_io import write_json
     from modules.mission_planning.ui import MissionAlgoConfigTab
-    from modules.mission_planning.MissionPlanner.runtime_settings import load_runtime_settings, settings_path as runtime_settings_path
+    from modules.mission_planning.MissionPlanner.runtime_settings import (
+        load_runtime_settings,
+        runtime_override as runtime_settings_override,
+        settings_path as runtime_settings_path,
+    )
 
 PROJECT_ROOT, COMMON_DIR = _bootstrap_paths(Path(__file__))
 _TEMP_DIR = PROJECT_ROOT / "temp"
@@ -62,6 +70,14 @@ _TEMP_DIR = PROJECT_ROOT / "temp"
 def _ensure_temp_dir() -> Path:
     _TEMP_DIR.mkdir(parents=True, exist_ok=True)
     return _TEMP_DIR
+
+
+def _ensure_mission_planner_import_paths() -> None:
+    mp_pkg_dir = Path(PROJECT_ROOT) / "modules" / "mission_planning" / "MissionPlanner"
+    for path in (mp_pkg_dir, mp_pkg_dir.parent, Path(PROJECT_ROOT) / "modules"):
+        path_str = str(path)
+        if path.exists() and path_str not in sys.path:
+            sys.path.insert(0, path_str)
 
 from modules.common.qt_env import ensure_qt_platform
 ensure_qt_platform()
@@ -177,8 +193,12 @@ try:
         describe_latest_ids,
         resolve_path_from_cache,
     )
-    from .prior_mission_pipeline import run_prior_mission_pipeline
-    from .attack_plan_pipeline import run_attack_plan_pipeline
+    from .prior_mission_pipeline import run_prior_mission_pipeline, warm_prior_mission_pipeline
+    from .attack_plan_pipeline import (
+        run_attack_exclusion_pipeline,
+        run_attack_plan_pipeline,
+        warm_attack_plan_pipeline,
+    )
 except Exception:
     from latest_input_cache import (
         reset_latest_inputs,
@@ -188,8 +208,12 @@ except Exception:
         describe_latest_ids,
         resolve_path_from_cache,
     )
-    from prior_mission_pipeline import run_prior_mission_pipeline
-    from attack_plan_pipeline import run_attack_plan_pipeline
+    from prior_mission_pipeline import run_prior_mission_pipeline, warm_prior_mission_pipeline
+    from attack_plan_pipeline import (
+        run_attack_exclusion_pipeline,
+        run_attack_plan_pipeline,
+        warm_attack_plan_pipeline,
+    )
 
 # ───────── nFusion 설정/라이선스 정규화 + MessageLibrary 로드 ─────────
 from dll_files.nFusionImports import *  # FusionNodeIoc, NodeMessenger, clr 등
@@ -537,6 +561,7 @@ class MainWindow(QMainWindow):
     ctrl_payload   = pyqtSignal(dict)   # 제어
     log_sig        = pyqtSignal(str)    # 로그
     pipeline_log_sig = pyqtSignal(dict) # pipeline log fan-out
+    planning_metric_sig = pyqtSignal(dict)
     start_push_seq = pyqtSignal()       # 0301/0305/0901 순차 푸시 트리거
     visual_refresh = pyqtSignal()
 
@@ -569,6 +594,15 @@ class MainWindow(QMainWindow):
         self._hb_0102_interval_sec = 0.2  # 5Hz
         self._hb_0102_stop = threading.Event()
         self._hb_0102_thread: Optional[threading.Thread] = None
+        self._planning_timer_started_at: Optional[float] = None
+        self._planning_timer_reason: str = "-"
+        self._last_planning_elapsed_ms: Optional[float] = None
+        self._last_planning_status: str = "idle"
+        self._planner_runtime_lock = threading.RLock()
+        self._planner_runtime_cache: Optional[Dict[str, Any]] = None
+        self._planner_runtime_warmup_running = False
+        self._planner_runtime_warmup_pending: Optional[str] = None
+        self._planner_runtime_ready_logged = False
 
         reset_latest_inputs()
         self._last_logged_input_ids = {"0201": None, "0203": None}
@@ -606,6 +640,7 @@ class MainWindow(QMainWindow):
         self._log_file_path: Optional[Path] = None
         self._init_gui_log_file_sink()
         self._on_algo_settings_applied()
+        QTimer.singleShot(0, lambda: self._schedule_planner_warmup("startup"))
 
         # ── 상단 모드 슬라이더
         top = QWidget()
@@ -616,6 +651,9 @@ class MainWindow(QMainWindow):
         self._latest_input_label = QLabel("0201/0203 \uc218\uc2e0 \ud604\ud669")
         self._latest_input_label.setObjectName("InfoBadge")
         top_layout.addWidget(self._latest_input_label)
+        self._planning_elapsed_label = QLabel("최근 계획 시간: -")
+        self._planning_elapsed_label.setObjectName("InfoBadge")
+        top_layout.addWidget(self._planning_elapsed_label)
         top_layout.addStretch(1)
         self.mode_slider = QSlider(Qt.Horizontal)
         self.mode_slider.setRange(0, 3)
@@ -660,6 +698,7 @@ class MainWindow(QMainWindow):
         self.ctrl_payload.connect(self._handle_ctrl_payload)
         self.log_sig.connect(self._append_log_line)
         self.pipeline_log_sig.connect(self._pipeline_logger.handle_event)
+        self.planning_metric_sig.connect(self._apply_planning_metric)
         self.start_push_seq.connect(self._start_push_sequence)
         if self._log_file_path:
             self._append_log_line(f"[LOG] Mission planning log started: {self._log_file_path}")
@@ -684,6 +723,227 @@ class MainWindow(QMainWindow):
             tab.refresh()
         except Exception:
             pass
+
+    @staticmethod
+    def _format_planning_elapsed(elapsed_ms: Optional[float]) -> str:
+        if elapsed_ms is None:
+            return "-"
+        try:
+            seconds = float(elapsed_ms) / 1000.0
+        except Exception:
+            return "-"
+        return f"{seconds:.2f}초"
+
+    def _apply_planning_metric(self, payload: Dict[str, Any]) -> None:
+        if not isinstance(payload, dict):
+            return
+        state = str(payload.get("state") or "idle")
+        reason = _sanitize_reason(payload.get("reason"), self._planning_timer_reason or "-")
+        elapsed_ms_raw = payload.get("elapsed_ms")
+        try:
+            elapsed_ms = float(elapsed_ms_raw) if elapsed_ms_raw is not None else None
+        except Exception:
+            elapsed_ms = None
+
+        if state == "running":
+            self._planning_timer_reason = reason
+            self._planning_timer_started_at = time.perf_counter()
+            self._last_planning_status = "running"
+            self._planning_elapsed_label.setText(f"최근 계획 시간: 측정 중 ({reason})")
+            return
+
+        if elapsed_ms is not None:
+            self._last_planning_elapsed_ms = elapsed_ms
+        self._planning_timer_started_at = None
+        self._planning_timer_reason = reason
+        self._last_planning_status = state
+
+        elapsed_text = self._format_planning_elapsed(self._last_planning_elapsed_ms)
+        if state == "success":
+            self._planning_elapsed_label.setText(f"최근 계획 시간: {elapsed_text} ({reason})")
+        elif state == "failed":
+            self._planning_elapsed_label.setText(f"최근 계획 시간: 실패 {elapsed_text} ({reason})")
+        else:
+            self._planning_elapsed_label.setText(f"최근 계획 시간: {elapsed_text}")
+
+    def _mark_planning_metric_start(self, reason: str) -> None:
+        self.planning_metric_sig.emit({"state": "running", "reason": reason})
+
+    def _mark_planning_metric_finish(self, reason: str, *, success: bool) -> Optional[float]:
+        start_ts = self._planning_timer_started_at
+        elapsed_ms = None
+        if start_ts is not None:
+            elapsed_ms = max(0.0, (time.perf_counter() - start_ts) * 1000.0)
+        self.planning_metric_sig.emit(
+            {
+                "state": "success" if success else "failed",
+                "reason": reason,
+                "elapsed_ms": elapsed_ms,
+            }
+        )
+        return elapsed_ms
+
+    def _build_planner_runtime(self) -> Dict[str, Any]:
+        _ensure_mission_planner_import_paths()
+        from AnS import run_divide_and_pattern, build_mission_plan_0301
+        from data_def import d0302, d0303, d0304
+
+        try:
+            import config as mp_config
+        except Exception:
+            mp_config = None
+        try:
+            from data_def import search_speed as mp_search_speed
+        except Exception:
+            mp_search_speed = None
+
+        uav_cruise_speed = 40.0
+        uav_turn_step = 15.0
+        applied = False
+        param_error: Optional[str] = None
+        try:
+            uav_cruise_speed, uav_turn_step, applied = self._apply_uav_params_from_store(
+                d0303,
+                mp_config_module=mp_config,
+                search_speed_module=mp_search_speed,
+                default_cruise=uav_cruise_speed,
+                default_turn_step=uav_turn_step,
+            )
+        except Exception as exc:
+            param_error = str(exc)
+
+        warm_status: Dict[str, Any] = {}
+        warm_errors: Dict[str, str] = {}
+        for key, warm_fn in (
+            ("prior_pipeline", warm_prior_mission_pipeline),
+            ("attack_pipeline", warm_attack_plan_pipeline),
+        ):
+            try:
+                warm_status[key] = warm_fn()
+            except BaseException as exc:
+                warm_errors[key] = str(exc)
+
+        return {
+            "run_divide_and_pattern": run_divide_and_pattern,
+            "build_mission_plan_0301": build_mission_plan_0301,
+            "d0302": d0302,
+            "d0303": d0303,
+            "d0304": d0304,
+            "uav_cruise_speed": float(uav_cruise_speed),
+            "uav_turn_step": float(uav_turn_step),
+            "uav_params_applied": bool(applied),
+            "uav_params_error": param_error,
+            "warm_status": warm_status,
+            "warm_errors": warm_errors,
+        }
+
+    def _get_planner_runtime(self) -> Dict[str, Any]:
+        with self._planner_runtime_lock:
+            runtime = self._planner_runtime_cache
+        if runtime is not None:
+            return runtime
+
+        runtime = self._build_planner_runtime()
+        with self._planner_runtime_lock:
+            self._planner_runtime_cache = runtime
+        return runtime
+
+    def _prime_latest_input_file(self, msg_id: str) -> None:
+        latest_id = get_latest_package_id(msg_id)
+        if latest_id is None:
+            return
+        snapshot = get_latest_snapshot(msg_id)
+        payload = getattr(snapshot, "payload", None)
+        if not isinstance(payload, dict):
+            return
+
+        if msg_id == "0201":
+            has_core_data = bool(payload.get("inputMissionList") or payload.get("availableAircraftList"))
+            directory_name = "InputMissionPlan"
+            package_key = "inputMissionPackageID"
+        elif msg_id == "0203":
+            has_core_data = bool(
+                payload.get("takeOverInfoList")
+                or payload.get("flightAreaList")
+                or payload.get("handOverInfoList")
+            )
+            directory_name = "MissionReferenceInfo"
+            package_key = "missionReferencePackageID"
+        else:
+            return
+        if not has_core_data:
+            return
+
+        try:
+            package_id = int(latest_id)
+        except Exception:
+            return
+
+        try:
+            db_root = db_paths.get_active_db_root()
+        except Exception:
+            db_root = db_paths.LEGACY_DB_ROOT
+
+        directory = db_root / directory_name
+        directory.mkdir(parents=True, exist_ok=True)
+        payload_copy = dict(payload)
+        payload_copy.setdefault(package_key, package_id)
+        write_json(
+            directory / f"{package_id}.json",
+            payload_copy,
+            pretty=True,
+            ensure_ascii=False,
+            skip_if_unchanged=True,
+        )
+
+    def _schedule_planner_warmup(self, reason: str = "background") -> None:
+        with self._planner_runtime_lock:
+            if self._planner_runtime_warmup_running:
+                self._planner_runtime_warmup_pending = reason
+                return
+            self._planner_runtime_warmup_running = True
+
+        threading.Thread(
+            target=self._planner_warmup_worker,
+            args=(reason,),
+            name="Planner-Warmup",
+            daemon=True,
+        ).start()
+
+    def _planner_warmup_worker(self, reason: str) -> None:
+        announce_ready = False
+        runtime: Optional[Dict[str, Any]] = None
+        try:
+            runtime = self._build_planner_runtime()
+            self._prime_latest_input_file("0201")
+            self._prime_latest_input_file("0203")
+            with self._planner_runtime_lock:
+                self._planner_runtime_cache = runtime
+                if not self._planner_runtime_ready_logged:
+                    self._planner_runtime_ready_logged = True
+                    announce_ready = True
+        except Exception as exc:
+            self.log_sig.emit(f"[WARM WARN] Planner warm-up failed ({reason}): {exc}")
+        else:
+            warm_errors = dict((runtime or {}).get("warm_errors") or {})
+            for pipeline_name, error_text in warm_errors.items():
+                self.log_sig.emit(f"[WARM WARN] {pipeline_name} warm-up failed ({reason}): {error_text}")
+            if announce_ready:
+                self.log_sig.emit(f"[WARM] Mission planner runtime ready ({reason})")
+        finally:
+            pending_reason = None
+            with self._planner_runtime_lock:
+                self._planner_runtime_warmup_running = False
+                pending_reason = self._planner_runtime_warmup_pending
+                self._planner_runtime_warmup_pending = None
+            if pending_reason:
+                self._schedule_planner_warmup(pending_reason)
+
+    def _invalidate_planner_runtime(self, *, warm_reason: Optional[str] = None) -> None:
+        with self._planner_runtime_lock:
+            self._planner_runtime_cache = None
+        if warm_reason:
+            self._schedule_planner_warmup(warm_reason)
 
     # ───────── 0101 모드 수신 리스너 ─────────
     def _install_0101_mode_listener(self):
@@ -1323,7 +1583,7 @@ class MainWindow(QMainWindow):
         if isinstance(flyover, dict):
             d0303_module.set_flyover_options(
                 entry_offset=bool(flyover.get("entry_offset", False)),
-                dubins_prefix=bool(flyover.get("dubins_prefix", False)),
+                dubins_prefix=False,
                 all_wps=bool(flyover.get("all_wps", False)),
             )
 
@@ -1331,6 +1591,7 @@ class MainWindow(QMainWindow):
 
     def _on_algo_settings_applied(self, payload: Optional[Dict[str, Any]] = None) -> None:
         try:
+            _ensure_mission_planner_import_paths()
             from data_def import d0303, search_speed
             try:
                 import config as mp_config
@@ -1351,6 +1612,7 @@ class MainWindow(QMainWindow):
                 )
         except Exception as exc:
             self.log_sig.emit(f"[WARN] 알고리즘 설정 즉시 적용 실패: {exc}")
+        self._invalidate_planner_runtime(warm_reason="algo_settings")
 
     def _compute_attack_waypoint(
         self, friendly: Dict[str, Any], target: Dict[str, Any], variant_no: int
@@ -1447,6 +1709,7 @@ class MainWindow(QMainWindow):
         if src:
             note += f" (source={src})"
         self.log_sig.emit(note)
+        self._schedule_planner_warmup(f"{msg_id}_updated")
 
         cmpk_update = current if msg_id == "0201" else None
         mrpk_update = current if msg_id == "0203" else None
@@ -1590,10 +1853,12 @@ class MainWindow(QMainWindow):
             self._append_log_line("[WARN] No missionPlanID to push (0301)")
             return
 
-        # send 0301 immediately for any plan delivery
-        QTimer.singleShot(0, lambda: self._click_tx_button_for("0301"))
-        # send 0305 completion shortly after
-        QTimer.singleShot(600, lambda: self._push_0305(status=2, reason=reason))
+        # Send 0301 first, then queue 0305 completion on the next event-loop turn.
+        sent_0301 = self._click_tx_button_for("0301")
+        if sent_0301:
+            QTimer.singleShot(0, lambda: self._push_0305(status=2, reason=reason))
+        else:
+            self._append_log_line("[WARN] 0301 push failed -> 0305 completion not scheduled")
 
         if is_execution_mode and not force_direct:
             self._append_log_line("[INFO] Execution mode -> sending 0901 instead of 0903")
@@ -1619,15 +1884,15 @@ class MainWindow(QMainWindow):
 
         self._pending_plan_push = None
 
-    def _click_tx_button_for(self, code: str):
+    def _click_tx_button_for(self, code: str) -> bool:
         if not self._power_on:
             self._append_log_line(f"[BLOCK] Power OFF -> TX '{code}' blocked")
-            return
+            return False
         try:
             tab = getattr(self, "_tab", None)
             if tab is None or not hasattr(tab, "tbl_tx"):
                 self._append_log_line(f"[WARN] TX table missing for code={code}")
-                return
+                return False
 
             tbl = tab.tbl_tx
             target_row = -1
@@ -1639,14 +1904,14 @@ class MainWindow(QMainWindow):
 
             if target_row < 0:
                 self._append_log_line(f"[WARN] TX table has no entry for {code}")
-                return
+                return False
 
             try:
                 btn = tbl.cellWidget(target_row, 3)
                 if btn is not None and hasattr(btn, "click"):
                     btn.click()
                     self._append_log_line(f"[PUSH] {code} button click()")
-                    return
+                    return True
             except Exception:
                 pass
 
@@ -1654,13 +1919,15 @@ class MainWindow(QMainWindow):
                 if hasattr(tab, "_on_tx_button_clicked"):
                     tab._on_tx_button_clicked(target_row)
                     self._append_log_line(f"[PUSH] {code} handler invoked")
-                    return
+                    return True
             except Exception:
                 pass
 
             self._append_log_line(f"[ERR] {code} push failed: no button/handler")
+            return False
         except Exception as e:
             self._append_log_line(f"[ERR] {code} push failed: {e}")
+            return False
 
     def _init_gui_log_file_sink(self) -> None:
         try:
@@ -1813,9 +2080,14 @@ class MainWindow(QMainWindow):
 
     # ───────── 0305 / 0903 요청 ─────────
     def _push_0305(self, status: int, reason: str = "초기임무재계획"):
+        clean_reason = _sanitize_reason(reason, "초기임무재계획")
+        elapsed_ms: Optional[float] = None
+        if int(status) == 1:
+            self._mark_planning_metric_start(clean_reason)
+        elif int(status) == 2:
+            elapsed_ms = self._mark_planning_metric_finish(clean_reason, success=True)
         try:
             from push_center import push_message
-            clean_reason = _sanitize_reason(reason, "초기임무재계획")
             body = {
                 "timestamp": _now_ms_since_2000(),
                 "source": "MMR",
@@ -1849,7 +2121,12 @@ class MainWindow(QMainWindow):
                 on_done=_after_push,
                 body_dict=body,
             )
-            self.log_sig.emit(f"[0305] status={status}, reason={clean_reason} 전송")
+            if int(status) == 2 and elapsed_ms is not None:
+                self.log_sig.emit(
+                    f"[0305] status={status}, reason={clean_reason}, elapsed={elapsed_ms / 1000.0:.2f}s 전송"
+                )
+            else:
+                self.log_sig.emit(f"[0305] status={status}, reason={clean_reason} 전송")
         except Exception as e:
             self.log_sig.emit(f"[ERR] 0305 전송 실패: {e}")
 
@@ -2609,6 +2886,7 @@ class MainWindow(QMainWindow):
             attack_option_indices = _collect_attack_option_indices(ctx)
             attack_ctx = _filter_context_by_indices(ctx, attack_option_indices) if attack_option_indices else ctx
             attack_summary_info: Optional[Dict[str, Any]] = None
+            attack_exclusion_source_plan_id = getattr(self, "_last_mission_plan_id", None)
             if self._should_use_attack_pipeline(ctx):
                 _record_step("attack_pipeline", "start", detail={"reason": reason})
                 self.log_sig.emit("[ATTACK] 공격 특화 재계획 요청 감지 → 전용 파이프라인 실행")
@@ -2670,6 +2948,29 @@ class MainWindow(QMainWindow):
                 ]
                 if not keep_indices:
                     if attack_summary_info:
+                        try:
+                            self._schedule_plan_delivery(
+                                list(attack_ctx.get("plan_ids") or []),
+                                list(attack_ctx.get("option_names") or []),
+                                reason,
+                                dict(attack_ctx.get("_option_meta") or {}),
+                                force_direct_update=False,
+                            )
+                            _record_step(
+                                "attack_delivery",
+                                "queued",
+                                detail={"plan_ids": list(attack_ctx.get("plan_ids") or [])},
+                            )
+                        except Exception as exc:
+                            self._append_log_line(f"[ATTACK][ERR] delivery queue failed: {exc}")
+                            self._pipeline_logger.log_event(
+                                session_id, "error", f"Attack delivery queue failed: {exc}"
+                            )
+                            _record_issue(
+                                "attack_delivery_queue_failed",
+                                f"Attack delivery queue failed: {exc}",
+                            )
+                            _notify_failure_once("attack_delivery_queue_failed", exc=exc)
                         summary_info = attack_summary_info
                         plan_log_status = "success"
                         plan_log_summary.update(summary_info or {})
@@ -2702,38 +3003,27 @@ class MainWindow(QMainWindow):
             generated_path_ids: Set[int] = set()
             stored_path_ids: Set[int] = set()
 
-            mp_pkg_dir = Path(PROJECT_ROOT) / 'modules' / 'mission_planning' / 'MissionPlanner'
-            for p in (mp_pkg_dir, mp_pkg_dir.parent, Path(PROJECT_ROOT) / 'modules'):
-                p_str = str(p)
-                if p.exists() and p_str not in sys.path:
-                    sys.path.insert(0, p_str)
+            planner_runtime = self._get_planner_runtime()
+            run_divide_and_pattern = planner_runtime["run_divide_and_pattern"]
+            build_mission_plan_0301 = planner_runtime["build_mission_plan_0301"]
+            d0302 = planner_runtime["d0302"]
+            d0303 = planner_runtime["d0303"]
+            d0304 = planner_runtime["d0304"]
+            _ensure_mission_planner_import_paths()
+            from data_def.id_allocator import (
+                next_path_id,
+                reserve_imp_ids,
+                reserve_path_ids,
+            )
 
-            from AnS import run_divide_and_pattern, build_mission_plan_0301
-            from data_def import d0302, d0303, d0304
-            from data_def.id_allocator import next_path_id
-
-            uav_cruise_speed = 40.0
-            uav_turn_step = 15.0
-            try:
-                import config as mp_config
-                from data_def import search_speed as mp_search_speed
-            except Exception:
-                mp_config = None
-                mp_search_speed = None
-            try:
-                uav_cruise_speed, uav_turn_step, applied = self._apply_uav_params_from_store(
-                    d0303,
-                    mp_config_module=mp_config,
-                    search_speed_module=mp_search_speed,
-                    default_cruise=uav_cruise_speed,
-                    default_turn_step=uav_turn_step,
+            uav_cruise_speed = float(planner_runtime.get("uav_cruise_speed", 40.0))
+            uav_turn_step = float(planner_runtime.get("uav_turn_step", 15.0))
+            if planner_runtime.get("uav_params_applied"):
+                self.log_sig.emit(
+                    f"[INFO] UAV params loaded (cruise={uav_cruise_speed:.2f}, turn_step={uav_turn_step:.1f})"
                 )
-                if applied:
-                    self.log_sig.emit(
-                        f"[INFO] UAV params loaded (cruise={uav_cruise_speed:.2f}, turn_step={uav_turn_step:.1f})"
-                    )
-            except Exception as exc:
-                self.log_sig.emit(f"[WARN] UAV params load failed: {exc}")
+            elif planner_runtime.get("uav_params_error"):
+                self.log_sig.emit(f"[WARN] UAV params load failed: {planner_runtime['uav_params_error']}")
 
             def _imp_path_id(im):
                 for key in ('pathID', 'pathId', 'individualMissionPathID', 'missionPathID'):
@@ -3576,6 +3866,9 @@ class MainWindow(QMainWindow):
             attack_option_indices: Set[int] = {
                 idx for idx, label in enumerate(option_labels) if label in attack_option_labels
             }
+            attack_exclusion_option_indices: Set[int] = {
+                idx for idx, label in enumerate(option_labels) if str(label or "").replace(" ", "") == "공격배제"
+            }
             for attack_idx in attack_option_indices:
                 if 0 <= attack_idx < len(option_codes):
                     option_codes[attack_idx] = 2
@@ -3650,14 +3943,6 @@ class MainWindow(QMainWindow):
 
             def _allocate_plan_id(preferred: int | None) -> int:
                 nonlocal next_plan_id_seed
-                if preferred is not None:
-                    try:
-                        candidate = int(preferred)
-                        # 요청된 ID가 기존에 있어도 그대로 재사용 (재계획 요청 준수)
-                        used_plan_ids.add(candidate)
-                        return candidate
-                    except Exception:
-                        pass
                 while next_plan_id_seed in used_plan_ids:
                     next_plan_id_seed += 1
                 assigned = next_plan_id_seed
@@ -3665,20 +3950,531 @@ class MainWindow(QMainWindow):
                 next_plan_id_seed += 1
                 return assigned
 
+            def _allocate_imp_id_map(plan_json: Dict[str, Any]) -> Dict[int, int]:
+                allocated: Dict[int, int] = {}
+                aircraft_list = plan_json.get("aircraftList")
+                if not isinstance(aircraft_list, list):
+                    return allocated
+                pending_rows: list[tuple[dict, int]] = []
+                for aircraft in aircraft_list:
+                    if not isinstance(aircraft, dict):
+                        continue
+                    try:
+                        aid = int(aircraft.get("aircraftID", 0))
+                    except Exception:
+                        continue
+                    if aid < 1 or aid > 6 or aid in allocated:
+                        continue
+                    pending_rows.append((aircraft, aid))
+                if not pending_rows:
+                    return allocated
+                reserved_pkg_ids = reserve_imp_ids(len(pending_rows))
+                for (aircraft, aid), pkg_id in zip(pending_rows, reserved_pkg_ids):
+                    pkg_id_int = int(pkg_id)
+                    aircraft["individualMissionPackageID"] = pkg_id_int
+                    allocated[aid] = pkg_id_int
+                return allocated
+
+            def _assign_fresh_path_ids(missions: list[dict], generated_ids: Set[int]) -> Dict[tuple[int, int], int]:
+                pid_map: Dict[tuple[int, int], int] = {}
+                grouped: Dict[int, list[dict]] = {}
+                for im in missions:
+                    try:
+                        aid = int(im.get("aircraftID", 0))
+                        mid = int(im.get("individualMissionID", 0))
+                    except Exception:
+                        continue
+                    if aid < 1 or aid > 6:
+                        continue
+                    grouped.setdefault(aid, []).append(im)
+                for aid, items in grouped.items():
+                    reserved_path_ids_for_aid = reserve_path_ids(aid, len(items))
+                    for im, pid in zip(items, reserved_path_ids_for_aid):
+                        try:
+                            mid = int(im.get("individualMissionID", 0))
+                        except Exception:
+                            continue
+                        pid_int = int(pid)
+                        im["pathID"] = pid_int
+                        pid_map[(aid, mid)] = pid_int
+                        generated_ids.add(pid_int)
+                return pid_map
+
             generated_plan_ids: list[int] = []
             option_codes_out: list[int] = []
             plan_meta_map: Dict[int, Dict[str, Any]] = {}
             total_imp_files = 0
             total_fp_files = 0
+            base_runtime_payload = load_runtime_settings()
 
-            for idx in range(plan_count):
+            def _variant_runtime_override_payload(option_label: str) -> Optional[Dict[str, Any]]:
+                label = str(option_label or "").strip().replace(" ", "")
+                preset_key = ""
+                area_mode = ""
+                all_wps: Optional[bool] = None
+                if label in {"정찰시간균형", "정찰/시간균형"}:
+                    preset_key = "bearing_par_sweep"
+                    area_mode = "parallel"
+                    all_wps = True
+                elif label in {"정찰특화"}:
+                    preset_key = "nadir_mode"
+                    area_mode = "nadir"
+                elif label in {"최소시간"}:
+                    preset_key = "bearing_ver_sweep"
+                    area_mode = "vertical"
+                if not preset_key:
+                    return None
+                payload = copy.deepcopy(base_runtime_payload) if isinstance(base_runtime_payload, dict) else {}
+                values = payload.get("values")
+                if not isinstance(values, dict):
+                    values = {}
+                    payload["values"] = values
+                flyover = payload.get("flyover")
+                if not isinstance(flyover, dict):
+                    flyover = {}
+                    payload["flyover"] = flyover
+                payload["preset_key"] = preset_key
+                values["area_sweep_mode"] = area_mode
+                if all_wps is not None:
+                    flyover["all_wps"] = bool(all_wps)
+                return payload
+
+            general_parallel_replan = (
+                plan_count > 1
+                and not attack_option_indices
+                and not attack_exclusion_option_indices
+                and not prior_option_indices
+            )
+
+            class _VariantCoreError(RuntimeError):
+                def __init__(self, code: str, message: str, *, variant_no: int, detail: Optional[Dict[str, Any]] = None):
+                    super().__init__(message)
+                    self.code = str(code or "variant_core_error")
+                    self.message = str(message or code or "variant_core_error")
+                    self.variant_no = int(variant_no)
+                    self.detail = dict(detail or {})
+
+            def _run_general_variant_core(spec: Dict[str, Any]) -> Dict[str, Any]:
+                variant_no = int(spec["variant_no"])
+                option_code = int(spec["option_code"])
+                requested_plan_id = spec.get("requested_plan_id")
+                cmpk_source_path = Path(spec["cmpk_source_path"])
+                runtime_payload = spec.get("runtime_payload")
+                with runtime_settings_override(runtime_payload):
+                    iter_out_root = out_root_base / f"variant_{variant_no:02d}"
+                    if iter_out_root.exists():
+                        shutil.rmtree(iter_out_root)
+                    iter_out_root.mkdir(parents=True, exist_ok=True)
+
+                    variant_start = time.perf_counter()
+                    variant_generated_path_ids: Set[int] = set()
+                    step_t0 = time.perf_counter()
+                    self.log_sig.emit(f"[STEP 1.{variant_no}] Divide & Pattern start")
+                    imp_paths = run_divide_and_pattern(
+                        str(cmpk_source_path),
+                        str(mrpk_path),
+                        str(iter_out_root),
+                        log=lambda msg, n=variant_no: self.log_sig.emit(f"[variant {n}] {msg}"),
+                        option_code=option_code,
+                    )
+                    if not imp_paths:
+                        self.log_sig.emit(f"[ERR] IMP generation failed (variant={variant_no})")
+                        raise _VariantCoreError(
+                            "imp_generation_failed",
+                            f"IMP generation failed (variant={variant_no})",
+                            variant_no=variant_no,
+                        )
+                    step_ms = (time.perf_counter() - step_t0) * 1000.0
+                    self.log_sig.emit(f"[TIME] divide_and_pattern (variant={variant_no}): {step_ms:.1f} ms")
+                    self.log_sig.emit(f"[OK] IMP generated: {len(imp_paths)} file(s) (variant={variant_no})")
+
+                    step_t0 = time.perf_counter()
+                    mp_tmp = iter_out_root / f"MissionPlan_{int(time.time()*1000)}.json"
+                    mp_json = build_mission_plan_0301(
+                        str(cmpk_source_path),
+                        str(mrpk_path),
+                        imp_paths,
+                        str(mp_tmp),
+                    )
+                    if not isinstance(mp_json, dict):
+                        with mp_tmp.open(encoding="utf-8") as f:
+                            mp_json = json.load(f)
+                    imp_id_map = {
+                        a.get("aircraftID"): a.get("individualMissionPackageID")
+                        for a in mp_json.get("aircraftList", [])
+                    }
+                    step_ms = (time.perf_counter() - step_t0) * 1000.0
+                    self.log_sig.emit(f"[TIME] build_0301+load (variant={variant_no}): {step_ms:.1f} ms")
+                    self.log_sig.emit(f"[OK] MissionPlan built: {mp_tmp.name} (variant={variant_no})")
+
+                    step_t0 = time.perf_counter()
+                    missions = []
+                    loaded_imp_packages = _load_imp_packages(list(imp_paths))
+                    for aid, pkg in loaded_imp_packages:
+                        for im in pkg.get("individualMissionList", []):
+                            im_copy = dict(im)
+                            im_copy["aircraftID"] = aid
+                            if "individualMissionPlanPackageID" not in im_copy and imp_id_map:
+                                im_copy["individualMissionPlanPackageID"] = imp_id_map.get(aid)
+                            missions.append(im_copy)
+                    step_ms = (time.perf_counter() - step_t0) * 1000.0
+                    self.log_sig.emit(
+                        f"[TIME] collect_missions (variant={variant_no}): {step_ms:.1f} ms, count={len(missions)}"
+                    )
+
+                    step_t0 = time.perf_counter()
+                    pid_map = _assign_fresh_path_ids(missions, variant_generated_path_ids)
+                    step_ms = (time.perf_counter() - step_t0) * 1000.0
+                    self.log_sig.emit(f"[TIME] pathID_mapping (variant={variant_no}): {step_ms:.1f} ms")
+                    self.log_sig.emit(f"[INFO] pathID mapping done for 0302/0303/0304 (variant={variant_no})")
+
+                    manned = [im for im in missions if int(im.get("aircraftID", 0)) in (1, 2, 3)]
+                    unmanned = [im for im in missions if int(im.get("aircraftID", 0)) in (4, 5, 6)]
+                    wp_alloc = d0303._WPAllocator()
+                    try:
+                        manned_plan_mode = str(
+                            ((load_runtime_settings().get("values") or {}).get("manned_plan_mode")) or "normal"
+                        ).strip().lower()
+                    except Exception:
+                        manned_plan_mode = "normal"
+
+                    def _build_0303():
+                        start = time.perf_counter()
+                        with runtime_settings_override(runtime_payload):
+                            plans = d0303.build_flight_plans(
+                                unmanned,
+                                wp_alloc,
+                                uav_cruise_speed,
+                                turn_step_deg=uav_turn_step,
+                                ref0203=mrpk_data,
+                            )
+                        return plans, (time.perf_counter() - start) * 1000.0
+
+                    def _build_0304():
+                        start = time.perf_counter()
+                        plans = d0304.build_lah_flight_plans_fixed(
+                            manned,
+                            cruise_speed=15.0,
+                            manned_plan_mode=manned_plan_mode,
+                            wp_alloc=wp_alloc,
+                        )
+                        return plans, (time.perf_counter() - start) * 1000.0
+
+                    flight_plans_0303: list[dict] = []
+                    flight_plans_0304: list[dict] = []
+                    elapsed_0303_ms = 0.0
+                    elapsed_0304_ms = 0.0
+                    if unmanned and manned:
+                        self.log_sig.emit(f"[INFO] FlightPath build mode: parallel (variant={variant_no})")
+                        parallel_start = time.perf_counter()
+                        with concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="PlanFP") as executor:
+                            futures = {
+                                executor.submit(_build_0303): "0303",
+                                executor.submit(_build_0304): "0304",
+                            }
+                            for future in concurrent.futures.as_completed(futures):
+                                label = futures[future]
+                                try:
+                                    plans, elapsed_ms = future.result()
+                                except Exception as exc:
+                                    self.log_sig.emit(f"[ERR] FlightPath build failed ({label}): {exc}")
+                                    raise
+                                if label == "0303":
+                                    flight_plans_0303 = plans
+                                    elapsed_0303_ms = elapsed_ms
+                                else:
+                                    flight_plans_0304 = plans
+                                    elapsed_0304_ms = elapsed_ms
+                        parallel_ms = (time.perf_counter() - parallel_start) * 1000.0
+                        self.log_sig.emit(
+                            "[INFO] FlightPath build time (parallel): "
+                            f"0303={elapsed_0303_ms:.1f} ms, 0304={elapsed_0304_ms:.1f} ms, wall={parallel_ms:.1f} ms"
+                        )
+                    else:
+                        if unmanned or manned:
+                            self.log_sig.emit(f"[INFO] FlightPath build mode: sequential (variant={variant_no})")
+                        if unmanned:
+                            flight_plans_0303, elapsed_0303_ms = _build_0303()
+                        if manned:
+                            flight_plans_0304, elapsed_0304_ms = _build_0304()
+                        if unmanned or manned:
+                            parts = []
+                            if unmanned:
+                                parts.append(f"0303={elapsed_0303_ms:.1f} ms")
+                            if manned:
+                                parts.append(f"0304={elapsed_0304_ms:.1f} ms")
+                            self.log_sig.emit("[INFO] FlightPath build time (sequential): " + ", ".join(parts))
+
+                    for fp in (flight_plans_0303 or []) + (flight_plans_0304 or []):
+                        pid_val = fp.get("pathID")
+                        if pid_val is not None:
+                            try:
+                                variant_generated_path_ids.add(int(pid_val))
+                            except Exception:
+                                pass
+
+                    fixed3 = _enforce_fp_path_ids(flight_plans_0303, pid_map)
+                    fixed4 = _enforce_fp_path_ids(flight_plans_0304, pid_map)
+                    if fixed3 or fixed4:
+                        self.log_sig.emit(
+                            f"[INFO] FlightPath pathID enforced (variant={variant_no}): 0303={fixed3}, 0304={fixed4}"
+                        )
+                    if not flight_plans_0303 and not flight_plans_0304:
+                        self.log_sig.emit(f"[ERR] FlightPath generation failed (variant={variant_no})")
+                        raise _VariantCoreError(
+                            "flightpath_generation_failed",
+                            f"FlightPath generation failed (variant={variant_no})",
+                            variant_no=variant_no,
+                        )
+                    self.log_sig.emit(
+                        f"[OK] FlightPath counts (variant={variant_no}): 0303={len(flight_plans_0303)} / 0304={len(flight_plans_0304)}"
+                    )
+
+                    expected_path_ids = {int(pid) for pid in pid_map.values() if pid is not None}
+
+                    def _collect_valid_path_ids(fps):
+                        collected: Set[int] = set()
+                        for fp in fps or []:
+                            path_id = fp.get("pathID")
+                            if path_id is None:
+                                continue
+                            if fp.get("isFormationFlight"):
+                                try:
+                                    collected.add(int(path_id))
+                                except Exception:
+                                    pass
+                                continue
+                            waypoints = fp.get("waypointList")
+                            if not waypoints:
+                                waypoints = fp.get("lahWaypointList")
+                            if not waypoints:
+                                continue
+                            try:
+                                collected.add(int(path_id))
+                            except Exception:
+                                continue
+                        return collected
+
+                    available_path_ids = _collect_valid_path_ids(flight_plans_0303)
+                    available_path_ids.update(_collect_valid_path_ids(flight_plans_0304))
+                    missing_path_ids = sorted(pid for pid in expected_path_ids if pid not in available_path_ids)
+                    if missing_path_ids:
+                        missing_summary = ", ".join(str(pid) for pid in missing_path_ids)
+                        self.log_sig.emit(
+                            f"[ERR] FlightPath generation incomplete (variant={variant_no}): missing pathID(s) {missing_summary}"
+                        )
+                        raise _VariantCoreError(
+                            "flightpath_missing_ids",
+                            f"missing pathID(s) {missing_summary}",
+                            variant_no=variant_no,
+                            detail={"missing_paths": missing_summary},
+                        )
+
+                    return {
+                        "variant_no": variant_no,
+                        "requested_plan_id": requested_plan_id,
+                        "option_code": option_code,
+                        "cmpk_source_path": cmpk_source_path,
+                        "iter_out_root": iter_out_root,
+                        "mp_json": mp_json,
+                        "imp_id_map": imp_id_map,
+                        "missions": missions,
+                        "flight_plans_0303": flight_plans_0303,
+                        "flight_plans_0304": flight_plans_0304,
+                        "generated_path_ids": variant_generated_path_ids,
+                        "core_total_ms": (time.perf_counter() - variant_start) * 1000.0,
+                    }
+
+            def _store_general_variant(result: Dict[str, Any]) -> None:
+                nonlocal total_imp_files, total_fp_files
+                variant_no = int(result["variant_no"])
+                variant_store_start = time.perf_counter()
+                requested_plan_id = result.get("requested_plan_id")
+                option_code = int(result["option_code"])
+                iter_out_root = Path(result["iter_out_root"])
+                mp_json = result["mp_json"]
+                imp_id_map = result["imp_id_map"]
+                missions = result["missions"]
+                flight_plans_0303 = result["flight_plans_0303"]
+                flight_plans_0304 = result["flight_plans_0304"]
+                generated_path_ids.update(int(val) for val in (result.get("generated_path_ids") or set()) if val is not None)
+
+                plan_id_value = requested_plan_id if requested_plan_id is not None else mp_json.get("missionPlanID")
+                try:
+                    preferred_plan_id = int(plan_id_value)
+                except Exception:
+                    preferred_plan_id = None
+                plan_id = _allocate_plan_id(preferred_plan_id)
+                mp_json["missionPlanID"] = plan_id
+                imp_id_map = _allocate_imp_id_map(mp_json)
+
+                step_t0 = time.perf_counter()
+                imp_pkgs = d0302.build_mission_packages(missions, cmpk_id=cmpk_id, plan_pkg_map=imp_id_map)
+                step_ms = (time.perf_counter() - step_t0) * 1000.0
+                self.log_sig.emit(
+                    f"[TIME] build_0302 (variant={variant_no}): {step_ms:.1f} ms, packages={len(imp_pkgs)}"
+                )
+
+                step_t0 = time.perf_counter()
+                imp_write_rows: list[tuple[Path, Any]] = []
+                for pkg in imp_pkgs:
+                    imp_id = pkg.get("individualMissionPackageID") or pkg.get("individualMissionPlanPackageID")
+                    if imp_id is None:
+                        continue
+                    try:
+                        generated_imp_ids.add(int(imp_id))
+                    except Exception:
+                        pass
+                    imp_write_rows.append((dir_imp / f"{int(imp_id)}.json", pkg))
+                _write_json_batch(imp_write_rows, pretty=True)
+                total_imp_files += len(imp_pkgs)
+                step_ms = (time.perf_counter() - step_t0) * 1000.0
+                self.log_sig.emit(
+                    f"[TIME] write_0302 (variant={variant_no}): {step_ms:.1f} ms, files={len(imp_pkgs)}"
+                )
+
+                def _dump_fp(target_dir, fps):
+                    rows: list[tuple[Path, Any]] = []
+                    for fp in fps:
+                        pid = fp.get("pathID")
+                        if pid is None:
+                            continue
+                        rows.append((target_dir / f"{int(pid)}.json", fp))
+                        try:
+                            stored_path_ids.add(int(pid))
+                        except Exception:
+                            pass
+                    _write_json_batch(rows, pretty=True)
+                    return len(rows)
+
+                step_t0 = time.perf_counter()
+                fp_count_0303 = _dump_fp(dir_fp, flight_plans_0303)
+                fp_count_0304 = _dump_fp(dir_fp, flight_plans_0304)
+                total_fp_files += fp_count_0303 + fp_count_0304
+                step_ms = (time.perf_counter() - step_t0) * 1000.0
+                self.log_sig.emit(
+                    f"[TIME] write_FlightPath (variant={variant_no}): {step_ms:.1f} ms, files={fp_count_0303 + fp_count_0304}"
+                )
+
+                variant_total_ms = float(result.get("core_total_ms") or 0.0) + (time.perf_counter() - variant_store_start) * 1000.0
+                step_t0 = time.perf_counter()
+                mp_json["planningTime"] = variant_total_ms
+                write_json(dir_mp / f"{plan_id}.json", mp_json, pretty=True, ensure_ascii=False, skip_if_unchanged=True)
+                step_ms = (time.perf_counter() - step_t0) * 1000.0
+                self.log_sig.emit(f"[TIME] write_0301 (variant={variant_no}): {step_ms:.1f} ms")
+                self.log_sig.emit(
+                    f"[OK] Stored variant {variant_no}: MissionPlanID={plan_id}, IMP={len(imp_pkgs)}, FlightPath={fp_count_0303 + fp_count_0304}"
+                )
+                self.log_sig.emit(f"[TIME] variant_total (variant={variant_no}): {variant_total_ms:.1f} ms")
+
+                generated_plan_ids.append(plan_id)
+                option_codes_out.append(int(option_code))
+                self.log_sig.emit(
+                    f"[INFO] Option mapping #{variant_no}: planID={plan_id}, optionCode={option_code}({option_code_to_label(option_code)})"
+                )
+                try:
+                    shutil.rmtree(iter_out_root)
+                except Exception:
+                    pass
+
+            variant_loop_indices = range(plan_count)
+            if general_parallel_replan:
+                max_workers = min(plan_count, 3)
+                self.log_sig.emit(
+                    f"[INFO] 일반 재계획 옵션 병렬 생성 활성화: variants={plan_count}, workers={max_workers}"
+                )
+                parallel_specs = [
+                    {
+                        "idx": idx,
+                        "variant_no": idx + 1,
+                        "requested_plan_id": plan_ids[idx],
+                        "option_code": int(option_codes[idx]),
+                        "cmpk_source_path": Path(cmpk_path),
+                        "runtime_payload": _variant_runtime_override_payload(option_labels[idx] if idx < len(option_labels) else ""),
+                    }
+                    for idx in range(plan_count)
+                ]
+                parallel_results: Dict[int, Dict[str, Any]] = {}
+                try:
+                    with concurrent.futures.ThreadPoolExecutor(
+                        max_workers=max_workers,
+                        thread_name_prefix="PlanVariant",
+                    ) as executor:
+                        future_map = {
+                            executor.submit(_run_general_variant_core, spec): spec
+                            for spec in parallel_specs
+                        }
+                        for future in concurrent.futures.as_completed(future_map):
+                            spec = future_map[future]
+                            try:
+                                parallel_results[int(spec["idx"])] = future.result()
+                            except _VariantCoreError as exc:
+                                for pending in future_map:
+                                    if pending is not future:
+                                        pending.cancel()
+                                _record_issue(exc.code, exc.message, detail={"variant": exc.variant_no, **exc.detail}, status="error")
+                                plan_log_summary.update({"stop_reason": exc.code, "variant": exc.variant_no, **exc.detail})
+                                _notify_failure_once(exc.code, detail={"variant": exc.variant_no, **exc.detail})
+                                self._plan_status = "임무계획 실패"
+                                self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
+                                return
+                    for idx in range(plan_count):
+                        _store_general_variant(parallel_results[idx])
+                    variant_loop_indices = range(0)
+                except Exception as exc:
+                    self.log_sig.emit(f"[ERR] 일반 재계획 병렬 생성 실패: {exc}")
+                    raise
+
+            for idx in variant_loop_indices:
                 variant_no = idx + 1
                 requested_plan_id = plan_ids[idx]
                 option_code = option_codes[idx]
+                option_label = option_labels[idx] if idx < len(option_labels) else ""
+                attack_exclusion_selected = idx in attack_exclusion_option_indices
                 cmpk_source_path = cmpk_path
                 variant_attack_context: Optional[Dict[str, Any]] = None
                 variant_prior_context: Optional[Dict[str, Any]] = None
                 attack_option_selected = idx in attack_option_indices
+                if attack_exclusion_selected:
+                    self.log_sig.emit(f"[variant {variant_no}] 공격 배제 전용 재개 파이프라인 적용")
+                    exclusion_ctx = _filter_context_by_indices(ctx, [idx])
+                    if attack_exclusion_source_plan_id is not None:
+                        exclusion_ctx["sourceMissionPlanID"] = attack_exclusion_source_plan_id
+                    exclusion_t0 = time.perf_counter()
+                    exclusion_result = run_attack_exclusion_pipeline(
+                        exclusion_ctx,
+                        log_callback=self._append_log_line,
+                    )
+                    exclusion_ms = (time.perf_counter() - exclusion_t0) * 1000.0
+                    exclusion_payload = (exclusion_result or {}).get("result") or {}
+                    exclusion_plan_id = exclusion_payload.get("missionPlanID")
+                    if exclusion_plan_id is None:
+                        message = "공격 배제 재개 임무 생성에 실패했습니다."
+                        if exclusion_payload.get("error") == "no_updates":
+                            message = "공격 배제 재개 임무를 만들 수 있는 UAV가 없습니다."
+                        self.log_sig.emit(f"[ERR] {message} (variant={variant_no})")
+                        _record_issue(
+                            "attack_exclusion_failed",
+                            message,
+                            detail={"variant": variant_no, "payload": exclusion_payload},
+                        )
+                        plan_log_summary.update({"stop_reason": "attack_exclusion_failed", "variant": variant_no})
+                        _notify_failure_once("attack_exclusion_failed", detail={"variant": variant_no})
+                        return
+                    try:
+                        generated_plan_ids.append(int(exclusion_plan_id))
+                    except Exception:
+                        generated_plan_ids.append(exclusion_plan_id)
+                    option_codes_out.append(int(option_code))
+                    self.log_sig.emit(
+                        f"[OK] 공격 배제 variant 저장: MissionPlanID={exclusion_plan_id} "
+                        f"(elapsed={exclusion_ms:.1f} ms)"
+                    )
+                    self.log_sig.emit(
+                        f"[INFO] Option mapping #{variant_no}: planID={exclusion_plan_id}, "
+                        f"optionCode={option_code}({option_code_to_label(option_code)})"
+                    )
+                    continue
                 if attack_option_selected and attack_cmpk_path is not None:
                     cmpk_source_path = attack_cmpk_path
                     self.log_sig.emit(
@@ -3793,104 +4589,107 @@ class MainWindow(QMainWindow):
                     shutil.rmtree(iter_out_root)
                 iter_out_root.mkdir(parents=True, exist_ok=True)
 
-                variant_start = time.perf_counter()
-                step_t0 = time.perf_counter()
-                self.log_sig.emit(f"[STEP 1.{variant_no}] Divide & Pattern start")
-                imp_paths = run_divide_and_pattern(
-                    str(cmpk_source_path),
-                    str(mrpk_path),
-                    str(iter_out_root),
-                    log=lambda msg, n=variant_no: self.log_sig.emit(f"[variant {n}] {msg}"),
-                    option_code=int(option_code),
-                )
-                if not imp_paths:
-                    self.log_sig.emit(f"[ERR] IMP generation failed (variant={variant_no})")
-                    _record_issue("imp_generation_failed", f"IMP generation failed (variant={variant_no})", status="error")
-                    plan_log_summary.update({"stop_reason": "imp_generation_failed", "variant": variant_no})
-                    _notify_failure_once("imp_generation_failed", detail={"variant": variant_no})
-                    self._plan_status = "임무계획 실패"
-                    self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
-                    return
-                step_ms = (time.perf_counter() - step_t0) * 1000.0
-                self.log_sig.emit(
-                    f"[TIME] divide_and_pattern (variant={variant_no}): {step_ms:.1f} ms"
-                )
-                self.log_sig.emit(f"[OK] IMP generated: {len(imp_paths)} file(s) (variant={variant_no})")
+                runtime_payload = _variant_runtime_override_payload(option_label)
+                if runtime_payload:
+                    self.log_sig.emit(
+                        f"[variant {variant_no}] 일반 재계획 모드 적용: preset={runtime_payload.get('preset_key')}"
+                    )
 
-                step_t0 = time.perf_counter()
-                mp_tmp = iter_out_root / f"MissionPlan_{int(time.time()*1000)}.json"
-                mp_json = build_mission_plan_0301(
-                    str(cmpk_source_path),
-                    str(mrpk_path),
-                    imp_paths,
-                    str(mp_tmp),
-                )
-                if not isinstance(mp_json, dict):
-                    with mp_tmp.open(encoding='utf-8') as f:
-                        mp_json = json.load(f)
-                imp_id_map = {a.get('aircraftID'): a.get('individualMissionPackageID') for a in mp_json.get('aircraftList', [])}
-                step_ms = (time.perf_counter() - step_t0) * 1000.0
-                self.log_sig.emit(
-                    f"[TIME] build_0301+load (variant={variant_no}): {step_ms:.1f} ms"
-                )
-                self.log_sig.emit(f"[OK] MissionPlan built: {mp_tmp.name} (variant={variant_no})")
+                with runtime_settings_override(runtime_payload):
+                    variant_start = time.perf_counter()
+                    step_t0 = time.perf_counter()
+                    self.log_sig.emit(f"[STEP 1.{variant_no}] Divide & Pattern start")
+                    imp_paths = run_divide_and_pattern(
+                        str(cmpk_source_path),
+                        str(mrpk_path),
+                        str(iter_out_root),
+                        log=lambda msg, n=variant_no: self.log_sig.emit(f"[variant {n}] {msg}"),
+                        option_code=int(option_code),
+                    )
+                    if not imp_paths:
+                        self.log_sig.emit(f"[ERR] IMP generation failed (variant={variant_no})")
+                        _record_issue("imp_generation_failed", f"IMP generation failed (variant={variant_no})", status="error")
+                        plan_log_summary.update({"stop_reason": "imp_generation_failed", "variant": variant_no})
+                        _notify_failure_once("imp_generation_failed", detail={"variant": variant_no})
+                        self._plan_status = "임무계획 실패"
+                        self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
+                        return
+                    step_ms = (time.perf_counter() - step_t0) * 1000.0
+                    self.log_sig.emit(
+                        f"[TIME] divide_and_pattern (variant={variant_no}): {step_ms:.1f} ms"
+                    )
+                    self.log_sig.emit(f"[OK] IMP generated: {len(imp_paths)} file(s) (variant={variant_no})")
 
-                step_t0 = time.perf_counter()
-                missions = []
-                loaded_imp_packages = _load_imp_packages(list(imp_paths))
-                for aid, pkg in loaded_imp_packages:
-                    for im in pkg.get('individualMissionList', []):
-                        im_copy = dict(im)
-                        im_copy['aircraftID'] = aid
-                        if 'individualMissionPlanPackageID' not in im_copy and imp_id_map:
-                            im_copy['individualMissionPlanPackageID'] = imp_id_map.get(aid)
-                        missions.append(im_copy)
-                step_ms = (time.perf_counter() - step_t0) * 1000.0
-                self.log_sig.emit(
-                    f"[TIME] collect_missions (variant={variant_no}): {step_ms:.1f} ms, count={len(missions)}"
-                )
+                    step_t0 = time.perf_counter()
+                    mp_tmp = iter_out_root / f"MissionPlan_{int(time.time()*1000)}.json"
+                    mp_json = build_mission_plan_0301(
+                        str(cmpk_source_path),
+                        str(mrpk_path),
+                        imp_paths,
+                        str(mp_tmp),
+                    )
+                    if not isinstance(mp_json, dict):
+                        with mp_tmp.open(encoding='utf-8') as f:
+                            mp_json = json.load(f)
+                    imp_id_map = {a.get('aircraftID'): a.get('individualMissionPackageID') for a in mp_json.get('aircraftList', [])}
+                    step_ms = (time.perf_counter() - step_t0) * 1000.0
+                    self.log_sig.emit(
+                        f"[TIME] build_0301+load (variant={variant_no}): {step_ms:.1f} ms"
+                    )
+                    self.log_sig.emit(f"[OK] MissionPlan built: {mp_tmp.name} (variant={variant_no})")
 
-                step_t0 = time.perf_counter()
-                pid_map = {}
-                for im in missions:
-                    aid = int(im.get('aircraftID', 0))
-                    mid = int(im.get('individualMissionID', 0))
-                    if aid in (1, 2, 3):
-                        pid = int(next_path_id(aid))
-                        im['pathID'] = pid
-                        pid_map[(aid, mid)] = pid
-                        generated_path_ids.add(pid)
-                    else:
-                        imp_pid = _imp_path_id(im)
-                        if imp_pid is not None:
-                            pid_val = int(imp_pid)
-                            im['pathID'] = pid_val
-                            pid_map[(aid, mid)] = pid_val
-                            generated_path_ids.add(pid_val)
-                step_ms = (time.perf_counter() - step_t0) * 1000.0
-                self.log_sig.emit(
-                    f"[TIME] pathID_mapping (variant={variant_no}): {step_ms:.1f} ms"
-                )
-                self.log_sig.emit(f"[INFO] pathID mapping done for 0302/0303/0304 (variant={variant_no})")
+                    step_t0 = time.perf_counter()
+                    missions = []
+                    loaded_imp_packages = _load_imp_packages(list(imp_paths))
+                    for aid, pkg in loaded_imp_packages:
+                        for im in pkg.get('individualMissionList', []):
+                            im_copy = dict(im)
+                            im_copy['aircraftID'] = aid
+                            if 'individualMissionPlanPackageID' not in im_copy and imp_id_map:
+                                im_copy['individualMissionPlanPackageID'] = imp_id_map.get(aid)
+                            missions.append(im_copy)
+                    step_ms = (time.perf_counter() - step_t0) * 1000.0
+                    self.log_sig.emit(
+                        f"[TIME] collect_missions (variant={variant_no}): {step_ms:.1f} ms, count={len(missions)}"
+                    )
 
-                manned = [im for im in missions if int(im.get('aircraftID', 0)) in (1, 2, 3)]
-                unmanned = [im for im in missions if int(im.get('aircraftID', 0)) in (4, 5, 6)]
-                wp_alloc = d0303._WPAllocator()
+                    step_t0 = time.perf_counter()
+                    pid_map = _assign_fresh_path_ids(missions, generated_path_ids)
+                    step_ms = (time.perf_counter() - step_t0) * 1000.0
+                    self.log_sig.emit(
+                        f"[TIME] pathID_mapping (variant={variant_no}): {step_ms:.1f} ms"
+                    )
+                    self.log_sig.emit(f"[INFO] pathID mapping done for 0302/0303/0304 (variant={variant_no})")
+
+                    manned = [im for im in missions if int(im.get('aircraftID', 0)) in (1, 2, 3)]
+                    unmanned = [im for im in missions if int(im.get('aircraftID', 0)) in (4, 5, 6)]
+                    wp_alloc = d0303._WPAllocator()
+                    try:
+                        payload_values = (runtime_payload.get("values") or {}) if isinstance(runtime_payload, dict) else {}
+                        manned_plan_mode = str(payload_values.get("manned_plan_mode") or "normal").strip().lower()
+                    except Exception:
+                        manned_plan_mode = "normal"
 
                 def _build_0303():
                     start = time.perf_counter()
-                    plans = d0303.build_flight_plans(
-                        unmanned,
-                        wp_alloc,
-                        uav_cruise_speed,
-                        turn_step_deg=uav_turn_step,
-                        ref0203=mrpk_data,
-                    )
+                    with runtime_settings_override(runtime_payload):
+                        plans = d0303.build_flight_plans(
+                            unmanned,
+                            wp_alloc,
+                            uav_cruise_speed,
+                            turn_step_deg=uav_turn_step,
+                            ref0203=mrpk_data,
+                        )
                     return plans, (time.perf_counter() - start) * 1000.0
 
                 def _build_0304():
                     start = time.perf_counter()
-                    plans = d0304.build_lah_flight_plans_fixed(manned, cruise_speed=15.0, wp_alloc=wp_alloc)
+                    plans = d0304.build_lah_flight_plans_fixed(
+                        manned,
+                        cruise_speed=15.0,
+                        manned_plan_mode=manned_plan_mode,
+                        wp_alloc=wp_alloc,
+                    )
                     return plans, (time.perf_counter() - start) * 1000.0
 
                 flight_plans_0303: list[dict] = []
@@ -4037,6 +4836,7 @@ class MainWindow(QMainWindow):
                     preferred_plan_id = None
                 plan_id = _allocate_plan_id(preferred_plan_id)
                 mp_json['missionPlanID'] = plan_id
+                imp_id_map = _allocate_imp_id_map(mp_json)
                 plan_meta_entry = plan_meta_map.setdefault(plan_id, {})
                 if variant_attack_context:
                     attack_meta = {
@@ -4236,6 +5036,11 @@ class MainWindow(QMainWindow):
                 pass
             _notify_failure_once(plan_log_stop_reason or "exception", exc=exc, detail=dict(plan_log_summary))
         finally:
+            if not success and self._planning_timer_started_at is not None:
+                try:
+                    self._mark_planning_metric_finish(reason, success=False)
+                except Exception:
+                    pass
             self._initplan_running = False
             final_status = "success" if success else plan_log_status
             summary_payload: Dict[str, Any] = {}
@@ -4285,15 +5090,17 @@ class MainWindow(QMainWindow):
             attack_plan_id = None
 
         provided_plan_ids = list(ctx.get("plan_ids") or [])
-        plan_ids = list(provided_plan_ids) or []
+        plan_ids = []
         if attack_plan_id is None:
-            attack_plan_id = plan_ids[0] if plan_ids else None
-        if plan_ids:
-            if attack_plan_id is not None and attack_plan_id not in plan_ids:
-                # Respect externally provided plan IDs; map attack result onto the first one.
-                attack_plan_id = plan_ids[0]
-        elif attack_plan_id is not None:
+            if provided_plan_ids:
+                try:
+                    attack_plan_id = int(provided_plan_ids[0])
+                except Exception:
+                    attack_plan_id = None
+        if attack_plan_id is not None:
             plan_ids = [attack_plan_id]
+        else:
+            plan_ids = list(provided_plan_ids)
         if not plan_ids:
             raise RuntimeError("Attack pipeline produced no mission plan IDs.")
 

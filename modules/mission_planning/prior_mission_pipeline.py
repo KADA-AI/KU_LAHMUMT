@@ -10,6 +10,9 @@ _PROJECT_ROOT_STR = str(_PROJECT_ROOT)
 if _PROJECT_ROOT_STR not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT_STR)
 
-from modules.mission_planning.pipelines.prior_mission_pipeline_impl import run_prior_mission_pipeline
+from modules.mission_planning.pipelines.prior_mission_pipeline_impl import (
+    run_prior_mission_pipeline,
+    warm_prior_mission_pipeline,
+)
 
-__all__ = ["run_prior_mission_pipeline"]
+__all__ = ["run_prior_mission_pipeline", "warm_prior_mission_pipeline"]

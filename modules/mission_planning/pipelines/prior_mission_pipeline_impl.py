@@ -57,6 +57,18 @@ def _next_path_id(aircraft_id: int) -> int:
     return _load_id_allocator().next_path_id(aircraft_id)
 
 
+def _reserve_imp_ids(count: int) -> List[int]:
+    return [int(v) for v in _load_id_allocator().reserve_imp_ids(count)]
+
+
+def _reserve_individual_mission_ids(count: int) -> List[int]:
+    return [int(v) for v in _load_id_allocator().reserve_individual_mission_ids(count)]
+
+
+def _reserve_path_ids(aircraft_id: int, count: int) -> List[int]:
+    return [int(v) for v in _load_id_allocator().reserve_path_ids(aircraft_id, count)]
+
+
 def _next_waypoint_id() -> int:
     return _load_id_allocator().next_waypoint_id()
 
@@ -94,6 +106,21 @@ def _sample_dem_altitude(lat: float, lon: float) -> Optional[float]:
     if not math.isfinite(value):
         return None
     return value
+
+
+def warm_prior_mission_pipeline() -> Dict[str, Any]:
+    """Preload lazy dependencies used by the prior-mission replan path."""
+    status: Dict[str, Any] = {
+        "id_allocator_loaded": False,
+        "mission_helpers_loaded": False,
+        "terrain_elev_available": False,
+    }
+    allocator = _load_id_allocator()
+    status["id_allocator_loaded"] = allocator is not None
+    helpers = _load_mission_helpers_module()
+    status["mission_helpers_loaded"] = helpers is not None
+    status["terrain_elev_available"] = callable(getattr(helpers, "terrain_elev", None)) if helpers else False
+    return status
 
 
 def _orientation_altitude(lat: Optional[float], lon: Optional[float], *, fallback: int = 0) -> int:
@@ -498,12 +525,9 @@ def run_prior_mission_pipeline(
             return None
 
         new_plan_id = plan_ids[0]
-        new_imp_id = _next_imp_id()
-        prior_individual_id = _next_individual_mission_id()
-        resume_individual_id = _next_individual_mission_id()
-        done_path_id = _next_path_id(aircraft_id)
-        prior_path_id = _next_path_id(aircraft_id)
-        resume_path_id = _next_path_id(aircraft_id)
+        [new_imp_id] = _reserve_imp_ids(1)
+        prior_individual_id, resume_individual_id = _reserve_individual_mission_ids(2)
+        done_path_id, prior_path_id, resume_path_id = _reserve_path_ids(aircraft_id, 3)
         prior_approach_wp_id = _next_waypoint_id()
         prior_target_wp_id = _next_waypoint_id()
         _log_step4_waypoint_allocation(
@@ -1555,10 +1579,9 @@ def _build_other_uav_resume_package(
         emit(f"[PRIOR][UAV] Failed to load artifacts for aircraft {aircraft_id}: {exc}")
         return None
 
-    new_imp_id = _next_imp_id()
-    done_path_id = _next_path_id(aircraft_id)
-    resume_path_id = _next_path_id(aircraft_id)
-    resume_individual_id = _next_individual_mission_id()
+    [new_imp_id] = _reserve_imp_ids(1)
+    done_path_id, resume_path_id = _reserve_path_ids(aircraft_id, 2)
+    [resume_individual_id] = _reserve_individual_mission_ids(1)
 
     mission_list = imp_data.get("individualMissionList") or []
     target_index = None

@@ -5,7 +5,8 @@ from typing import List, Dict, Set, Tuple
 
 from .mission_helpers import now_ms_since_2000
 from data_def.id_allocator import (
-    next_imp_id, next_individual_mission_id, next_path_id,
+    next_imp_id,
+    reserve_imp_ids, reserve_individual_mission_ids, reserve_path_ids,
 )
 
 
@@ -220,16 +221,40 @@ def build_mission_packages(
         grouped.setdefault(aid, []).append(m)
 
     out: list[dict] = []
+    pending_pkg_ids: dict[int, int] = {}
+    missing_pkg_aids = [aid for aid in grouped if not (plan_pkg_map or {}).get(aid)]
+    if missing_pkg_aids:
+        reserved_pkg_ids = reserve_imp_ids(len(missing_pkg_aids))
+        pending_pkg_ids = {
+            int(aid): int(pkg_id)
+            for aid, pkg_id in zip(missing_pkg_aids, reserved_pkg_ids)
+        }
     for aid, im_raw in grouped.items():
 
         # 2) 패키지 ID 결정
         pkg_id = plan_pkg_map.get(aid) if plan_pkg_map else None
+        if not pkg_id:
+            pkg_id = pending_pkg_ids.get(int(aid))
         if not pkg_id:
             pkg_id = next_imp_id()
 
         base_path   = _path_base(aid)
         upper_path  = base_path + 100_000_000
         seen_path: set[int] = set()
+        invalid_path_rows: list[dict] = []
+        for im in im_raw:
+            pid = im.get("pathID", 0)
+            if not (base_path <= pid < upper_path) or pid in seen_path:
+                invalid_path_rows.append(im)
+                continue
+            seen_path.add(pid)
+        reserved_path_ids_for_aid = (
+            reserve_path_ids(aid, len(invalid_path_rows))
+            if invalid_path_rows
+            else []
+        )
+        reserved_path_iter = iter(reserved_path_ids_for_aid)
+        seen_path.clear()
 
         # 3) PathID/필드 보정 ───────────────────────────
         fixed: list[dict] = []
@@ -239,7 +264,7 @@ def build_mission_packages(
             # ▸ PathID 충돌/범위 확인
             pid = im.get("pathID", 0)
             if not (base_path <= pid < upper_path) or pid in seen_path:
-                pid = next_path_id(aid)
+                pid = int(next(reserved_path_iter))
             im["pathID"] = pid
             seen_path.add(pid)
 
@@ -304,8 +329,9 @@ def build_mission_packages(
 
         # 4) PathID 기준 정렬 → IM-ID 재발급
         fixed.sort(key=lambda m: m["pathID"])
-        for im in fixed:
-            im["individualMissionID"] = next_individual_mission_id()
+        reserved_im_ids = reserve_individual_mission_ids(len(fixed)) if fixed else []
+        for im, im_id in zip(fixed, reserved_im_ids):
+            im["individualMissionID"] = int(im_id)
 
         # 5) 필드 순서/정리(불필요 키 제거)
         ordered_list: list[dict] = []

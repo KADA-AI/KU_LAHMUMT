@@ -228,12 +228,78 @@ def _next(key: str, inc: int = 1, subkey=None) -> int:
             _record_path_usage(subkey, cur)
         return cur
 
+
+def _reserve_range(key: str, count: int, subkey=None) -> tuple[int, int]:
+    count_int = max(0, int(count or 0))
+    if count_int <= 0:
+        raise ValueError("count must be >= 1")
+
+    with _LOCK:
+        if key in VOLATILE_KEYS:
+            if subkey is not None:
+                raise ValueError(f"volatile key '{key}' does not support subkey allocation")
+            current_base = _volatile_counters.get(key, BASE[key] - 1)
+            start = int(current_base + 1)
+            end = int(current_base + count_int)
+            _volatile_counters[key] = end
+            if key == "waypoint":
+                _record_waypoint_usage(end)
+            return start, end
+
+        disk_state = _read_store_state()
+
+        if subkey is None:
+            current_base = BASE.get(key, 0) - 1
+            try:
+                disk_value = int(disk_state.get(key, current_base))
+            except (TypeError, ValueError):
+                disk_value = current_base
+            try:
+                mem_value = int(_state.get(key, current_base))
+            except (TypeError, ValueError):
+                mem_value = current_base
+            start = int(max(mem_value, disk_value) + 1)
+            end = int(start + count_int - 1)
+            _state[key] = end
+        else:
+            path_map = _state.setdefault(key, {})
+            disk_map = disk_state.get(key, {})
+            base_value = BASE[key][subkey] - 1
+            try:
+                disk_value = int(disk_map.get(subkey, base_value))
+            except (TypeError, ValueError):
+                disk_value = base_value
+            try:
+                mem_value = int(path_map.get(subkey, base_value))
+            except (TypeError, ValueError):
+                mem_value = base_value
+            start = int(max(mem_value, disk_value) + 1)
+            end = int(start + count_int - 1)
+            path_map[subkey] = end
+
+        _save(_state)
+        if key == "pathID" and subkey is not None:
+            _record_path_usage(subkey, end)
+        return start, end
+
 # ── public helpers ──────────────────────────────────────────
 def next_mission_plan_id():            return _next("missionPlanID")
 def next_imp_id():                     return _next("individualMissionPackage")
 def next_individual_mission_id():      return _next("individualMission")
 def next_path_id(aircraft_id: int):    return _next("pathID", subkey=aircraft_id)
 def next_waypoint_id():                return _next("waypoint")
+def reserve_mission_plan_ids(count: int):
+    start, end = _reserve_range("missionPlanID", count)
+    return list(range(start, end + 1))
+def reserve_imp_ids(count: int):
+    start, end = _reserve_range("individualMissionPackage", count)
+    return list(range(start, end + 1))
+def reserve_individual_mission_ids(count: int):
+    start, end = _reserve_range("individualMission", count)
+    return list(range(start, end + 1))
+def reserve_path_ids(aircraft_id: int, count: int):
+    start, end = _reserve_range("pathID", count, subkey=aircraft_id)
+    return list(range(start, end + 1))
 def reserve_waypoint_block(count: int) -> int:
     count_int = max(0, int(count or 0))
     if count_int <= 0:

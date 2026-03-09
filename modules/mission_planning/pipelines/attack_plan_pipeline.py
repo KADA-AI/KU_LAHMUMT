@@ -27,6 +27,7 @@ for _candidate in (_PROJECT_ROOT, _ATTACK_ROOT, _MP_DIR):
         sys.path.insert(0, _candidate_str)
 
 from modules.mission_planning.pipelines.prior_mission_pipeline_impl import (
+    _build_other_uav_resume_package,
     _load_latest_mission_progress_plan_id,
     _normalize_altitude_value,
     _project_coordinate,
@@ -34,9 +35,10 @@ from modules.mission_planning.pipelines.prior_mission_pipeline_impl import (
     _scan_latest_source_plan_id,
     _bearing_between,
     _next_imp_id,
-    _next_individual_mission_id,
-    _next_path_id,
     _next_waypoint_id,
+    _reserve_individual_mission_ids,
+    _reserve_path_ids,
+    warm_prior_mission_pipeline,
 )
 from modules.mission_planning.pipelines.mission_path_trim import (
     load_sweep_progress,
@@ -51,6 +53,45 @@ LOG_FILENAME = "log_attack_algorithm.json"
 ATTACK_ENTRY_OFFSET_METERS = 100.0
 ATTACK_RESUME_OFFSET_METERS = 20.0
 ATTACK_MANNED_CANDIDATES = (2, 3)
+_MISSION_PLAN_START = 700_000_001
+
+
+def warm_attack_plan_pipeline() -> Dict[str, Any]:
+    """Preload lazy dependencies used by the attack replan path."""
+    status: Dict[str, Any] = {"prior_pipeline": warm_prior_mission_pipeline()}
+    try:
+        from modules.mission_planning.MissionPlanner.data_def import (
+            lah_attack_assistance as attack_assist,
+        )
+    except BaseException as exc:
+        status["lah_attack_assistance_loaded"] = False
+        status["lah_attack_assistance_error"] = str(exc)
+        return status
+
+    status["lah_attack_assistance_loaded"] = attack_assist is not None
+    status["compute_attack_point_available"] = callable(
+        getattr(attack_assist, "calculate_attack_point", None)
+    )
+    return status
+
+
+def _allocate_fresh_plan_id() -> int:
+    plan_dir = db_paths.get_db_subpath("MissionPlan")
+    try:
+        plan_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    used: set[int] = set()
+    try:
+        for item in plan_dir.glob("*.json"):
+            stem = item.stem
+            if stem.isdigit():
+                used.add(int(stem))
+    except Exception:
+        pass
+    if not used:
+        return int(_MISSION_PLAN_START)
+    return int(max(used) + 1)
 
 
 def run_attack_plan_pipeline(
@@ -240,6 +281,135 @@ def run_attack_plan_pipeline(
         )
 
     return _persist_attack_log(attack_log)
+
+
+def run_attack_exclusion_pipeline(
+    ctx: Dict[str, Any],
+    log_callback: Optional[LogCallback] = None,
+) -> Dict[str, Any]:
+    """
+    Build an attack-exclusion plan by trimming each UAV mission to its
+    current resume portion, using the same logic as the non-selected UAV
+    branch of the prior-mission pipeline.
+    """
+
+    log_messages: List[str] = []
+    result_payload: Dict[str, Any] = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "context": _json_safe(
+            {
+                "reason": ctx.get("reason"),
+                "replan_level": ctx.get("replan_level"),
+                "mission_ids": ctx.get("mission_ids"),
+                "option_names": ctx.get("option_names"),
+            }
+        ),
+        "result": {},
+        "logMessages": log_messages,
+    }
+
+    def _emit(message: str) -> None:
+        log_messages.append(message)
+        if log_callback:
+            log_callback(f"[ATTACK-EXCLUDE] {message}")
+
+    source_plan_id = _to_int(
+        ctx.get("sourceMissionPlanID")
+        or ctx.get("source_plan_id")
+        or ctx.get("currentMissionPlanID")
+        or ctx.get("missionPlanID")
+    )
+    if source_plan_id is None:
+        source_plan_id = _load_latest_mission_progress_plan_id() or _scan_latest_source_plan_id()
+    if source_plan_id is None:
+        _emit("원본 MissionPlan을 찾지 못해 공격 배제 계획을 생성할 수 없습니다.")
+        result_payload["result"] = {"error": "source_plan_not_found"}
+        return result_payload
+
+    try:
+        plan_src = db_paths.get_db_subpath("MissionPlan", f"{int(source_plan_id)}.json")
+        plan_data = json.loads(plan_src.read_text(encoding="utf-8"))
+    except Exception as exc:
+        _emit(f"원본 MissionPlan {source_plan_id} 로드 실패: {exc}")
+        result_payload["result"] = {
+            "error": "source_plan_load_failed",
+            "sourcePlanID": int(source_plan_id),
+        }
+        return result_payload
+
+    agent_snapshot = agent_status_snapshot.load_agent_status_snapshot() or {}
+    agent_states = agent_snapshot.get("agent_states") or []
+    agent_index = _index_agent_states(agent_states)
+    sweep_progress = load_sweep_progress()
+
+    new_plan_id = _allocate_fresh_plan_id()
+    now_ms = _now_timestamp_ms()
+    new_plan_data = deepcopy(plan_data)
+    new_plan_data["missionPlanID"] = new_plan_id
+    new_plan_data["timestamp"] = now_ms
+    if "missionPlanTimestamp" in new_plan_data:
+        new_plan_data["missionPlanTimestamp"] = now_ms
+
+    aircraft_updates: List[Dict[str, Any]] = []
+    unchanged_aircraft: List[int] = []
+    for entry in new_plan_data.get("aircraftList", []):
+        aircraft_id = _to_int(entry.get("aircraftID"))
+        if aircraft_id is None:
+            continue
+        if aircraft_id <= 3:
+            unchanged_aircraft.append(aircraft_id)
+            continue
+
+        state = agent_index.get(aircraft_id) or {}
+        current_wp = _to_int(state.get("current_waypoint_id"))
+        current_coord = state.get("coordinate") if isinstance(state, dict) else None
+        if current_wp is None:
+            _emit(f"UAV {aircraft_id} currentWaypointID가 없어 기존 개별임무를 유지합니다.")
+            unchanged_aircraft.append(aircraft_id)
+            continue
+
+        update = _build_other_uav_resume_package(
+            source_plan_id=int(source_plan_id),
+            aircraft_id=int(aircraft_id),
+            current_waypoint_id=current_wp,
+            current_coord=current_coord,
+            emit=_emit,
+            now_ms=now_ms,
+            sweep_progress=sweep_progress,
+        )
+        if not update:
+            _emit(f"UAV {aircraft_id} resume 임무 생성에 실패하여 기존 개별임무를 유지합니다.")
+            unchanged_aircraft.append(aircraft_id)
+            continue
+
+        entry["individualMissionPackageID"] = int(update["individualMissionPackageID"])
+        aircraft_updates.append(update)
+
+    if not aircraft_updates:
+        _emit("공격 배제용 UAV 재개 임무가 생성되지 않았습니다.")
+        result_payload["result"] = {
+            "error": "no_updates",
+            "sourcePlanID": int(source_plan_id),
+            "unchangedAircraft": unchanged_aircraft,
+        }
+        return result_payload
+
+    plan_dest = db_paths.get_db_subpath("MissionPlan", f"{new_plan_id}.json")
+    plan_dest.parent.mkdir(parents=True, exist_ok=True)
+    _write_json_file(plan_dest, new_plan_data)
+    _emit(f"공격 배제 MissionPlan 저장 -> {plan_dest.name} (planID={new_plan_id})")
+
+    result_payload["result"] = {
+        "sourcePlanID": int(source_plan_id),
+        "missionPlanID": int(new_plan_id),
+        "planPath": str(plan_dest),
+        "missionUpdates": {
+            "mode": "attack_exclusion",
+            "aircraft": aircraft_updates,
+            "unchangedAircraft": unchanged_aircraft,
+        },
+    }
+    return result_payload
 
 
 def _select_preferred_manned_aircraft(
@@ -700,16 +870,11 @@ def _apply_attack_plan_overrides(
 
     sweep_progress = load_sweep_progress()
 
-    plan_ids_ctx = []
-    for value in ctx.get("plan_ids") or []:
-        value_int = _to_int(value)
-        if value_int is not None:
-            plan_ids_ctx.append(value_int)
-    if plan_ids_ctx:
-        new_plan_id = plan_ids_ctx[0]
-    else:
-        new_plan_id = source_plan_id
-        emit("[ATTACK] No missionPlanID supplied; falling back to source plan ID")
+    new_plan_id = _allocate_fresh_plan_id()
+    emit(
+        "[ATTACK] Allocated fresh missionPlanID "
+        f"{new_plan_id} (sourcePlanID={source_plan_id})"
+    )
 
     new_plan_data = deepcopy(plan_data)
     now_ms = _now_timestamp_ms()
@@ -1202,11 +1367,15 @@ def _clone_follow_up_missions(
     missions: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
     cloned: List[Dict[str, Any]] = []
+    pending: List[Dict[str, Any]] = []
     for mission in missions:
         if not isinstance(mission, dict):
             continue
+        pending.append(mission)
+    reserved_ids = _reserve_individual_mission_ids(len(pending)) if pending else []
+    for mission, mission_id in zip(pending, reserved_ids):
         copied = deepcopy(mission)
-        copied["individualMissionID"] = _next_individual_mission_id()
+        copied["individualMissionID"] = int(mission_id)
         copied["isDone"] = False
         cloned.append(copied)
     return cloned
@@ -1276,11 +1445,8 @@ def _build_uav_attack_tracking_package(
     if target_coord_norm.get("altitude") is None:
         target_coord_norm["altitude"] = _normalize_altitude_value(agent_coord.get("altitude")) or 700
 
-    done_path_id = _next_path_id(descriptor["aircraft_id"])
-    attack_path_id = _next_path_id(descriptor["aircraft_id"])
-    resume_path_id = _next_path_id(descriptor["aircraft_id"])
-    tracking_individual_id = _next_individual_mission_id()
-    resume_individual_id = _next_individual_mission_id()
+    done_path_id, attack_path_id, resume_path_id = _reserve_path_ids(descriptor["aircraft_id"], 3)
+    tracking_individual_id, resume_individual_id = _reserve_individual_mission_ids(2)
     target_wp_id = _next_waypoint_id()
     tracking_target_id = _to_int(descriptor.get("target_id"))
     if tracking_target_id is None:
@@ -1338,16 +1504,29 @@ def _build_uav_attack_tracking_package(
     mission_resume["pathID"] = resume_path_id
     mission_resume["relatedMission"] = resume_rel
     mission_resume["isDone"] = False
-
-    done_waypoints, resume_waypoints, removed_wp_id = _split_done_resume_path(
-        fp_data,
-        artifacts=artifacts,
-        sweep_progress=sweep_progress,
-        emit=emit,
-        force_nonempty_resume=True,
-        append_replan_anchor=True,
-        replan_coordinate=agent_coord,
-    )
+    source_waypoints = list(fp_data.get("waypointList") or [])
+    source_single_point = len(source_waypoints) <= 1
+    if source_single_point:
+        done_waypoints = deepcopy(source_waypoints)
+        for wp in done_waypoints:
+            if isinstance(wp, dict):
+                wp["isDone"] = True
+        resume_waypoints = []
+        removed_wp_id = _to_int((done_waypoints[-1] or {}).get("waypointID")) if done_waypoints else None
+        emit(
+            "[ATTACK][UAV] Source path has a single waypoint; "
+            "preserving it as done and skipping done/resume split."
+        )
+    else:
+        done_waypoints, resume_waypoints, removed_wp_id = _split_done_resume_path(
+            fp_data,
+            artifacts=artifacts,
+            sweep_progress=sweep_progress,
+            emit=emit,
+            force_nonempty_resume=True,
+            append_replan_anchor=True,
+            replan_coordinate=agent_coord,
+        )
 
     preserved_individual_id = _to_int(original_entry.get("individualMissionID"))
     done_fp_data = deepcopy(fp_data)
@@ -1539,9 +1718,8 @@ def _build_uav_attack_resume_package(
         emit("[ATTACK][UAV] Target mission index unavailable; skipping UAV resume.")
         return None
 
-    done_path_id = _next_path_id(descriptor["aircraft_id"])
-    resume_path_id = _next_path_id(descriptor["aircraft_id"])
-    resume_individual_id = _next_individual_mission_id()
+    done_path_id, resume_path_id = _reserve_path_ids(descriptor["aircraft_id"], 2)
+    [resume_individual_id] = _reserve_individual_mission_ids(1)
 
     original_entry = deepcopy(target_mission_template)
     base_rel_block = dict(original_entry.get("relatedMission") or {})
@@ -1731,10 +1909,8 @@ def _build_lah_attack_package(
             resume_start_coord["longitude"] = projected_resume.get("longitude", resume_start_coord.get("longitude"))
     resume_start_coord["altitude"] = attack_coord_norm.get("altitude")
 
-    attack_path_id = _next_path_id(aircraft_id)
-    return_path_id = _next_path_id(aircraft_id)
-    attack_individual_id = _next_individual_mission_id()
-    return_individual_id = _next_individual_mission_id()
+    attack_path_id, return_path_id = _reserve_path_ids(aircraft_id, 2)
+    attack_individual_id, return_individual_id = _reserve_individual_mission_ids(2)
     entry_wp_id = _next_waypoint_id()
     attack_wp_id = _next_waypoint_id()
     egress_start_wp_id = _next_waypoint_id()

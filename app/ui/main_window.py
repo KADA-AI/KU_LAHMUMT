@@ -15,7 +15,7 @@ import os, sys, subprocess, json, socket, shutil
 from pathlib import Path
 from modules.common import db_paths
 
-APP_TITLE = "KU Mission Decision Support Dashboard (v1.1.0)"
+APP_TITLE = "KU Mission Decision Support Dashboard (v1.2.0)"
 REFERENCE_PDF_PATH = db_paths.PROJECT_ROOT / "ref" / "04. 모듈 간 인터페이스 설계-v7-20260116_175548.pdf"
 if not REFERENCE_PDF_PATH.exists():
     REFERENCE_PDF_PATH = db_paths.PROJECT_ROOT / "ref" / "04. 모듈 간 인터페이스 설계-v7-20250917_133206.pdf"
@@ -81,7 +81,7 @@ class MainWindow(QMainWindow):
         title_lbl.setObjectName("MainTitle")
         title_lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         title_layout.addWidget(title_lbl)
-        subtitle_lbl = QLabel("최근 업데이트 날짜 : 26-03-09", title_wrap)
+        subtitle_lbl = QLabel("최근 업데이트 날짜 : 26-03-10", title_wrap)
         subtitle_lbl.setObjectName("MainSubtitle")
         subtitle_lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         title_layout.addWidget(subtitle_lbl)
