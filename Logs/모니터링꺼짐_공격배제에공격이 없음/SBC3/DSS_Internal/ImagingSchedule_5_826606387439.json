@@ -1,0 +1,44 @@
+{
+  "timestamp": 826606387439,
+  "reason": "000 경로 스케줄 미준수로 인한 재계획",
+  "sourceMissionPlanID": 700000169,
+  "aircraftID": 5,
+  "sourceIndividualMissionPackageID": 800000588,
+  "sourceIndividualMissionID": 900004397,
+  "sourcePathID": 500000977,
+  "currentWaypointID": 111,
+  "replacedWaypointID": 111,
+  "newWaypointID": 2,
+  "generatedMissionPlanID": 700000170,
+  "generatedIndividualMissionPackageID": 800000591,
+  "generatedIndividualMissionID": 900004431,
+  "generatedPathID": 500000993,
+  "logMessages": [
+    "[IMGSCH] stored imaging-schedule artifacts -> plan:700000170.json, imp:800000591.json, fp:500000993.json (4.2 ms)"
+  ],
+  "detail": {
+    "trigger": "0401",
+    "triggerType": "imagingScheduleDeviation",
+    "sourceMissionPlanID": 700000169,
+    "aircraftID": 5,
+    "inputMissionPackageID": 1,
+    "individualMissionPackageID": 800000588,
+    "individualMissionID": 900004397,
+    "pathID": 500000977,
+    "currentWaypointID": 111,
+    "currentWaypointCoordinate": {
+      "latitude": 37.900972,
+      "longitude": 128.151883,
+      "altitude": 1502.0
+    },
+    "patternType": 8,
+    "sensorType": null,
+    "operationMode": null,
+    "triggerProbability": 0.2,
+    "triggerRoll": 0.1646325506896128,
+    "selectedReplanReason": "000 경로 스케줄 미준수로 인한 재계획",
+    "timestamp": 826606387273,
+    "missionPlanID": 700000170,
+    "savedAt": "2026-03-12T04:53:07.273831+00:00"
+  }
+}

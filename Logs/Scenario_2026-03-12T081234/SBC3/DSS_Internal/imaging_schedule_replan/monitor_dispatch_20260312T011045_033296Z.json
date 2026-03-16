@@ -1,0 +1,28 @@
+{
+  "missionPlanID": 700123456,
+  "detailPath": "C:\\Users\\rain9\\Desktop\\LAH_MUMT\\branNew\\DSS_KU\\Logs\\Scenario_2026-03-12T081234\\SBC3\\DSS_Internal\\imaging_schedule_replan\\imaging_schedule_detail_700123456.json",
+  "detail": {
+    "trigger": "0401",
+    "triggerType": "imagingScheduleDeviation",
+    "sourceMissionPlanID": 700000001,
+    "aircraftID": 4,
+    "inputMissionPackageID": 100,
+    "individualMissionPackageID": 300,
+    "individualMissionID": 400,
+    "pathID": 500,
+    "currentWaypointID": 77,
+    "currentWaypointCoordinate": {
+      "latitude": 1.0,
+      "longitude": 2.0,
+      "altitude": null
+    },
+    "patternType": 6,
+    "sensorType": 1,
+    "operationMode": 2,
+    "triggerProbability": 0.2,
+    "triggerRoll": 0.13436424411240122,
+    "timestamp": 123456789
+  },
+  "savedAt": "2026-03-12T01:10:45.033450+00:00",
+  "stage": "monitor_dispatch"
+}

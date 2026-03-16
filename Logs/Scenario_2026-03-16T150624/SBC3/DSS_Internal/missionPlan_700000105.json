@@ -1,0 +1,90 @@
+{
+  "timestamp": "2026-03-16T06:16:31.790214+00:00",
+  "status": "success",
+  "stopReason": null,
+  "reason": "000 무인기 경로 미추종으로 인한 재계획",
+  "replanLevel": 3,
+  "sessionId": null,
+  "context": {
+    "plan_ids": [
+      700000105
+    ],
+    "option_names": [
+      "비행/촬영"
+    ],
+    "mission_ids": [
+      70000002
+    ],
+    "reason": "000 무인기 경로 미추종으로 인한 재계획",
+    "replan_level": 3
+  },
+  "planIds": [
+    700000105
+  ],
+  "summary": {
+    "mode": "pathDeviation",
+    "plan_ids": [
+      700000105
+    ],
+    "option_names": [
+      "비행/촬영"
+    ],
+    "log_path": "C:\\Users\\rain9\\Desktop\\LAH_MUMT\\branNew\\DSS_KU\\Logs\\Scenario_2026-03-16T150624\\SBC3\\DSS_Internal\\PathDeviation_5_826956991923.json",
+    "removed_waypoint_id": 83,
+    "inserted_waypoint_id": 905001
+  },
+  "steps": [
+    {
+      "step": "start",
+      "status": "info",
+      "detail": {
+        "reason": "000 무인기 경로 미추종으로 인한 재계획",
+        "plan_ids": [
+          700000105
+        ],
+        "replan_level": 3
+      }
+    },
+    {
+      "step": "path_deviation_pipeline",
+      "status": "success",
+      "detail": {
+        "mode": "pathDeviation",
+        "plan_ids": [
+          700000105
+        ],
+        "option_names": [
+          "비행/촬영"
+        ],
+        "log_path": "C:\\Users\\rain9\\Desktop\\LAH_MUMT\\branNew\\DSS_KU\\Logs\\Scenario_2026-03-16T150624\\SBC3\\DSS_Internal\\PathDeviation_5_826956991923.json",
+        "removed_waypoint_id": 83,
+        "inserted_waypoint_id": 905001
+      }
+    }
+  ],
+  "issues": [],
+  "messages": [
+    {
+      "ts": "2026-03-16T06:16:31.793328+00:00",
+      "text": "[STEP 0] Replan pipeline start (reason=000 무인기 경로 미추종으로 인한 재계획)"
+    },
+    {
+      "ts": "2026-03-16T06:16:31.822213+00:00",
+      "text": "[PATHDEV] Level-3 path deviation request detected. Using dedicated pipeline."
+    },
+    {
+      "ts": "2026-03-16T06:16:31.946595+00:00",
+      "text": "[PATHDEV] stored path-deviation artifacts -> plan:700000105.json, imp:800000460.json, fp:500000486.json (16.0 ms)"
+    },
+    {
+      "ts": "2026-03-16T06:16:31.951962+00:00",
+      "text": "[PATHDEV] log captured -> C:\\Users\\rain9\\Desktop\\LAH_MUMT\\branNew\\DSS_KU\\Logs\\Scenario_2026-03-16T150624\\SBC3\\DSS_Internal\\PathDeviation_5_826956991923.json"
+    },
+    {
+      "ts": "2026-03-16T06:16:31.965864+00:00",
+      "text": "[PATHDEV][DELIVERY] direct push start (planIds=700000105)"
+    }
+  ],
+  "missionPlanID": 700000105,
+  "logPath": "C:\\Users\\rain9\\Desktop\\LAH_MUMT\\branNew\\DSS_KU\\Logs\\Scenario_2026-03-16T150624\\SBC3\\DSS_Internal\\missionPlan_700000105.json"
+}

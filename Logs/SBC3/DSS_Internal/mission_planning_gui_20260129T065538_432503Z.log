@@ -1,0 +1,87 @@
+2026-01-29T06:55:38.441472Z [LOG] Mission planning log started: C:\Users\TRL98\Desktop\LAH_MUMT\branNew\Logs\Scenario_2026-01-29T155416\SBC3\DSS_Internal\mission_planning_gui_20260129T065538_432503Z.log
+2026-01-29T06:55:38.445459Z [0101] 모드 수신 리스너 등록 완료
+2026-01-29T06:55:38.941799Z [0102] NodeMessenger 초기화 대기 중 ? 자동 송신 보류
+2026-01-29T06:55:39.506997Z [BUS] NodeMessenger 초기화 완료
+2026-01-29T06:55:42.942528Z [MODE] 슬라이더 변경 → 대기모드
+2026-01-29T06:55:42.949916Z [0101/POLL] 모드 동기화 code=1
+2026-01-29T06:55:44.025663Z [INFO] Latest 0201 ID updated → 1
+2026-01-29T06:55:44.059415Z [INFO] Latest 0203 ID updated → 1
+2026-01-29T06:55:44.104177Z [AUTO] 0902 received (planIds=700000001)
+2026-01-29T06:55:44.104177Z [AUTO] replan pipeline scheduled after 0.1s delay
+2026-01-29T06:55:44.194965Z [MODE] 슬라이더 변경 → 대기모드
+2026-01-29T06:55:44.195962Z [0101/POLL] 모드 동기화 code=1
+2026-01-29T06:55:44.233833Z [0305] status=1, reason=초기임무재계획 전송
+2026-01-29T06:55:44.242803Z [INFO] Using latest 0201 ID 1 for inputMissionPackageID (fallback)
+2026-01-29T06:55:44.243800Z [INFO] Using latest 0203 ID 1 for missionReferencePackageID (fallback)
+2026-01-29T06:55:44.244796Z [STEP 0] Replan pipeline start (reason=초기임무재계획)
+2026-01-29T06:55:49.272164Z [INFO] UAV params loaded (cruise=40.00, turn_step=15.0)
+2026-01-29T06:55:49.272164Z [INFO] Latest input snapshot → 0201:ID=1,ts=822984907314,src=-, 0203:ID=1,ts=822984907308,src=-
+2026-01-29T06:55:49.272164Z [STEP 0] Using latest 0201 ID 1 (1.json)
+2026-01-29T06:55:49.272164Z [STEP 0] Using latest 0203 ID 1 (1.json)
+2026-01-29T06:55:49.272164Z [CHECK] 0201/0203 필수 데이터 확인 시작
+2026-01-29T06:55:49.272164Z [OK] 0201 inputMissionList 확인됨 (count=11) → 진행
+2026-01-29T06:55:49.287787Z [OK] 0201 availableAircraftList 확인됨 (count=6) → 진행
+2026-01-29T06:55:49.287787Z [OK] 0201 inputMissionPackageType=1 확인
+2026-01-29T06:55:49.287787Z [OK] 0201 mainSensor=1 확인
+2026-01-29T06:55:49.287787Z [CHECK] 0201 기체 수=6 (UAV=3, LAH=3)
+2026-01-29T06:55:49.287787Z [CHECK] 0201 임무: total=11 missingID=0 missingDetail=0 missingShape=0 unknownType=0 typeZero=0 lineOnlyViolation=0
+2026-01-29T06:55:49.287787Z [OK] 0203 takeOverInfoList 확인됨 (count=3) → 진행
+2026-01-29T06:55:49.287787Z [OK] 0203 handOverInfoList 확인됨 (count=3) → 진행
+2026-01-29T06:55:49.287787Z [OK] 0203 flightAreaList 확인됨 (count=1) → 진행
+2026-01-29T06:55:49.287787Z [CHECK] 0203 flightAreaList count=1
+2026-01-29T06:55:49.287787Z [STEP 1.1] Divide & Pattern start
+2026-01-29T06:55:49.287787Z [variant 1] [1] CMPK 로드
+2026-01-29T06:55:49.287787Z [variant 1]     ▸ VehicleStatus 적용: 사용 가능한 기체 [1, 2, 3, 4, 5, 6]
+2026-01-29T06:55:49.287787Z [variant 1]     MRPK 로드
+2026-01-29T06:55:49.287787Z [variant 1]     ▸ 로드 완료  (소요 0.01s)
+2026-01-29T06:55:49.287787Z [variant 1] [2] LAH 임무 저장 시작
+2026-01-29T06:55:49.553383Z [variant 1] [LAH1] LAH 임무파일 저장 → C:\Users\TRL98\Desktop\LAH_MUMT\branNew\Logs\Scenario_2026-01-29T155542\SBC3\mission_output\variant_01\IndividualMissionPlan_LAH001.json
+2026-01-29T06:55:49.553383Z [variant 1] [LAH2] LAH 임무파일 저장 → C:\Users\TRL98\Desktop\LAH_MUMT\branNew\Logs\Scenario_2026-01-29T155542\SBC3\mission_output\variant_01\IndividualMissionPlan_LAH002.json
+2026-01-29T06:55:49.553383Z [variant 1] [LAH3] LAH 임무파일 저장 → C:\Users\TRL98\Desktop\LAH_MUMT\branNew\Logs\Scenario_2026-01-29T155542\SBC3\mission_output\variant_01\IndividualMissionPlan_LAH003.json
+2026-01-29T06:55:49.553383Z [variant 1] [TIME] LAH save: 0.27s
+2026-01-29T06:55:49.553383Z [variant 1]     ▸ LAH 3개 파일 저장
+2026-01-29T06:55:49.553383Z [variant 1] [3] InputMission 분할
+2026-01-29T06:55:49.553383Z [variant 1] [3] InputMission 분할
+2026-01-29T06:55:49.553383Z [variant 1]     ▸ (1/11) inputMissionID=1 type=1
+2026-01-29T06:55:49.569006Z [variant 1]        └─ sub-area 3개 추가 (누적 3)
+2026-01-29T06:55:49.584629Z [variant 1]     ▸ (2/11) inputMissionID=2 type=1
+2026-01-29T06:57:57.714637Z [MODE] 슬라이더 변경 → 초기 임무 계획
+2026-01-29T06:57:57.730260Z [0101/POLL] 모드 동기화 code=2
+2026-01-29T06:57:57.886955Z [AUTO] 0902 received (planIds=700000002)
+2026-01-29T06:57:57.886955Z [AUTO] replan pipeline scheduled after 0.1s delay
+2026-01-29T06:57:58.017741Z [0305] status=1, reason=초기임무재계획 전송
+2026-01-29T06:57:58.021727Z [INFO] Using latest 0201 ID 1 for inputMissionPackageID (fallback)
+2026-01-29T06:57:58.022724Z [INFO] Using latest 0203 ID 1 for missionReferencePackageID (fallback)
+2026-01-29T06:57:58.023723Z [STEP 0] Replan pipeline start (reason=초기임무재계획)
+2026-01-29T06:57:58.033976Z [INFO] UAV params loaded (cruise=40.00, turn_step=15.0)
+2026-01-29T06:57:58.033976Z [INFO] Latest input snapshot → 0201:ID=1,ts=822985077704,src=-, 0203:ID=1,ts=822985077687,src=-
+2026-01-29T06:57:58.034977Z [STEP 0] Using latest 0201 ID 1 (1.json)
+2026-01-29T06:57:58.036970Z [STEP 0] Using latest 0203 ID 1 (1.json)
+2026-01-29T06:57:58.037966Z [CHECK] 0201/0203 필수 데이터 확인 시작
+2026-01-29T06:57:58.037966Z [OK] 0201 inputMissionList 확인됨 (count=11) → 진행
+2026-01-29T06:57:58.038962Z [OK] 0201 availableAircraftList 확인됨 (count=6) → 진행
+2026-01-29T06:57:58.038962Z [OK] 0201 inputMissionPackageType=1 확인
+2026-01-29T06:57:58.039959Z [OK] 0201 mainSensor=1 확인
+2026-01-29T06:57:58.040956Z [CHECK] 0201 기체 수=6 (UAV=3, LAH=3)
+2026-01-29T06:57:58.040956Z [CHECK] 0201 임무: total=11 missingID=0 missingDetail=0 missingShape=0 unknownType=0 typeZero=0 lineOnlyViolation=0
+2026-01-29T06:57:58.041952Z [OK] 0203 takeOverInfoList 확인됨 (count=3) → 진행
+2026-01-29T06:57:58.041952Z [OK] 0203 handOverInfoList 확인됨 (count=3) → 진행
+2026-01-29T06:57:58.042948Z [OK] 0203 flightAreaList 확인됨 (count=1) → 진행
+2026-01-29T06:57:58.042948Z [CHECK] 0203 flightAreaList count=1
+2026-01-29T06:57:58.049389Z [STEP 1.1] Divide & Pattern start
+2026-01-29T06:57:58.050387Z [variant 1] [1] CMPK 로드
+2026-01-29T06:57:58.051385Z [variant 1]     ▸ VehicleStatus 적용: 사용 가능한 기체 [1, 2, 3, 4, 5, 6]
+2026-01-29T06:57:58.051385Z [variant 1]     MRPK 로드
+2026-01-29T06:57:58.052381Z [variant 1]     ▸ 로드 완료  (소요 0.01s)
+2026-01-29T06:57:58.053377Z [variant 1] [2] LAH 임무 저장 시작
+2026-01-29T06:57:58.560747Z [variant 1] [LAH1] LAH 임무파일 저장 → C:\Users\TRL98\Desktop\LAH_MUMT\branNew\Logs\Scenario_2026-01-29T155542\SBC3\mission_output\variant_01\IndividualMissionPlan_LAH001.json
+2026-01-29T06:57:58.562741Z [variant 1] [LAH2] LAH 임무파일 저장 → C:\Users\TRL98\Desktop\LAH_MUMT\branNew\Logs\Scenario_2026-01-29T155542\SBC3\mission_output\variant_01\IndividualMissionPlan_LAH002.json
+2026-01-29T06:57:58.563737Z [variant 1] [LAH3] LAH 임무파일 저장 → C:\Users\TRL98\Desktop\LAH_MUMT\branNew\Logs\Scenario_2026-01-29T155542\SBC3\mission_output\variant_01\IndividualMissionPlan_LAH003.json
+2026-01-29T06:57:58.565237Z [variant 1] [TIME] LAH save: 0.53s
+2026-01-29T06:57:58.565237Z [variant 1]     ▸ LAH 3개 파일 저장
+2026-01-29T06:57:58.565237Z [variant 1] [3] InputMission 분할
+2026-01-29T06:57:58.565237Z [variant 1] [3] InputMission 분할
+2026-01-29T06:57:58.565237Z [variant 1]     ▸ (1/11) inputMissionID=1 type=1
+2026-01-29T06:57:58.565237Z [variant 1]        └─ sub-area 3개 추가 (누적 3)
+2026-01-29T06:57:58.565237Z [variant 1]     ▸ (2/11) inputMissionID=2 type=1
+2026-01-29T07:03:11.472597Z [MODE] 슬라이더 변경 → 임무 수행

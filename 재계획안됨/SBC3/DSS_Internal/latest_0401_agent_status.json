@@ -1,0 +1,521 @@
+{
+  "saved_at": "2026-03-11T08:37:09.684697+00:00",
+  "agent_states": [
+    {
+      "aircraftID": 1,
+      "isUnmanned": false,
+      "coordinate": {
+        "latitude": 37.88019943237305,
+        "longitude": 128.1441650390625,
+        "altitude": 649
+      },
+      "velocity": {
+        "speed": 2.4601773475296795e-05,
+        "heading": 352.2094421386719
+      },
+      "fuel": 0.0,
+      "health": 1,
+      "lastSignalTime": 1010109739456,
+      "mannedInfo": {
+        "weapons": {
+          "type1": 0,
+          "type2": 0,
+          "type3": 0
+        },
+        "datalinkStatus": {
+          "isConnectedToUAV1": true,
+          "isConnectedToUAV2": true,
+          "isConnectedToUAV3": true
+        }
+      }
+    },
+    {
+      "aircraftID": 2,
+      "isUnmanned": false,
+      "coordinate": {
+        "latitude": 37.89453125,
+        "longitude": 128.1514129638672,
+        "altitude": 1199
+      },
+      "velocity": {
+        "speed": 0.0,
+        "heading": 0.004447427578270435
+      },
+      "fuel": 1200.0,
+      "health": 1,
+      "lastSignalTime": 451780768192,
+      "mannedInfo": {
+        "weapons": {
+          "type1": 500,
+          "type2": 7,
+          "type3": 2
+        },
+        "datalinkStatus": {
+          "isConnectedToUAV1": true,
+          "isConnectedToUAV2": true,
+          "isConnectedToUAV3": true
+        }
+      }
+    },
+    {
+      "aircraftID": 3,
+      "isUnmanned": false,
+      "coordinate": {
+        "latitude": 37.8807487487793,
+        "longitude": 128.14498901367188,
+        "altitude": 1198
+      },
+      "velocity": {
+        "speed": 0.0,
+        "heading": 0.007255206350237131
+      },
+      "fuel": 1200.0,
+      "health": 1,
+      "lastSignalTime": 593514688960,
+      "mannedInfo": {
+        "weapons": {
+          "type1": 500,
+          "type2": 7,
+          "type3": 2
+        },
+        "datalinkStatus": {
+          "isConnectedToUAV1": true,
+          "isConnectedToUAV2": true,
+          "isConnectedToUAV3": true
+        }
+      }
+    },
+    {
+      "aircraftID": 4,
+      "isUnmanned": true,
+      "coordinate": {
+        "latitude": 37.90031051635742,
+        "longitude": 128.15509033203125,
+        "altitude": 1479
+      },
+      "velocity": {
+        "speed": 39.86132049560547,
+        "heading": 8.3935546875
+      },
+      "fuel": 12.300000190734863,
+      "health": 1,
+      "lastSignalTime": 249917305280,
+      "unmannedInfo": {
+        "currentWaypointID": {
+          "waypointID": 57
+        },
+        "flightMode": 7,
+        "sensorInfo": {
+          "operationalMode": 2,
+          "sensorType": 1,
+          "fov": 4.397345066070557,
+          "centerCoordinate": {
+            "latitude": 37.9041633605957,
+            "longitude": 128.1488037109375,
+            "altitude": 1655
+          },
+          "footprintCornerList": [
+            {
+              "latitude": 37.9039421081543,
+              "longitude": 128.14837646484375,
+              "altitude": 1655
+            },
+            {
+              "latitude": 37.9046745300293,
+              "longitude": 128.1486358642578,
+              "altitude": 1655
+            },
+            {
+              "latitude": 37.904380798339844,
+              "longitude": 128.14920043945312,
+              "altitude": 1655
+            },
+            {
+              "latitude": 37.9036750793457,
+              "longitude": 128.1489715576172,
+              "altitude": 1655
+            }
+          ]
+        },
+        "payloadHealth": 1,
+        "fuelWarning": 1,
+        "onMission": 2
+      }
+    },
+    {
+      "aircraftID": 5,
+      "isUnmanned": true,
+      "coordinate": {
+        "latitude": 37.900550842285156,
+        "longitude": 128.15882873535156,
+        "altitude": 1485
+      },
+      "velocity": {
+        "speed": 39.9151611328125,
+        "heading": -0.7305908203125
+      },
+      "fuel": 12.300000190734863,
+      "health": 1,
+      "lastSignalTime": 589219721664,
+      "unmannedInfo": {
+        "currentWaypointID": {
+          "waypointID": 110
+        },
+        "flightMode": 7,
+        "sensorInfo": {
+          "operationalMode": 2,
+          "sensorType": 1,
+          "fov": 4.397345066070557,
+          "centerCoordinate": {
+            "latitude": 37.903587341308594,
+            "longitude": 128.15252685546875,
+            "altitude": 1664
+          },
+          "footprintCornerList": [
+            {
+              "latitude": 37.903350830078125,
+              "longitude": 128.15211486816406,
+              "altitude": 1664
+            },
+            {
+              "latitude": 37.903995513916016,
+              "longitude": 128.1523895263672,
+              "altitude": 1664
+            },
+            {
+              "latitude": 37.903785705566406,
+              "longitude": 128.15298461914062,
+              "altitude": 1664
+            },
+            {
+              "latitude": 37.90313720703125,
+              "longitude": 128.1527862548828,
+              "altitude": 1664
+            }
+          ]
+        },
+        "payloadHealth": 1,
+        "fuelWarning": 1,
+        "onMission": 2
+      }
+    },
+    {
+      "aircraftID": 6,
+      "isUnmanned": true,
+      "coordinate": {
+        "latitude": 37.90213394165039,
+        "longitude": 128.15345764160156,
+        "altitude": 1498
+      },
+      "velocity": {
+        "speed": 39.9151611328125,
+        "heading": -136.0601806640625
+      },
+      "fuel": 12.300000190734863,
+      "health": 1,
+      "lastSignalTime": 803968086464,
+      "unmannedInfo": {
+        "currentWaypointID": {
+          "waypointID": 163
+        },
+        "flightMode": 7,
+        "sensorInfo": {
+          "operationalMode": 2,
+          "sensorType": 1,
+          "fov": 4.397345066070557,
+          "centerCoordinate": {
+            "latitude": 37.903011322021484,
+            "longitude": 128.15626525878906,
+            "altitude": 1699
+          },
+          "footprintCornerList": [
+            {
+              "latitude": 37.903194427490234,
+              "longitude": 128.1565704345703,
+              "altitude": 1699
+            },
+            {
+              "latitude": 37.902713775634766,
+              "longitude": 128.1562957763672,
+              "altitude": 1699
+            },
+            {
+              "latitude": 37.902828216552734,
+              "longitude": 128.1559600830078,
+              "altitude": 1699
+            },
+            {
+              "latitude": 37.9033088684082,
+              "longitude": 128.15621948242188,
+              "altitude": 1699
+            }
+          ]
+        },
+        "payloadHealth": 1,
+        "fuelWarning": 1,
+        "onMission": 2
+      }
+    }
+  ],
+  "raw": {
+    "timestamp": 826533429482,
+    "source": "DSC",
+    "agentStateList": [
+      {
+        "aircraftID": 1,
+        "isUnmanned": false,
+        "coordinate": {
+          "latitude": 37.88019943237305,
+          "longitude": 128.1441650390625,
+          "altitude": 649
+        },
+        "velocity": {
+          "speed": 2.4601773475296795e-05,
+          "heading": 352.2094421386719
+        },
+        "fuel": 0.0,
+        "health": 1,
+        "lastSignalTime": 1010109739456,
+        "mannedInfo": {
+          "weapons": {
+            "type1": 0,
+            "type2": 0,
+            "type3": 0
+          },
+          "datalinkStatus": {
+            "isConnectedToUAV1": true,
+            "isConnectedToUAV2": true,
+            "isConnectedToUAV3": true
+          }
+        }
+      },
+      {
+        "aircraftID": 2,
+        "isUnmanned": false,
+        "coordinate": {
+          "latitude": 37.89453125,
+          "longitude": 128.1514129638672,
+          "altitude": 1199
+        },
+        "velocity": {
+          "speed": 0.0,
+          "heading": 0.004447427578270435
+        },
+        "fuel": 1200.0,
+        "health": 1,
+        "lastSignalTime": 451780768192,
+        "mannedInfo": {
+          "weapons": {
+            "type1": 500,
+            "type2": 7,
+            "type3": 2
+          },
+          "datalinkStatus": {
+            "isConnectedToUAV1": true,
+            "isConnectedToUAV2": true,
+            "isConnectedToUAV3": true
+          }
+        }
+      },
+      {
+        "aircraftID": 3,
+        "isUnmanned": false,
+        "coordinate": {
+          "latitude": 37.8807487487793,
+          "longitude": 128.14498901367188,
+          "altitude": 1198
+        },
+        "velocity": {
+          "speed": 0.0,
+          "heading": 0.007255206350237131
+        },
+        "fuel": 1200.0,
+        "health": 1,
+        "lastSignalTime": 593514688960,
+        "mannedInfo": {
+          "weapons": {
+            "type1": 500,
+            "type2": 7,
+            "type3": 2
+          },
+          "datalinkStatus": {
+            "isConnectedToUAV1": true,
+            "isConnectedToUAV2": true,
+            "isConnectedToUAV3": true
+          }
+        }
+      },
+      {
+        "aircraftID": 4,
+        "isUnmanned": true,
+        "coordinate": {
+          "latitude": 37.90031051635742,
+          "longitude": 128.15509033203125,
+          "altitude": 1479
+        },
+        "velocity": {
+          "speed": 39.86132049560547,
+          "heading": 8.3935546875
+        },
+        "fuel": 12.300000190734863,
+        "health": 1,
+        "lastSignalTime": 249917305280,
+        "unmannedInfo": {
+          "currentWaypointID": {
+            "waypointID": 57
+          },
+          "flightMode": 7,
+          "sensorInfo": {
+            "operationalMode": 2,
+            "sensorType": 1,
+            "fov": 4.397345066070557,
+            "centerCoordinate": {
+              "latitude": 37.9041633605957,
+              "longitude": 128.1488037109375,
+              "altitude": 1655
+            },
+            "footprintCornerList": [
+              {
+                "latitude": 37.9039421081543,
+                "longitude": 128.14837646484375,
+                "altitude": 1655
+              },
+              {
+                "latitude": 37.9046745300293,
+                "longitude": 128.1486358642578,
+                "altitude": 1655
+              },
+              {
+                "latitude": 37.904380798339844,
+                "longitude": 128.14920043945312,
+                "altitude": 1655
+              },
+              {
+                "latitude": 37.9036750793457,
+                "longitude": 128.1489715576172,
+                "altitude": 1655
+              }
+            ]
+          },
+          "payloadHealth": 1,
+          "fuelWarning": 1,
+          "onMission": 2
+        }
+      },
+      {
+        "aircraftID": 5,
+        "isUnmanned": true,
+        "coordinate": {
+          "latitude": 37.900550842285156,
+          "longitude": 128.15882873535156,
+          "altitude": 1485
+        },
+        "velocity": {
+          "speed": 39.9151611328125,
+          "heading": -0.7305908203125
+        },
+        "fuel": 12.300000190734863,
+        "health": 1,
+        "lastSignalTime": 589219721664,
+        "unmannedInfo": {
+          "currentWaypointID": {
+            "waypointID": 110
+          },
+          "flightMode": 7,
+          "sensorInfo": {
+            "operationalMode": 2,
+            "sensorType": 1,
+            "fov": 4.397345066070557,
+            "centerCoordinate": {
+              "latitude": 37.903587341308594,
+              "longitude": 128.15252685546875,
+              "altitude": 1664
+            },
+            "footprintCornerList": [
+              {
+                "latitude": 37.903350830078125,
+                "longitude": 128.15211486816406,
+                "altitude": 1664
+              },
+              {
+                "latitude": 37.903995513916016,
+                "longitude": 128.1523895263672,
+                "altitude": 1664
+              },
+              {
+                "latitude": 37.903785705566406,
+                "longitude": 128.15298461914062,
+                "altitude": 1664
+              },
+              {
+                "latitude": 37.90313720703125,
+                "longitude": 128.1527862548828,
+                "altitude": 1664
+              }
+            ]
+          },
+          "payloadHealth": 1,
+          "fuelWarning": 1,
+          "onMission": 2
+        }
+      },
+      {
+        "aircraftID": 6,
+        "isUnmanned": true,
+        "coordinate": {
+          "latitude": 37.90213394165039,
+          "longitude": 128.15345764160156,
+          "altitude": 1498
+        },
+        "velocity": {
+          "speed": 39.9151611328125,
+          "heading": -136.0601806640625
+        },
+        "fuel": 12.300000190734863,
+        "health": 1,
+        "lastSignalTime": 803968086464,
+        "unmannedInfo": {
+          "currentWaypointID": {
+            "waypointID": 163
+          },
+          "flightMode": 7,
+          "sensorInfo": {
+            "operationalMode": 2,
+            "sensorType": 1,
+            "fov": 4.397345066070557,
+            "centerCoordinate": {
+              "latitude": 37.903011322021484,
+              "longitude": 128.15626525878906,
+              "altitude": 1699
+            },
+            "footprintCornerList": [
+              {
+                "latitude": 37.903194427490234,
+                "longitude": 128.1565704345703,
+                "altitude": 1699
+              },
+              {
+                "latitude": 37.902713775634766,
+                "longitude": 128.1562957763672,
+                "altitude": 1699
+              },
+              {
+                "latitude": 37.902828216552734,
+                "longitude": 128.1559600830078,
+                "altitude": 1699
+              },
+              {
+                "latitude": 37.9033088684082,
+                "longitude": 128.15621948242188,
+                "altitude": 1699
+              }
+            ]
+          },
+          "payloadHealth": 1,
+          "fuelWarning": 1,
+          "onMission": 2
+        }
+      }
+    ]
+  }
+}

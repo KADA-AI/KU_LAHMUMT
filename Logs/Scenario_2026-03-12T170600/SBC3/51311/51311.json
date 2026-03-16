@@ -1,0 +1,205 @@
+[
+  {
+    "presenceVector": 0,
+    "timestamp": 826618030700,
+    "missionReferencePackageID": 1,
+    "takeOverInfoListN": 3,
+    "takeOverInfoList": [
+      {
+        "aircraftID": 5,
+        "coordinate": {
+          "latitude": 37.894535,
+          "longitude": 128.1523,
+          "altitude": 1000
+        }
+      },
+      {
+        "aircraftID": 4,
+        "coordinate": {
+          "latitude": 37.894115,
+          "longitude": 128.15392,
+          "altitude": 1000
+        }
+      },
+      {
+        "aircraftID": 6,
+        "coordinate": {
+          "latitude": 37.894115,
+          "longitude": 128.15392,
+          "altitude": 1000
+        }
+      }
+    ],
+    "handOverInfoListN": 3,
+    "handOverInfoList": [
+      {
+        "aircraftID": 5,
+        "coordinate": {
+          "latitude": 37.892864,
+          "longitude": 128.17398,
+          "altitude": 1000
+        }
+      },
+      {
+        "aircraftID": 4,
+        "coordinate": {
+          "latitude": 37.894142,
+          "longitude": 128.17342,
+          "altitude": 1000
+        }
+      },
+      {
+        "aircraftID": 6,
+        "coordinate": {
+          "latitude": 37.891586,
+          "longitude": 128.17455,
+          "altitude": 1000
+        }
+      }
+    ],
+    "rtbCoordinateListN": 2,
+    "rtbCoordinateList": [
+      {
+        "latitude": 37.895473,
+        "longitude": 128.12816,
+        "altitude": 1000
+      },
+      {
+        "latitude": 37.921852,
+        "longitude": 128.15271,
+        "altitude": 1000
+      }
+    ],
+    "flightAreaListN": 1,
+    "flightAreaList": [
+      {
+        "areaLatLonListN": 4,
+        "areaLatLonList": [
+          {
+            "latitude": 37.933125,
+            "longitude": 128.10344
+          },
+          {
+            "latitude": 37.85672,
+            "longitude": 128.1031
+          },
+          {
+            "latitude": 37.857536,
+            "longitude": 128.23099
+          },
+          {
+            "latitude": 37.93881,
+            "longitude": 128.22997
+          }
+        ],
+        "altitudeLimits": {
+          "lowerLimit": 0,
+          "upperLimit": 5000
+        }
+      }
+    ],
+    "prohibitedAreaListN": 1,
+    "prohibitedAreaList": [
+      {
+        "areaLatLonListN": 4,
+        "areaLatLonList": [
+          {
+            "latitude": 37.92527,
+            "longitude": 128.11494
+          },
+          {
+            "latitude": 37.914436,
+            "longitude": 128.11511
+          },
+          {
+            "latitude": 37.913895,
+            "longitude": 128.12335
+          },
+          {
+            "latitude": 37.92202,
+            "longitude": 128.12988
+          }
+        ],
+        "altitudelimits": {
+          "lowerLimit": 0,
+          "upperLimit": 5000
+        }
+      }
+    ],
+    "regionInfoListN": 9,
+    "regionInfoList": [
+      {
+        "regionType": 1,
+        "coordinate": {
+          "latitude": 37.88593,
+          "longitude": 128.14873,
+          "altitude": 0
+        }
+      },
+      {
+        "regionType": 2,
+        "coordinate": {
+          "latitude": 37.894535,
+          "longitude": 128.1523,
+          "altitude": 0
+        }
+      },
+      {
+        "regionType": 3,
+        "coordinate": {
+          "latitude": 37.903297,
+          "longitude": 128.15442,
+          "altitude": 0
+        }
+      },
+      {
+        "regionType": 4,
+        "coordinate": {
+          "latitude": 37.90955,
+          "longitude": 128.15459,
+          "altitude": 0
+        }
+      },
+      {
+        "regionType": 5,
+        "coordinate": {
+          "latitude": 37.90537,
+          "longitude": 128.18536,
+          "altitude": 0
+        }
+      },
+      {
+        "regionType": 6,
+        "coordinate": {
+          "latitude": 37.917805,
+          "longitude": 128.17154,
+          "altitude": 0
+        }
+      },
+      {
+        "regionType": 5,
+        "coordinate": {
+          "latitude": 37.90537,
+          "longitude": 128.18536,
+          "altitude": 0
+        }
+      },
+      {
+        "regionType": 3,
+        "coordinate": {
+          "latitude": 37.897503,
+          "longitude": 128.18748,
+          "altitude": 0
+        }
+      },
+      {
+        "regionType": 2,
+        "coordinate": {
+          "latitude": 37.892864,
+          "longitude": 128.17398,
+          "altitude": 0
+        }
+      }
+    ]
+  }
+]

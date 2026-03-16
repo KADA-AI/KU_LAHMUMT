@@ -1,0 +1,23 @@
+{
+  "payloadKeys": [
+    "individualMissionIDList",
+    "inputMissionIDList",
+    "optionList",
+    "replanLevel",
+    "replanRequest",
+    "replanRequestTime",
+    "source",
+    "timestamp"
+  ],
+  "reason": "000 무인기 경로 미추종으로 인한 재계획",
+  "planIDs": [
+    700000102
+  ],
+  "optionNames": [
+    "비행/촬영"
+  ],
+  "hasReplanDetail": false,
+  "detailKeys": [],
+  "savedAt": "2026-03-16T06:12:56.220720+00:00",
+  "stage": "mission_0902_received"
+}

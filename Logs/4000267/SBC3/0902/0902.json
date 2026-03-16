@@ -1,0 +1,71 @@
+[
+  {
+    "timestamp": 826454553582,
+    "source": "MSM",
+    "replanRequestTime": {
+      "replanRequestTimestamp": 826454553582
+    },
+    "replanLevel": 1,
+    "inputMissionIDList": [
+      {
+        "inputMissionID": 70000001
+      },
+      {
+        "inputMissionID": 70000002
+      },
+      {
+        "inputMissionID": 70000003
+      },
+      {
+        "inputMissionID": 70000004
+      }
+    ],
+    "individualMissionIDList": null,
+    "priorMissionList": null,
+    "replanReason": "초기임무재계획",
+    "pendingOptionList": [
+      {
+        "optionID": 1,
+        "optionName": "1",
+        "missionPlanID": 700000055
+      }
+    ]
+  },
+  {
+    "timestamp": 826454768518,
+    "source": "MSM",
+    "replanRequestTime": {
+      "replanRequestTimestamp": 826454768518
+    },
+    "replanLevel": 2,
+    "inputMissionIDList": [
+      {
+        "inputMissionID": 70000001
+      },
+      {
+        "inputMissionID": 70000002
+      },
+      {
+        "inputMissionID": 70000003
+      },
+      {
+        "inputMissionID": 70000004
+      }
+    ],
+    "individualMissionIDList": null,
+    "priorMissionList": null,
+    "replanReason": "무인기 1번 - 전차(ID-1001) 발견으로 인한 재계획",
+    "pendingOptionList": [
+      {
+        "optionID": 2,
+        "optionName": "공격 특화",
+        "missionPlanID": 700000056
+      },
+      {
+        "optionID": 3,
+        "optionName": "공격 배제",
+        "missionPlanID": 700000057
+      }
+    ]
+  }
+]

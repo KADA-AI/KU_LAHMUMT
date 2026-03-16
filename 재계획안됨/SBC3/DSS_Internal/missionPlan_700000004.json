@@ -1,0 +1,386 @@
+{
+  "timestamp": "2026-03-11T08:21:07.282548+00:00",
+  "status": "success",
+  "stopReason": null,
+  "reason": "무인기 3번 - 곡사포(ID-1002) 발견으로 인한 재계획",
+  "replanLevel": 2,
+  "sessionId": null,
+  "context": {
+    "plan_ids": [
+      700000014,
+      700000015
+    ],
+    "option_names": [
+      "공격 특화",
+      "공격 배제"
+    ],
+    "mission_ids": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11
+    ],
+    "reason": "무인기 3번 - 곡사포(ID-1002) 발견으로 인한 재계획",
+    "replan_level": 2
+  },
+  "planIds": [
+    700000004
+  ],
+  "summary": {
+    "mode": "legacy",
+    "plan_ids": [
+      700000004
+    ],
+    "option_codes": [
+      3
+    ]
+  },
+  "steps": [
+    {
+      "step": "start",
+      "status": "info",
+      "detail": {
+        "reason": "무인기 3번 - 곡사포(ID-1002) 발견으로 인한 재계획",
+        "plan_ids": [
+          700000014,
+          700000015
+        ],
+        "replan_level": 2
+      }
+    },
+    {
+      "step": "attack_pipeline",
+      "status": "start",
+      "detail": {
+        "reason": "무인기 3번 - 곡사포(ID-1002) 발견으로 인한 재계획"
+      }
+    },
+    {
+      "step": "attack_pipeline",
+      "status": "evaluated",
+      "detail": {
+        "log_path": "C:\\Users\\TRL98\\Desktop\\LAH_MUMT\\Logs\\Scenario_2026-03-11T171530\\SBC3\\DSS_Internal\\log_attack_algorithm_20260311T082116_270691.json"
+      }
+    },
+    {
+      "step": "attack_pipeline",
+      "status": "complete",
+      "detail": {
+        "plan_ids": [
+          700000003
+        ],
+        "log_path": "C:\\Users\\TRL98\\Desktop\\LAH_MUMT\\Logs\\Scenario_2026-03-11T171530\\SBC3\\DSS_Internal\\log_attack_algorithm_20260311T082116_270691.json"
+      }
+    },
+    {
+      "step": "0201_resolved",
+      "status": "ok",
+      "detail": {
+        "path": "C:\\Users\\TRL98\\Desktop\\LAH_MUMT\\Logs\\Scenario_2026-03-11T171530\\SBC3\\InputMissionPlan\\1.json",
+        "latest_id": 1
+      }
+    },
+    {
+      "step": "0203_resolved",
+      "status": "ok",
+      "detail": {
+        "path": "C:\\Users\\TRL98\\Desktop\\LAH_MUMT\\Logs\\Scenario_2026-03-11T171530\\SBC3\\MissionReferenceInfo\\1.json",
+        "latest_id": 1
+      }
+    },
+    {
+      "step": "input_validation",
+      "status": "ok",
+      "detail": {
+        "missions": 11,
+        "aircrafts": 6,
+        "uavs": 3,
+        "lahs": 3,
+        "takeOver": 3,
+        "handOver": 3,
+        "flightArea": 1
+      }
+    },
+    {
+      "step": "store_output",
+      "status": "ok",
+      "detail": {
+        "plan_count": 1,
+        "imp_files": 0,
+        "flightpath_files": 0
+      }
+    },
+    {
+      "step": "replan_pipeline",
+      "status": "success",
+      "detail": {
+        "plan_ids": [
+          700000004
+        ],
+        "option_codes": [
+          3
+        ]
+      }
+    }
+  ],
+  "issues": [],
+  "messages": [
+    {
+      "ts": "2026-03-11T08:21:07.285068+00:00",
+      "text": "[INFO] Using latest 0201 ID 1 for inputMissionPackageID (fallback)"
+    },
+    {
+      "ts": "2026-03-11T08:21:07.285555+00:00",
+      "text": "[INFO] Using latest 0203 ID 1 for missionReferencePackageID (fallback)"
+    },
+    {
+      "ts": "2026-03-11T08:21:07.285957+00:00",
+      "text": "[STEP 0] Replan pipeline start (reason=무인기 3번 - 곡사포(ID-1002) 발견으로 인한 재계획)"
+    },
+    {
+      "ts": "2026-03-11T08:21:07.286303+00:00",
+      "text": "[ATTACK] 공격 특화 재계획 요청 감지 → 전용 파이프라인 실행"
+    },
+    {
+      "ts": "2026-03-11T08:21:07.297937+00:00",
+      "text": "[ATTACK] STEP1 Selected manned aircraft: aircraft 3 (fuel=1200.0, coord=(37.8807487487793, 128.14498901367188, alt=1198))"
+    },
+    {
+      "ts": "2026-03-11T08:21:07.299024+00:00",
+      "text": "[ATTACK] STEP2 UAV tracking summary: watcher 6?’target 1002, watcher 4?’target 1001, watcher 6?’target 1001, watcher 3?’target unknown-1, watcher 5?’target unknown-2"
+    },
+    {
+      "ts": "2026-03-11T08:21:15.583023+00:00",
+      "text": "[ATTACK] STEP3 Attack plan completed: lat=37.871470, lon=128.144802, alt=1045m"
+    },
+    {
+      "ts": "2026-03-11T08:21:15.583832+00:00",
+      "text": "[ATTACK] [ATTACK][ETA] Using detection fallback (replan_level=2, watcher=6)."
+    },
+    {
+      "ts": "2026-03-11T08:21:15.584300+00:00",
+      "text": "[ATTACK] [ATTACK][ETA] Manned speed missing; using default 40 m/s."
+    },
+    {
+      "ts": "2026-03-11T08:21:15.584697+00:00",
+      "text": "[ATTACK] [ATTACK][ETA] Tracking ETA computed (dist=1031.8m, speed=40.0m/s, +30s) -> 56s"
+    },
+    {
+      "ts": "2026-03-11T08:21:15.596557+00:00",
+      "text": "[ATTACK] [ATTACK] Allocated fresh missionPlanID 700000003 (sourcePlanID=700000002)"
+    },
+    {
+      "ts": "2026-03-11T08:21:15.601494+00:00",
+      "text": "[ATTACK] [PRIOR] Falling back to first mission for aircraft 3 (current waypoint not found in plan)."
+    },
+    {
+      "ts": "2026-03-11T08:21:15.639520+00:00",
+      "text": "[ATTACK] [ATTACK][LAH] Generated attack/egress missions -> IMP:800000071.json PATHS:300000110.json/300000111.json"
+    },
+    {
+      "ts": "2026-03-11T08:21:15.678069+00:00",
+      "text": "[ATTACK] [ATTACK][UAV] isDone/currentWP mismatch; using currentWP split (isDonePrefix=3, currentIdx=2)."
+    },
+    {
+      "ts": "2026-03-11T08:21:15.678645+00:00",
+      "text": "[ATTACK] [ATTACK][UAV] Resume trimmed by currentWP (lastRemovedWP=162)."
+    },
+    {
+      "ts": "2026-03-11T08:21:15.680297+00:00",
+      "text": "[ATTACK] [ATTACK][UAV] Added replan anchor waypoint to done path (anchorWP=317)."
+    },
+    {
+      "ts": "2026-03-11T08:21:15.680700+00:00",
+      "text": "[ATTACK] [ATTACK][UAV] Resume sweep trim applied (cutPoints=108, pathID=600000150)."
+    },
+    {
+      "ts": "2026-03-11T08:21:15.811996+00:00",
+      "text": "[ATTACK] [ATTACK][UAV] Preserved done segment, inserted tracking, and reattached 16 follow-up mission(s)."
+    },
+    {
+      "ts": "2026-03-11T08:21:15.841647+00:00",
+      "text": "[ATTACK] [ATTACK][UAV] Generated tracking-only mission -> IMP:800000072.json PATH:600000204.json (followUps=16, resumeSkipped=true)"
+    },
+    {
+      "ts": "2026-03-11T08:21:15.849524+00:00",
+      "text": "[ATTACK] [ATTACK][UAV] Tracking assignment state saved (aircraft=6, sourcePlan=700000002, attackPlan=700000003)."
+    },
+    {
+      "ts": "2026-03-11T08:21:15.859012+00:00",
+      "text": "[ATTACK] [PRIOR] Falling back to first mission for aircraft 4 (current waypoint not found in plan)."
+    },
+    {
+      "ts": "2026-03-11T08:21:15.895360+00:00",
+      "text": "[ATTACK] [ATTACK][UAV] isDone/currentWP mismatch; using currentWP split (isDonePrefix=3, currentIdx=0)."
+    },
+    {
+      "ts": "2026-03-11T08:21:15.895945+00:00",
+      "text": "[ATTACK] [ATTACK][UAV] Resume sweep trim applied (cutPoints=14, pathID=400000103)."
+    },
+    {
+      "ts": "2026-03-11T08:21:16.028790+00:00",
+      "text": "[ATTACK] [ATTACK][UAV] Preserved prior mission as done, inserted resume, and reattached 16 follow-up mission(s)."
+    },
+    {
+      "ts": "2026-03-11T08:21:16.058562+00:00",
+      "text": "[ATTACK] [ATTACK][UAV] Generated resume-only mission -> IMP:800000073.json PATH:400000158.json (followUps=16)"
+    },
+    {
+      "ts": "2026-03-11T08:21:16.097659+00:00",
+      "text": "[ATTACK] [ATTACK][UAV] isDone/currentWP mismatch; using currentWP split (isDonePrefix=0, currentIdx=1)."
+    },
+    {
+      "ts": "2026-03-11T08:21:16.098290+00:00",
+      "text": "[ATTACK] [ATTACK][UAV] Resume trimmed by currentWP (lastRemovedWP=109)."
+    },
+    {
+      "ts": "2026-03-11T08:21:16.100354+00:00",
+      "text": "[ATTACK] [ATTACK][UAV] Added replan anchor waypoint to done path (anchorWP=418)."
+    },
+    {
+      "ts": "2026-03-11T08:21:16.232445+00:00",
+      "text": "[ATTACK] [ATTACK][UAV] Preserved prior mission as done, inserted resume, and reattached 16 follow-up mission(s)."
+    },
+    {
+      "ts": "2026-03-11T08:21:16.260421+00:00",
+      "text": "[ATTACK] [ATTACK][UAV] Generated resume-only mission -> IMP:800000074.json PATH:500000207.json (followUps=16)"
+    },
+    {
+      "ts": "2026-03-11T08:21:16.262444+00:00",
+      "text": "[ATTACK] [ATTACK][PLAN] MissionPlan saved -> 700000003.json (planID=700000003)"
+    },
+    {
+      "ts": "2026-03-11T08:21:16.273494+00:00",
+      "text": "[ATTACK] 분석 로그 저장: C:\\Users\\TRL98\\Desktop\\LAH_MUMT\\Logs\\Scenario_2026-03-11T171530\\SBC3\\DSS_Internal\\log_attack_algorithm_20260311T082116_270691.json"
+    },
+    {
+      "ts": "2026-03-11T08:21:16.274468+00:00",
+      "text": "[ATTACK] mark target used: key=1002-6, targetID=1002"
+    },
+    {
+      "ts": "2026-03-11T08:21:16.274513+00:00",
+      "text": "[ATTACK] 공격 임무 계획 완료 (planIds=700000003)"
+    },
+    {
+      "ts": "2026-03-11T08:21:16.275872+00:00",
+      "text": "[INFO] UAV params loaded (cruise=40.00, turn_step=15.0)"
+    },
+    {
+      "ts": "2026-03-11T08:21:16.276579+00:00",
+      "text": "[INFO] Latest input snapshot → 0201:ID=1,ts=826532135626,src=-, 0203:ID=1,ts=826532135660,src=-"
+    },
+    {
+      "ts": "2026-03-11T08:21:16.277210+00:00",
+      "text": "[STEP 0] Using latest 0201 ID 1 (1.json)"
+    },
+    {
+      "ts": "2026-03-11T08:21:16.277811+00:00",
+      "text": "[STEP 0] Using latest 0203 ID 1 (1.json)"
+    },
+    {
+      "ts": "2026-03-11T08:21:16.278346+00:00",
+      "text": "[CHECK] 0201/0203 필수 데이터 확인 시작"
+    },
+    {
+      "ts": "2026-03-11T08:21:16.279006+00:00",
+      "text": "[OK] 0201 inputMissionList 확인됨 (count=11) → 진행"
+    },
+    {
+      "ts": "2026-03-11T08:21:16.279500+00:00",
+      "text": "[OK] 0201 availableAircraftList 확인됨 (count=6) → 진행"
+    },
+    {
+      "ts": "2026-03-11T08:21:16.279919+00:00",
+      "text": "[OK] 0201 inputMissionPackageType=1 확인"
+    },
+    {
+      "ts": "2026-03-11T08:21:16.280284+00:00",
+      "text": "[OK] 0201 mainSensor=1 확인"
+    },
+    {
+      "ts": "2026-03-11T08:21:16.280629+00:00",
+      "text": "[CHECK] 0201 기체 수=6 (UAV=3, LAH=3)"
+    },
+    {
+      "ts": "2026-03-11T08:21:16.280975+00:00",
+      "text": "[CHECK] 0201 임무: total=11 missingID=0 missingDetail=0 missingShape=0 unknownType=0 typeZero=0 lineOnlyViolation=0"
+    },
+    {
+      "ts": "2026-03-11T08:21:16.281319+00:00",
+      "text": "[OK] 0203 takeOverInfoList 확인됨 (count=3) → 진행"
+    },
+    {
+      "ts": "2026-03-11T08:21:16.281664+00:00",
+      "text": "[OK] 0203 handOverInfoList 확인됨 (count=3) → 진행"
+    },
+    {
+      "ts": "2026-03-11T08:21:16.282007+00:00",
+      "text": "[OK] 0203 flightAreaList 확인됨 (count=1) → 진행"
+    },
+    {
+      "ts": "2026-03-11T08:21:16.282353+00:00",
+      "text": "[CHECK] 0203 flightAreaList count=1"
+    },
+    {
+      "ts": "2026-03-11T08:21:16.282780+00:00",
+      "text": "[variant 1] 공격 배제 전용 재개 파이프라인 적용"
+    },
+    {
+      "ts": "2026-03-11T08:21:16.471445+00:00",
+      "text": "[ATTACK-EXCLUDE] UAV 4 resume 임무 생성에 실패하여 기존 개별임무를 유지합니다."
+    },
+    {
+      "ts": "2026-03-11T08:21:16.648610+00:00",
+      "text": "[ATTACK-EXCLUDE] [PRIOR][UAV] Resume trimmed by currentWP (lastRemovedWP=109)."
+    },
+    {
+      "ts": "2026-03-11T08:21:16.650402+00:00",
+      "text": "[ATTACK-EXCLUDE] [PRIOR][UAV] Added replan anchor waypoint to done path (anchorWP=519)."
+    },
+    {
+      "ts": "2026-03-11T08:21:16.681519+00:00",
+      "text": "[ATTACK-EXCLUDE] [PRIOR][UAV] Generated done/resume mission -> aircraft=5 IMP:800000075.json PATHS:500000224.json/500000225.json"
+    },
+    {
+      "ts": "2026-03-11T08:21:16.856090+00:00",
+      "text": "[ATTACK-EXCLUDE] [PRIOR][UAV] Resume trimmed by currentWP (lastRemovedWP=162)."
+    },
+    {
+      "ts": "2026-03-11T08:21:16.857684+00:00",
+      "text": "[ATTACK-EXCLUDE] [PRIOR][UAV] Added replan anchor waypoint to done path (anchorWP=570)."
+    },
+    {
+      "ts": "2026-03-11T08:21:16.858077+00:00",
+      "text": "[ATTACK-EXCLUDE] [PRIOR][UAV] Resume sweep trim applied (cutPoints=108, pathID=600000150)."
+    },
+    {
+      "ts": "2026-03-11T08:21:16.858423+00:00",
+      "text": "[ATTACK-EXCLUDE] [PRIOR][UAV] Resume path became empty for aircraft 6; skipping update."
+    },
+    {
+      "ts": "2026-03-11T08:21:16.859013+00:00",
+      "text": "[ATTACK-EXCLUDE] UAV 6 resume 임무 생성에 실패하여 기존 개별임무를 유지합니다."
+    },
+    {
+      "ts": "2026-03-11T08:21:16.860622+00:00",
+      "text": "[ATTACK-EXCLUDE] 공격 배제 MissionPlan 저장 -> 700000004.json (planID=700000004)"
+    },
+    {
+      "ts": "2026-03-11T08:21:16.861389+00:00",
+      "text": "[OK] 공격 배제 variant 저장: MissionPlanID=700000004 (elapsed=582.3 ms)"
+    },
+    {
+      "ts": "2026-03-11T08:21:16.862217+00:00",
+      "text": "[INFO] Option mapping #1: planID=700000004, optionCode=3(공격배제)"
+    }
+  ],
+  "missionPlanID": 700000004,
+  "logPath": "C:\\Users\\TRL98\\Desktop\\LAH_MUMT\\Logs\\Scenario_2026-03-11T171530\\SBC3\\DSS_Internal\\missionPlan_700000004.json"
+}

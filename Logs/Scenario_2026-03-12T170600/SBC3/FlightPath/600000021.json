@@ -1,0 +1,90 @@
+{
+  "timestamp": 826618448913,
+  "source": "MMR",
+  "pathID": 600000021,
+  "aircraftID": 6,
+  "isFormationFlight": false,
+  "waypointList": [
+    {
+      "waypointID": 376,
+      "coordinate": {
+        "latitude": 37.911800860364515,
+        "longitude": 128.17980465882843,
+        "altitude": 1371
+      },
+      "speed": 40.0,
+      "eta": 0,
+      "ecf": 0.0,
+      "nextWaypointID": 377,
+      "waypointPassType": 1,
+      "filmingProperty": {
+        "fieldOfView": 3.8,
+        "sensorType": 1,
+        "operationMode": 2,
+        "lineSearch": {
+          "coordinateList": [
+            {
+              "latitude": 37.905340959921794,
+              "longitude": 128.1874951536755,
+              "altitude": 734
+            },
+            {
+              "latitude": 37.904261,
+              "longitude": 128.184999,
+              "altitude": 790
+            },
+            {
+              "latitude": 37.903181938382886,
+              "longitude": 128.1825032223666,
+              "altitude": 846
+            },
+            {
+              "latitude": 37.90704288161725,
+              "longitude": 128.17984313286897,
+              "altitude": 741
+            },
+            {
+              "latitude": 37.908122,
+              "longitude": 128.182339,
+              "altitude": 702
+            },
+            {
+              "latitude": 37.90920201668452,
+              "longitude": 128.18483524319197,
+              "altitude": 662
+            }
+          ],
+          "searchSpeed": 452.07,
+          "interpolationPoints": 3
+        }
+      },
+      "isDone": false
+    },
+    {
+      "waypointID": 377,
+      "coordinate": {
+        "latitude": 37.911484,
+        "longitude": 128.180912,
+        "altitude": 1501
+      },
+      "speed": 40.0,
+      "eta": 6,
+      "ecf": 1.0,
+      "nextWaypointID": 0,
+      "waypointPassType": 1,
+      "filmingProperty": {
+        "fieldOfView": 3.8,
+        "sensorType": 1,
+        "operationMode": 1,
+        "coordinateOrientation": {
+          "coordinate": {
+            "latitude": 37.905340959921794,
+            "longitude": 128.1874951536755,
+            "altitude": 0
+          }
+        }
+      },
+      "isDone": false
+    }
+  ]
+}

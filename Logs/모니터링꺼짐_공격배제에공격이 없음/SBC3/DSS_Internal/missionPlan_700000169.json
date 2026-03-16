@@ -1,0 +1,86 @@
+{
+  "timestamp": "2026-03-12T04:53:03.702186+00:00",
+  "status": "success",
+  "stopReason": null,
+  "reason": "000 무인기 촬영 스케줄 미준수",
+  "replanLevel": 3,
+  "sessionId": null,
+  "context": {
+    "plan_ids": [
+      700000169
+    ],
+    "option_names": [
+      "비행/촬영"
+    ],
+    "mission_ids": [
+      2
+    ],
+    "reason": "000 무인기 촬영 스케줄 미준수",
+    "replan_level": 3
+  },
+  "planIds": [
+    700000169
+  ],
+  "summary": {
+    "mode": "imagingSchedule",
+    "plan_ids": [
+      700000169
+    ],
+    "option_names": [
+      "비행/촬영"
+    ],
+    "log_path": "C:\\Users\\TRL98\\Desktop\\LAH_MUMT\\Logs\\Scenario_2026-03-12T135105\\SBC3\\DSS_Internal\\ImagingSchedule_4_826606383750.json",
+    "replaced_waypoint_id": 58,
+    "new_waypoint_id": 1
+  },
+  "steps": [
+    {
+      "step": "start",
+      "status": "info",
+      "detail": {
+        "reason": "000 무인기 촬영 스케줄 미준수",
+        "plan_ids": [
+          700000169
+        ],
+        "replan_level": 3
+      }
+    },
+    {
+      "step": "imaging_schedule_pipeline",
+      "status": "success",
+      "detail": {
+        "mode": "imagingSchedule",
+        "plan_ids": [
+          700000169
+        ],
+        "option_names": [
+          "비행/촬영"
+        ],
+        "log_path": "C:\\Users\\TRL98\\Desktop\\LAH_MUMT\\Logs\\Scenario_2026-03-12T135105\\SBC3\\DSS_Internal\\ImagingSchedule_4_826606383750.json",
+        "replaced_waypoint_id": 58,
+        "new_waypoint_id": 1
+      }
+    }
+  ],
+  "issues": [],
+  "messages": [
+    {
+      "ts": "2026-03-12T04:53:03.704702+00:00",
+      "text": "[INFO] Using latest 0201 ID 1 for inputMissionPackageID (fallback)"
+    },
+    {
+      "ts": "2026-03-12T04:53:03.705185+00:00",
+      "text": "[INFO] Using latest 0203 ID 1 for missionReferencePackageID (fallback)"
+    },
+    {
+      "ts": "2026-03-12T04:53:03.705590+00:00",
+      "text": "[STEP 0] Replan pipeline start (reason=000 무인기 촬영 스케줄 미준수)"
+    },
+    {
+      "ts": "2026-03-12T04:53:03.719444+00:00",
+      "text": "[IMGSCH] Level-3 imaging schedule request detected. Using dedicated pipeline."
+    }
+  ],
+  "missionPlanID": 700000169,
+  "logPath": "C:\\Users\\TRL98\\Desktop\\LAH_MUMT\\Logs\\Scenario_2026-03-12T135105\\SBC3\\DSS_Internal\\missionPlan_700000169.json"
+}

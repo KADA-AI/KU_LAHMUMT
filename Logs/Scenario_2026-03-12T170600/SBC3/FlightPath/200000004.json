@@ -1,0 +1,37 @@
+{
+  "timestamp": 826618036538,
+  "source": "MMR",
+  "pathID": 200000004,
+  "aircraftID": 2,
+  "lahWaypointList": [
+    {
+      "waypointID": 24,
+      "isDone": false,
+      "coordinate": {
+        "latitude": 37.908027,
+        "longitude": 128.16307,
+        "altitude": 1448
+      },
+      "speed": 15.0,
+      "eta": 0,
+      "ecf": 0.0,
+      "nextWaypointID": 25
+    },
+    {
+      "waypointID": 25,
+      "isDone": false,
+      "coordinate": {
+        "latitude": 37.905113,
+        "longitude": 128.18541,
+        "altitude": 1448
+      },
+      "speed": 15.0,
+      "eta": 132696,
+      "ecf": 1.0,
+      "nextWaypointID": 0,
+      "hovering": {
+        "time": 30
+      }
+    }
+  ]
+}

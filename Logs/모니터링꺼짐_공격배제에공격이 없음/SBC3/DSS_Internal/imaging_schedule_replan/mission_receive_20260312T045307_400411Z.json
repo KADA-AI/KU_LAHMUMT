@@ -1,0 +1,32 @@
+{
+  "reason": "000 경로 스케줄 미준수로 인한 재계획",
+  "replanLevel": 3,
+  "planIDs": [
+    700000170
+  ],
+  "detailTriggerType": null,
+  "storeDetailLoaded": true,
+  "detailKeys": [
+    "aircraftID",
+    "currentWaypointCoordinate",
+    "currentWaypointID",
+    "individualMissionID",
+    "individualMissionPackageID",
+    "inputMissionPackageID",
+    "missionPlanID",
+    "operationMode",
+    "pathID",
+    "patternType",
+    "savedAt",
+    "selectedReplanReason",
+    "sensorType",
+    "sourceMissionPlanID",
+    "timestamp",
+    "trigger",
+    "triggerProbability",
+    "triggerRoll",
+    "triggerType"
+  ],
+  "savedAt": "2026-03-12T04:53:07.400725+00:00",
+  "stage": "mission_receive"
+}

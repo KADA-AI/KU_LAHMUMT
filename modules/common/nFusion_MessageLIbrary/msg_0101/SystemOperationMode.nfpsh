@@ -1,0 +1,19 @@
+# MessageID 0101 시스템운용모드
+
+ulong timestamp:
+ - 길이 : 8
+ - min : 0
+ - Max : 2^64-1
+ - unit : ms
+ - 비고 : 2000년 1월 1일부터 ms
+
+string source:
+ - 비고 : 메시지를 전송하는 모듈 이름
+
+uint systemMode:
+ - 길이 : 4
+ - min : 0
+ - Max : 3
+ - unit : N/A
+ - 비고 : 시스템 모드
+ - enum : 0=초기화 모드, 1=대기 모드, 2=초기임무계획 모드, 3=임무수행 모드

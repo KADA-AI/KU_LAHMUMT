@@ -1,0 +1,291 @@
+{
+  "timestamp": "2026-03-12T08:07:16.149674+00:00",
+  "status": "success",
+  "stopReason": null,
+  "reason": "초기임무재계획",
+  "replanLevel": 1,
+  "sessionId": null,
+  "context": {
+    "plan_ids": [
+      700000001
+    ],
+    "option_names": [
+      "1"
+    ],
+    "mission_ids": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11
+    ],
+    "reason": "초기임무재계획",
+    "replan_level": 1
+  },
+  "planIds": [
+    700000000
+  ],
+  "summary": {
+    "mode": "legacy",
+    "plan_ids": [
+      700000000
+    ],
+    "option_codes": [
+      1
+    ]
+  },
+  "steps": [
+    {
+      "step": "start",
+      "status": "info",
+      "detail": {
+        "reason": "초기임무재계획",
+        "plan_ids": [
+          700000001
+        ],
+        "replan_level": 1
+      }
+    },
+    {
+      "step": "0201_resolved",
+      "status": "ok",
+      "detail": {
+        "path": "C:\\Users\\TRL98\\Desktop\\LAH_MUMT\\Logs\\Scenario_2026-03-12T170600\\SBC3\\InputMissionPlan\\1.json",
+        "latest_id": 1
+      }
+    },
+    {
+      "step": "0203_resolved",
+      "status": "ok",
+      "detail": {
+        "path": "C:\\Users\\TRL98\\Desktop\\LAH_MUMT\\Logs\\Scenario_2026-03-12T170600\\SBC3\\MissionReferenceInfo\\1.json",
+        "latest_id": 1
+      }
+    },
+    {
+      "step": "input_validation",
+      "status": "ok",
+      "detail": {
+        "missions": 11,
+        "aircrafts": 6,
+        "uavs": 3,
+        "lahs": 3,
+        "takeOver": 3,
+        "handOver": 3,
+        "flightArea": 1
+      }
+    },
+    {
+      "step": "store_output",
+      "status": "ok",
+      "detail": {
+        "plan_count": 1,
+        "imp_files": 6,
+        "flightpath_files": 71
+      }
+    },
+    {
+      "step": "replan_pipeline",
+      "status": "success",
+      "detail": {
+        "plan_ids": [
+          700000000
+        ],
+        "option_codes": [
+          1
+        ]
+      }
+    }
+  ],
+  "issues": [],
+  "messages": [
+    {
+      "ts": "2026-03-12T08:07:16.152494+00:00",
+      "text": "[INFO] Using latest 0201 ID 1 for inputMissionPackageID (fallback)"
+    },
+    {
+      "ts": "2026-03-12T08:07:16.153603+00:00",
+      "text": "[INFO] Using latest 0203 ID 1 for missionReferencePackageID (fallback)"
+    },
+    {
+      "ts": "2026-03-12T08:07:16.154333+00:00",
+      "text": "[STEP 0] Replan pipeline start (reason=초기임무재계획)"
+    },
+    {
+      "ts": "2026-03-12T08:07:16.160292+00:00",
+      "text": "[INFO] UAV params loaded (cruise=40.00, turn_step=15.0)"
+    },
+    {
+      "ts": "2026-03-12T08:07:16.160970+00:00",
+      "text": "[INFO] Latest input snapshot → 0201:ID=1,ts=826618035855,src=-, 0203:ID=1,ts=826618035828,src=-"
+    },
+    {
+      "ts": "2026-03-12T08:07:16.161505+00:00",
+      "text": "[STEP 0] Using latest 0201 ID 1 (1.json)"
+    },
+    {
+      "ts": "2026-03-12T08:07:16.162027+00:00",
+      "text": "[STEP 0] Using latest 0203 ID 1 (1.json)"
+    },
+    {
+      "ts": "2026-03-12T08:07:16.162734+00:00",
+      "text": "[CHECK] 0201/0203 필수 데이터 확인 시작"
+    },
+    {
+      "ts": "2026-03-12T08:07:16.164813+00:00",
+      "text": "[OK] 0201 inputMissionList 확인됨 (count=11) → 진행"
+    },
+    {
+      "ts": "2026-03-12T08:07:16.165778+00:00",
+      "text": "[OK] 0201 availableAircraftList 확인됨 (count=6) → 진행"
+    },
+    {
+      "ts": "2026-03-12T08:07:16.167158+00:00",
+      "text": "[OK] 0201 inputMissionPackageType=1 확인"
+    },
+    {
+      "ts": "2026-03-12T08:07:16.168433+00:00",
+      "text": "[OK] 0201 mainSensor=1 확인"
+    },
+    {
+      "ts": "2026-03-12T08:07:16.169856+00:00",
+      "text": "[CHECK] 0201 기체 수=6 (UAV=3, LAH=3)"
+    },
+    {
+      "ts": "2026-03-12T08:07:16.170581+00:00",
+      "text": "[CHECK] 0201 임무: total=11 missingID=0 missingDetail=0 missingShape=0 unknownType=0 typeZero=0 lineOnlyViolation=0"
+    },
+    {
+      "ts": "2026-03-12T08:07:16.171615+00:00",
+      "text": "[OK] 0203 takeOverInfoList 확인됨 (count=3) → 진행"
+    },
+    {
+      "ts": "2026-03-12T08:07:16.172566+00:00",
+      "text": "[OK] 0203 handOverInfoList 확인됨 (count=3) → 진행"
+    },
+    {
+      "ts": "2026-03-12T08:07:16.173489+00:00",
+      "text": "[OK] 0203 flightAreaList 확인됨 (count=1) → 진행"
+    },
+    {
+      "ts": "2026-03-12T08:07:16.174561+00:00",
+      "text": "[CHECK] 0203 flightAreaList count=1"
+    },
+    {
+      "ts": "2026-03-12T08:07:16.175470+00:00",
+      "text": "[STEP 1.1] Divide & Pattern start"
+    },
+    {
+      "ts": "2026-03-12T08:07:16.176457+00:00",
+      "text": "[variant 1] [ENHANCED][1] split start: uavs=[4, 5, 6]"
+    },
+    {
+      "ts": "2026-03-12T08:07:16.259153+00:00",
+      "text": "[variant 1] [ENHANCED][1] split done: pieces=33"
+    },
+    {
+      "ts": "2026-03-12T08:07:16.260768+00:00",
+      "text": "[variant 1] [ENHANCED][2] type-decider done: profile=6 changed=33/33"
+    },
+    {
+      "ts": "2026-03-12T08:07:16.262672+00:00",
+      "text": "[variant 1] [ENHANCED][3] expected-path done: count=33"
+    },
+    {
+      "ts": "2026-03-12T08:07:16.265365+00:00",
+      "text": "[variant 1] [ENHANCED][4] area-review done: overflow=5 targets=5 pieces=33->40"
+    },
+    {
+      "ts": "2026-03-12T08:07:16.279772+00:00",
+      "text": "[variant 1] [ENHANCED][5] expected-velocity done: pieces=40 dbRows=391"
+    },
+    {
+      "ts": "2026-03-12T08:07:16.439590+00:00",
+      "text": "[variant 1] [ENHANCED][6] 0302 export done: files=6"
+    },
+    {
+      "ts": "2026-03-12T08:07:16.441172+00:00",
+      "text": "[variant 1] [ENHANCED] total=282.9 ms"
+    },
+    {
+      "ts": "2026-03-12T08:07:16.442020+00:00",
+      "text": "[TIME] divide_and_pattern (variant=1): 283.4 ms"
+    },
+    {
+      "ts": "2026-03-12T08:07:16.442986+00:00",
+      "text": "[OK] IMP generated: 6 file(s) (variant=1)"
+    },
+    {
+      "ts": "2026-03-12T08:07:16.456446+00:00",
+      "text": "[TIME] build_0301+load (variant=1): 16.5 ms"
+    },
+    {
+      "ts": "2026-03-12T08:07:16.457559+00:00",
+      "text": "[OK] MissionPlan built: MissionPlan_1773302836439.json (variant=1)"
+    },
+    {
+      "ts": "2026-03-12T08:07:16.461729+00:00",
+      "text": "[TIME] collect_missions (variant=1): 5.2 ms, count=71"
+    },
+    {
+      "ts": "2026-03-12T08:07:16.536313+00:00",
+      "text": "[TIME] pathID_mapping (variant=1): 74.6 ms"
+    },
+    {
+      "ts": "2026-03-12T08:07:16.537051+00:00",
+      "text": "[INFO] pathID mapping done for 0302/0303/0304 (variant=1)"
+    },
+    {
+      "ts": "2026-03-12T08:07:16.539497+00:00",
+      "text": "[INFO] FlightPath build mode: parallel (variant=1)"
+    },
+    {
+      "ts": "2026-03-12T08:07:17.717818+00:00",
+      "text": "[INFO] FlightPath build time (parallel): 0303=1179.1 ms, 0304=878.1 ms, wall=1181.0 ms"
+    },
+    {
+      "ts": "2026-03-12T08:07:17.718460+00:00",
+      "text": "[OK] FlightPath counts (variant=1): 0303=38 / 0304=33"
+    },
+    {
+      "ts": "2026-03-12T08:07:17.765274+00:00",
+      "text": "[TIME] build_0302 (variant=1): 38.6 ms, packages=6"
+    },
+    {
+      "ts": "2026-03-12T08:07:17.774999+00:00",
+      "text": "[TIME] write_0302 (variant=1): 9.7 ms, files=6"
+    },
+    {
+      "ts": "2026-03-12T08:07:17.851568+00:00",
+      "text": "[TIME] write_FlightPath (variant=1): 76.7 ms, files=71"
+    },
+    {
+      "ts": "2026-03-12T08:07:17.852734+00:00",
+      "text": "[TIME] write_0301 (variant=1): 1.2 ms"
+    },
+    {
+      "ts": "2026-03-12T08:07:17.853289+00:00",
+      "text": "[OK] Stored variant 1: MissionPlanID=700000000, IMP=6, FlightPath=71"
+    },
+    {
+      "ts": "2026-03-12T08:07:17.853803+00:00",
+      "text": "[TIME] variant_total (variant=1): 1696.5 ms"
+    },
+    {
+      "ts": "2026-03-12T08:07:17.854353+00:00",
+      "text": "[INFO] Option mapping #1: planID=700000000, optionCode=1(시스템 추천)"
+    },
+    {
+      "ts": "2026-03-12T08:07:17.855152+00:00",
+      "text": "[OK] Stored mission data: MissionPlan=1, IndividualMission=6, FlightPath=71"
+    }
+  ],
+  "missionPlanID": 700000000,
+  "logPath": "C:\\Users\\TRL98\\Desktop\\LAH_MUMT\\Logs\\Scenario_2026-03-12T170600\\SBC3\\DSS_Internal\\missionPlan_700000000.json"
+}

@@ -1,0 +1,30 @@
+{
+  "missionPlanID": 700000109,
+  "detailPath": "C:\\Users\\rain9\\Desktop\\LAH_MUMT\\branNew\\DSS_KU\\Logs\\Scenario_2026-03-16T150624\\SBC3\\DSS_Internal\\path_deviation_replan\\path_deviation_detail_700000109.json",
+  "detail": {
+    "trigger": "0401",
+    "triggerType": "pathDeviation",
+    "sourceMissionPlanID": 700000107,
+    "aircraftID": 4,
+    "inputMissionPackageID": 100,
+    "individualMissionPackageID": 800000459,
+    "individualMissionID": 900002913,
+    "pathID": 400000471,
+    "currentWaypointID": 904001,
+    "alternateWaypointID": 904003,
+    "alternateWaypointCoordinate": {
+      "latitude": 38.14091527211998,
+      "longitude": 127.29112863013027
+    },
+    "alternateWaypointEtaS": 8.0,
+    "spiralState": "warning",
+    "spiralAngleDeg": 230.57540594840424,
+    "idealRadiusM": 340.0,
+    "actualRadiusM": 341.88375500550285,
+    "turnRateDegS": 5.027654459232212,
+    "selectedReplanReason": "000 무인기 경로 미추종으로 인한 재계획",
+    "timestamp": 826957076253
+  },
+  "savedAt": "2026-03-16T06:17:56.257423+00:00",
+  "stage": "monitor_dispatch"
+}

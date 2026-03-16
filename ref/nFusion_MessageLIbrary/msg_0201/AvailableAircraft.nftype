@@ -1,0 +1,7 @@
+uint aircraftID:
+ - 길이 : 4
+ - min : 0
+ - Max : 6
+ - unit : N/A
+ - 비고 : 가용 가능한 유무인기 ID
+ - enum : 0=Not Used, 1=지휘기, 2=편대기1, 3=편대기2, 4=UAV#1, 5=UAV#2, 6=UAV#3

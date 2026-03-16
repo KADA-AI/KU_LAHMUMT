@@ -1,0 +1,16 @@
+# MessageID 0001 정보공지
+
+ulong timestamp:
+ - 길이 : 8
+ - min : 0
+ - Max : 2^64-1
+ - unit : ms
+ - 비고 : 2000년 1월 1일부터 ms
+
+string source:
+ - 비고 : 메시지를 전송하는 모듈 이름
+
+string contents:
+ - 길이 : 36
+ - unit : N/A
+ - 비고 : 공지 하고자 하는 내용

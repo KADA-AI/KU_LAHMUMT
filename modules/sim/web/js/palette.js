@@ -1,0 +1,15 @@
+export const palette = {
+  background: "#2a3322",
+  landcover: "#33402b",
+  landuse: "#3a4830",
+  park: "#3f5433",
+  water: "#2b5aa5",
+  waterway: "#3b72bd",
+  boundary: "#7a8671",
+  transportation: "#8c8458",
+  building: "#4a4e3a",
+  sky: "#cfe0f2",
+  skyHorizon: "#e6f0fb",
+  label: "#e7eddc",
+  labelHalo: "rgba(22, 28, 20, 0.8)",
+};

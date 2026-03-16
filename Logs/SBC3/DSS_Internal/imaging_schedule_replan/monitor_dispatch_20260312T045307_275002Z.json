@@ -1,0 +1,29 @@
+{
+  "missionPlanID": 700000170,
+  "detailPath": "C:\\Users\\TRL98\\Desktop\\LAH_MUMT\\Logs\\Scenario_2026-03-12T135105\\SBC3\\DSS_Internal\\imaging_schedule_replan\\imaging_schedule_detail_700000170.json",
+  "detail": {
+    "trigger": "0401",
+    "triggerType": "imagingScheduleDeviation",
+    "sourceMissionPlanID": 700000169,
+    "aircraftID": 5,
+    "inputMissionPackageID": 1,
+    "individualMissionPackageID": 800000588,
+    "individualMissionID": 900004397,
+    "pathID": 500000977,
+    "currentWaypointID": 111,
+    "currentWaypointCoordinate": {
+      "latitude": 37.900972,
+      "longitude": 128.151883,
+      "altitude": 1502.0
+    },
+    "patternType": 8,
+    "sensorType": null,
+    "operationMode": null,
+    "triggerProbability": 0.2,
+    "triggerRoll": 0.1646325506896128,
+    "selectedReplanReason": "000 경로 스케줄 미준수로 인한 재계획",
+    "timestamp": 826606387273
+  },
+  "savedAt": "2026-03-12T04:53:07.275274+00:00",
+  "stage": "monitor_dispatch"
+}

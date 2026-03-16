@@ -1,0 +1,11 @@
+uint aircraftID:
+ - 길이 : 4
+ - min : 0
+ - Max : 6
+ - unit : N/A
+ - 비고 : 유무인기 ID
+
+uint individualMissionPackageID:
+ - 길이 : 4
+ - unit : N/A
+ - 비고 : 연결된 개별 임무계획 패키지ID

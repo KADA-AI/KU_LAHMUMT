@@ -1,0 +1,6147 @@
+﻿# -*- coding: utf-8 -*-
+# mission_planning_gui.py – 임무 할당·계획수립 전용 GUI (S110 플로우 대응)
+from __future__ import annotations
+
+import sys, os, threading, json, re, time, shutil, copy, traceback
+import concurrent.futures
+import folium
+os.environ["KU_ROLE"] = "mission"  # MMR
+from pathlib import Path
+from typing import Any, Dict, Optional, Set, List
+
+_SCRIPT_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_SCRIPT_PROJECT_ROOT_STR = str(_SCRIPT_PROJECT_ROOT)
+if _SCRIPT_PROJECT_ROOT_STR not in sys.path:
+    sys.path.insert(0, _SCRIPT_PROJECT_ROOT_STR)
+
+from modules.common.process_console import emit_process_log, ensure_console, install_process_file_logging
+
+ensure_console(os.getenv("KU_CONSOLE_TITLE", "KU Mission Planning Console"))
+install_process_file_logging("mission_planning")
+
+try:
+    from .mission_planning_attack_helpers import (
+        apply_attack_customizations,
+        build_attack_context_from_replan_detail,
+        compute_attack_waypoint,
+        load_attack_context,
+    )
+    from .mission_planning_gui_env import (
+        _bootstrap_paths,
+        _ensure_fusion_configs,
+        _load_msglib_and_deps,
+        _now_ms_since_2000,
+        _sanitize_reason,
+        _z4,
+    )
+    from .mission_planning_pipeline_logging import PipelineLogManager
+    from .mission_plan_file_logger import MissionPlanFileLogger
+    from .json_io import write_json
+    from .ui import MissionAlgoConfigTab
+    from .MissionPlanner.runtime_settings import (
+        load_runtime_settings,
+        runtime_override as runtime_settings_override,
+        settings_path as runtime_settings_path,
+    )
+except Exception:
+    from mission_planning_attack_helpers import (
+        apply_attack_customizations,
+        build_attack_context_from_replan_detail,
+        compute_attack_waypoint,
+        load_attack_context,
+    )
+    from mission_planning_gui_env import (
+        _bootstrap_paths,
+        _ensure_fusion_configs,
+        _load_msglib_and_deps,
+        _now_ms_since_2000,
+        _sanitize_reason,
+        _z4,
+    )
+    from mission_planning_pipeline_logging import PipelineLogManager
+    from mission_plan_file_logger import MissionPlanFileLogger
+    from json_io import write_json
+    from modules.mission_planning.ui import MissionAlgoConfigTab
+    from modules.mission_planning.MissionPlanner.runtime_settings import (
+        load_runtime_settings,
+        runtime_override as runtime_settings_override,
+        settings_path as runtime_settings_path,
+    )
+
+PROJECT_ROOT, COMMON_DIR = _bootstrap_paths(Path(__file__))
+_TEMP_DIR = PROJECT_ROOT / "temp"
+
+
+def _ensure_temp_dir() -> Path:
+    _TEMP_DIR.mkdir(parents=True, exist_ok=True)
+    return _TEMP_DIR
+
+
+def _ensure_mission_planner_import_paths() -> None:
+    mp_pkg_dir = Path(PROJECT_ROOT) / "modules" / "mission_planning" / "MissionPlanner"
+    for path in (mp_pkg_dir, mp_pkg_dir.parent, Path(PROJECT_ROOT) / "modules"):
+        path_str = str(path)
+        if path.exists() and path_str not in sys.path:
+            sys.path.insert(0, path_str)
+
+from modules.common.qt_env import ensure_qt_platform
+ensure_qt_platform()
+from modules.common.gui_style import load_shared_stylesheet, polish_tabs, position_window_from_env
+
+from PyQt5.QtCore import (
+    qInstallMessageHandler, QtMsgType, pyqtSignal, QTimer, Qt, QEvent, QObject, QUrl, QRect
+)
+from PyQt5.QtGui import QKeySequence, QPainter, QColor, QFontMetrics, QFont
+from PyQt5.QtWidgets import (
+    QApplication, QMainWindow, QTabWidget, QShortcut,
+    QWidget, QLabel, QHBoxLayout, QVBoxLayout, QSlider, QPushButton, QCheckBox,
+    QStyle, QStyleOptionSlider,
+)
+
+class ModeTickLabels(QWidget):
+    def __init__(self, slider, labels, parent=None):
+        super().__init__(parent)
+        self._slider = slider
+        self._labels = list(labels)
+        self._pad = 0
+        self._font = QFont("Malgun Gothic")
+        self._font.setPointSize(8)
+        metrics = QFontMetrics(self._font)
+        self.setFixedHeight(max(30, metrics.height() * 2 + 2))
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self._slider.installEventFilter(self)
+        self._sync_width()
+
+    def _calc_pad(self):
+        metrics = QFontMetrics(self._font)
+        max_width = 0
+        for label in self._labels:
+            lines = str(label).splitlines() or [""]
+            width = max(metrics.horizontalAdvance(line) for line in lines)
+            if width > max_width:
+                max_width = width
+        rect_width = max(max_width + 6, 24)
+        return int(rect_width / 2) + 2
+
+    def _sync_width(self):
+        self._pad = self._calc_pad()
+        self.setFixedWidth(self._slider.width() + self._pad * 2)
+        self.update()
+
+    def eventFilter(self, obj, event):
+        if obj is self._slider and event.type() == QEvent.Resize:
+            self._sync_width()
+        return super().eventFilter(obj, event)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.TextAntialiasing)
+        painter.setPen(QColor("#6b7280"))
+        painter.setFont(self._font)
+        metrics = QFontMetrics(self._font)
+        option = QStyleOptionSlider()
+        self._slider.initStyleOption(option)
+        style = self._slider.style()
+        groove = style.subControlRect(QStyle.CC_Slider, option, QStyle.SC_SliderGroove, self._slider)
+        handle = style.subControlRect(QStyle.CC_Slider, option, QStyle.SC_SliderHandle, self._slider)
+        min_val = self._slider.minimum()
+        max_val = self._slider.maximum()
+        count = len(self._labels)
+        if count < 2 or max_val == min_val:
+            return
+        step = (max_val - min_val) / (count - 1)
+        available = groove.width() - handle.width()
+        if available < 0:
+            available = 0
+        for idx, label in enumerate(self._labels):
+            val = min_val + int(round(step * idx))
+            pos = style.sliderPositionFromValue(min_val, max_val, val, available, option.upsideDown)
+            x = self._pad + groove.x() + (handle.width() // 2) + pos
+            lines = str(label).splitlines() or [""]
+            text_width = max(metrics.horizontalAdvance(line) for line in lines)
+            rect_width = max(text_width + 6, 24)
+            x0 = int(x - rect_width / 2)
+            rect = QRect(int(x0), 0, int(rect_width), self.height())
+            painter.drawText(rect, Qt.AlignHCenter | Qt.AlignTop, label)
+        painter.end()
+
+
+
+try:
+    from PyQt5.QtWebEngineWidgets import QWebEngineView
+except Exception:
+    QWebEngineView = None
+
+# ───────── Qt 경고 필터 ─────────
+def _qt_silent_handler(mode: QtMsgType, context, message: str):
+    if "Cannot queue arguments of type" in message:
+        return
+    sys.stderr.write(message + "\n")
+qInstallMessageHandler(_qt_silent_handler)
+
+# ───────── 경로 부트스트랩 ─────────
+from modules.common.status_reporter import send_status_ok
+from modules.common import db_paths
+from modules.common import imaging_schedule_replan_store
+from modules.common import path_deviation_replan_store
+from modules.common.option_codes import (
+    DEFAULT_OPTION_CODE_SEQUENCE,
+    ensure_option_code_sequence,
+    normalize_option_code,
+    option_code_to_label,
+)
+from receive_center import register_listener, unregister_listener   # ★ 0101 모드 수신 리스너
+try:
+    from .latest_input_cache import (
+        reset_latest_inputs,
+        update_from_payload as cache_update_from_payload,
+        get_latest_package_id,
+        get_latest_snapshot,
+        describe_latest_ids,
+        resolve_path_from_cache,
+    )
+    from .prior_mission_pipeline import run_prior_mission_pipeline, warm_prior_mission_pipeline
+    from .imaging_schedule_replan_pipeline import (
+        run_imaging_schedule_replan_pipeline,
+        warm_imaging_schedule_replan_pipeline,
+    )
+    from .path_deviation_replan_pipeline import (
+        run_path_deviation_replan_pipeline,
+        warm_path_deviation_replan_pipeline,
+    )
+    from .attack_plan_pipeline import (
+        run_attack_exclusion_pipeline,
+        run_attack_plan_pipeline,
+        warm_attack_plan_pipeline,
+    )
+except Exception:
+    from latest_input_cache import (
+        reset_latest_inputs,
+        update_from_payload as cache_update_from_payload,
+        get_latest_package_id,
+        get_latest_snapshot,
+        describe_latest_ids,
+        resolve_path_from_cache,
+    )
+    from prior_mission_pipeline import run_prior_mission_pipeline, warm_prior_mission_pipeline
+    from imaging_schedule_replan_pipeline import (
+        run_imaging_schedule_replan_pipeline,
+        warm_imaging_schedule_replan_pipeline,
+    )
+    from path_deviation_replan_pipeline import (
+        run_path_deviation_replan_pipeline,
+        warm_path_deviation_replan_pipeline,
+    )
+    from attack_plan_pipeline import (
+        run_attack_exclusion_pipeline,
+        run_attack_plan_pipeline,
+        warm_attack_plan_pipeline,
+    )
+
+# ───────── nFusion 설정/라이선스 정규화 + MessageLibrary 로드 ─────────
+from dll_files.nFusionImports import *  # FusionNodeIoc, NodeMessenger, clr 등
+
+_settings_path = _ensure_fusion_configs(PROJECT_ROOT, COMMON_DIR)
+_ = _load_msglib_and_deps(COMMON_DIR)
+
+# 수신 등록 모듈(내부에서 각 탭의 RECEIVE 등록을 수행)
+from receive import *  # noqa
+
+# 탭
+from Tabs.assignment_planning_tab import AssignmentPlanningTab
+from datetime import datetime, timezone
+
+
+_PATH_DEVIATION_REASON_KEYWORDS = (
+    "\uacbd\ub85c \ubbf8\ucd94\uc885",
+    "\uacbd\ub85c \uc2a4\ucf00\uc904 \ubbf8\uc900\uc218",
+)
+_IMAGING_SCHEDULE_REASON_KEYWORDS = (
+    "\ucd2c\uc601 \uc2a4\ucf00\uc904 \ubbf8\uc900\uc218",
+)
+
+
+def _is_path_deviation_reason_text(value: object | None) -> bool:
+    text = str(value or "")
+    return any(keyword in text for keyword in _PATH_DEVIATION_REASON_KEYWORDS)
+
+
+def _is_imaging_schedule_reason_text(value: object | None) -> bool:
+    text = str(value or "")
+    return any(keyword in text for keyword in _IMAGING_SCHEDULE_REASON_KEYWORDS)
+
+
+class MissionVisualizationTab(QWidget):
+    def __init__(self, plan_id_provider, db_root_provider, log_cb, parent=None):
+        super().__init__(parent)
+        self._plan_id_provider = plan_id_provider
+        self._db_root_provider = db_root_provider
+        self._log = log_cb or (lambda _: None)
+        self._map_view_state: dict | None = None
+        self._map_html_path = _ensure_temp_dir() / "mission_planning_map.html"
+        self._show_waypoints = True
+        self._show_geometry = True
+        self._map_view: QWebEngineView | None = None
+
+        layout = QVBoxLayout(self)
+        row = QHBoxLayout()
+        self._info_label = QLabel("plan_ids: -")
+        self._btn_refresh = QPushButton("Refresh")
+        self._btn_refresh.clicked.connect(self.refresh)
+        self._chk_wps = QCheckBox("Show WPs")
+        self._chk_wps.setChecked(True)
+        self._chk_wps.toggled.connect(self._on_toggle_options)
+        self._chk_geo = QCheckBox("Show Mission Geometry")
+        self._chk_geo.setChecked(True)
+        self._chk_geo.toggled.connect(self._on_toggle_options)
+        row.addWidget(self._btn_refresh)
+        row.addWidget(self._chk_wps)
+        row.addWidget(self._chk_geo)
+        row.addStretch(1)
+        row.addWidget(self._info_label)
+        layout.addLayout(row)
+
+        if QWebEngineView is None:
+            layout.addWidget(QLabel("QtWebEngine not available."))
+        else:
+            self._map_view = QWebEngineView()
+            self._map_view.loadFinished.connect(self._on_map_load_finished)
+            layout.addWidget(self._map_view)
+            self._build_map()
+
+    def _log_line(self, msg: str) -> None:
+        try:
+            self._log(f"[VIS] {msg}")
+        except Exception:
+            pass
+
+    def _on_toggle_options(self, checked: bool) -> None:
+        self._show_waypoints = bool(self._chk_wps.isChecked())
+        self._show_geometry = bool(self._chk_geo.isChecked())
+        self.refresh()
+
+    def refresh(self) -> None:
+        if not self._map_view:
+            return
+        self._capture_map_view_state(self._reload_map_content)
+
+    def _build_map(self) -> None:
+        if not self._map_view:
+            return
+        self._write_map_html()
+        self._map_view.setUrl(QUrl.fromLocalFile(str(self._map_html_path)))
+
+    def _reload_map_content(self) -> None:
+        self._write_map_html()
+        try:
+            if self._map_view:
+                self._map_view.reload()
+        except Exception:
+            pass
+
+    def _capture_map_view_state(self, callback=None) -> None:
+        if not self._map_view:
+            if callback:
+                callback()
+            return
+        script = """
+            (function() {
+                var map = null;
+                for (var k in window) {
+                    if (window[k] instanceof L.Map) { map = window[k]; break; }
+                }
+                if (!map) { return null; }
+                var c = map.getCenter();
+                return {lat: c.lat, lng: c.lng, zoom: map.getZoom()};
+            })();
+        """
+        def _store_view(result):
+            if isinstance(result, dict) and "lat" in result and "lng" in result:
+                self._map_view_state = result
+            if callback:
+                callback()
+        try:
+            self._map_view.page().runJavaScript(script, _store_view)
+        except Exception:
+            if callback:
+                callback()
+
+    def _on_map_load_finished(self, ok: bool) -> None:
+        if not ok or not self._map_view_state:
+            return
+        lat = float(self._map_view_state.get("lat", 0.0))
+        lng = float(self._map_view_state.get("lng", 0.0))
+        zoom = int(self._map_view_state.get("zoom", 14))
+        script = f"""
+            (function() {{
+                var map = null;
+                for (var k in window) {{
+                    if (window[k] instanceof L.Map) {{ map = window[k]; break; }}
+                }}
+                if (map) {{
+                    map.setView([{lat}, {lng}], {zoom});
+                }}
+            }})();
+        """
+        try:
+            if self._map_view:
+                self._map_view.page().runJavaScript(script)
+        except Exception:
+            pass
+
+    def _resolve_plan_ids(self, db_root: Path) -> list[int]:
+        raw = []
+        try:
+            raw = list(self._plan_id_provider() or [])
+        except Exception:
+            raw = []
+        plan_ids: list[int] = []
+        for val in raw:
+            try:
+                plan_ids.append(int(val))
+            except Exception:
+                continue
+        if plan_ids:
+            return plan_ids
+        dir_mp = db_root / "MissionPlan"
+        if not dir_mp.exists():
+            return []
+        candidates = sorted(dir_mp.glob("*.json"), key=lambda p: p.stat().st_mtime)
+        if not candidates:
+            return []
+        latest = candidates[-1]
+        try:
+            with latest.open(encoding="utf-8") as fh:
+                data = json.load(fh)
+            val = data.get("missionPlanID")
+            if val is not None:
+                return [int(val)]
+        except Exception:
+            pass
+        if latest.stem.isdigit():
+            return [int(latest.stem)]
+        return []
+
+    def _coords_from_list(self, items) -> list[tuple[float, float]]:
+        coords = []
+        for item in items or []:
+            lat = item.get("latitude")
+            lon = item.get("longitude")
+            if lat is None or lon is None:
+                continue
+            coords.append((float(lat), float(lon)))
+        return coords
+
+    def _collect_plan_data(self, plan_ids: list[int], db_root: Path) -> dict:
+        dir_mp = db_root / "MissionPlan"
+        dir_imp = db_root / "IndividualMissionPlan"
+        dir_fp = db_root / "FlightPath"
+        path_meta: dict[int, dict] = {}
+        line_geoms: list[dict] = []
+        area_geoms: list[dict] = []
+        points: list[tuple[float, float]] = []
+
+        for plan_id in plan_ids:
+            mp_path = dir_mp / f"{int(plan_id)}.json"
+            if not mp_path.exists():
+                continue
+            try:
+                mp_json = json.loads(mp_path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            for entry in mp_json.get("aircraftList", []):
+                aid = entry.get("aircraftID")
+                imp_id = entry.get("individualMissionPackageID") or entry.get("individualMissionPlanPackageID")
+                if imp_id is None:
+                    continue
+                imp_path = dir_imp / f"{int(imp_id)}.json"
+                if not imp_path.exists():
+                    continue
+                try:
+                    imp_json = json.loads(imp_path.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                aircraft_id = imp_json.get("aircraftID", aid)
+                for im in imp_json.get("individualMissionList", []):
+                    path_id = im.get("pathID")
+                    if path_id is not None:
+                        try:
+                            path_meta[int(path_id)] = {
+                                "aircraftID": aircraft_id,
+                                "missionID": im.get("individualMissionID"),
+                                "missionType": im.get("individualMissionInfo", {}).get("individualMissionType"),
+                            }
+                        except Exception:
+                            pass
+                    info = im.get("individualMissionInfo", {}) or {}
+                    for line in info.get("lineList", []) or []:
+                        coords = self._coords_from_list(line.get("coordinateList"))
+                        if len(coords) >= 2:
+                            line_geoms.append(
+                                {
+                                    "coords": coords,
+                                    "aircraftID": aircraft_id,
+                                    "missionID": im.get("individualMissionID"),
+                                    "pathID": path_id,
+                                }
+                            )
+                            points.extend(coords)
+                    for area in info.get("areaList", []) or []:
+                        coords = self._coords_from_list(area.get("coordinateList"))
+                        if len(coords) >= 3:
+                            area_geoms.append(
+                                {
+                                    "coords": coords,
+                                    "aircraftID": aircraft_id,
+                                    "missionID": im.get("individualMissionID"),
+                                    "pathID": path_id,
+                                }
+                            )
+                            points.extend(coords)
+
+        paths: list[dict] = []
+        for path_id, meta in path_meta.items():
+            fp_path = dir_fp / f"{int(path_id)}.json"
+            if not fp_path.exists():
+                continue
+            try:
+                fp_json = json.loads(fp_path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            waypoints = fp_json.get("waypointList") or fp_json.get("lahWaypointList") or []
+            coords = []
+            for wp in waypoints:
+                coord = (wp or {}).get("coordinate") or {}
+                lat = coord.get("latitude")
+                lon = coord.get("longitude")
+                if lat is None or lon is None:
+                    continue
+                coords.append((float(lat), float(lon)))
+            if len(coords) >= 2:
+                paths.append(
+                    {
+                        "pathID": path_id,
+                        "aircraftID": fp_json.get("aircraftID", meta.get("aircraftID")),
+                        "missionID": meta.get("missionID"),
+                        "coords": coords,
+                        "waypoints": waypoints,
+                    }
+                )
+                points.extend(coords)
+
+        return {
+            "paths": paths,
+            "lines": line_geoms,
+            "areas": area_geoms,
+            "points": points,
+        }
+
+    def _write_map_html(self) -> None:
+        db_root = self._db_root_provider()
+        plan_ids = self._resolve_plan_ids(db_root)
+        label = ", ".join(str(pid) for pid in plan_ids) if plan_ids else "-"
+        self._info_label.setText(f"plan_ids: {label}")
+
+        data = self._collect_plan_data(plan_ids, db_root)
+        points = data.get("points") or []
+        state = self._map_view_state or {}
+        if points:
+            avg_lat = sum(p[0] for p in points) / len(points)
+            avg_lon = sum(p[1] for p in points) / len(points)
+        else:
+            avg_lat = float(state.get("lat", 38.128774))
+            avg_lon = float(state.get("lng", 127.318005))
+        zoom = int(state.get("zoom", 13))
+
+        fmap = folium.Map(location=[avg_lat, avg_lon], zoom_start=zoom)
+        color_map = {1: "green", 2: "orange", 3: "purple", 4: "red", 5: "blue", 6: "brown"}
+
+        if self._show_geometry:
+            for line in data.get("lines", []):
+                coords = line["coords"]
+                aid = line.get("aircraftID")
+                color = color_map.get(aid, "gray")
+                label = f"A{aid} M{line.get('missionID')} P{line.get('pathID')}"
+                folium.PolyLine(coords, color=color, weight=2, dash_array="6,6", tooltip=label).add_to(fmap)
+            for area in data.get("areas", []):
+                coords = area["coords"]
+                aid = area.get("aircraftID")
+                color = color_map.get(aid, "gray")
+                label = f"A{aid} M{area.get('missionID')} P{area.get('pathID')}"
+                folium.Polygon(coords, color=color, weight=2, fill=True, fill_opacity=0.2, tooltip=label).add_to(fmap)
+
+        for path in data.get("paths", []):
+            aid = path.get("aircraftID")
+            color = color_map.get(aid, "gray")
+            label = f"A{aid} M{path.get('missionID')} P{path.get('pathID')}"
+            folium.PolyLine(path["coords"], color=color, weight=3, tooltip=label).add_to(fmap)
+            if self._show_waypoints:
+                for idx, wp in enumerate(path.get("waypoints") or []):
+                    coord = (wp or {}).get("coordinate") or {}
+                    lat = coord.get("latitude")
+                    lon = coord.get("longitude")
+                    if lat is None or lon is None:
+                        continue
+                    folium.CircleMarker(
+                        [float(lat), float(lon)],
+                        radius=2,
+                        color=color,
+                        fill=True,
+                        fill_opacity=1.0,
+                        tooltip=f"WP {idx + 1}",
+                    ).add_to(fmap)
+
+        try:
+            fmap.save(str(self._map_html_path))
+        except Exception as exc:
+            self._log_line(f"map save failed: {exc}")
+
+
+# ───────── 메인 윈도우 ─────────
+class MainWindow(QMainWindow):
+    # 백그라운드 → UI 스레드용 신호
+    ctrl_payload   = pyqtSignal(dict)   # 제어
+    log_sig        = pyqtSignal(str)    # 로그
+    pipeline_log_sig = pyqtSignal(dict) # pipeline log fan-out
+    planning_metric_sig = pyqtSignal(dict)
+    start_push_seq = pyqtSignal()       # 0301/0305/0901 순차 푸시 트리거
+    visual_refresh = pyqtSignal()
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.setWindowTitle('임무계획(MMR)')
+        self.resize(1100, 700)
+
+        # 파워/상태
+        self._power_on = True
+        self._self_check_sent = False
+        self._last_ctrl_ts = {}     # 디듀프
+        self._rx_counts = {}
+
+        # 파이프라인 컨텍스트
+        self._initplan_running = False
+        self._last_mission_plan_id = None
+        self._last_mission_plan_ids = []
+        self._staged_plan_context: dict = {}
+        self._active_plan_context: dict = {}
+        self._pending_plan_push: dict | None = None
+        self._scheduled_0301_plan_ids: list[int] = []
+        self._replan_delay_timer: QTimer | None = None
+        self._post_0301_delivery: dict | None = None
+        self._post_0301_timer = QTimer(self)
+        self._post_0301_timer.setSingleShot(True)
+        self._post_0301_timer.timeout.connect(
+            lambda: self._try_flush_post_0301_delivery(
+                trigger="timeout",
+                force=True,
+            )
+        )
+        self._session_scope = self._create_empty_scope()
+        self._plan_status = "임무계획 전"
+        self._option_id_counter = 0
+        self._bus_ready = False
+        self._attack_delivery_buffer: list[dict] = []
+        self._hb_0102_enabled = False
+        self._hb_0102_interval_sec = 0.2  # 5Hz
+        self._hb_0102_stop = threading.Event()
+        self._hb_0102_thread: Optional[threading.Thread] = None
+        self._planning_timer_started_at: Optional[float] = None
+        self._planning_timer_reason: str = "-"
+        self._last_planning_elapsed_ms: Optional[float] = None
+        self._last_planning_status: str = "idle"
+        self._planner_runtime_lock = threading.RLock()
+        self._planner_runtime_cache: Optional[Dict[str, Any]] = None
+        self._planner_runtime_warmup_running = False
+        self._planner_runtime_warmup_pending: Optional[str] = None
+        self._planner_runtime_ready_logged = False
+
+        reset_latest_inputs()
+        self._last_logged_input_ids = {"0201": None, "0203": None}
+        self._input_listener_refs: list[tuple[str, callable]] = []
+        self._install_input_listeners()
+
+        # ── 중앙 탭(AssignmentPlanningTab)
+        tabs = QTabWidget()
+        polish_tabs(tabs)
+        self._tab = AssignmentPlanningTab(messenger=NodeMessenger)
+        self._tab.set_replan_callback(self._handle_replan_received)
+
+        self._tab._build_overridden_body = lambda mid: (
+            {"Timestamp": _now_ms_since_2000(), "Status": 1, "Source": "MMR"}
+            if str(mid).strip() == "0102" else None
+        )
+
+        self._install_power_gate_hooks()       # Power OFF 가드
+        self._install_0301_override()          # 0301 전송 커스텀
+        tabs.addTab(self._tab, "임무 할당·계획수립 CSC")
+        self._algo_tab = MissionAlgoConfigTab(
+            runtime_settings_path(),
+            on_apply=self._on_algo_settings_applied,
+        )
+        tabs.addTab(self._algo_tab, "알고리즘 설정")
+        self._log_tab = None
+        self._visual_tab = None
+        self._pipeline_logger = PipelineLogManager(
+            emit_callback=self.pipeline_log_sig.emit,
+            log_tab_provider=lambda: getattr(self, "_log_tab", None),
+            sanitize_reason=_sanitize_reason,
+        )
+        self._mission_plan_logger = MissionPlanFileLogger()
+        self._active_plan_log_run = None
+        self._log_file_path: Optional[Path] = None
+        self._init_gui_log_file_sink()
+        self._on_algo_settings_applied()
+        QTimer.singleShot(0, lambda: self._schedule_planner_warmup("startup"))
+
+        # ── 상단 모드 슬라이더
+        top = QWidget()
+        top.setObjectName("TopBar")
+        top_layout = QHBoxLayout(top)
+        top_layout.setContentsMargins(4, 2, 4, 2)
+        top_layout.setSpacing(12)
+        self._latest_input_label = QLabel("0201/0203 \uc218\uc2e0 \ud604\ud669")
+        self._latest_input_label.setObjectName("InfoBadge")
+        top_layout.addWidget(self._latest_input_label)
+        self._planning_elapsed_label = QLabel("최근 계획 시간: -")
+        self._planning_elapsed_label.setObjectName("InfoBadge")
+        top_layout.addWidget(self._planning_elapsed_label)
+        top_layout.addStretch(1)
+        self.mode_slider = QSlider(Qt.Horizontal)
+        self.mode_slider.setRange(0, 3)
+        self.mode_slider.setSingleStep(1)
+        self.mode_slider.setTickInterval(1)
+        self.mode_slider.setTickPosition(QSlider.TicksBelow)
+        self.mode_slider.setFixedWidth(420)
+        self.mode_slider.valueChanged.connect(self._on_mode_slider_changed)
+        slider_wrap = QWidget()
+        slider_wrap.setObjectName("ModePanel")
+        slider_layout = QVBoxLayout(slider_wrap)
+        slider_layout.setContentsMargins(0, 0, 0, 0)
+        slider_layout.setSpacing(2)
+        slider_layout.addWidget(self.mode_slider, 0, Qt.AlignHCenter)
+        self.mode_hint = ModeTickLabels(
+            self.mode_slider,
+            ["0\n초기화", "1\n대기", "2\n초기임무계획", "3\n임무수행"],
+            slider_wrap,
+        )
+        slider_layout.addWidget(self.mode_hint, 0, Qt.AlignHCenter)
+        self.mode_now = QLabel("초기화 모드")
+        self.mode_now.setObjectName("ModeStatusLabel")
+        self.mode_now.setFixedWidth(140)
+        self.mode_now.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        lbl = QLabel("모드:")
+        lbl.setObjectName("ModeCaptionLabel")
+        top_layout.addWidget(lbl); top_layout.addWidget(slider_wrap); top_layout.addWidget(self.mode_now)
+        self._refresh_input_banner()
+
+        center = QWidget()
+        v = QVBoxLayout(center)
+        v.setContentsMargins(12, 12, 12, 12)
+        v.setSpacing(10)
+        v.addWidget(top); v.addWidget(tabs)
+        self.setCentralWidget(center)
+
+        # 초기 기동 시 즉시 초기화 모드로 전환
+        self._set_mode_slider_by_text("초기화 모드")
+        self._apply_power_state()
+
+        # 신호 연결
+        self.ctrl_payload.connect(self._handle_ctrl_payload)
+        self.log_sig.connect(self._append_log_line)
+        self.pipeline_log_sig.connect(self._pipeline_logger.handle_event)
+        self.planning_metric_sig.connect(self._apply_planning_metric)
+        self.start_push_seq.connect(self._start_push_sequence)
+        if self._log_file_path:
+            self._append_log_line(f"[LOG] Mission planning log started: {self._log_file_path}")
+
+        # nFusion RX 초기화 + 테스트 단축키
+        threading.Thread(target=self._rx_setup, daemon=True).start()
+        self._install_test_shortcuts()
+
+        # GUI 표시 후 상태 OK(=1) 한 번 송신
+        QTimer.singleShot(800, lambda: send_status_ok("MMR"))
+
+        # run.py 등의 self_check ON 신호 수신 시에도 내부에서만 0102=1 송신
+        # ★★★ 0101 수신 → 모드 반영 리스너 + 폴백 폴링 설치
+        self._install_0101_mode_listener()
+        self._start_0101_rx_poller()
+
+    def _refresh_visual_tab(self) -> None:
+        tab = getattr(self, "_visual_tab", None)
+        if tab is None:
+            return
+        try:
+            tab.refresh()
+        except Exception:
+            pass
+
+    @staticmethod
+    def _format_planning_elapsed(elapsed_ms: Optional[float]) -> str:
+        if elapsed_ms is None:
+            return "-"
+        try:
+            seconds = float(elapsed_ms) / 1000.0
+        except Exception:
+            return "-"
+        return f"{seconds:.2f}초"
+
+    def _apply_planning_metric(self, payload: Dict[str, Any]) -> None:
+        if not isinstance(payload, dict):
+            return
+        state = str(payload.get("state") or "idle")
+        reason = _sanitize_reason(payload.get("reason"), self._planning_timer_reason or "-")
+        elapsed_ms_raw = payload.get("elapsed_ms")
+        try:
+            elapsed_ms = float(elapsed_ms_raw) if elapsed_ms_raw is not None else None
+        except Exception:
+            elapsed_ms = None
+
+        if state == "running":
+            self._planning_timer_reason = reason
+            self._planning_timer_started_at = time.perf_counter()
+            self._last_planning_status = "running"
+            self._planning_elapsed_label.setText(f"최근 계획 시간: 측정 중 ({reason})")
+            return
+
+        if elapsed_ms is not None:
+            self._last_planning_elapsed_ms = elapsed_ms
+        self._planning_timer_started_at = None
+        self._planning_timer_reason = reason
+        self._last_planning_status = state
+
+        elapsed_text = self._format_planning_elapsed(self._last_planning_elapsed_ms)
+        if state == "success":
+            self._planning_elapsed_label.setText(f"최근 계획 시간: {elapsed_text} ({reason})")
+        elif state == "failed":
+            self._planning_elapsed_label.setText(f"최근 계획 시간: 실패 {elapsed_text} ({reason})")
+        else:
+            self._planning_elapsed_label.setText(f"최근 계획 시간: {elapsed_text}")
+
+    def _mark_planning_metric_start(self, reason: str) -> None:
+        self.planning_metric_sig.emit({"state": "running", "reason": reason})
+
+    def _mark_planning_metric_finish(self, reason: str, *, success: bool) -> Optional[float]:
+        start_ts = self._planning_timer_started_at
+        elapsed_ms = None
+        if start_ts is not None:
+            elapsed_ms = max(0.0, (time.perf_counter() - start_ts) * 1000.0)
+        self.planning_metric_sig.emit(
+            {
+                "state": "success" if success else "failed",
+                "reason": reason,
+                "elapsed_ms": elapsed_ms,
+            }
+        )
+        return elapsed_ms
+
+    def _build_planner_runtime(self) -> Dict[str, Any]:
+        _ensure_mission_planner_import_paths()
+        from AnS import run_divide_and_pattern, build_mission_plan_0301
+        from data_def import d0302, d0303, d0304
+
+        try:
+            import config as mp_config
+        except Exception:
+            mp_config = None
+        try:
+            from data_def import search_speed as mp_search_speed
+        except Exception:
+            mp_search_speed = None
+
+        uav_cruise_speed = 40.0
+        uav_turn_step = 15.0
+        applied = False
+        param_error: Optional[str] = None
+        try:
+            uav_cruise_speed, uav_turn_step, applied = self._apply_uav_params_from_store(
+                d0303,
+                mp_config_module=mp_config,
+                search_speed_module=mp_search_speed,
+                default_cruise=uav_cruise_speed,
+                default_turn_step=uav_turn_step,
+            )
+        except Exception as exc:
+            param_error = str(exc)
+
+        warm_status: Dict[str, Any] = {}
+        warm_errors: Dict[str, str] = {}
+        for key, warm_fn in (
+            ("prior_pipeline", warm_prior_mission_pipeline),
+            ("imaging_schedule_pipeline", warm_imaging_schedule_replan_pipeline),
+            ("path_deviation_pipeline", warm_path_deviation_replan_pipeline),
+            ("attack_pipeline", warm_attack_plan_pipeline),
+        ):
+            try:
+                warm_status[key] = warm_fn()
+            except BaseException as exc:
+                warm_errors[key] = str(exc)
+
+        return {
+            "run_divide_and_pattern": run_divide_and_pattern,
+            "build_mission_plan_0301": build_mission_plan_0301,
+            "d0302": d0302,
+            "d0303": d0303,
+            "d0304": d0304,
+            "uav_cruise_speed": float(uav_cruise_speed),
+            "uav_turn_step": float(uav_turn_step),
+            "uav_params_applied": bool(applied),
+            "uav_params_error": param_error,
+            "warm_status": warm_status,
+            "warm_errors": warm_errors,
+        }
+
+    def _get_planner_runtime(self) -> Dict[str, Any]:
+        with self._planner_runtime_lock:
+            runtime = self._planner_runtime_cache
+        if runtime is not None:
+            return runtime
+
+        runtime = self._build_planner_runtime()
+        with self._planner_runtime_lock:
+            self._planner_runtime_cache = runtime
+        return runtime
+
+    def _prime_latest_input_file(self, msg_id: str) -> None:
+        latest_id = get_latest_package_id(msg_id)
+        if latest_id is None:
+            return
+        snapshot = get_latest_snapshot(msg_id)
+        payload = getattr(snapshot, "payload", None)
+        if not isinstance(payload, dict):
+            return
+
+        if msg_id == "0201":
+            has_core_data = bool(payload.get("inputMissionList") or payload.get("availableAircraftList"))
+            directory_name = "InputMissionPlan"
+            package_key = "inputMissionPackageID"
+        elif msg_id == "0203":
+            has_core_data = bool(
+                payload.get("takeOverInfoList")
+                or payload.get("flightAreaList")
+                or payload.get("handOverInfoList")
+            )
+            directory_name = "MissionReferenceInfo"
+            package_key = "missionReferencePackageID"
+        else:
+            return
+        if not has_core_data:
+            return
+
+        try:
+            package_id = int(latest_id)
+        except Exception:
+            return
+
+        try:
+            db_root = db_paths.get_active_db_root()
+        except Exception:
+            db_root = db_paths.LEGACY_DB_ROOT
+
+        directory = db_root / directory_name
+        directory.mkdir(parents=True, exist_ok=True)
+        payload_copy = dict(payload)
+        payload_copy.setdefault(package_key, package_id)
+        write_json(
+            directory / f"{package_id}.json",
+            payload_copy,
+            pretty=True,
+            ensure_ascii=False,
+            skip_if_unchanged=True,
+        )
+
+    def _schedule_planner_warmup(self, reason: str = "background") -> None:
+        with self._planner_runtime_lock:
+            if self._planner_runtime_warmup_running:
+                self._planner_runtime_warmup_pending = reason
+                return
+            self._planner_runtime_warmup_running = True
+
+        threading.Thread(
+            target=self._planner_warmup_worker,
+            args=(reason,),
+            name="Planner-Warmup",
+            daemon=True,
+        ).start()
+
+    def _planner_warmup_worker(self, reason: str) -> None:
+        announce_ready = False
+        runtime: Optional[Dict[str, Any]] = None
+        try:
+            runtime = self._build_planner_runtime()
+            self._prime_latest_input_file("0201")
+            self._prime_latest_input_file("0203")
+            with self._planner_runtime_lock:
+                self._planner_runtime_cache = runtime
+                if not self._planner_runtime_ready_logged:
+                    self._planner_runtime_ready_logged = True
+                    announce_ready = True
+        except Exception as exc:
+            self.log_sig.emit(f"[WARM WARN] Planner warm-up failed ({reason}): {exc}")
+        else:
+            warm_errors = dict((runtime or {}).get("warm_errors") or {})
+            for pipeline_name, error_text in warm_errors.items():
+                self.log_sig.emit(f"[WARM WARN] {pipeline_name} warm-up failed ({reason}): {error_text}")
+            if announce_ready:
+                self.log_sig.emit(f"[WARM] Mission planner runtime ready ({reason})")
+        finally:
+            pending_reason = None
+            with self._planner_runtime_lock:
+                self._planner_runtime_warmup_running = False
+                pending_reason = self._planner_runtime_warmup_pending
+                self._planner_runtime_warmup_pending = None
+            if pending_reason:
+                self._schedule_planner_warmup(pending_reason)
+
+    def _invalidate_planner_runtime(self, *, warm_reason: Optional[str] = None) -> None:
+        with self._planner_runtime_lock:
+            self._planner_runtime_cache = None
+        if warm_reason:
+            self._schedule_planner_warmup(warm_reason)
+
+    # ───────── 0101 모드 수신 리스너 ─────────
+    def _install_0101_mode_listener(self):
+        """
+        receive_center.notify("0101", raw)를 직접 수신해
+        systemMode 숫자코드를 슬라이더로 바로 반영.
+        """
+        class _Rx0101:
+            def __init__(self, host): self.host = host
+            def mark_received(self, msg_id: str, raw: bytes | None = None):
+                try:
+                    self.host._on_rx_0101(raw)
+                except Exception:
+                    pass
+
+        try:
+            self._rx0101 = _Rx0101(self)
+            register_listener("0101", self._rx0101)
+            self._append_log_line("[0101] 모드 수신 리스너 등록 완료")
+        except Exception as e:
+            self._append_log_line(f"[0101] 리스너 등록 실패: {e}")
+
+    def _on_rx_0101(self, raw: bytes | None):
+        # 1) RAW → 텍스트
+        txt = (raw or b"").decode("utf-8", "ignore")
+        # 2) JSON 추출(프리텍스트 대응)
+        m = re.search(r"\{.*\}", txt, flags=re.S)
+        jtxt = m.group(0) if m else txt.strip()
+        # 3) 딕셔너리 파싱
+        try:
+            body = json.loads(jtxt) if jtxt.startswith("{") else {}
+        except Exception:
+            body = {}
+
+        # 4) 코드 추출(여러 키/형식 대응)
+        code = self._extract_mode_code(body)
+        if code is None:
+            # 마지막 폴백: RAW에서 직접 캡쳐
+            mm = re.search(r'"systemMode"\s*:\s*([0-9]+)', txt)
+            if mm:
+                try: code = int(mm.group(1))
+                except Exception: code = None
+
+        if code is None:
+            # 조용히 무시(불필요한 실패 로그 없음)
+            return
+
+        if self._apply_system_mode_code(code):
+            self._append_log_line(f"[0101] 시스템 운용 모드 수신 → code={code}")
+        else:
+            self._append_log_line(f"[MODE] 미지원 코드({code})")
+
+    def _extract_mode_code(self, body: dict) -> int | None:
+        """
+        dict의 다양한 키에서 모드코드를 견고하게 추출.
+        - 키 대/소문자 무시
+        - 값이 str/bool/float 모두 허용
+        """
+        if not isinstance(body, dict):
+            return None
+        low = {str(k).lower(): body[k] for k in body.keys() if k is not None}
+        for key in ("systemmode", "mode", "modecode", "state"):
+            if key in low:
+                v = low[key]
+                if isinstance(v, bool):
+                    return 1 if v else 0
+                try:
+                    return int(v)
+                except Exception:
+                    try:
+                        return int(float(str(v).strip()))
+                    except Exception:
+                        return None
+        return None
+
+    def _apply_system_mode_code(self, code: int) -> bool:
+        """
+        외부 0101 systemMode 매핑
+          0 : 초기화 모드
+          1 : 대기 모드
+          2 : 초기임무계획 모드
+          3 : 임무수행 모드
+        내부 슬라이더(0~3): [0=초기화 모드, 1=대기모드, 2=초기 임무 계획, 3=임무 수행]
+        → 매핑: 동일(0→0, 1→1, 2→2, 3→3)
+        """
+        if code not in (0, 1, 2, 3):
+            return None
+        val = code
+        try:
+            self.mode_slider.blockSignals(True)
+            self.mode_slider.setValue(val)
+            self.mode_slider.blockSignals(False)
+            # 기존 부수효과(전원/주기TX/모니터링 통지) 실행
+            self._on_mode_slider_changed(val)
+            if code in (2, 3):
+                self._mark_post_0301_ready(trigger=f"0101 code={code}")
+        except Exception:
+            return None
+        return True
+
+    # ───────── RX 테이블 폴링 기반 0101 모드 반영(리시버 경로 폴백) ─────────
+    def _start_0101_rx_poller(self):
+        self._last_0101_raw = None
+        self._poll_0101_timer = QTimer(self)
+        self._poll_0101_timer.setInterval(250)  # 4Hz
+        self._poll_0101_timer.timeout.connect(self._poll_0101_in_rx_table)
+        self._poll_0101_timer.start()
+
+
+    def _poll_0101_in_rx_table(self):
+        try:
+            tab = getattr(self, "_tab", None)
+            tbl = getattr(tab, "tbl_rx", None) if tab else None
+            if tbl is None:
+                return
+            target_row = -1
+            for r in range(tbl.rowCount()):
+                it = tbl.item(r, 0)
+                if it and it.text().strip() == "0101":
+                    target_row = r
+                    break
+            if target_row < 0:
+                return
+            item = tbl.item(target_row, 0)
+            payload = item.data(Qt.UserRole) if item else None
+            if tab and hasattr(tab, "_latest_payload_bytes"):
+                raw_latest = tab._latest_payload_bytes(payload)
+            else:
+                raw_latest = payload if isinstance(payload, (bytes, bytearray)) else b""
+            if not raw_latest:
+                return
+            if self._last_0101_raw is not None and raw_latest == self._last_0101_raw:
+                return
+
+            txt = raw_latest.decode("utf-8", "ignore")
+            m = re.search(r"\{.*\}", txt, flags=re.S)
+            jtxt = m.group(0) if m else txt.strip()
+            body = {}
+            try:
+                if jtxt.startswith("{"):
+                    body = json.loads(jtxt)
+            except Exception:
+                body = {}
+
+            code = self._extract_mode_code(body)
+            if code is None:
+                mm = re.search(r'"systemMode"\s*:\s*([0-9]+)', txt)
+                if mm:
+                    try:
+                        code = int(mm.group(1))
+                    except Exception:
+                        code = None
+
+            if code is not None:
+                if self._apply_system_mode_code(code):
+                    self._append_log_line(f"[0101/POLL] 모드 동기화 code={code}")
+                self._last_0101_raw = raw_latest
+        except Exception:
+            pass
+
+
+    # ───────── 모니터링(대시보드) 전송 훅 ─────────
+    def _find_tx_row(self, code: str) -> int:
+        tab = getattr(self, "_tab", None)
+        tbl = getattr(tab, "tbl_tx", None) if tab else None
+        if tbl is None:
+            return -1
+        try:
+            needle = str(code).strip()
+            for r in range(tbl.rowCount()):
+                it = tbl.item(r, 0)
+                if it and it.text().strip() == needle:
+                    return r
+        except Exception:
+            return -1
+        return -1
+
+    def _set_0102_tx_state(self, running: bool) -> None:
+        try:
+            row = self._find_tx_row("0102")
+            if row < 0:
+                return
+            state_item = self._tab.tbl_tx.item(row, 2)
+            if state_item is None:
+                return
+            if running:
+                state_item.setText("주기송신(5Hz/HB)")
+                state_item.setForeground(QColor("blue"))
+            else:
+                state_item.setText("전송 정지")
+        except Exception:
+            pass
+
+    def _start_0102_heartbeat_worker_if_needed(self) -> None:
+        th = getattr(self, "_hb_0102_thread", None)
+        if th is not None and th.is_alive():
+            return
+        self._hb_0102_stop.clear()
+        self._hb_0102_thread = threading.Thread(
+            target=self._run_0102_heartbeat_worker,
+            name="MMR-0102-HB",
+            daemon=True,
+        )
+        self._hb_0102_thread.start()
+
+    def _run_0102_heartbeat_worker(self) -> None:
+        try:
+            from push_center import push_message
+        except Exception as exc:
+            try:
+                self.log_sig.emit(f"[ERR] 0102 heartbeat import failed: {exc}")
+            except Exception:
+                pass
+            return
+
+        interval = float(getattr(self, "_hb_0102_interval_sec", 0.2) or 0.2)
+        next_due = time.monotonic() + interval
+        last_warn = 0.0
+
+        while not self._hb_0102_stop.is_set():
+            if not self._hb_0102_enabled:
+                self._hb_0102_stop.wait(0.1)
+                next_due = time.monotonic() + interval
+                continue
+            if not self._power_on:
+                self._hb_0102_stop.wait(0.1)
+                next_due = time.monotonic() + interval
+                continue
+            if not getattr(self, "_bus_ready", False):
+                self._hb_0102_stop.wait(0.1)
+                next_due = time.monotonic() + interval
+                continue
+
+            now = time.monotonic()
+            if now < next_due:
+                self._hb_0102_stop.wait(min(0.05, next_due - now))
+                continue
+
+            # 큰 지연이 발생한 경우 burst 전송 대신 다음 주기로 재정렬한다.
+            if now - next_due > interval:
+                next_due = now + interval
+            else:
+                next_due += interval
+
+            try:
+                body = {
+                    "timestamp": _now_ms_since_2000(),
+                    "source": "MMR",
+                    "status": 1,
+                }
+                push_message("0102", NodeMessenger, body_dict=body)
+                self._self_check_sent = True
+            except Exception as exc:
+                # heartbeat 실패 로그는 저주기로만 남겨서 GUI 이벤트 큐 과부하를 막는다.
+                if (now - last_warn) >= 5.0:
+                    try:
+                        self.log_sig.emit(f"[WARN] 0102 heartbeat send failed: {exc}")
+                    except Exception:
+                        pass
+                    last_warn = now
+                next_due = time.monotonic() + max(interval, 0.5)
+
+    def _set_0102_heartbeat_enabled(self, enabled: bool) -> None:
+        self._hb_0102_enabled = bool(enabled)
+        if self._hb_0102_enabled:
+            self._start_0102_heartbeat_worker_if_needed()
+            self._set_0102_tx_state(True)
+        else:
+            self._set_0102_tx_state(False)
+
+    def _stop_tab_periodic_0102_if_running(self) -> None:
+        try:
+            tab = self._tab
+            timers = getattr(tab, "periodic_timers", {})
+            timer = timers.get("0102")
+            if timer is not None:
+                timer.stop()
+                timer.deleteLater()
+                del timers["0102"]
+        except Exception:
+            pass
+
+    def _install_0301_override(self):
+        tab = getattr(self, "_tab", None)
+        if not tab or not hasattr(tab, "_on_tx_button_clicked") or hasattr(self, "_tx_override_installed"):
+            return
+
+        original_handler = tab._on_tx_button_clicked
+
+        def _wrapped(row: int):
+            code = ""
+            try:
+                item = tab.tbl_tx.item(row, 0)
+                if item is not None:
+                    code = item.text().strip()
+            except Exception:
+                code = ""
+
+            if code == "0102":
+                self._ensure_0102(not bool(getattr(self, "_hb_0102_enabled", False)))
+                return
+
+            if code == "0301":
+                plan_ids: list[int] = []
+                for pid in self._scheduled_0301_plan_ids or []:
+                    try:
+                        plan_ids.append(int(pid))
+                    except Exception:
+                        continue
+                plan_ids = list(dict.fromkeys(plan_ids))
+                if not plan_ids:
+                    return original_handler(row)
+                self._send_0301_batch(plan_ids)
+                return
+
+            return original_handler(row)
+
+        tab._on_tx_button_clicked = _wrapped  # type: ignore
+        self._tx_override_installed = True
+
+    def _push_single_0301(self, mission_plan_id: int):
+        try:
+            from push_center import push_message
+        except Exception as exc:
+            self._append_log_line(f"[ERR] 0301 push unavailable: {exc}")
+            return
+
+        try:
+            mpid = int(mission_plan_id)
+        except Exception:
+            self._append_log_line(f"[WARN] 0301 skipped: invalid missionPlanID={mission_plan_id}")
+            return
+
+        body = {
+            "timestamp": _now_ms_since_2000(),
+            "source": "MMR",
+            "missionPlanID": mpid,
+        }
+
+        try:
+            push_message("0301", NodeMessenger, body_dict=body)
+            raw = json.dumps(body, ensure_ascii=False).encode("utf-8", "ignore")
+        except Exception as exc:
+            self._append_log_line(f"[ERR] 0301 push failed: {exc}")
+            return
+
+        try:
+            self.log_sig.emit(f"[0301] missionPlanID={mpid} 전송")
+        except Exception:
+            pass
+
+        try:
+            self._tab.mark_sent(_z4("0301"), raw)
+        except Exception:
+            pass
+
+    def _send_0301_batch(self, plan_ids: list[int]):
+        for pid in plan_ids:
+            self._push_single_0301(pid)
+        self._scheduled_0301_plan_ids = []
+
+    def _start_0102_stream(self, _retry: int = 0):
+        """초기화 모드 직후 0.5s 뒤 0102를 5Hz로 자동 시작."""
+        if not self._power_on:
+            return
+        if not getattr(self, "_bus_ready", False):
+            if _retry == 0:
+                self._append_log_line("[0102] NodeMessenger 초기화 대기 중 ? 자동 송신 보류")
+            if _retry < 30:
+                QTimer.singleShot(300, lambda r=_retry + 1: self._start_0102_stream(r))
+            else:
+                self._append_log_line("[WARN] NodeMessenger가 준비되지 않아 0102 자동 송신을 건너뜁니다.")
+            return
+        try:
+            self._tab.periodic_config['0102'] = 5
+        except Exception:
+            pass
+        self._ensure_0102(True)
+
+    # ───────── 최신 0201/0203 ID 트래킹 ─────────
+    def _install_input_listeners(self):
+        """0201/0203 수신 리스너를 등록하고 캐시를 유지한다."""
+        if getattr(self, "_input_listener_refs", None):
+            for msg_id, handler in self._input_listener_refs:
+                try:
+                    unregister_listener(msg_id, handler)
+                except Exception:
+                    pass
+            self._input_listener_refs.clear()
+        for msg_id, handler in (("0201", self._on_input_payload_0201), ("0203", self._on_input_payload_0203)):
+            try:
+                register_listener(msg_id, handler)
+                self._input_listener_refs.append((msg_id, handler))
+            except Exception:
+                self._append_log_line(f"[WARN] Listener registration failed for {msg_id}")
+
+    # ───────── 0201/0203 최신 상태 배너 ─────────
+    def _build_input_banner_info(self) -> tuple[str, str]:
+        """GUI 상단 배너에 보여줄 0201/0203 ID·파일 정보를 만든다."""
+        try:
+            db_root = db_paths.get_active_db_root()
+        except Exception:
+            db_root = db_paths.LEGACY_DB_ROOT
+
+        entries = []
+        tips = []
+        for msg_id, directory in (("0201", db_root / "InputMissionPlan"), ("0203", db_root / "MissionReferenceInfo")):
+            pid = get_latest_package_id(msg_id)
+            pid_text = str(pid) if pid is not None else "미수신"
+
+            resolved_path = None
+            if pid is not None:
+                try:
+                    candidate = directory / f"{pid}.json"
+                    if candidate.exists():
+                        resolved_path = candidate
+                    else:
+                        cached = resolve_path_from_cache(msg_id, directory)
+                        if cached and Path(cached).exists():
+                            resolved_path = Path(cached)
+                except Exception:
+                    resolved_path = None
+
+            file_label = "파일 없음"
+            file_tip = f"{directory} (파일 없음)"
+            if resolved_path:
+                file_label = f"{resolved_path.parent.name}/{resolved_path.name}"
+                file_tip = str(resolved_path)
+            elif pid is not None:
+                file_label = "미존재"
+                file_tip = str(directory / f"{pid}.json")
+
+            entries.append(f"{msg_id}: {pid_text} ({file_label})")
+            tips.append(f"{msg_id}: ID={pid_text}, file={file_tip}")
+
+        return " | ".join(entries), "\n".join(tips)
+
+    def _refresh_input_banner(self) -> None:
+        label = getattr(self, "_latest_input_label", None)
+        if label is None:
+            return
+        try:
+            text, tip = self._build_input_banner_info()
+        except Exception as exc:
+            text = f"0201/0203 상태 표시 실패: {exc}"
+            tip = text
+
+        def _apply() -> None:
+            lbl = getattr(self, "_latest_input_label", None)
+            if lbl is None:
+                return
+            try:
+                lbl.setText(text)
+                lbl.setToolTip(tip)
+            except Exception:
+                pass
+
+        QTimer.singleShot(0, _apply)
+
+    def _load_attack_context(self, cmpk_path: Path) -> Optional[Dict[str, Any]]:
+        return load_attack_context(cmpk_path, getattr(self.log_sig, "emit", None))
+
+    def _build_attack_context_from_replan_detail(self, detail: Any) -> Optional[Dict[str, Any]]:
+        return build_attack_context_from_replan_detail(detail)
+
+    def _load_uav_params_from_store(self) -> Optional[Dict[str, Any]]:
+        payload = load_runtime_settings()
+        if not isinstance(payload, dict) or not payload:
+            return None
+        return payload
+
+    def _apply_uav_params_from_store(
+        self,
+        d0303_module,
+        *,
+        mp_config_module=None,
+        search_speed_module=None,
+        default_cruise: float = 40.0,
+        default_turn_step: float = 15.0,
+    ) -> tuple[float, float, bool]:
+        payload = self._load_uav_params_from_store()
+        if not payload:
+            return default_cruise, default_turn_step, False
+
+        values = payload.get("values")
+        if not isinstance(values, dict):
+            values = {}
+
+        def _get_float(key: str, default: float) -> float:
+            if key not in values:
+                return default
+            try:
+                return float(values.get(key))
+            except Exception:
+                return default
+
+        def _get_int(key: str, default: int) -> int:
+            if key not in values:
+                return default
+            try:
+                return int(float(values.get(key)))
+            except Exception:
+                return default
+
+        cruise_speed = _get_float("cruise_speed_mps", default_cruise)
+        turn_step = _get_float("turn_step_deg", default_turn_step)
+        sweep_sep = _get_float(
+            "default_sweep_separation_m",
+            float(getattr(mp_config_module, "DEFAULT_SWEEP_SEPARATION_M", d0303_module.SWEEP_GEOMETRY.separation_m)),
+        )
+        search_weight = _get_float(
+            "search_speed_weight",
+            float(getattr(mp_config_module, "SEARCH_SPEED_WEIGHT", 1.0)),
+        )
+        db_fov_weight = _get_float(
+            "db_fov_weight",
+            float(getattr(mp_config_module, "DB_FOV_WEIGHT", 1.0)),
+        )
+        if db_fov_weight <= 0.0:
+            db_fov_weight = 1.0
+        fov_deg = _get_float("fov_deg", float(getattr(d0303_module, "FOV_DEG", 0.0)))
+        altitude = _get_int("altitude_m", int(getattr(d0303_module, "Altitude", 0)))
+        d0303_module.FOV_DEG = fov_deg
+        d0303_module.DB_FOV_WEIGHT = float(db_fov_weight)
+        d0303_module.Altitude = int(round(altitude))
+        d0303_module.SWEEP_ENTRY_OFFSET_M = _get_float(
+            "sweep_entry_offset_m", float(getattr(d0303_module, "SWEEP_ENTRY_OFFSET_M", 0.0))
+        )
+        d0303_module.SWEEP_MERGE_HEADING_DEG = _get_float(
+            "sweep_merge_heading_deg", float(getattr(d0303_module, "SWEEP_MERGE_HEADING_DEG", 0.0))
+        )
+        d0303_module.SWEEP_LINE_INTERP_POINTS = _get_int(
+            "sweep_line_interp_points", int(getattr(d0303_module, "SWEEP_LINE_INTERP_POINTS", 2))
+        )
+        d0303_module.MIN_SWEEP_LEN_M = _get_float(
+            "min_sweep_len_m", float(getattr(d0303_module, "MIN_SWEEP_LEN_M", 0.0))
+        )
+        d0303_module.MIN_ROUTE_SPACING_M = _get_float(
+            "min_route_spacing_m", float(getattr(d0303_module, "MIN_ROUTE_SPACING_M", 0.0))
+        )
+        d0303_module.AREA_DUBINS_ENTRY_LINKS_ENABLED = bool(
+            values.get(
+                "area_dubins_entry_links_enabled",
+                bool(getattr(d0303_module, "AREA_DUBINS_ENTRY_LINKS_ENABLED", False)),
+            )
+        )
+        d0303_module.DEFAULT_SEARCH_SPEED_MULTIPLIER = _get_float(
+            "default_search_speed_multiplier",
+            float(getattr(d0303_module, "DEFAULT_SEARCH_SPEED_MULTIPLIER", 1.0)),
+        )
+        d0303_module.POINT_FOV_DEG = _get_float(
+            "point_fov_deg", float(getattr(d0303_module, "POINT_FOV_DEG", 0.0))
+        )
+        d0303_module.AREA_NADIR_FOV_DEG = _get_float(
+            "area_nadir_fov_deg", float(getattr(d0303_module, "AREA_NADIR_FOV_DEG", 31.2))
+        )
+        d0303_module.ENTRY_HOLD_FOV_DEG = _get_float(
+            "entry_hold_fov_deg", float(getattr(d0303_module, "ENTRY_HOLD_FOV_DEG", 0.0))
+        )
+        d0303_module.ENTRY_HOLD_GIMBAL_PITCH = _get_float(
+            "entry_hold_gimbal_pitch",
+            float(getattr(d0303_module, "ENTRY_HOLD_GIMBAL_PITCH", 0.0)),
+        )
+        d0303_module.ENTRY_HOLD_GIMBAL_YAW = _get_float(
+            "entry_hold_gimbal_yaw",
+            float(getattr(d0303_module, "ENTRY_HOLD_GIMBAL_YAW", 0.0)),
+        )
+        d0303_module.LOITER_RADIUS_M = _get_float(
+            "loiter_radius_m", float(getattr(d0303_module, "LOITER_RADIUS_M", 0.0))
+        )
+        d0303_module.LOITER_DIRECTION = _get_int(
+            "loiter_direction", int(getattr(d0303_module, "LOITER_DIRECTION", 0))
+        )
+        d0303_module.LOITER_TIME_S = _get_float(
+            "loiter_time_s", float(getattr(d0303_module, "LOITER_TIME_S", 0.0))
+        )
+        d0303_module.LOITER_SPEED_MPS = _get_float(
+            "loiter_speed_mps", float(getattr(d0303_module, "LOITER_SPEED_MPS", 0.0))
+        )
+        d0303_module.SWEEP_GEOMETRY = d0303_module.SweepConfig(
+            separation_m=sweep_sep,
+            fov_deg=fov_deg,
+        )
+
+        # Keep one authoritative settings file by backfilling missing keys
+        # into modules/mission_planning/MissionPlanner/uav_params.json.
+        resolved_values = {
+            "cruise_speed_mps": float(cruise_speed),
+            "turn_step_deg": float(turn_step),
+            "default_sweep_separation_m": float(sweep_sep),
+            "area_sweep_mode": str(values.get("area_sweep_mode", "parallel") or "parallel"),
+            "area_split_mode": str(values.get("area_split_mode", "two_stage") or "two_stage"),
+            "search_speed_weight": float(search_weight),
+            "fov_deg": float(fov_deg),
+            "db_fov_weight": float(db_fov_weight),
+            "altitude_m": int(round(altitude)),
+            "sweep_entry_offset_m": float(d0303_module.SWEEP_ENTRY_OFFSET_M),
+            "sweep_merge_heading_deg": float(d0303_module.SWEEP_MERGE_HEADING_DEG),
+            "sweep_line_interp_points": int(d0303_module.SWEEP_LINE_INTERP_POINTS),
+            "min_sweep_len_m": float(d0303_module.MIN_SWEEP_LEN_M),
+            "min_route_spacing_m": float(d0303_module.MIN_ROUTE_SPACING_M),
+            "area_dubins_entry_links_enabled": bool(d0303_module.AREA_DUBINS_ENTRY_LINKS_ENABLED),
+            "default_search_speed_multiplier": float(d0303_module.DEFAULT_SEARCH_SPEED_MULTIPLIER),
+            "point_fov_deg": float(d0303_module.POINT_FOV_DEG),
+            "area_nadir_fov_deg": float(d0303_module.AREA_NADIR_FOV_DEG),
+            "entry_hold_fov_deg": float(d0303_module.ENTRY_HOLD_FOV_DEG),
+            "entry_hold_gimbal_pitch": float(d0303_module.ENTRY_HOLD_GIMBAL_PITCH),
+            "entry_hold_gimbal_yaw": float(d0303_module.ENTRY_HOLD_GIMBAL_YAW),
+            "loiter_radius_m": float(d0303_module.LOITER_RADIUS_M),
+            "loiter_direction": int(d0303_module.LOITER_DIRECTION),
+            "loiter_time_s": float(d0303_module.LOITER_TIME_S),
+            "loiter_speed_mps": float(d0303_module.LOITER_SPEED_MPS),
+            "enhanced_area_review_enabled": bool(values.get("enhanced_area_review_enabled", True)),
+            "enhanced_area_review_max_segment_m": _get_float("enhanced_area_review_max_segment_m", 550.0),
+            "enhanced_auto_fov_from_db": (
+                False
+                if str(payload.get("preset_key") or "custom").strip().lower() == "custom"
+                else bool(values.get("enhanced_auto_fov_from_db", True))
+            ),
+        }
+        algo_key = str(payload.get("algo_key") or "")
+        if algo_key not in ("dtatrim", "algo2", "algo3"):
+            algo_key = "dtatrim"
+        flyover = payload.get("flyover")
+        if not isinstance(flyover, dict):
+            flyover = {}
+        preset_key = str(payload.get("preset_key") or "custom")
+        if preset_key not in ("bearing_par_sweep", "bearing_ver_sweep", "nadir_mode", "custom"):
+            preset_key = "custom"
+        normalized_payload = {
+            "preset_key": preset_key,
+            "algo_key": algo_key,
+            "values": resolved_values,
+            "flyover": flyover,
+        }
+        try:
+            path = runtime_settings_path()
+            path.write_text(json.dumps(normalized_payload, ensure_ascii=True, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
+        if mp_config_module is not None:
+            mp_config_module.DEFAULT_SWEEP_SEPARATION_M = float(sweep_sep)
+            mp_config_module.SEARCH_SPEED_WEIGHT = float(search_weight)
+            mp_config_module.DB_FOV_WEIGHT = float(db_fov_weight)
+        if search_speed_module is not None:
+            search_speed_module._CFG_WEIGHT = float(search_weight)
+
+        algo_map = {"dtatrim": "dtatrim", "algo2": "linear", "algo3": "algo3"}
+        algo_key = payload.get("algo_key")
+        algo_name = algo_map.get(str(algo_key))
+        if algo_name:
+            d0303_module.set_route_planner(algo_name)
+
+        flyover = payload.get("flyover")
+        if isinstance(flyover, dict):
+            d0303_module.set_flyover_options(
+                entry_offset=bool(flyover.get("entry_offset", False)),
+                dubins_prefix=False,
+                all_wps=bool(flyover.get("all_wps", False)),
+            )
+
+        return cruise_speed, turn_step, True
+
+    def _on_algo_settings_applied(self, payload: Optional[Dict[str, Any]] = None) -> None:
+        try:
+            _ensure_mission_planner_import_paths()
+            from data_def import d0303, search_speed
+            try:
+                import config as mp_config
+            except Exception:
+                mp_config = None
+            cruise, turn_step, loaded = self._apply_uav_params_from_store(
+                d0303,
+                mp_config_module=mp_config,
+                search_speed_module=search_speed,
+            )
+            if loaded:
+                self.log_sig.emit(
+                    "[CONFIG] 알고리즘 설정 적용 "
+                    f"(cruise={cruise:.1f}m/s, turn_step={turn_step:.1f}°, "
+                    f"preset={str((payload or {}).get('preset_key') or 'custom')}, "
+                    f"areaMode={str((payload or {}).get('values', {}).get('area_sweep_mode', 'parallel'))}, "
+                    f"areaSplit={str((payload or {}).get('values', {}).get('area_split_mode', 'two_stage'))}, "
+                    f"autoFovDb={bool((payload or {}).get('values', {}).get('enhanced_auto_fov_from_db', True))})"
+                )
+        except Exception as exc:
+            self.log_sig.emit(f"[WARN] 알고리즘 설정 즉시 적용 실패: {exc}")
+        self._invalidate_planner_runtime(warm_reason="algo_settings")
+
+    def _compute_attack_waypoint(
+        self, friendly: Dict[str, Any], target: Dict[str, Any], variant_no: int
+    ) -> Dict[str, float]:
+        return compute_attack_waypoint(
+            PROJECT_ROOT, friendly, target, variant_no, getattr(self.log_sig, "emit", None)
+        )
+
+    def _apply_attack_customizations(
+        self,
+        missions: List[Dict[str, Any]],
+        flight_plans_0304: List[Dict[str, Any]],
+        attack_context: Dict[str, Any],
+        variant_no: int,
+        *,
+        replan_detail: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        apply_attack_customizations(
+            missions,
+            flight_plans_0304,
+            attack_context,
+            variant_no,
+            replan_detail=replan_detail,
+            project_root=PROJECT_ROOT,
+            log_cb=getattr(self.log_sig, "emit", None),
+        )
+
+    def _on_input_payload_0201(self, msg_id, payload):
+        self._handle_latest_input_payload(msg_id, payload)
+
+    def _on_input_payload_0203(self, msg_id, payload):
+        self._handle_latest_input_payload(msg_id, payload)
+
+    def _create_empty_scope(self) -> Dict[str, Set[int]]:
+        return {
+            "packages": set(),
+            "plans": set(),
+            "individual_packages": set(),
+            "paths": set(),
+        }
+
+    def _reset_session_scope(self) -> None:
+        self._session_scope = self._create_empty_scope()
+
+    def _submit_id_tab_update(
+        self,
+        *,
+        scope: Optional[Dict[str, Set[int]]] = None,
+        cmpk_id: Optional[int] = None,
+        mrpk_id: Optional[int] = None,
+        plan_state: Optional[str] = None,
+    ) -> None:
+        tab = getattr(self, "_id_tab", None)
+        if tab is None:
+            return
+        scope_payload = None
+        if scope is not None:
+            scope_payload = {
+                "packages": set(scope.get("packages", set())),
+                "plans": set(scope.get("plans", set())),
+                "individual_packages": set(scope.get("individual_packages", set())),
+                "paths": set(scope.get("paths", set())),
+            }
+        def _apply() -> None:
+            if scope_payload is not None:
+                tab.update_session_scope(scope_payload)
+            tab.update_input_status(
+                cmpk_id=cmpk_id,
+                mrpk_id=mrpk_id,
+                plan_state=plan_state,
+            )
+        QTimer.singleShot(0, _apply)
+
+    def _set_plan_status(self, status: str) -> None:
+        self._plan_status = status
+        self._submit_id_tab_update(plan_state=status)
+
+    def _handle_latest_input_payload(self, msg_id: str, payload):
+        try:
+            prev = self._last_logged_input_ids.get(msg_id)
+        except Exception:
+            prev = None
+        cache_update_from_payload(msg_id, payload)
+        self._refresh_input_banner()
+        current = get_latest_package_id(msg_id)
+        if current is None or current == prev:
+            self._submit_id_tab_update(plan_state=self._plan_status)
+            return
+        self._last_logged_input_ids[msg_id] = current
+        src = None
+        if isinstance(payload, dict):
+            src = payload.get("Source") or payload.get("source")
+        note = f"[INFO] Latest {msg_id} ID updated → {current}"
+        if src:
+            note += f" (source={src})"
+        self.log_sig.emit(note)
+        self._schedule_planner_warmup(f"{msg_id}_updated")
+
+        cmpk_update = current if msg_id == "0201" else None
+        mrpk_update = current if msg_id == "0203" else None
+        scope_update: Optional[Dict[str, Set[int]]] = None
+        if msg_id == "0201":
+            if current is not None:
+                self._reset_session_scope()
+                self._session_scope["packages"].add(int(current))
+            self._plan_status = "임무계획 전"
+            scope_update = self._session_scope
+        self._submit_id_tab_update(
+            scope=scope_update,
+            cmpk_id=cmpk_update,
+            mrpk_id=mrpk_update,
+            plan_state=self._plan_status,
+        )
+
+    # ───────── Power OFF 가드(발신/수신/카운트/우회 클릭 차단) ─────────
+    def _install_power_gate_hooks(self):
+        try:
+            tab = self._tab
+            tbl = getattr(tab, "tbl_tx", None)
+
+            # TX만 차단
+            if tbl is not None:
+                class _PG(QObject):
+                    def __init__(self, host):
+                        super().__init__(host)
+                        self.host = host
+
+                    def eventFilter(self, obj, ev):
+                        if not self.host._power_on and ev.type() in (
+                            QEvent.MouseButtonPress,
+                            QEvent.MouseButtonRelease,
+                            QEvent.MouseButtonDblClick,
+                            QEvent.KeyPress,
+                            QEvent.KeyRelease,
+                        ):
+                            return True
+                        return False
+                self._pg_filter = _PG(self)
+                tbl.installEventFilter(self._pg_filter)
+
+            # TX 버튼 우회만 차단
+            if hasattr(tab, "_on_tx_button_clicked"):
+                self._orig_tx_click = tab._on_tx_button_clicked
+                def _wrapped_tx_click(row):
+                    if not self._power_on:
+                        self._append_log_line("[BLOCK] Power OFF → TX 버튼 무시")
+                        return
+                    try:
+                        it = getattr(tab, "tbl_tx", None).item(row, 0) if getattr(tab, "tbl_tx", None) else None
+                    except Exception: pass
+                    return self._orig_tx_click(row)
+                tab._on_tx_button_clicked = _wrapped_tx_click
+
+        except Exception:
+            pass
+
+    def _apply_power_state(self):
+        on = bool(self._power_on)
+        try:
+            self._update_tx_table_enabled(on)
+            self._update_rx_table_enabled(True)  # ? RX는 항상 보이게
+            if not on:
+                self._stop_all_periodic()
+        except Exception:
+            pass
+
+    def _update_tx_table_enabled(self, enabled: bool):
+        """TX 테이블 및 전송 버튼 활성/비활성."""
+        try:
+            tab = self._tab
+            tbl = getattr(tab, "tbl_tx", None)
+            if tbl is None:
+                return
+            tbl.setEnabled(enabled)
+            for r in range(tbl.rowCount()):
+                w = tbl.cellWidget(r, 3)  # 전송 버튼 컬럼
+                if w is not None and hasattr(w, "setEnabled"):
+                    w.setEnabled(enabled)
+        except Exception:
+            pass
+
+    def _update_rx_table_enabled(self, enabled: bool):
+        """RX 테이블 및 셀 위젯(버튼 등) 활성/비활성."""
+        try:
+            tab = self._tab
+            tbl = getattr(tab, "tbl_rx", None)
+            if tbl is None:
+                return
+            tbl.setEnabled(enabled)
+            cols = getattr(tbl, "columnCount", lambda: 4)()
+            for r in range(tbl.rowCount()):
+                for c in range(cols):
+                    w = tbl.cellWidget(r, c)
+                    if w is not None and hasattr(w, "setEnabled"):
+                        w.setEnabled(enabled)
+        except Exception:
+            pass
+
+    def _stop_all_periodic(self):
+        """주기 전송(0102 등) 일괄 중지."""
+        try:
+            tab = self._tab
+            timers = getattr(tab, "periodic_timers", {})
+            for code, t in list(timers.items()):
+                try: t.stop()
+                except Exception: pass
+            try: timers.clear()
+            except Exception: pass
+            self._set_0102_heartbeat_enabled(False)
+            self._append_log_line("[POWER] periodic TX 정지")
+        except Exception:
+            pass
+
+    # ───────── 순차 푸시(0301 송신 → 0305 완료 → 0903 요청) ─────────
+    def _queue_post_0301_delivery(
+        self,
+        *,
+        plan_ids: list[int],
+        option_names: list[str],
+        plan_meta: dict,
+        is_execution_mode: bool,
+        force_direct: bool,
+    ) -> None:
+        valid_plan_ids: list[int] = []
+        for plan_id in plan_ids:
+            try:
+                valid_plan_ids.append(int(plan_id))
+            except Exception:
+                self._append_log_line(f"[WARN] post-0301 skip: invalid missionPlanID={plan_id}")
+
+        if not valid_plan_ids and not (is_execution_mode and not force_direct):
+            self._append_log_line("[WARN] No valid missionPlanID for post-0301 apply")
+            return
+
+        plan_count = max(len(valid_plan_ids), 1)
+        grace_ms = 1800 + max(0, plan_count - 1) * 250
+        fallback_ms = grace_ms + 1200
+        self._post_0301_delivery = {
+            "plan_ids": valid_plan_ids,
+            "option_names": list(option_names or []),
+            "plan_meta": dict(plan_meta or {}),
+            "execution_mode": bool(is_execution_mode),
+            "force_direct": bool(force_direct),
+            "ready_at": time.monotonic() + (grace_ms / 1000.0),
+            "mode_ready": False,
+        }
+        try:
+            if self._post_0301_timer.isActive():
+                self._post_0301_timer.stop()
+            self._post_0301_timer.start(int(fallback_ms))
+        except Exception:
+            pass
+        self._append_log_line(
+            "[INFO] Post-0301 apply queued "
+            f"(grace={grace_ms}ms, timeout={fallback_ms}ms, plans={len(valid_plan_ids)})"
+        )
+
+    def _mark_post_0301_ready(self, *, trigger: str) -> bool:
+        pending = getattr(self, "_post_0301_delivery", None)
+        if not pending:
+            return False
+        if not pending.get("mode_ready"):
+            pending["mode_ready"] = True
+            self._append_log_line(f"[INFO] Post-0301 ready signal received ({trigger})")
+        return self._try_flush_post_0301_delivery(trigger=trigger, force=False)
+
+    def _try_flush_post_0301_delivery(self, *, trigger: str, force: bool) -> bool:
+        pending = getattr(self, "_post_0301_delivery", None)
+        if not pending:
+            return False
+        if not force and not pending.get("mode_ready"):
+            return False
+
+        remaining_ms = max(
+            0,
+            int(round((float(pending.get("ready_at", 0.0)) - time.monotonic()) * 1000.0)),
+        )
+        if remaining_ms > 0 and not force:
+            try:
+                timer = getattr(self, "_post_0301_timer", None)
+                if timer is not None:
+                    timer.start(remaining_ms)
+            except Exception:
+                pass
+            return False
+
+        self._post_0301_delivery = None
+        try:
+            timer = getattr(self, "_post_0301_timer", None)
+            if timer is not None and timer.isActive():
+                timer.stop()
+        except Exception:
+            pass
+
+        valid_plan_ids = list(pending.get("plan_ids") or [])
+        option_names = list(pending.get("option_names") or [])
+        plan_meta = dict(pending.get("plan_meta") or {})
+        is_execution_mode = bool(pending.get("execution_mode"))
+        force_direct = bool(pending.get("force_direct"))
+
+        if is_execution_mode and not force_direct:
+            self._append_log_line(f"[INFO] Post-0301 ready ({trigger}) -> sending 0901")
+            self._push_0901_options(valid_plan_ids, option_names, plan_meta)
+            return True
+
+        if not valid_plan_ids:
+            self._append_log_line("[WARN] Post-0301 ready but no valid missionPlanID for 0903")
+            return False
+
+        self._append_log_line(f"[INFO] Post-0301 ready ({trigger}) -> sending 0903")
+        for idx, mpid in enumerate(valid_plan_ids):
+            delay = idx * 200
+            QTimer.singleShot(delay, lambda pid=mpid: self._push_0903(pid))
+            if force_direct:
+                QTimer.singleShot(delay + 250, lambda pid=mpid: self._push_0702_auto_apply(pid))
+        return True
+
+    def _start_push_sequence(self):
+        if not self._power_on:
+            self._append_log_line("[BLOCK] Power OFF -> push sequence blocked")
+            return
+        payload = self._pending_plan_push or {}
+        force_direct = bool(payload.get("force_direct_update"))
+        plan_ids = list(payload.get("plan_ids") or [])
+        option_names = list(payload.get("option_names") or [])
+        reason = _sanitize_reason(payload.get("reason"), "init-plan")
+        plan_meta = payload.get("option_meta") or {}
+
+        is_execution_mode = False
+        if not force_direct:
+            try:
+                mode_slider = getattr(self, "mode_slider", None)
+                if mode_slider is not None:
+                    is_execution_mode = int(mode_slider.value()) == 3
+            except Exception:
+                is_execution_mode = False
+        else:
+            self._append_log_line("[INFO] Direct delivery -> skip 0901/0701, send 0301+0903 only")
+
+        if not plan_ids:
+            self._append_log_line("[WARN] No missionPlanID to push (0301)")
+            return
+
+        # Send 0301 first, then queue 0305 completion on the next event-loop turn.
+        sent_0301 = self._click_tx_button_for("0301")
+        if sent_0301:
+            QTimer.singleShot(0, lambda: self._push_0305(status=2, reason=reason))
+        else:
+            self._append_log_line("[WARN] 0301 push failed -> 0305 completion not scheduled")
+
+        if sent_0301:
+            self._queue_post_0301_delivery(
+                plan_ids=plan_ids,
+                option_names=option_names,
+                plan_meta=plan_meta,
+                is_execution_mode=is_execution_mode,
+                force_direct=force_direct,
+            )
+
+        self._pending_plan_push = None
+
+    def _click_tx_button_for(self, code: str) -> bool:
+        if not self._power_on:
+            self._append_log_line(f"[BLOCK] Power OFF -> TX '{code}' blocked")
+            return False
+        try:
+            tab = getattr(self, "_tab", None)
+            if tab is None or not hasattr(tab, "tbl_tx"):
+                self._append_log_line(f"[WARN] TX table missing for code={code}")
+                return False
+
+            tbl = tab.tbl_tx
+            target_row = -1
+            for r in range(tbl.rowCount()):
+                it = tbl.item(r, 0)
+                if it and it.text().strip() == str(code):
+                    target_row = r
+                    break
+
+            if target_row < 0:
+                self._append_log_line(f"[WARN] TX table has no entry for {code}")
+                return False
+
+            try:
+                btn = tbl.cellWidget(target_row, 3)
+                if btn is not None and hasattr(btn, "click"):
+                    btn.click()
+                    self._append_log_line(f"[PUSH] {code} button click()")
+                    return True
+            except Exception:
+                pass
+
+            try:
+                if hasattr(tab, "_on_tx_button_clicked"):
+                    tab._on_tx_button_clicked(target_row)
+                    self._append_log_line(f"[PUSH] {code} handler invoked")
+                    return True
+            except Exception:
+                pass
+
+            self._append_log_line(f"[ERR] {code} push failed: no button/handler")
+            return False
+        except Exception as e:
+            self._append_log_line(f"[ERR] {code} push failed: {e}")
+            return False
+
+    def _init_gui_log_file_sink(self) -> None:
+        try:
+            log_dir = db_paths.get_db_subpath("DSS_Internal")
+            log_dir.mkdir(parents=True, exist_ok=True)
+            token = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S_%fZ")
+            path = log_dir / f"mission_planning_gui_{token}.log"
+            path.write_text("", encoding="utf-8")
+            self._log_file_path = path
+        except Exception:
+            self._log_file_path = None
+
+    def _persist_gui_log(self, text: str) -> None:
+        path = getattr(self, "_log_file_path", None)
+        if not path:
+            return
+        try:
+            if not path.parent.exists():
+                self._init_gui_log_file_sink()
+                path = getattr(self, "_log_file_path", None)
+                if not path:
+                    return
+            stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(f"{stamp} {text}\n")
+        except Exception:
+            try:
+                self._init_gui_log_file_sink()
+                path = getattr(self, "_log_file_path", None)
+                if not path:
+                    return
+                stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+                with path.open("a", encoding="utf-8") as fh:
+                    fh.write(f"{stamp} {text}\n")
+            except Exception:
+                pass
+
+    def _append_log_line(self, text: str):
+        try:
+            emit_process_log("mission_planning", str(text))
+        except Exception:
+            pass
+        try:
+            run_log = getattr(self, "_active_plan_log_run", None)
+            if run_log:
+                run_log.add_message(text)
+        except Exception:
+            pass
+        self._persist_gui_log(text)
+        try:
+            if getattr(self, "_tab", None) and hasattr(self._tab, "append_log"):
+                self._tab.append_log(text); return
+        except Exception:
+            pass
+        try: print(text)
+        except Exception: pass
+
+    def _mark_attack_target_used(self, attack_result: dict | None) -> None:
+        try:
+            result = (attack_result or {}).get("result") or {}
+            primary = result.get("primary_target")
+            if not isinstance(primary, dict):
+                return
+
+            key = primary.get("key") or primary.get("targetKey")
+            target_id = primary.get("target_id") or primary.get("targetID") or primary.get("targetId")
+            watcher_id = primary.get("watcher_id") or primary.get("watcherID") or primary.get("watcherId")
+            raw = primary.get("raw")
+            if isinstance(raw, dict):
+                key = key or raw.get("key") or raw.get("targetKey")
+                target_id = target_id or raw.get("targetID") or raw.get("targetId")
+                watcher_id = watcher_id or raw.get("watcherID") or raw.get("watcherId")
+
+            if key is None and target_id is None:
+                return
+
+            try:
+                from modules.monitoring.logic.target_info import mark_targets_as_used
+            except Exception as exc:
+                self._append_log_line(f"[ATTACK] mark target used import failed: {exc}")
+                return
+
+            payload = {}
+            if key is not None:
+                payload["key"] = key
+            if target_id is not None:
+                payload["targetID"] = target_id
+            if watcher_id is not None:
+                payload["watcherID"] = watcher_id
+            mark_targets_as_used([payload])
+            self._append_log_line(f"[ATTACK] mark target used: key={key}, targetID={target_id}")
+        except Exception as exc:
+            self._append_log_line(f"[ATTACK] mark target used failed: {exc}")
+
+    # ───────── 모드/슬라이더 ─────────
+    def _on_mode_slider_changed(self, val: int):
+        labels = ["초기화 모드", "대기모드", "초기 임무 계획", "임무 수행"]
+        try: self.mode_now.setText(labels[int(val)])
+        except Exception: pass
+        self._power_on = True
+        self._append_log_line(f"[MODE] 슬라이더 변경 → {labels[int(val)] if 0 <= val < len(labels) else val}")
+        self._apply_power_state()
+        if self._power_on:
+            QTimer.singleShot(500, self._start_0102_stream)
+
+    def _set_mode_slider_by_text(self, text: str):
+        labels = ["초기화 모드", "대기모드", "초기 임무 계획", "임무 수행"]
+        norm = re.sub(r"\s+", "", str(text)).lower()
+        mapping = {
+            "전원off":0,"off":0,"poweroff":0,
+            "전원on":0,"on":0,"poweron":0,
+            "0":0,
+            "초기화":0,"초기화모드":0,"초기화mode":0,
+            "1":1,"대기모드":1,"대기":1,"standby":1,
+            "2":2,"초기임무계획":2,"초기임무계획모드":2,"initplan":2,"initial":2,
+            "3":3,"임무수행":3,"execution":3,
+        }
+        val = mapping.get(norm, 1)
+        try:
+            if getattr(self, "mode_slider", None):
+                if self.mode_slider.value() != val:
+                    self.mode_slider.blockSignals(True)
+                    self.mode_slider.setValue(val)
+                    self.mode_slider.blockSignals(False)
+            if getattr(self, "mode_now", None):
+                self.mode_now.setText(labels[val])
+            # ★ 텍스트 기반 모드 변경도 통지
+        except Exception:
+            pass
+        self._power_on = True
+        self._apply_power_state()
+        if self._power_on:
+            QTimer.singleShot(500, self._start_0102_stream)
+
+    # ───────── nFusion RX 초기화 ─────────
+    def _rx_setup(self):
+        try:
+            FusionNodeIoc.Configure()
+            NodeMessenger.Initialize("MMR_ReceiveNode")
+            NodeMessenger.RegistAllConsumerFromFusionNodeIoc()
+            NodeMessenger.InitAllSubscriberFromAssembly()
+            NodeMessenger.RegistAllProviderFromFusionNodeIoc()
+            self._bus_ready = True
+            try:
+                self.log_sig.emit("[BUS] NodeMessenger 초기화 완료")
+            except Exception:
+                pass
+        except Exception as exc:
+            self._bus_ready = False
+            try:
+                self.log_sig.emit(f"[BUS ERR] NodeMessenger 초기화 실패: {exc}")
+            except Exception:
+                pass
+
+    # ───────── 0305 / 0903 요청 ─────────
+    def _push_0305(self, status: int, reason: str = "초기임무재계획"):
+        clean_reason = _sanitize_reason(reason, "초기임무재계획")
+        elapsed_ms: Optional[float] = None
+        if int(status) == 1:
+            self._mark_planning_metric_start(clean_reason)
+        elif int(status) == 2:
+            elapsed_ms = self._mark_planning_metric_finish(clean_reason, success=True)
+        try:
+            from push_center import push_message
+            body = {
+                "timestamp": _now_ms_since_2000(),
+                "source": "MMR",
+                "missionPlanningStatus": int(status),  # 1: 재계획 수행 중, 2: 재계획 완료
+                "replanReason": clean_reason,
+            }
+            orig_mark_fn = getattr(self, "_orig_mark_sent", None)
+            mon_sent_via_wrapper = {"done": False}
+
+            def _after_push(mid, raw):
+                mid_norm = _z4(str(mid))
+                if callable(orig_mark_fn):
+                    try:
+                        orig_mark_fn(mid_norm, raw)
+                        return
+                    except Exception:
+                        pass
+                tab = getattr(self, "_tab", None)
+                mark_method = getattr(tab, "mark_sent", None) if tab else None
+                if callable(mark_method):
+                    try:
+                        mark_method(mid_norm, raw)
+                        if callable(orig_mark_fn):
+                            mon_sent_via_wrapper["done"] = True
+                    except Exception:
+                        pass
+
+            push_message(
+                "0305",
+                NodeMessenger,
+                on_done=_after_push,
+                body_dict=body,
+            )
+            if int(status) == 2 and elapsed_ms is not None:
+                self.log_sig.emit(
+                    f"[0305] status={status}, reason={clean_reason}, elapsed={elapsed_ms / 1000.0:.2f}s 전송"
+                )
+            else:
+                self.log_sig.emit(f"[0305] status={status}, reason={clean_reason} 전송")
+        except Exception as e:
+            self.log_sig.emit(f"[ERR] 0305 전송 실패: {e}")
+
+    def _push_0903(self, mission_plan_id):
+        try:
+            from push_center import push_message
+        except Exception as e:
+            self.log_sig.emit(f"[ERR] 0903 push unavailable: {e}")
+            return
+
+        if mission_plan_id is None:
+            self.log_sig.emit("[WARN] 0903 skipped: missionPlanID missing")
+            return
+
+        try:
+            mpid = int(mission_plan_id)
+        except Exception:
+            self.log_sig.emit(f"[WARN] 0903 skipped: invalid missionPlanID={mission_plan_id}")
+            return
+
+        body = {
+            "timestamp": _now_ms_since_2000(),
+            "source": "MMR",
+            "missionPlanID": mpid,
+        }
+        try:
+            push_message("0903", NodeMessenger, body_dict=body)
+            self.log_sig.emit(f"[0903] request sent (missionPlanID={mpid})")
+            try:
+                raw = json.dumps(body, ensure_ascii=False).encode("utf-8", "ignore")
+            except Exception:
+                raw = None
+            try:
+                self._tab.mark_sent(_z4("0903"), raw)
+            except Exception:
+                pass
+        except Exception as e:
+            self.log_sig.emit(f"[ERR] 0903 push failed: {e}")
+
+    def _push_0702_auto_apply(self, mission_plan_id):
+        try:
+            from push_center import push_message
+        except Exception as e:
+            self.log_sig.emit(f"[ERR] 0702 push unavailable: {e}")
+            return
+
+        try:
+            mpid = int(mission_plan_id)
+        except Exception:
+            self.log_sig.emit(f"[WARN] 0702 auto-apply skipped: invalid missionPlanID={mission_plan_id}")
+            return
+        if mpid <= 0:
+            self.log_sig.emit(f"[WARN] 0702 auto-apply skipped: invalid missionPlanID={mission_plan_id}")
+            return
+
+        body = {
+            "timestamp": _now_ms_since_2000(),
+            "source": "MMR",
+            "ignore": 2,
+            "missionPlanID": mpid,
+        }
+        try:
+            push_message("0702", NodeMessenger, body_dict=body)
+            self.log_sig.emit(f"[0702][AUTO] ignore=2 sent (missionPlanID={mpid})")
+            try:
+                raw = json.dumps(body, ensure_ascii=False).encode("utf-8", "ignore")
+            except Exception:
+                raw = None
+            try:
+                self._tab.mark_sent(_z4("0702"), raw)
+            except Exception:
+                pass
+        except Exception as e:
+            self.log_sig.emit(f"[ERR] 0702 auto-apply push failed: {e}")
+
+
+    def _allocate_option_ids(self, count: int) -> list[int]:
+        ids: list[int] = []
+        try:
+            total = int(count)
+        except Exception:
+            total = 0
+        for _ in range(max(total, 0)):
+            self._option_id_counter += 1
+            ids.append(self._option_id_counter)
+        return ids
+
+    def _push_0901_options(self, plan_ids, option_names, plan_meta=None):
+        """Push option info request using supplied plan IDs."""
+        try:
+            from push_center import push_message
+        except Exception as e:
+            self.log_sig.emit(f"[ERR] 0901 push unavailable: {e}")
+            return
+        try:
+            ts = _now_ms_since_2000()
+            plan_list = list(plan_ids or [])
+            name_list = list(option_names or [])
+            meta_map = dict(plan_meta or {})
+            valid_entries: list[tuple[int, int]] = []
+            defaults = list(DEFAULT_OPTION_CODE_SEQUENCE) or [1]
+            for idx, plan_id in enumerate(plan_list, 1):
+                try:
+                    pid = int(plan_id)
+                except Exception:
+                    continue
+                raw_name = name_list[idx - 1] if idx - 1 < len(name_list) else None
+                code = normalize_option_code(
+                    raw_name,
+                    fallback=defaults[idx - 1] if idx - 1 < len(defaults) else defaults[-1],
+                )
+                if code is None:
+                    code = defaults[-1]
+                valid_entries.append((pid, code))
+            if not valid_entries:
+                self.log_sig.emit("[WARN] 0901 skipped: no entries")
+                return
+            option_ids = self._allocate_option_ids(len(valid_entries))
+            entries = []
+            for oid, (pid, code) in zip(option_ids, valid_entries):
+                entry = {"optionID": oid, "optionName": code, "missionPlanID": pid}
+                meta = meta_map.get(pid)
+                if meta:
+                    entry["optionMeta"] = meta
+                entries.append(entry)
+            body = {
+                "timestamp": ts,
+                "source": "MMR",
+                "requestTime": ts,
+                "pendingOptionList": entries,
+            }
+            push_message("0901", NodeMessenger, body_dict=body)
+            labels = ", ".join(
+                f"{entry['optionName']}({option_code_to_label(entry['optionName'])})"
+                for entry in entries
+            )
+            self.log_sig.emit(f"[0901] option request sent (count={len(entries)}, codes={labels})")
+        except Exception as e:
+            self.log_sig.emit(f"[ERR] 0901 push failed: {e}")
+
+    def _push_0001_notice(self, contents: str) -> None:
+        if not contents:
+            return
+        try:
+            from push_center import push_message
+        except Exception as exc:
+            self.log_sig.emit(f"[ERR] 0001 push unavailable: {exc}")
+            return
+        body = {
+            "timestamp": _now_ms_since_2000(),
+            "source": "MMR",
+            "contents": str(contents),
+        }
+        try:
+            push_message("0001", NodeMessenger, body_dict=body)
+            self.log_sig.emit(f"[0001] notice sent: {contents}")
+            try:
+                raw = json.dumps(body, ensure_ascii=False).encode("utf-8", "ignore")
+            except Exception:
+                raw = None
+            try:
+                self._tab.mark_sent(_z4("0001"), raw)
+            except Exception:
+                pass
+        except Exception as exc:
+            self.log_sig.emit(f"[ERR] 0001 push failed: {exc}")
+
+    def _plan_file_notice(self, label: str, exc: Optional[BaseException]) -> str:
+        if isinstance(exc, FileNotFoundError):
+            return f"임무계획 실패: {label} 파일을 찾을 수 없습니다."
+        if isinstance(exc, PermissionError):
+            return f"임무계획 실패: {label} 파일에 접근할 수 없습니다."
+        if isinstance(exc, (json.JSONDecodeError, UnicodeDecodeError)):
+            return f"임무계획 실패: {label} 파일 형식이 올바르지 않습니다."
+        return f"임무계획 실패: {label} 파일을 읽을 수 없습니다."
+
+    def _build_plan_failure_notice(
+        self,
+        failure_code: str,
+        *,
+        exc: Optional[BaseException] = None,
+        detail: Optional[Dict[str, Any]] = None,
+        ctx: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        detail = detail or {}
+        ctx = ctx or {}
+
+        if failure_code == "0201_missing":
+            return "임무계획 실패: 0201 입력 임무 파일을 찾을 수 없습니다."
+        if failure_code == "0203_missing":
+            return "임무계획 실패: 0203 비행참조정보 파일을 찾을 수 없습니다."
+        if failure_code == "input_missing":
+            missing_labels: list[str] = []
+            if not detail.get("cmpk_path"):
+                missing_labels.append("0201 입력 임무")
+            if not detail.get("mrpk_path"):
+                missing_labels.append("0203 비행참조정보")
+            if missing_labels:
+                return "임무계획 실패: " + ", ".join(missing_labels) + " 파일을 찾을 수 없습니다."
+            return "임무계획 실패: 0201 또는 0203 입력 파일을 찾을 수 없습니다."
+        if failure_code == "0201_load_failed":
+            return self._plan_file_notice("0201 입력 임무", exc)
+        if failure_code == "0203_load_failed":
+            return self._plan_file_notice("0203 비행참조정보", exc)
+        if failure_code == "variant_0201_load_failed":
+            return self._plan_file_notice("옵션용 0201 입력 임무", exc)
+        if failure_code == "input_validation_failed":
+            errors = detail.get("errors") if isinstance(detail.get("errors"), list) else []
+            has_0201 = False
+            has_0203 = False
+            for item in errors:
+                key = str((item or {}).get("key") or "")
+                if key.startswith("inputMission") or key == "availableAircraftList" or key == "mainSensor":
+                    has_0201 = True
+                if key.startswith("takeOver") or key.startswith("handOver") or key.startswith("flightArea"):
+                    has_0203 = True
+            if has_0201 and has_0203:
+                return "임무계획 실패: 0201 및 0203 필수 데이터가 부족하거나 형식이 올바르지 않습니다."
+            if has_0201:
+                return "임무계획 실패: 0201 입력 임무 데이터가 부족하거나 형식이 올바르지 않습니다."
+            if has_0203:
+                return "임무계획 실패: 0203 비행참조정보 데이터가 부족하거나 형식이 올바르지 않습니다."
+            return "임무계획 실패: 입력 데이터가 부족하거나 형식이 올바르지 않습니다."
+        if failure_code in {"attack_pipeline_failed", "attack_finalize_failed", "attack_pipeline_empty"}:
+            return "임무계획 실패: 공격 재계획 생성 중 오류가 발생했습니다."
+        if failure_code == "imp_generation_failed":
+            return "임무계획 실패: 개별 임무 계획 생성 중 오류가 발생했습니다."
+        if failure_code == "flightpath_generation_failed":
+            return "임무계획 실패: 비행경로 생성에 실패했습니다."
+        if failure_code == "flightpath_missing_ids":
+            return "임무계획 실패: 일부 비행경로 데이터가 누락되어 임무계획을 완료할 수 없습니다."
+
+        if isinstance(exc, (ModuleNotFoundError, ImportError)):
+            return "임무계획 실패: 필수 라이브러리를 불러오지 못했습니다."
+        if isinstance(exc, FileNotFoundError):
+            return "임무계획 실패: 필요한 입력 파일을 찾을 수 없습니다."
+        if isinstance(exc, PermissionError):
+            return "임무계획 실패: 필요한 파일 또는 폴더에 접근할 수 없습니다."
+        if isinstance(exc, (json.JSONDecodeError, UnicodeDecodeError)):
+            return "임무계획 실패: 입력 파일 형식이 올바르지 않습니다."
+
+        try:
+            replan_level = int(ctx.get("replan_level", ctx.get("replanLevel", 0)))
+        except Exception:
+            replan_level = 0
+        if replan_level == 4:
+            return "임무계획 실패: 선행임무 재계획 처리 중 오류가 발생했습니다."
+        return "임무계획 실패: 임무계획 처리 중 오류가 발생했습니다."
+
+    # ───────── 0102 폴백(일반적으론 send_status_ok 사용) ─────────
+    def _send_self_check_0102(self, status: int = 1, _retry: int = 0):
+        if not self._power_on:
+            self._append_log_line("[BLOCK] Power OFF → 0102 폴백 차단")
+            return
+        if not getattr(self, "_bus_ready", False):
+            if _retry == 0:
+                self._append_log_line("[0102] NodeMessenger 초기화 대기 중 ? 송신을 재시도합니다.")
+            if _retry < 10:
+                QTimer.singleShot(500, lambda r=_retry + 1: self._send_self_check_0102(status=status, _retry=r))
+                return
+            self._append_log_line("[WARN] NodeMessenger가 준비되지 않아 0102 강제 송신을 시도합니다.")
+        try:
+            from push_center import push_message
+        except Exception as e:
+            self._append_log_line(f"0102 push import 실패: {e}")
+            return
+
+        # 탭이 바디를 오버라이드해 줄 수 있으면 사용, 아니면 폴백
+        try:
+            body = self._tab._build_overridden_body("0102") or {}
+        except Exception:
+            body = {}
+        if not body:
+            body = {"timestamp": _now_ms_since_2000(), "source": "MMR", "status": int(status)}
+
+        try:
+            push_message("0102", NodeMessenger, body_dict=body)
+            self._append_log_line("자체점검(0102) 발신")
+            self._self_check_sent = True
+        except Exception as e:
+            if _retry < 5:
+                QTimer.singleShot(500, lambda: self._send_self_check_0102(status=status, _retry=_retry+1))
+            else:
+                self._append_log_line(f"자체점검(0102) 발신 실패: {e}")
+
+    # ───────── 테스트 단축키 ─────────
+    def _install_test_shortcuts(self):
+        # 테스트: 1 → 0102 ON 토글, 0 → 0102 OFF 토글
+        QShortcut(QKeySequence("1"), self, activated=lambda: self._ensure_0102(True))
+        QShortcut(QKeySequence("0"), self, activated=lambda: self._ensure_0102(False))
+
+    def _ensure_0102(self, on: bool) -> bool:
+        if not self._power_on:
+            self._append_log_line("[BLOCK] Power OFF → 0102 차단")
+            return False
+        if on and not getattr(self, "_bus_ready", False):
+            self._append_log_line("[WAIT] NodeMessenger 초기화 전 ? 0102 ON 요청을 지연합니다.")
+            QTimer.singleShot(300, self._start_0102_stream)
+            return False
+        try:
+            if self._find_tx_row("0102") < 0:
+                self._append_log_line("[CTRL] TX 테이블에 0102 행이 없음"); return False
+            # 0102는 GUI QTimer 대신 별도 heartbeat 스레드로 유지한다.
+            # 재계획 중 UI 이벤트 큐가 밀려도 0102 공백이 생기지 않도록 한다.
+            self._stop_tab_periodic_0102_if_running()
+            self._set_0102_heartbeat_enabled(bool(on))
+            return True
+        except Exception as e:
+            self._append_log_line(f"[CTRL] 0102 토글 처리 실패: {e}"); return False
+
+    # ───────── CTRL/수신 핸들러 ─────────
+    def _handle_ctrl_payload(self, payload: dict):
+        import time
+        try: cmd = str(payload.get("cmd") or "")
+        except Exception: return
+
+        key = f"{cmd}:{payload.get('text') or payload.get('status')}"
+        now = time.monotonic(); last = self._last_ctrl_ts.get(key, 0.0)
+        if (now - last) < 1.0: return
+        self._last_ctrl_ts[key] = now
+
+        # Power OFF 상태에서는 mode 외에는 무시
+        if not self._power_on and cmd not in ("mode",):
+            self._append_log_line(f"[BLOCK] Power OFF → CTRL '{cmd}' 무시")
+            return
+
+        if cmd == "self_check":
+            try: status = int(payload.get("status", 1))
+            except Exception: status = 1
+            ok = self._ensure_0102(on=(status == 1))
+            if not ok:
+                self._send_self_check_0102(status=status)
+
+        elif cmd == "mode":
+            text = str(payload.get("text") or "").strip()
+            self._append_log_line(f"[CTRL] MODE change request: {text}")
+            self._set_mode_slider_by_text(text)
+
+        elif cmd == "init_plan_context":
+            # 외부에서 초기 컨텍스트를 제공하는 경우(파일 경로/ID 등)
+            self._stage_plan_context(payload.get("context") or {}, payload.get("trigger") or "")
+            return
+
+    # ───────── 0902(재계획 요청) 처리 ─────────
+    def _parse_replan_payload(self, raw: bytes | None):
+        if not raw:
+            return None
+        try:
+            text = raw.decode("utf-8", "ignore")
+            m = re.search(r"{.*}", text, flags=re.S)
+            if not m: return None
+            return json.loads(m.group(0))
+        except Exception:
+            return None
+
+    def _stage_plan_context(self, raw_context: dict, trigger: str = ""):
+        """외부에서 사전 컨텍스트를 주입(파일 경로/ID/옵션명 등)."""
+        if not isinstance(raw_context, dict):
+            self._append_log_line("[CTRL] init_plan_context ignored: invalid payload")
+            return
+
+        ctx: dict = {}
+        # plan_ids
+        plan_ids: list[int] = []
+        for v in raw_context.get("plan_ids", []):
+            try: plan_ids.append(int(v))
+            except Exception: pass
+
+        # mission_ids(필요시)
+        mission_ids: list[int] = []
+        for v in raw_context.get("mission_ids", []):
+            try: mission_ids.append(int(v))
+            except Exception: pass
+
+        # option_names
+        option_names: list[str] = []
+        for name in raw_context.get("option_names", []):
+            if name is not None:
+                option_names.append(str(name))
+        while len(option_names) < len(plan_ids):
+            option_names.append(f"option{len(option_names) + 1}")
+
+        if plan_ids:     ctx["plan_ids"] = plan_ids
+        if mission_ids:  ctx["mission_ids"] = mission_ids
+        if option_names: ctx["option_names"] = option_names
+
+        # 입력 파일 경로(선택)
+        for key in ("cmpk_path", "mrpk_path"):
+            value = raw_context.get(key)
+            if isinstance(value, str) and value.strip():
+                ctx[key] = value.strip()
+
+        ctx["reason"] = _sanitize_reason(raw_context.get("reason"), "init-plan")
+        try: ctx["replan_level"] = int(raw_context.get("replan_level", 1))
+        except Exception: ctx["replan_level"] = 1
+
+        if raw_context.get("fallback_plan_id") is not None:
+            try: ctx["fallback_plan_id"] = int(raw_context.get("fallback_plan_id"))
+            except Exception: pass
+
+        self._staged_plan_context = ctx
+        summary = ", ".join(str(pid) for pid in ctx.get("plan_ids", [])) or "-"
+        note = f"[CTRL] init_plan_context received (planIds={summary})"
+        if trigger: note += f" trigger={trigger}"
+        self._append_log_line(note)
+
+    def _handle_replan_received(self, msg_id, raw):
+        """탭에서 0902 수신 시 호출해주는 콜백."""
+        if not self._power_on:
+            self._append_log_line("[BLOCK] Power OFF → 0902 수신 무시")
+            return
+
+        payload = self._parse_replan_payload(raw)
+        if not payload:
+            self._append_log_line("[ERR] 0902 payload parse failed")
+            return
+        staged = self._staged_plan_context if isinstance(getattr(self, '_staged_plan_context', {}), dict) else {}
+
+        # 0902에서 옵션/계획 ID 추출
+        plan_ids: list[int] = []
+        option_names: list[str] = []
+        option_payload = payload.get("optionList") or payload.get("pendingOptionList") or []
+        for item in option_payload:
+            try:
+                plan_ids.append(int(item.get("missionPlanID")))
+            except Exception:
+                continue
+            name = item.get("optionName")
+            if name:
+                option_names.append(str(name))
+
+        # (필요시) 입력 미션 ID
+        mission_ids: list[int] = []
+        for item in payload.get("inputMissionIDList") or []:
+            try:
+                mission_ids.append(int(item.get("inputMissionID")))
+            except Exception:
+                continue
+
+        staged_reason = _sanitize_reason(staged.get("reason"), "init-plan")
+        reason = _sanitize_reason(payload.get("replanRequest") or payload.get("replanReason"), staged_reason)
+
+        ctx = dict(staged)
+        if plan_ids:
+            ctx["plan_ids"] = plan_ids
+        if option_names:
+            ctx["option_names"] = option_names
+        if mission_ids:
+            ctx["mission_ids"] = mission_ids
+        ctx["reason"] = reason
+        detail_payload = payload.get("replanDetail")
+        if detail_payload is not None:
+            ctx["replan_detail"] = detail_payload
+        try:
+            ctx["replan_level"] = int(payload.get("replanLevel", ctx.get("replan_level", 1)))
+        except Exception:
+            ctx["replan_level"] = ctx.get("replan_level", 1)
+        for field_name in ("inputMissionPackageID", "missionReferencePackageID"):
+            if payload.get(field_name) is None:
+                continue
+            try:
+                ctx[field_name] = int(payload.get(field_name))
+            except Exception:
+                pass
+        if payload.get("fallbackPlanId") is not None:
+            try: ctx["fallback_plan_id"] = int(payload.get("fallbackPlanId"))
+            except Exception: pass
+        try:
+            replan_reason_text = str(ctx.get("reason") or "")
+        except Exception:
+            replan_reason_text = ""
+        if _is_path_deviation_reason_text(replan_reason_text):
+            self._log_path_deviation_event(
+                "mission_0902_received",
+                {
+                    "payloadKeys": sorted(payload.keys()),
+                    "reason": replan_reason_text,
+                    "planIDs": list(ctx.get("plan_ids") or []),
+                    "optionNames": list(ctx.get("option_names") or []),
+                    "hasReplanDetail": isinstance(detail_payload, dict),
+                    "detailKeys": sorted(detail_payload.keys()) if isinstance(detail_payload, dict) else [],
+                },
+            )
+        if _is_imaging_schedule_reason_text(replan_reason_text):
+            self._log_imaging_schedule_event(
+                "mission_0902_received",
+                {
+                    "payloadKeys": sorted(payload.keys()),
+                    "reason": replan_reason_text,
+                    "planIDs": list(ctx.get("plan_ids") or []),
+                    "optionNames": list(ctx.get("option_names") or []),
+                    "hasReplanDetail": isinstance(detail_payload, dict),
+                    "detailKeys": sorted(detail_payload.keys()) if isinstance(detail_payload, dict) else [],
+                },
+            )
+
+        # 새 0902 요청 수신 시 이전 전송 버퍼 초기화
+        self._pending_plan_push = None
+        try:
+            self._attack_delivery_buffer.clear()
+        except Exception:
+            self._attack_delivery_buffer = []
+
+        self._active_plan_context = ctx
+        summary = ", ".join(str(pid) for pid in ctx.get("plan_ids", [])) or "-"
+        self._append_log_line(f"[AUTO] 0902 received (planIds={summary})")
+        self._schedule_replan_pipeline(delay_ms=100)
+
+    def _should_use_attack_pipeline(self, ctx: Dict[str, Any]) -> bool:
+        reason_text = str(ctx.get("reason") or "").strip()
+        if "공격 특화" in reason_text or "공격특화" in reason_text or "공격추천" in reason_text:
+            return True
+
+        detail = ctx.get("replan_detail")
+        if isinstance(detail, dict):
+            trigger = detail.get("trigger")
+            if isinstance(trigger, str) and trigger.strip() == "0402":
+                return True
+            for key in ("ReplanReason", "reason", "label", "mode"):
+                value = detail.get(key)
+                if value and ("공격 특화" in str(value) or "공격특화" in str(value)):
+                    return True
+
+        option_names = ctx.get("option_names") or []
+        for name in option_names:
+            text = str(name)
+            if "공격 특화" in text or "공격특화" in text or "공격추천" in text:
+                return True
+
+        return False
+
+    def _ensure_ctx_package_ids(self, ctx: Dict[str, Any], staged: Dict[str, Any]) -> None:
+        """replan 파이프라인 진입 전에 필수 패키지 ID를 미리 채워둔다."""
+
+        def _coerce_positive_int(value: Any) -> Optional[int]:
+            if value is None:
+                return None
+            try:
+                ivalue = int(value)
+            except Exception:
+                return None
+            return ivalue if ivalue > 0 else None
+
+        def _ensure_id(key: str, snapshot_id: str) -> None:
+            existing = _coerce_positive_int(ctx.get(key))
+            if existing is None:
+                existing = _coerce_positive_int(staged.get(key))
+                if existing is not None:
+                    ctx[key] = existing
+                    return
+            if existing is not None:
+                ctx[key] = existing
+                return
+            try:
+                latest = get_latest_package_id(snapshot_id)
+            except Exception as exc:
+                self.log_sig.emit(f"[WARN] Failed to query latest {snapshot_id} ID for {key}: {exc}")
+                return
+            if latest is not None:
+                ctx[key] = latest
+                self.log_sig.emit(f"[INFO] Using latest {snapshot_id} ID {latest} for {key} (fallback)")
+
+        _ensure_id("inputMissionPackageID", "0201")
+        _ensure_id("missionReferencePackageID", "0203")
+
+    # ───────── 재계획 파이프라인(파일 생성/저장 후 0301만 송신) ─────────
+    def _schedule_replan_pipeline(self, delay_ms: int = 1000) -> None:
+        """Delay the replan pipeline start to avoid race conditions with rapid 0902 dispatch."""
+        timer = getattr(self, "_replan_delay_timer", None)
+        if timer is not None:
+            timer.stop()
+            timer.deleteLater()
+        if delay_ms <= 0:
+            self._replan_delay_timer = None
+            self._run_replan_pipeline_async()
+            return
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+        timer.setInterval(int(delay_ms))
+        timer.timeout.connect(self._run_replan_pipeline_async)
+        self._replan_delay_timer = timer
+        timer.start()
+        self._append_log_line(f"[AUTO] replan pipeline scheduled after {delay_ms/1000:.1f}s delay")
+
+    def _run_replan_pipeline_async(self):
+        timer = getattr(self, "_replan_delay_timer", None)
+        if timer is not None:
+            timer.stop()
+            timer.deleteLater()
+            self._replan_delay_timer = None
+        ctx = getattr(self, "_active_plan_context", {}) or {}
+        reason = _sanitize_reason(ctx.get("reason"), "초기임무재계획")
+        plan_logger = getattr(self, "_mission_plan_logger", None)
+        if not self._power_on:
+            msg = "[BLOCK] Power OFF 상태에서 replan pipeline 차단"
+            self._append_log_line(msg)
+            try:
+                if plan_logger:
+                    plan_logger.log_blocked(ctx, reason, msg)
+            except Exception:
+                pass
+            return
+        if self._initplan_running:
+            msg = "[INFO] replan pipeline already running"
+            self._append_log_line(msg)
+            try:
+                if plan_logger:
+                    plan_logger.log_blocked(ctx, reason, msg)
+            except Exception:
+                pass
+            return
+        self._initplan_running = True
+        self._pending_plan_push = None
+        self._push_0305(status=1, reason=reason)
+        session_id = self._pipeline_logger.open_session(ctx, reason)
+        plan_run_log = None
+        try:
+            if plan_logger:
+                plan_run_log = plan_logger.start_run(ctx, reason, session_id=session_id)
+        except Exception:
+            plan_run_log = None
+        threading.Thread(
+            target=self._run_replan_pipeline_do,
+            args=(session_id, plan_run_log),
+            name="Replan-GUI",
+            daemon=True,
+        ).start()
+
+    def _run_replan_pipeline_do(self, session_id: Optional[str], plan_run_log=None):
+        success = False
+        plan_log_status = "error"
+        plan_log_stop_reason: Optional[str] = None
+        plan_log_summary: Dict[str, Any] = {}
+        summary_info: Optional[Dict[str, Any]] = None
+        plan_log = plan_run_log
+        ctx: Dict[str, Any] = {}
+        staged: Dict[str, Any] = {}
+        failure_notice_sent = False
+        reason = "init-plan"
+        try:
+            import os, json
+            from pathlib import Path
+
+            ctx = getattr(self, '_active_plan_context', {}) or {}
+            staged = self._staged_plan_context if isinstance(getattr(self, '_staged_plan_context', {}), dict) else {}
+            self._pending_plan_push = None
+            try:
+                self._attack_delivery_buffer.clear()
+            except Exception:
+                self._attack_delivery_buffer = []
+            self._ensure_ctx_package_ids(ctx, staged)
+            staged_reason = _sanitize_reason(staged.get('reason'), 'init-plan')
+            reason = _sanitize_reason(ctx.get('reason'), staged_reason)
+
+            plan_log = plan_run_log
+            if plan_log is None:
+                try:
+                    plan_log = self._mission_plan_logger.start_run(ctx, reason, session_id=session_id)
+                except Exception:
+                    plan_log = None
+            if plan_log:
+                self._active_plan_log_run = plan_log
+                plan_log.add_step(
+                    "start",
+                    "info",
+                    detail={
+                        "reason": reason,
+                        "plan_ids": list(ctx.get("plan_ids") or []),
+                        "replan_level": ctx.get("replan_level", ctx.get("replanLevel")),
+                    },
+                )
+            def _record_step(name: str, status: str, detail: Optional[Dict[str, Any]] = None, message: str = "") -> None:
+                if plan_log:
+                    plan_log.add_step(name, status, detail=detail, message=message)
+
+            def _record_issue(code: str, message: str = "", detail: Optional[Dict[str, Any]] = None, *, status: str = "error") -> None:
+                nonlocal plan_log_status, plan_log_stop_reason
+                plan_log_stop_reason = plan_log_stop_reason or code
+                plan_log_status = status or plan_log_status
+                if plan_log:
+                    if message or detail:
+                        plan_log.add_issue(code, message=message or None, detail=detail)
+                    plan_log.add_step(code, status or "error", detail=detail, message=message)
+
+            def _notify_failure_once(
+                code: str,
+                *,
+                exc: Optional[BaseException] = None,
+                detail: Optional[Dict[str, Any]] = None,
+            ) -> None:
+                nonlocal failure_notice_sent
+                if failure_notice_sent:
+                    return
+                notice = self._build_plan_failure_notice(code, exc=exc, detail=detail, ctx=ctx)
+                if not notice:
+                    return
+                self._push_0001_notice(notice)
+                failure_notice_sent = True
+
+            self.log_sig.emit(f"[STEP 0] Replan pipeline start (reason={reason})")
+            self._pipeline_logger.log_event(
+                session_id,
+                "info",
+                "Replan pipeline start",
+                detail={
+                    "reason": reason,
+                    "plan_ids": list(ctx.get("plan_ids") or []),
+                    "replan_level": ctx.get("replan_level"),
+                },
+            )
+
+
+            def _normalize_option_label(value: Any) -> str:
+                return str(value).strip() if value is not None else ""
+
+            def _collect_attack_option_indices(context: Dict[str, Any]) -> list[int]:
+                labels = list(context.get("option_names") or [])
+                attack_labels = {"공격추천", "공격 특화", "공격특화"}
+                return [
+                    idx for idx, label in enumerate(labels)
+                    if _normalize_option_label(label) in attack_labels
+                ]
+
+            def _select_by_indices(values: list[Any], indices: list[int]) -> list[Any]:
+                seq = list(values or [])
+                return [seq[idx] if idx < len(seq) else None for idx in indices]
+
+            def _filter_context_by_indices(context: Dict[str, Any], keep_indices: list[int]) -> Dict[str, Any]:
+                filtered = dict(context)
+                plan_ids = list(context.get("plan_ids") or [])
+                option_names = list(context.get("option_names") or [])
+                if keep_indices:
+                    filtered["plan_ids"] = _select_by_indices(plan_ids, keep_indices)
+                    filtered["option_names"] = _select_by_indices(option_names, keep_indices)
+                else:
+                    filtered.pop("plan_ids", None)
+                    filtered.pop("option_names", None)
+                return filtered
+
+            def _load_imp_package(imp_path: str | Path) -> tuple[int, dict]:
+                with open(imp_path, encoding="utf-8") as f:
+                    pkg = json.load(f)
+                aid = int(pkg.get("aircraftID", 0))
+                return aid, pkg
+
+            def _load_imp_packages(imp_paths: list[str]) -> list[tuple[int, dict]]:
+                if len(imp_paths) <= 1:
+                    return [_load_imp_package(path) for path in imp_paths]
+                loaded: list[tuple[int, dict] | None] = [None] * len(imp_paths)
+                with concurrent.futures.ThreadPoolExecutor(
+                    max_workers=min(6, len(imp_paths)),
+                    thread_name_prefix="LoadIMP",
+                ) as executor:
+                    futures = {
+                        executor.submit(_load_imp_package, path): idx
+                        for idx, path in enumerate(imp_paths)
+                    }
+                    for future in concurrent.futures.as_completed(futures):
+                        loaded[futures[future]] = future.result()
+                return [row for row in loaded if row is not None]
+
+            def _write_json_batch(rows: list[tuple[Path, Any]], *, pretty: bool = True) -> int:
+                if not rows:
+                    return 0
+
+                def _write_one(item: tuple[Path, Any]) -> bool:
+                    path, payload = item
+                    return bool(
+                        write_json(
+                            path,
+                            payload,
+                            pretty=pretty,
+                            ensure_ascii=False,
+                            skip_if_unchanged=True,
+                        )
+                    )
+
+                if len(rows) == 1:
+                    return 1 if _write_one(rows[0]) else 0
+
+                written = 0
+                with concurrent.futures.ThreadPoolExecutor(
+                    max_workers=min(8, len(rows)),
+                    thread_name_prefix="WriteJSON",
+                ) as executor:
+                    futures = [executor.submit(_write_one, row) for row in rows]
+                    for future in concurrent.futures.as_completed(futures):
+                        if future.result():
+                            written += 1
+                return written
+
+            attack_option_indices = _collect_attack_option_indices(ctx)
+            attack_ctx = _filter_context_by_indices(ctx, attack_option_indices) if attack_option_indices else ctx
+            attack_summary_info: Optional[Dict[str, Any]] = None
+            attack_exclusion_source_plan_id = getattr(self, "_last_mission_plan_id", None)
+            if self._should_use_attack_pipeline(ctx):
+                _record_step("attack_pipeline", "start", detail={"reason": reason})
+                self.log_sig.emit("[ATTACK] 공격 특화 재계획 요청 감지 → 전용 파이프라인 실행")
+                try:
+                    attack_result = run_attack_plan_pipeline(attack_ctx, log_callback=self._append_log_line)
+                    attack_ctx["_attack_pipeline"] = attack_result
+                    log_path = (attack_result or {}).get("log_path")
+                    if log_path:
+                        self.log_sig.emit(f"[ATTACK] 분석 로그 저장: {log_path}")
+                    self._pipeline_logger.log_event(
+                        session_id,
+                        "info",
+                        "Attack pipeline evaluated",
+                        detail={"log_path": log_path},
+                    )
+                    _record_step("attack_pipeline", "evaluated", detail={"log_path": str(log_path) if log_path else None})
+                    attack_updates = ((attack_result or {}).get("result") or {}).get("missionUpdates")
+                    if attack_updates:
+                        try:
+                            self._finalize_attack_pipeline(
+                                attack_ctx, attack_result, attack_updates, reason, session_id, schedule_delivery=False
+                            )
+                            self._mark_attack_target_used(attack_result)
+
+                            attack_summary_info = {
+                                "mode": "attack",
+                                "plan_ids": list(attack_ctx.get("plan_ids") or []),
+                                "attack_log": log_path,
+                            }
+
+                            self._attack_delivery_buffer.append(
+                                {
+                                    "plan_ids": list(attack_ctx.get("plan_ids") or []),
+                                    "option_names": list(attack_ctx.get("option_names") or []),
+                                    "option_meta": dict(attack_ctx.get("_option_meta") or {}),
+                                }
+                            )
+                            _record_step("attack_pipeline", "complete", detail={"plan_ids": list(attack_ctx.get("plan_ids") or []), "log_path": str(log_path) if log_path else None})
+                        except Exception as exc:
+                            self._append_log_line(f"[ATTACK][ERR] finalize failed: {exc}")
+                            self._pipeline_logger.log_event(
+                                session_id, "error", f"Attack finalize failed: {exc}"
+                            )
+                            _record_issue("attack_finalize_failed", f"Attack finalize failed: {exc}")
+                            _notify_failure_once("attack_finalize_failed", exc=exc)
+                except Exception as exc:
+                    self._append_log_line(f"[ATTACK][ERR] pipeline failed: {exc}")
+                    self._pipeline_logger.log_event(
+                        session_id, "error", f"Attack pipeline failed: {exc}"
+                    )
+                    _record_issue("attack_pipeline_failed", f"Attack pipeline failed: {exc}")
+                    _notify_failure_once("attack_pipeline_failed", exc=exc)
+
+            # 공격 옵션은 공격 파이프라인 결과만 사용 (일반 파이프라인에서 제외)
+            if attack_option_indices:
+                keep_indices = [
+                    idx for idx in range(max(len(ctx.get("plan_ids") or []), len(ctx.get("option_names") or [])))
+                    if idx not in attack_option_indices
+                ]
+                if not keep_indices:
+                    if attack_summary_info:
+                        try:
+                            self._schedule_plan_delivery(
+                                list(attack_ctx.get("plan_ids") or []),
+                                list(attack_ctx.get("option_names") or []),
+                                reason,
+                                dict(attack_ctx.get("_option_meta") or {}),
+                                force_direct_update=False,
+                            )
+                            _record_step(
+                                "attack_delivery",
+                                "queued",
+                                detail={"plan_ids": list(attack_ctx.get("plan_ids") or [])},
+                            )
+                        except Exception as exc:
+                            self._append_log_line(f"[ATTACK][ERR] delivery queue failed: {exc}")
+                            self._pipeline_logger.log_event(
+                                session_id, "error", f"Attack delivery queue failed: {exc}"
+                            )
+                            _record_issue(
+                                "attack_delivery_queue_failed",
+                                f"Attack delivery queue failed: {exc}",
+                            )
+                            _notify_failure_once("attack_delivery_queue_failed", exc=exc)
+                        summary_info = attack_summary_info
+                        plan_log_status = "success"
+                        plan_log_summary.update(summary_info or {})
+                        success = True
+                    else:
+                        _record_issue(
+                            "attack_pipeline_empty",
+                            "Attack option requested but no attack plan was generated.",
+                            status="error",
+                        )
+                        _notify_failure_once("attack_pipeline_empty")
+                    return
+                ctx = _filter_context_by_indices(ctx, keep_indices)
+
+            imaging_schedule_handled, imaging_schedule_summary = self._try_run_imaging_schedule_replan_pipeline(
+                ctx,
+                reason,
+                session_id=session_id,
+            )
+            if imaging_schedule_handled:
+                if imaging_schedule_summary:
+                    summary_info = {"mode": "imagingSchedule", **imaging_schedule_summary}
+                    plan_log_status = "success"
+                    plan_log_summary.update(summary_info or {})
+                    if plan_log:
+                        plan_log.set_plan_ids(
+                            imaging_schedule_summary.get("plan_ids")
+                            or imaging_schedule_summary.get("planIds")
+                            or ctx.get("plan_ids")
+                            or []
+                        )
+                        plan_log.update_summary(summary_info)
+                        _record_step("imaging_schedule_pipeline", "success", detail=summary_info)
+                    success = True
+                else:
+                    _record_issue(
+                        "imaging_schedule_pipeline_failed",
+                        "Imaging-schedule replan request could not be materialized.",
+                    )
+                    _notify_failure_once("imaging_schedule_pipeline_failed")
+                return
+
+            path_deviation_handled, path_deviation_summary = self._try_run_path_deviation_replan_pipeline(
+                ctx,
+                reason,
+                session_id=session_id,
+            )
+            if path_deviation_handled:
+                if path_deviation_summary:
+                    summary_info = {"mode": "pathDeviation", **path_deviation_summary}
+                    plan_log_status = "success"
+                    plan_log_summary.update(summary_info or {})
+                    if plan_log:
+                        plan_log.set_plan_ids(
+                            path_deviation_summary.get("plan_ids")
+                            or path_deviation_summary.get("planIds")
+                            or ctx.get("plan_ids")
+                            or []
+                        )
+                        plan_log.update_summary(summary_info)
+                        _record_step("path_deviation_pipeline", "success", detail=summary_info)
+                    success = True
+                else:
+                    _record_issue(
+                        "path_deviation_pipeline_failed",
+                        "Path-deviation replan request could not be materialized.",
+                    )
+                    _notify_failure_once("path_deviation_pipeline_failed")
+                return
+
+            prior_summary = self._try_run_prior_mission_pipeline(ctx, reason, session_id=session_id)
+            if prior_summary:
+                summary_info = {"mode": "prior", **prior_summary}
+                plan_log_status = "success"
+                plan_log_summary.update(summary_info or {})
+                if plan_log:
+                    plan_log.set_plan_ids(
+                        prior_summary.get("plan_ids") or prior_summary.get("planIds") or ctx.get("plan_ids") or []
+                    )
+                    plan_log.update_summary(summary_info)
+                    _record_step("prior_pipeline", "success", detail=summary_info)
+                success = True
+                return
+
+            generated_imp_ids: Set[int] = set()
+            generated_path_ids: Set[int] = set()
+            stored_path_ids: Set[int] = set()
+
+            planner_runtime = self._get_planner_runtime()
+            run_divide_and_pattern = planner_runtime["run_divide_and_pattern"]
+            build_mission_plan_0301 = planner_runtime["build_mission_plan_0301"]
+            d0302 = planner_runtime["d0302"]
+            d0303 = planner_runtime["d0303"]
+            d0304 = planner_runtime["d0304"]
+            _ensure_mission_planner_import_paths()
+            from modules.mission_planning.MissionPlanner.data_def.id_allocator import (
+                next_path_id,
+                reserve_imp_ids,
+                reserve_path_ids,
+            )
+
+            uav_cruise_speed = float(planner_runtime.get("uav_cruise_speed", 40.0))
+            uav_turn_step = float(planner_runtime.get("uav_turn_step", 15.0))
+            if planner_runtime.get("uav_params_applied"):
+                self.log_sig.emit(
+                    f"[INFO] UAV params loaded (cruise={uav_cruise_speed:.2f}, turn_step={uav_turn_step:.1f})"
+                )
+            elif planner_runtime.get("uav_params_error"):
+                self.log_sig.emit(f"[WARN] UAV params load failed: {planner_runtime['uav_params_error']}")
+
+            def _imp_path_id(im):
+                for key in ('pathID', 'pathId', 'individualMissionPathID', 'missionPathID'):
+                    value = im.get(key)
+                    try:
+                        if value is not None:
+                            return int(value)
+                    except Exception:
+                        continue
+                mission_info = im.get('missionInfo')
+                if isinstance(mission_info, dict):
+                    for key in ('pathID', 'pathId'):
+                        value = mission_info.get(key)
+                        try:
+                            if value is not None:
+                                return int(value)
+                        except Exception:
+                            continue
+                return None
+
+            def _enforce_fp_path_ids(fps, pid_map):
+                fixed = 0
+                for fp in fps or []:
+                    try:
+                        aid = int(fp.get('aircraftID', 0))
+                        mid = int(fp.get('individualMissionID', 0))
+                        desired = pid_map.get((aid, mid))
+                        if desired is not None and fp.get('pathID') != desired:
+                            fp['pathID'] = desired
+                            fixed += 1
+                    except Exception:
+                        continue
+                return fixed
+
+            db_root = db_paths.get_active_db_root()
+
+            def _locate_prior_mission_plan():
+                dss_dir = db_root / 'DSS_Internal'
+                if not dss_dir.exists():
+                    return None
+                candidates = sorted(
+                    (p for p in dss_dir.glob("0201_*.json") if p.is_file()),
+                    key=lambda p: p.stat().st_mtime,
+                    reverse=True,
+                )
+                for candidate in candidates:
+                    try:
+                        data = json.loads(candidate.read_text(encoding='utf-8'))
+                    except Exception:
+                        continue
+                    ctx = data.get("_priorMissionContext")
+                    if isinstance(ctx, dict):
+                        return candidate, ctx
+                return None
+
+            def _apply_prior_mission_customizations(
+                missions,
+                flight_plans_0303,
+                context,
+                variant_no,
+                pid_map,
+                generated_path_ids,
+            ):
+                if not isinstance(context, dict):
+                    return
+
+                def _to_int(value, default=None):
+                    try:
+                        iv = int(value)
+                        return iv
+                    except Exception:
+                        return default
+
+                def _to_float(value, default=None):
+                    try:
+                        fv = float(value)
+                        return fv
+                    except Exception:
+                        return default
+
+                input_mission_id = _to_int(context.get("inputMissionID")) or _to_int(context.get("mission_id"))
+                if input_mission_id is None:
+                    self.log_sig.emit(f"[WARN] Prior mission customization skipped (variant={variant_no}): missing inputMissionID")
+                    return
+
+                coord = context.get("coordinate") or {}
+                lat = _to_float(coord.get("latitude"))
+                lon = _to_float(coord.get("longitude"))
+                alt = _to_float(coord.get("altitude"), 800.0)
+                if lat is None or lon is None:
+                    self.log_sig.emit(f"[WARN] Prior mission customization skipped (variant={variant_no}): coordinate missing")
+                    return
+
+                prior_mission_id = _to_int(context.get("priorMissionID"), 0) or 0
+                mission_type = _to_int(context.get("missionType"), 1) or 1
+                target_id = _to_int(context.get("targetID"))
+                preferred_aircraft_ids = (4, 5, 6)
+
+                mission_entry = None
+                fallback_entry = None
+                for im in missions:
+                    rel = im.get("relatedMission") or {}
+                    if _to_int(rel.get("inputMissionID")) != input_mission_id:
+                        continue
+                    fallback_entry = im if fallback_entry is None else fallback_entry
+                    if _to_int(im.get("aircraftID")) in preferred_aircraft_ids:
+                        mission_entry = im
+                        break
+                if mission_entry is None:
+                    mission_entry = fallback_entry
+                if mission_entry is None:
+                    self.log_sig.emit(f"[WARN] Prior mission customization skipped (variant={variant_no}): matching mission not found")
+                    return
+
+                aircraft_id = _to_int(mission_entry.get("aircraftID"))
+                if aircraft_id not in preferred_aircraft_ids:
+                    aircraft_id = preferred_aircraft_ids[0]
+                    mission_entry["aircraftID"] = aircraft_id
+
+                path_id = _to_int(mission_entry.get("pathID"))
+                if not path_id or path_id <= 0:
+                    path_id = next_path_id(aircraft_id)
+                    mission_entry["pathID"] = path_id
+                generated_path_ids.add(path_id)
+                pid_map[(aircraft_id, _to_int(mission_entry.get("individualMissionID")))] = path_id
+
+                rel_block = dict(mission_entry.get("relatedMission") or {})
+                rel_block["relatedMissionType"] = 2
+                rel_block["inputMissionID"] = input_mission_id
+                rel_block["priorMissionID"] = prior_mission_id
+                mission_entry["relatedMission"] = rel_block
+                mission_entry["isDone"] = False
+
+                mission_info = dict(mission_entry.get("individualMissionInfo") or {})
+                mission_info["individualMissionType"] = 1 if mission_type == 2 else 5
+                mission_info["patternType"] = 1
+                mission_info["autoZoomIn"] = True
+                mission_info["coordinateList"] = [
+                    {
+                        "latitude": lat,
+                        "longitude": lon,
+                        "altitude": int(round(alt)),
+                    }
+                ]
+                mission_info["lineList"] = []
+                mission_info["areaList"] = []
+                mission_info["targetID"] = target_id if (mission_type == 2 and target_id is not None) else 0
+                mission_entry["individualMissionInfo"] = mission_info
+
+                flight_entry = None
+                for fp in flight_plans_0303 or []:
+                    if _to_int(fp.get("aircraftID")) == aircraft_id:
+                        flight_entry = fp
+                        break
+                if flight_entry is None:
+                    flight_entry = {
+                        "timestamp": _now_ms_since_2000(),
+                        "Source": "MMR",
+                        "pathID": path_id,
+                        "aircraftID": aircraft_id,
+                        "isFormationFlight": False,
+                        "waypointList": [],
+                    }
+                    flight_plans_0303.append(flight_entry)
+                else:
+                    flight_entry["pathID"] = path_id
+                    flight_entry["aircraftID"] = aircraft_id
+
+                filming_property = {
+                    "fieldOfView": 15,
+                    "sensorType": 1,
+                    "operationMode": 3 if mission_type == 2 else 1,
+                }
+                if mission_type == 2 and target_id is not None:
+                    filming_property["autoTracking"] = {"targetID": target_id}
+                else:
+                    filming_property["coordinateOrientation"] = {
+                        "coordinate": {
+                            "latitude": lat,
+                            "longitude": lon,
+                            "altitude": 0,
+                        }
+                    }
+
+                waypoint_id = 1
+                try:
+                    if flight_entry.get("waypointList"):
+                        waypoint_id = _to_int(flight_entry["waypointList"][0].get("waypointID")) or 1
+                except Exception:
+                    waypoint_id = 1
+
+                waypoint = {
+                    "waypointID": waypoint_id,
+                    "coordinate": {
+                        "latitude": lat,
+                        "longitude": lon,
+                        "altitude": int(round(alt)),
+                    },
+                    "speed": 35.0,
+                    "eta": 300,
+                    "ecf": 0.0,
+                    "nextWaypointID": 0,
+                    "waypointPassType": 2,
+                    "filmingProperty": filming_property,
+                    "loiterProperty": {
+                        "radius": 400,
+                        "direction": 1,
+                        "time": 300,
+                        "speed": 3,
+                    },
+                }
+
+                flight_entry["timestamp"] = _now_ms_since_2000()
+                flight_entry["Source"] = flight_entry.get("Source") or "MMR"
+                flight_entry["isFormationFlight"] = False
+                flight_entry["waypointList"] = [waypoint]
+
+                self.log_sig.emit(
+                    f"[variant {variant_no}] Prior mission customization applied "
+                    f"(aircraft={aircraft_id}, inputMissionID={input_mission_id})"
+                )
+            dir_0201 = db_root / 'InputMissionPlan'
+            dir_0203 = db_root / 'MissionReferenceInfo'
+            out_root_base = db_root / 'mission_output'
+            out_root_base.mkdir(parents=True, exist_ok=True)
+
+            def _pick_json(directory: Path):
+                candidates = sorted(p for p in directory.glob('*.json') if p.is_file())
+                return candidates[0] if candidates else None
+
+            def _resolve_path(value, directory: Path):
+                if value:
+                    try:
+                        candidate = Path(value)
+                        if candidate.exists():
+                            return candidate
+                    except Exception:
+                        pass
+                return _pick_json(directory)
+
+            self.log_sig.emit(f"[INFO] Latest input snapshot → {describe_latest_ids()}")
+
+            latest_cmpk_id = get_latest_package_id("0201")
+            latest_mrpk_id = get_latest_package_id("0203")
+
+            cmpk_path = None
+            cmpk_missing = False
+            if latest_cmpk_id is not None:
+                candidate = dir_0201 / f"{latest_cmpk_id}.json"
+                if candidate.exists():
+                    cmpk_path = candidate
+                    ctx['inputMissionPackageID'] = latest_cmpk_id
+                    self.log_sig.emit(f"[STEP 0] Using latest 0201 ID {latest_cmpk_id} ({candidate.name})")
+                else:
+                    snap_0201 = get_latest_snapshot("0201")
+                    payload_0201 = getattr(snap_0201, "payload", None)
+                    if isinstance(payload_0201, dict) and (
+                        payload_0201.get("inputMissionList") or payload_0201.get("availableAircraftList")
+                    ):
+                        payload_copy = dict(payload_0201)
+                        payload_copy.setdefault("inputMissionPackageID", latest_cmpk_id)
+                        try:
+                            write_json(candidate, payload_copy, pretty=True, ensure_ascii=False, skip_if_unchanged=True)
+                            cmpk_path = candidate
+                            ctx['inputMissionPackageID'] = latest_cmpk_id
+                            self.log_sig.emit(f"[STEP 0] Materialized latest 0201 ID {latest_cmpk_id} from cache payload ({candidate.name})")
+                        except Exception as exc:
+                            self.log_sig.emit(f"[ERR] Failed to materialize latest 0201 ID {latest_cmpk_id}: {exc}")
+                            cmpk_missing = True
+                    else:
+                        self.log_sig.emit(f"[ERR] Latest 0201 ID {latest_cmpk_id} missing and cache payload unavailable")
+                        cmpk_missing = True
+            if cmpk_missing:
+                failure_detail = {"latest_0201": latest_cmpk_id}
+                _record_issue("0201_missing", "latest 0201 missing", detail=failure_detail)
+                plan_log_summary.update({"stop_reason": "0201_missing", **failure_detail})
+                _notify_failure_once("0201_missing", detail=failure_detail)
+                self._plan_status = "임무계획 실패"
+                self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
+                return
+            if cmpk_path is None:
+                fallback_cmpk = ctx.get('cmpk_path') or staged.get('cmpk_path')
+                cmpk_path = _resolve_path(fallback_cmpk, dir_0201)
+                if cmpk_path:
+                    try:
+                        ctx.setdefault('inputMissionPackageID', int(Path(cmpk_path).stem))
+                    except Exception:
+                        pass
+                    self.log_sig.emit(f"[INFO] Fallback 0201 file selected: {cmpk_path.name}")
+
+            if cmpk_path:
+                _record_step("0201_resolved", "ok", detail={"path": str(cmpk_path), "latest_id": latest_cmpk_id})
+            mrpk_path = None
+            mrpk_missing = False
+            if latest_mrpk_id is not None:
+                candidate = dir_0203 / f"{latest_mrpk_id}.json"
+                if candidate.exists():
+                    mrpk_path = candidate
+                    ctx['missionReferencePackageID'] = latest_mrpk_id
+                    self.log_sig.emit(f"[STEP 0] Using latest 0203 ID {latest_mrpk_id} ({candidate.name})")
+                else:
+                    snap_0203 = get_latest_snapshot("0203")
+                    payload_0203 = getattr(snap_0203, "payload", None)
+                    if isinstance(payload_0203, dict) and (
+                        payload_0203.get("takeOverInfoList") or payload_0203.get("flightAreaList") or payload_0203.get("handOverInfoList")
+                    ):
+                        payload_copy = dict(payload_0203)
+                        payload_copy.setdefault("missionReferencePackageID", latest_mrpk_id)
+                        try:
+                            write_json(candidate, payload_copy, pretty=True, ensure_ascii=False, skip_if_unchanged=True)
+                            mrpk_path = candidate
+                            ctx['missionReferencePackageID'] = latest_mrpk_id
+                            self.log_sig.emit(f"[STEP 0] Materialized latest 0203 ID {latest_mrpk_id} from cache payload ({candidate.name})")
+                        except Exception as exc:
+                            self.log_sig.emit(f"[ERR] Failed to materialize latest 0203 ID {latest_mrpk_id}: {exc}")
+                            mrpk_missing = True
+                    else:
+                        self.log_sig.emit(f"[ERR] Latest 0203 ID {latest_mrpk_id} missing and cache payload unavailable")
+                        mrpk_missing = True
+            if mrpk_missing:
+                failure_detail = {"latest_0203": latest_mrpk_id}
+                _record_issue("0203_missing", "latest 0203 missing", detail=failure_detail)
+                plan_log_summary.update({"stop_reason": "0203_missing", **failure_detail})
+                _notify_failure_once("0203_missing", detail=failure_detail)
+                self._plan_status = "임무계획 실패"
+                self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
+                return
+            if mrpk_path is None:
+                fallback_mrpk = ctx.get('mrpk_path') or staged.get('mrpk_path')
+                mrpk_path = _resolve_path(fallback_mrpk, dir_0203)
+                if mrpk_path:
+                    try:
+                        ctx.setdefault('missionReferencePackageID', int(Path(mrpk_path).stem))
+                    except Exception:
+                        pass
+                    self.log_sig.emit(f"[INFO] Fallback 0203 file selected: {mrpk_path.name}")
+
+            if mrpk_path:
+                _record_step("0203_resolved", "ok", detail={"path": str(mrpk_path), "latest_id": latest_mrpk_id})
+            if not cmpk_path or not mrpk_path:
+                self.log_sig.emit('[ERR] Replan pipeline aborted: missing 0201/0203 input')
+                missing_detail = {"cmpk_path": str(cmpk_path) if cmpk_path else None, "mrpk_path": str(mrpk_path) if mrpk_path else None}
+                _record_issue("input_missing", "missing 0201/0203 input", detail=missing_detail)
+                plan_log_summary.update({"stop_reason": "input_missing", **missing_detail})
+                _notify_failure_once("input_missing", detail=missing_detail)
+                self._plan_status = "임무계획 실패"
+                self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
+                return
+
+            cmpk_data = None
+            mrpk_data = None
+            try:
+                with cmpk_path.open("r", encoding="utf-8") as fh:
+                    cmpk_data = json.load(fh)
+            except Exception as exc:
+                self.log_sig.emit(f"[ERR] 0201 로드 실패: {exc}")
+                _record_issue("0201_load_failed", "failed to load 0201", detail={"path": str(cmpk_path), "error": str(exc)})
+                plan_log_summary.update({"stop_reason": "0201_load_failed", "cmpk_path": str(cmpk_path)})
+                _notify_failure_once("0201_load_failed", exc=exc, detail={"path": str(cmpk_path)})
+                self._plan_status = "임무계획 실패"
+                self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
+                return
+            try:
+                with mrpk_path.open("r", encoding="utf-8") as fh:
+                    mrpk_data = json.load(fh)
+            except Exception as exc:
+                self.log_sig.emit(f"[ERR] 0203 로드 실패: {exc}")
+                _record_issue("0203_load_failed", "failed to load 0203", detail={"path": str(mrpk_path), "error": str(exc)})
+                plan_log_summary.update({"stop_reason": "0203_load_failed", "mrpk_path": str(mrpk_path)})
+                _notify_failure_once("0203_load_failed", exc=exc, detail={"path": str(mrpk_path)})
+                self._plan_status = "임무계획 실패"
+                self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
+                return
+
+            validation_errors: list[dict[str, Any]] = []
+
+            def _require_list(
+                payload: dict,
+                key: str,
+                label: str,
+                *,
+                allow_empty: bool = False,
+                allow_missing: bool = False,
+            ) -> list:
+                value = payload.get(key)
+                if not isinstance(value, list):
+                    if value is None and allow_missing:
+                        self.log_sig.emit(f"[WARN] {label} 없음 (선택 항목)")
+                        return []
+                    self.log_sig.emit(f"[ERR] {label} 필요하지만 없음/형식오류 → 중단")
+                    validation_errors.append({"key": key, "reason": "missing_or_invalid"})
+                    return []
+                if not value and not allow_empty:
+                    self.log_sig.emit(f"[ERR] {label} 필요하지만 비어있음 → 중단")
+                    validation_errors.append({"key": key, "reason": "empty"})
+                else:
+                    self.log_sig.emit(f"[OK] {label} 확인됨 (count={len(value)}) → 진행")
+                return value
+
+            def _summarize_ids(values: list, limit: int = 5) -> str:
+                if not values:
+                    return "-"
+                return ", ".join(str(v) for v in values[:limit])
+
+            self.log_sig.emit("[CHECK] 0201/0203 필수 데이터 확인 시작")
+            mission_list = _require_list(cmpk_data or {}, "inputMissionList", "0201 inputMissionList")
+            aircraft_list = _require_list(cmpk_data or {}, "availableAircraftList", "0201 availableAircraftList")
+
+            pkg_type_raw = (cmpk_data or {}).get("inputMissionPackageType")
+            try:
+                pkg_type = int(pkg_type_raw)
+            except Exception:
+                pkg_type = None
+            if not pkg_type or pkg_type == 0:
+                self.log_sig.emit("[ERR] 0201 inputMissionPackageType=0/없음 → 중단")
+                validation_errors.append({"key": "inputMissionPackageType", "reason": "invalid"})
+            else:
+                self.log_sig.emit(f"[OK] 0201 inputMissionPackageType={pkg_type} 확인")
+
+            main_sensor_raw = (cmpk_data or {}).get("mainSensor")
+            try:
+                main_sensor = int(main_sensor_raw)
+            except Exception:
+                main_sensor = None
+            if not main_sensor or main_sensor == 0:
+                self.log_sig.emit("[ERR] 0201 mainSensor=0/없음 → 중단")
+                validation_errors.append({"key": "mainSensor", "reason": "invalid"})
+            else:
+                self.log_sig.emit(f"[OK] 0201 mainSensor={main_sensor} 확인")
+
+            uav_count = 0
+            lah_count = 0
+            zero_aircraft: list[Any] = []
+            invalid_aircraft: list[Any] = []
+            for idx, entry in enumerate(aircraft_list):
+                aircraft_id = None
+                if isinstance(entry, dict):
+                    aircraft_id = entry.get("aircraftID")
+                elif isinstance(entry, int):
+                    aircraft_id = entry
+                elif isinstance(entry, str) and entry.isdigit():
+                    aircraft_id = int(entry)
+                if not isinstance(aircraft_id, int):
+                    invalid_aircraft.append(idx)
+                    continue
+                if aircraft_id == 0:
+                    zero_aircraft.append(idx)
+                    continue
+                if 1 <= aircraft_id <= 3:
+                    lah_count += 1
+                elif 4 <= aircraft_id <= 6:
+                    uav_count += 1
+                else:
+                    invalid_aircraft.append(aircraft_id)
+            if aircraft_list:
+                self.log_sig.emit(f"[CHECK] 0201 기체 수={len(aircraft_list)} (UAV={uav_count}, LAH={lah_count})")
+                if zero_aircraft:
+                    self.log_sig.emit(
+                        f"[ERR] 0201 availableAircraftList에 0 포함 (idx={_summarize_ids(zero_aircraft)}) → 중단"
+                    )
+                    validation_errors.append({"key": "availableAircraftList", "reason": "contains_zero"})
+                if invalid_aircraft:
+                    self.log_sig.emit(
+                        f"[ERR] 0201 availableAircraftList 형식/범위 오류 (idx={_summarize_ids(invalid_aircraft)}) → 중단"
+                    )
+                    validation_errors.append({"key": "availableAircraftList", "reason": "invalid_entries"})
+                if uav_count == 0:
+                    self.log_sig.emit("[ERR] 0201 UAV 정보 없음 → 중단")
+                    validation_errors.append({"key": "availableAircraftList", "reason": "no_uav"})
+                if lah_count == 0:
+                    self.log_sig.emit("[ERR] 0201 LAH 정보 없음 → 중단")
+                    validation_errors.append({"key": "availableAircraftList", "reason": "no_lah"})
+
+            missing_id: list[Any] = []
+            missing_detail: list[Any] = []
+            missing_shape: list[Any] = []
+            unknown_type: list[Any] = []
+            type_zero: list[Any] = []
+            line_only_violation: list[Any] = []
+            for mission in mission_list:
+                if not isinstance(mission, dict):
+                    missing_detail.append("?")
+                    continue
+                mid = mission.get("inputMissionID")
+                if mid is None:
+                    missing_id.append("?")
+                detail = mission.get("missionDetail")
+                if not isinstance(detail, dict):
+                    missing_detail.append(mid)
+                    continue
+                mtype_raw = mission.get("inputMissionType")
+                try:
+                    mtype = int(mtype_raw)
+                except Exception:
+                    mtype = None
+                if mtype == 0 or mtype is None:
+                    type_zero.append(mid)
+                    continue
+                if mtype in (1, 7):
+                    if not detail.get("lineList"):
+                        missing_shape.append(mid)
+                    if detail.get("areaList"):
+                        line_only_violation.append(mid)
+                elif mtype in (4, 5):
+                    if not detail.get("lineList"):
+                        missing_shape.append(mid)
+                elif mtype in (2, 3, 6):
+                    if not detail.get("areaList"):
+                        missing_shape.append(mid)
+                else:
+                    unknown_type.append(mid)
+
+            if mission_list:
+                self.log_sig.emit(
+                    "[CHECK] 0201 임무: total={total} missingID={mid} missingDetail={md} "
+                    "missingShape={ms} unknownType={ut} typeZero={tz} lineOnlyViolation={lv}".format(
+                        total=len(mission_list),
+                        mid=len(missing_id),
+                        md=len(missing_detail),
+                        ms=len(missing_shape),
+                        ut=len(unknown_type),
+                        tz=len(type_zero),
+                        lv=len(line_only_violation),
+                    )
+                )
+                if missing_id or missing_detail or missing_shape or unknown_type or type_zero or line_only_violation:
+                    self.log_sig.emit(
+                        "[DETAIL] 0201 문제 샘플: missingID={mid} missingDetail={md} "
+                        "missingShape={ms} unknownType={ut} typeZero={tz} lineOnlyViolation={lv}".format(
+                            mid=_summarize_ids(missing_id),
+                            md=_summarize_ids(missing_detail),
+                            ms=_summarize_ids(missing_shape),
+                            ut=_summarize_ids(unknown_type),
+                            tz=_summarize_ids(type_zero),
+                            lv=_summarize_ids(line_only_violation),
+                        )
+                    )
+                    validation_errors.append({"key": "inputMissionList", "reason": "invalid_entries"})
+
+            take_over_list = _require_list(mrpk_data or {}, "takeOverInfoList", "0203 takeOverInfoList")
+            hand_over_list = _require_list(mrpk_data or {}, "handOverInfoList", "0203 handOverInfoList")
+            flight_area_list = _require_list(
+                mrpk_data or {},
+                "flightAreaList",
+                "0203 flightAreaList",
+                allow_empty=True,
+                allow_missing=True,
+            )
+            bad_take: list[int] = []
+            bad_hand: list[int] = []
+
+            def _count_bad_coords(entries: list) -> list[int]:
+                bad = []
+                for idx, item in enumerate(entries):
+                    coord = item.get("coordinate") if isinstance(item, dict) else None
+                    if not isinstance(coord, dict) or "latitude" not in coord or "longitude" not in coord:
+                        bad.append(idx)
+                return bad
+
+            if take_over_list:
+                bad_take = _count_bad_coords(take_over_list)
+                if bad_take:
+                    self.log_sig.emit(f"[WARN] 0203 takeOver 좌표 누락: {len(bad_take)}건 (idx={_summarize_ids(bad_take)})")
+            if hand_over_list:
+                bad_hand = _count_bad_coords(hand_over_list)
+                if bad_hand:
+                    self.log_sig.emit(f"[WARN] 0203 handOver 좌표 누락: {len(bad_hand)}건 (idx={_summarize_ids(bad_hand)})")
+            if flight_area_list:
+                self.log_sig.emit(f"[CHECK] 0203 flightAreaList count={len(flight_area_list)}")
+            else:
+                self.log_sig.emit("[WARN] 0203 flightAreaList 비어있음 (선택 항목)")
+
+            if validation_errors:
+                notice_parts: list[str] = []
+                reason_labels = {
+                    "missing_or_invalid": "누락/형식오류",
+                    "empty": "빈목록",
+                    "invalid": "값오류",
+                    "contains_zero": "0포함",
+                    "invalid_entries": "형식오류",
+                    "no_uav": "UAV없음",
+                    "no_lah": "LAH없음",
+                }
+                key_labels = {
+                    "inputMissionPackageType": "0201 패키지타입",
+                    "mainSensor": "0201 메인센서",
+                    "availableAircraftList": "0201 기체목록",
+                    "inputMissionList": "0201 임무목록",
+                    "takeOverInfoList": "0203 인계목록",
+                    "handOverInfoList": "0203 반환목록",
+                    "flightAreaList": "0203 비행구역목록",
+                }
+                err_map: dict[str, set[str]] = {}
+                for err in validation_errors:
+                    key = err.get("key") if isinstance(err, dict) else None
+                    reason = err.get("reason") if isinstance(err, dict) else None
+                    key_text = key_labels.get(str(key), str(key or "알수없음"))
+                    reason_text = reason_labels.get(str(reason), str(reason or "오류"))
+                    err_map.setdefault(key_text, set()).add(reason_text)
+                if err_map:
+                    chunks = []
+                    for key_text, reasons in err_map.items():
+                        reason_text = ",".join(sorted(reasons))
+                        chunks.append(f"{key_text}({reason_text})")
+                    notice_parts.append("항목: " + " / ".join(chunks))
+                if missing_id or missing_detail or missing_shape or unknown_type or type_zero or line_only_violation:
+                    notice_parts.append(
+                        "0201 임무오류(ID누락={mid},상세누락={md},도형누락={ms},타입미정={ut},타입0={tz},lineOnly위반={lv})".format(
+                            mid=len(missing_id),
+                            md=len(missing_detail),
+                            ms=len(missing_shape),
+                            ut=len(unknown_type),
+                            tz=len(type_zero),
+                            lv=len(line_only_violation),
+                        )
+                    )
+                if bad_take or bad_hand:
+                    notice_parts.append(
+                        f"0203 좌표누락(인계={len(bad_take)},반환={len(bad_hand)})"
+                    )
+                if notice_parts:
+                    self.log_sig.emit("[ERR] 0201/0203 검증 실패 요약: " + " | ".join(notice_parts))
+                self.log_sig.emit("[ERR] 0201/0203 필수 데이터 부족 → 임무계획 중단")
+                _record_issue("input_validation_failed", "0201/0203 validation failed", detail={"errors": validation_errors})
+                plan_log_summary.update({"stop_reason": "input_validation_failed", "errors": validation_errors})
+                _notify_failure_once("input_validation_failed", detail={"errors": validation_errors})
+                self._plan_status = "임무계획 실패"
+                self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
+                return
+            _record_step(
+                "input_validation",
+                "ok",
+                detail={
+                    "missions": len(mission_list),
+                    "aircrafts": len(aircraft_list),
+                    "uavs": uav_count,
+                    "lahs": lah_count,
+                    "takeOver": len(take_over_list),
+                    "handOver": len(hand_over_list),
+                    "flightArea": len(flight_area_list),
+                },
+            )
+
+            # Exclude completed input missions (isDone=True) before generating new plans.
+            mission_whitelist: Set[int] = set()
+            for source in (ctx.get("mission_ids"), staged.get("mission_ids")):
+                for value in source or []:
+                    try:
+                        mission_whitelist.add(int(value))
+                    except Exception:
+                        continue
+
+            def _filter_input_missions_payload(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+                mission_list_local = payload.get("inputMissionList") if isinstance(payload, dict) else None
+                if not isinstance(mission_list_local, list):
+                    return None
+
+                filtered_list: List[Dict[str, Any]] = []
+                removed_ids: list[str] = []
+                converted_ids: list[str] = []
+                width_adjusted_ids: list[str] = []
+                active_ids: list[int] = []
+
+                for mission in mission_list_local:
+                    if not isinstance(mission, dict):
+                        continue
+                    mid_raw = mission.get("inputMissionID")
+                    try:
+                        mid_int = int(mid_raw)
+                    except Exception:
+                        mid_int = None
+                    if mission_whitelist and (mid_int is None or mid_int not in mission_whitelist):
+                        removed_ids.append(str(mid_raw))
+                        continue
+                    if bool(mission.get("isDone")):
+                        removed_ids.append(str(mid_raw))
+                        continue
+
+                    mtype = mission.get("inputMissionType")
+                    if not isinstance(mtype, int) or mtype == 0:
+                        detail = mission.get("missionDetail") or {}
+                        if detail.get("lineList"):
+                            mission["inputMissionType"] = 1
+                            mtype = 1
+                            converted_ids.append(f"{mid_raw}->1")
+                        elif detail.get("areaList"):
+                            mission["inputMissionType"] = 2
+                            mtype = 2
+                            converted_ids.append(f"{mid_raw}->2")
+                        else:
+                            removed_ids.append(str(mid_raw))
+                            continue
+
+                    if mtype in (1, 7):
+                        detail = mission.get("missionDetail") or {}
+                        for entry in detail.get("lineList") or []:
+                            try:
+                                width_val = float(entry.get("width", 0))
+                            except Exception:
+                                width_val = 0.0
+                            if width_val <= 0:
+                                entry["width"] = 1 if mtype == 7 else 1000
+                                width_adjusted_ids.append(str(mid_raw))
+
+                    filtered_list.append(mission)
+                    if mid_int is not None:
+                        active_ids.append(mid_int)
+
+                return {
+                    "filtered_list": filtered_list,
+                    "removed_ids": removed_ids,
+                    "converted_ids": converted_ids,
+                    "width_adjusted_ids": width_adjusted_ids,
+                    "active_ids": active_ids,
+                    "original_count": len(mission_list_local),
+                }
+
+            filtered_cmpk_path = cmpk_path
+            mission_list = cmpk_data.get("inputMissionList") if isinstance(cmpk_data, dict) else None
+            if isinstance(mission_list, list):
+                filtered_list = []
+                removed_ids: list[str] = []
+                converted_ids: list[str] = []
+                width_adjusted_ids: list[str] = []
+                active_ids: list[int] = []
+                for mission in mission_list:
+                    mid_raw = mission.get("inputMissionID")
+                    try:
+                        mid_int = int(mid_raw)
+                    except Exception:
+                        mid_int = None
+                    if mission_whitelist and (mid_int is None or mid_int not in mission_whitelist):
+                        removed_ids.append(str(mid_raw))
+                        continue
+                    if bool(mission.get("isDone")):
+                        removed_ids.append(str(mid_raw))
+                        continue
+                    mtype = mission.get("inputMissionType")
+                    if not isinstance(mtype, int) or mtype == 0:
+                        detail = mission.get("missionDetail") or {}
+                        if detail.get("lineList"):
+                            mission["inputMissionType"] = 1
+                            mtype = 1
+                            converted_ids.append(f"{mid_raw}->1")
+                        elif detail.get("areaList"):
+                            mission["inputMissionType"] = 2
+                            mtype = 2
+                            converted_ids.append(f"{mid_raw}->2")
+                        else:
+                            removed_ids.append(str(mid_raw))
+                            continue
+                    if mtype in (1, 7):
+                        detail = mission.get("missionDetail") or {}
+                        for entry in detail.get("lineList") or []:
+                            try:
+                                width_val = float(entry.get("width", 0))
+                            except Exception:
+                                width_val = 0.0
+                            if width_val <= 0:
+                                entry["width"] = 1 if mtype == 7 else 1000
+                                width_adjusted_ids.append(str(mid_raw))
+                    filtered_list.append(mission)
+                    if mid_int is not None:
+                        active_ids.append(mid_int)
+                if not filtered_list:
+                    plan_log_status = "skipped"
+                    _record_issue(
+                        "0201_filter_empty",
+                        "filtered 0201 has no missions",
+                        detail={"removed": removed_ids, "mission_whitelist": sorted(mission_whitelist) if mission_whitelist else []},
+                        status="skipped",
+                    )
+                    plan_log_summary.update({
+                        "stop_reason": "0201_filter_empty",
+                        "removed_input_ids": removed_ids,
+                        "mission_whitelist": sorted(mission_whitelist) if mission_whitelist else [],
+                    })
+                    self.log_sig.emit("[WARN] No pending missions remain after filtering; skipping replan pipeline.")
+                    self._plan_status = "replan_skipped"
+                    self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
+                    return
+                if active_ids:
+                    ctx["mission_ids"] = active_ids
+
+                if len(filtered_list) != len(mission_list) or (mission_whitelist and set(active_ids) != mission_whitelist):
+                    cmpk_data["inputMissionList"] = filtered_list
+                    filtered_dir = out_root_base / "_filtered"
+                    filtered_dir.mkdir(parents=True, exist_ok=True)
+                    filtered_cmpk_path = filtered_dir / cmpk_path.name
+                    try:
+                        filtered_cmpk_path.write_text(
+                            json.dumps(cmpk_data, ensure_ascii=False, indent=2),
+                            encoding="utf-8",
+                        )
+                        cmpk_path = filtered_cmpk_path
+                    except Exception as exc:
+                        self.log_sig.emit(f"[WARN] Failed to persist filtered 0201 snapshot: {exc}")
+                    else:
+                        removed_summary = ", ".join(removed_ids) if removed_ids else "-"
+                        converted_summary = ", ".join(converted_ids) if converted_ids else "-"
+                        width_summary = ", ".join(width_adjusted_ids) if width_adjusted_ids else "-"
+                        self.log_sig.emit(
+                            "[INFO] Filtered completed input missions "
+                            f"(removed={removed_summary or '-'}, converted={converted_summary or '-'}, "
+                            f"widthAdjusted={width_summary or '-'})"
+                        )
+            else:
+                self.log_sig.emit("[WARN] 0201 payload missing valid inputMissionList; continuing without filtering")
+
+            filtered_cmpk_cache: Dict[str, Path] = {}
+            try:
+                filtered_cmpk_cache[str(Path(cmpk_path).resolve())] = Path(cmpk_path)
+            except Exception:
+                filtered_cmpk_cache[str(cmpk_path)] = Path(cmpk_path)
+
+            ctx['cmpk_path'] = str(cmpk_path)
+            ctx['mrpk_path'] = str(mrpk_path)
+
+            plan_ids_source = ctx.get('plan_ids') or staged.get('plan_ids') or []
+            plan_ids: list[int | None] = []
+            for val in plan_ids_source:
+                try:
+                    plan_ids.append(int(val))
+                except Exception:
+                    plan_ids.append(None)
+
+            raw_option_values = list(ctx.get('option_names') or staged.get('option_names') or [])
+            plan_count = max(len(plan_ids), len(raw_option_values), 1)
+            while len(plan_ids) < plan_count:
+                plan_ids.append(None)
+            option_codes = ensure_option_code_sequence(raw_option_values, plan_count)
+            option_labels: List[str] = []
+            for idx in range(plan_count):
+                label = ""
+                if idx < len(raw_option_values):
+                    value = raw_option_values[idx]
+                    label = str(value).strip() if value is not None else ""
+                option_labels.append(label)
+            attack_option_labels = {"공격추천", "공격 특화"}
+            attack_option_indices: Set[int] = {
+                idx for idx, label in enumerate(option_labels) if label in attack_option_labels
+            }
+            attack_exclusion_option_indices: Set[int] = {
+                idx for idx, label in enumerate(option_labels) if str(label or "").replace(" ", "") == "공격배제"
+            }
+            for attack_idx in attack_option_indices:
+                if 0 <= attack_idx < len(option_codes):
+                    option_codes[attack_idx] = 2
+            shared_attack_detail = ctx.get("replan_detail") if isinstance(ctx.get("replan_detail"), dict) else None
+            shared_attack_context = (
+                self._build_attack_context_from_replan_detail(shared_attack_detail) if shared_attack_detail else None
+            )
+            attack_cmpk_path: Optional[Path] = None
+            if attack_option_indices:
+                dss_dir = db_root / 'DSS_Internal'
+                attack_candidates: List[Path] = []
+                if dss_dir.exists():
+                    attack_candidates.extend(sorted(dss_dir.glob("0201_*.json")))
+                    attack_candidates.extend(sorted(dss_dir.glob("0201_attack*.json")))
+                if attack_candidates:
+                    attack_cmpk_path = max(attack_candidates, key=lambda p: p.stat().st_mtime)
+                else:
+                    legacy_attack = dss_dir / '0201_attack.json'
+                    if legacy_attack.exists():
+                        attack_cmpk_path = legacy_attack
+                if attack_cmpk_path:
+                    self.log_sig.emit(
+                        f"[INFO] 공격 옵션에 {attack_cmpk_path.name} 적용: {sorted(idx + 1 for idx in attack_option_indices)}"
+                    )
+                elif shared_attack_context is None:
+                    self.log_sig.emit("[WARN] 공격 옵션이 있으나 활용 가능한 대상 정보가 없어 기본 임무를 유지합니다.")
+                    attack_option_indices.clear()
+
+            prior_option_indices: Set[int] = {idx for idx, label in enumerate(option_labels) if label == "선행임무 재계획"}
+            prior_variant_contexts: Dict[int, Dict[str, Any]] = {}
+            if prior_option_indices:
+                prior_plan = _locate_prior_mission_plan()
+                if prior_plan is None:
+                    self.log_sig.emit("[WARN] 선행임무 재계획 옵션이 있으나 DSS_Internal/0201_prior 데이터를 찾지 못했습니다.")
+                    prior_option_indices.clear()
+                else:
+                    prior_path, prior_ctx = prior_plan
+                    for idx in prior_option_indices:
+                        prior_variant_contexts[idx] = {"path": prior_path, "context": prior_ctx}
+                    self.log_sig.emit(
+                        f"[INFO] 선행임무 재계획 옵션에 {prior_path.name} 적용: "
+                        f"{sorted(i + 1 for i in prior_option_indices)}"
+                    )
+
+            try:
+                cmpk_id = int(Path(cmpk_path).stem)
+            except Exception:
+                cmpk_id = 0
+
+            dir_mp = db_root / 'MissionPlan'
+            dir_imp = db_root / 'IndividualMissionPlan'
+            dir_fp = db_root / 'FlightPath'
+            for directory in (dir_mp, dir_imp, dir_fp):
+                directory.mkdir(parents=True, exist_ok=True)
+
+            def _scan_existing_ids(target_dir: Path) -> set[int]:
+                results: set[int] = set()
+                try:
+                    for item in target_dir.glob("*.json"):
+                        stem = item.stem
+                        if stem.isdigit():
+                            try:
+                                results.add(int(stem))
+                            except Exception:
+                                continue
+                except Exception:
+                    pass
+                return results
+
+            used_plan_ids: set[int] = _scan_existing_ids(dir_mp)
+            next_plan_id_seed = max(used_plan_ids) + 1 if used_plan_ids else 700000000
+
+            def _allocate_plan_id(preferred: int | None) -> int:
+                nonlocal next_plan_id_seed
+                while next_plan_id_seed in used_plan_ids:
+                    next_plan_id_seed += 1
+                assigned = next_plan_id_seed
+                used_plan_ids.add(assigned)
+                next_plan_id_seed += 1
+                return assigned
+
+            def _allocate_imp_id_map(plan_json: Dict[str, Any]) -> Dict[int, int]:
+                allocated: Dict[int, int] = {}
+                aircraft_list = plan_json.get("aircraftList")
+                if not isinstance(aircraft_list, list):
+                    return allocated
+                pending_rows: list[tuple[dict, int]] = []
+                for aircraft in aircraft_list:
+                    if not isinstance(aircraft, dict):
+                        continue
+                    try:
+                        aid = int(aircraft.get("aircraftID", 0))
+                    except Exception:
+                        continue
+                    if aid < 1 or aid > 6 or aid in allocated:
+                        continue
+                    pending_rows.append((aircraft, aid))
+                if not pending_rows:
+                    return allocated
+                reserved_pkg_ids = reserve_imp_ids(len(pending_rows))
+                for (aircraft, aid), pkg_id in zip(pending_rows, reserved_pkg_ids):
+                    pkg_id_int = int(pkg_id)
+                    aircraft["individualMissionPackageID"] = pkg_id_int
+                    allocated[aid] = pkg_id_int
+                return allocated
+
+            def _assign_fresh_path_ids(missions: list[dict], generated_ids: Set[int]) -> Dict[tuple[int, int], int]:
+                pid_map: Dict[tuple[int, int], int] = {}
+                grouped: Dict[int, list[dict]] = {}
+                for im in missions:
+                    try:
+                        aid = int(im.get("aircraftID", 0))
+                        mid = int(im.get("individualMissionID", 0))
+                    except Exception:
+                        continue
+                    if aid < 1 or aid > 6:
+                        continue
+                    grouped.setdefault(aid, []).append(im)
+                for aid, items in grouped.items():
+                    reserved_path_ids_for_aid = reserve_path_ids(aid, len(items))
+                    for im, pid in zip(items, reserved_path_ids_for_aid):
+                        try:
+                            mid = int(im.get("individualMissionID", 0))
+                        except Exception:
+                            continue
+                        pid_int = int(pid)
+                        im["pathID"] = pid_int
+                        pid_map[(aid, mid)] = pid_int
+                        generated_ids.add(pid_int)
+                return pid_map
+
+            generated_plan_ids: list[int] = []
+            option_codes_out: list[int] = []
+            plan_meta_map: Dict[int, Dict[str, Any]] = {}
+            total_imp_files = 0
+            total_fp_files = 0
+            base_runtime_payload = load_runtime_settings()
+
+            def _variant_runtime_override_payload(option_label: str) -> Optional[Dict[str, Any]]:
+                label = str(option_label or "").strip().replace(" ", "")
+                preset_key = ""
+                area_mode = ""
+                all_wps: Optional[bool] = None
+                if label in {"정찰시간균형", "정찰/시간균형"}:
+                    preset_key = "bearing_par_sweep"
+                    area_mode = "parallel"
+                    all_wps = True
+                elif label in {"정찰특화"}:
+                    preset_key = "nadir_mode"
+                    area_mode = "nadir"
+                elif label in {"최소시간"}:
+                    preset_key = "bearing_ver_sweep"
+                    area_mode = "vertical"
+                if not preset_key:
+                    return None
+                payload = copy.deepcopy(base_runtime_payload) if isinstance(base_runtime_payload, dict) else {}
+                values = payload.get("values")
+                if not isinstance(values, dict):
+                    values = {}
+                    payload["values"] = values
+                flyover = payload.get("flyover")
+                if not isinstance(flyover, dict):
+                    flyover = {}
+                    payload["flyover"] = flyover
+                payload["preset_key"] = preset_key
+                values["area_sweep_mode"] = area_mode
+                if all_wps is not None:
+                    flyover["all_wps"] = bool(all_wps)
+                return payload
+
+            general_parallel_replan = (
+                plan_count > 1
+                and not attack_option_indices
+                and not attack_exclusion_option_indices
+                and not prior_option_indices
+            )
+
+            class _VariantCoreError(RuntimeError):
+                def __init__(self, code: str, message: str, *, variant_no: int, detail: Optional[Dict[str, Any]] = None):
+                    super().__init__(message)
+                    self.code = str(code or "variant_core_error")
+                    self.message = str(message or code or "variant_core_error")
+                    self.variant_no = int(variant_no)
+                    self.detail = dict(detail or {})
+
+            def _run_general_variant_core(spec: Dict[str, Any]) -> Dict[str, Any]:
+                variant_no = int(spec["variant_no"])
+                option_code = int(spec["option_code"])
+                requested_plan_id = spec.get("requested_plan_id")
+                cmpk_source_path = Path(spec["cmpk_source_path"])
+                runtime_payload = spec.get("runtime_payload")
+                with runtime_settings_override(runtime_payload):
+                    iter_out_root = out_root_base / f"variant_{variant_no:02d}"
+                    if iter_out_root.exists():
+                        shutil.rmtree(iter_out_root)
+                    iter_out_root.mkdir(parents=True, exist_ok=True)
+
+                    variant_start = time.perf_counter()
+                    variant_generated_path_ids: Set[int] = set()
+                    step_t0 = time.perf_counter()
+                    self.log_sig.emit(f"[STEP 1.{variant_no}] Divide & Pattern start")
+                    imp_paths = run_divide_and_pattern(
+                        str(cmpk_source_path),
+                        str(mrpk_path),
+                        str(iter_out_root),
+                        log=lambda msg, n=variant_no: self.log_sig.emit(f"[variant {n}] {msg}"),
+                        option_code=option_code,
+                    )
+                    if not imp_paths:
+                        self.log_sig.emit(f"[ERR] IMP generation failed (variant={variant_no})")
+                        raise _VariantCoreError(
+                            "imp_generation_failed",
+                            f"IMP generation failed (variant={variant_no})",
+                            variant_no=variant_no,
+                        )
+                    step_ms = (time.perf_counter() - step_t0) * 1000.0
+                    self.log_sig.emit(f"[TIME] divide_and_pattern (variant={variant_no}): {step_ms:.1f} ms")
+                    self.log_sig.emit(f"[OK] IMP generated: {len(imp_paths)} file(s) (variant={variant_no})")
+
+                    step_t0 = time.perf_counter()
+                    mp_tmp = iter_out_root / f"MissionPlan_{int(time.time()*1000)}.json"
+                    mp_json = build_mission_plan_0301(
+                        str(cmpk_source_path),
+                        str(mrpk_path),
+                        imp_paths,
+                        str(mp_tmp),
+                    )
+                    if not isinstance(mp_json, dict):
+                        with mp_tmp.open(encoding="utf-8") as f:
+                            mp_json = json.load(f)
+                    imp_id_map = {
+                        a.get("aircraftID"): a.get("individualMissionPackageID")
+                        for a in mp_json.get("aircraftList", [])
+                    }
+                    step_ms = (time.perf_counter() - step_t0) * 1000.0
+                    self.log_sig.emit(f"[TIME] build_0301+load (variant={variant_no}): {step_ms:.1f} ms")
+                    self.log_sig.emit(f"[OK] MissionPlan built: {mp_tmp.name} (variant={variant_no})")
+
+                    step_t0 = time.perf_counter()
+                    missions = []
+                    loaded_imp_packages = _load_imp_packages(list(imp_paths))
+                    for aid, pkg in loaded_imp_packages:
+                        for im in pkg.get("individualMissionList", []):
+                            im_copy = dict(im)
+                            im_copy["aircraftID"] = aid
+                            if "individualMissionPlanPackageID" not in im_copy and imp_id_map:
+                                im_copy["individualMissionPlanPackageID"] = imp_id_map.get(aid)
+                            missions.append(im_copy)
+                    step_ms = (time.perf_counter() - step_t0) * 1000.0
+                    self.log_sig.emit(
+                        f"[TIME] collect_missions (variant={variant_no}): {step_ms:.1f} ms, count={len(missions)}"
+                    )
+
+                    step_t0 = time.perf_counter()
+                    pid_map = _assign_fresh_path_ids(missions, variant_generated_path_ids)
+                    step_ms = (time.perf_counter() - step_t0) * 1000.0
+                    self.log_sig.emit(f"[TIME] pathID_mapping (variant={variant_no}): {step_ms:.1f} ms")
+                    self.log_sig.emit(f"[INFO] pathID mapping done for 0302/0303/0304 (variant={variant_no})")
+
+                    manned = [im for im in missions if int(im.get("aircraftID", 0)) in (1, 2, 3)]
+                    unmanned = [im for im in missions if int(im.get("aircraftID", 0)) in (4, 5, 6)]
+                    wp_alloc = d0303._WPAllocator()
+                    try:
+                        manned_plan_mode = str(
+                            ((load_runtime_settings().get("values") or {}).get("manned_plan_mode")) or "normal"
+                        ).strip().lower()
+                    except Exception:
+                        manned_plan_mode = "normal"
+
+                    def _build_0303():
+                        start = time.perf_counter()
+                        with runtime_settings_override(runtime_payload):
+                            plans = d0303.build_flight_plans(
+                                unmanned,
+                                wp_alloc,
+                                uav_cruise_speed,
+                                turn_step_deg=uav_turn_step,
+                                ref0203=mrpk_data,
+                            )
+                        return plans, (time.perf_counter() - start) * 1000.0
+
+                    def _build_0304():
+                        start = time.perf_counter()
+                        plans = d0304.build_lah_flight_plans_fixed(
+                            manned,
+                            cruise_speed=15.0,
+                            manned_plan_mode=manned_plan_mode,
+                            wp_alloc=wp_alloc,
+                        )
+                        return plans, (time.perf_counter() - start) * 1000.0
+
+                    flight_plans_0303: list[dict] = []
+                    flight_plans_0304: list[dict] = []
+                    elapsed_0303_ms = 0.0
+                    elapsed_0304_ms = 0.0
+                    if unmanned and manned:
+                        self.log_sig.emit(f"[INFO] FlightPath build mode: parallel (variant={variant_no})")
+                        parallel_start = time.perf_counter()
+                        with concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="PlanFP") as executor:
+                            futures = {
+                                executor.submit(_build_0303): "0303",
+                                executor.submit(_build_0304): "0304",
+                            }
+                            for future in concurrent.futures.as_completed(futures):
+                                label = futures[future]
+                                try:
+                                    plans, elapsed_ms = future.result()
+                                except Exception as exc:
+                                    self.log_sig.emit(f"[ERR] FlightPath build failed ({label}): {exc}")
+                                    raise
+                                if label == "0303":
+                                    flight_plans_0303 = plans
+                                    elapsed_0303_ms = elapsed_ms
+                                else:
+                                    flight_plans_0304 = plans
+                                    elapsed_0304_ms = elapsed_ms
+                        parallel_ms = (time.perf_counter() - parallel_start) * 1000.0
+                        self.log_sig.emit(
+                            "[INFO] FlightPath build time (parallel): "
+                            f"0303={elapsed_0303_ms:.1f} ms, 0304={elapsed_0304_ms:.1f} ms, wall={parallel_ms:.1f} ms"
+                        )
+                    else:
+                        if unmanned or manned:
+                            self.log_sig.emit(f"[INFO] FlightPath build mode: sequential (variant={variant_no})")
+                        if unmanned:
+                            flight_plans_0303, elapsed_0303_ms = _build_0303()
+                        if manned:
+                            flight_plans_0304, elapsed_0304_ms = _build_0304()
+                        if unmanned or manned:
+                            parts = []
+                            if unmanned:
+                                parts.append(f"0303={elapsed_0303_ms:.1f} ms")
+                            if manned:
+                                parts.append(f"0304={elapsed_0304_ms:.1f} ms")
+                            self.log_sig.emit("[INFO] FlightPath build time (sequential): " + ", ".join(parts))
+
+                    for fp in (flight_plans_0303 or []) + (flight_plans_0304 or []):
+                        pid_val = fp.get("pathID")
+                        if pid_val is not None:
+                            try:
+                                variant_generated_path_ids.add(int(pid_val))
+                            except Exception:
+                                pass
+
+                    fixed3 = _enforce_fp_path_ids(flight_plans_0303, pid_map)
+                    fixed4 = _enforce_fp_path_ids(flight_plans_0304, pid_map)
+                    if fixed3 or fixed4:
+                        self.log_sig.emit(
+                            f"[INFO] FlightPath pathID enforced (variant={variant_no}): 0303={fixed3}, 0304={fixed4}"
+                        )
+                    if not flight_plans_0303 and not flight_plans_0304:
+                        self.log_sig.emit(f"[ERR] FlightPath generation failed (variant={variant_no})")
+                        raise _VariantCoreError(
+                            "flightpath_generation_failed",
+                            f"FlightPath generation failed (variant={variant_no})",
+                            variant_no=variant_no,
+                        )
+                    self.log_sig.emit(
+                        f"[OK] FlightPath counts (variant={variant_no}): 0303={len(flight_plans_0303)} / 0304={len(flight_plans_0304)}"
+                    )
+
+                    expected_path_ids = {int(pid) for pid in pid_map.values() if pid is not None}
+
+                    def _collect_valid_path_ids(fps):
+                        collected: Set[int] = set()
+                        for fp in fps or []:
+                            path_id = fp.get("pathID")
+                            if path_id is None:
+                                continue
+                            if fp.get("isFormationFlight"):
+                                try:
+                                    collected.add(int(path_id))
+                                except Exception:
+                                    pass
+                                continue
+                            waypoints = fp.get("waypointList")
+                            if not waypoints:
+                                waypoints = fp.get("lahWaypointList")
+                            if not waypoints:
+                                continue
+                            try:
+                                collected.add(int(path_id))
+                            except Exception:
+                                continue
+                        return collected
+
+                    available_path_ids = _collect_valid_path_ids(flight_plans_0303)
+                    available_path_ids.update(_collect_valid_path_ids(flight_plans_0304))
+                    missing_path_ids = sorted(pid for pid in expected_path_ids if pid not in available_path_ids)
+                    if missing_path_ids:
+                        missing_summary = ", ".join(str(pid) for pid in missing_path_ids)
+                        self.log_sig.emit(
+                            f"[ERR] FlightPath generation incomplete (variant={variant_no}): missing pathID(s) {missing_summary}"
+                        )
+                        raise _VariantCoreError(
+                            "flightpath_missing_ids",
+                            f"missing pathID(s) {missing_summary}",
+                            variant_no=variant_no,
+                            detail={"missing_paths": missing_summary},
+                        )
+
+                    return {
+                        "variant_no": variant_no,
+                        "requested_plan_id": requested_plan_id,
+                        "option_code": option_code,
+                        "cmpk_source_path": cmpk_source_path,
+                        "iter_out_root": iter_out_root,
+                        "mp_json": mp_json,
+                        "imp_id_map": imp_id_map,
+                        "missions": missions,
+                        "flight_plans_0303": flight_plans_0303,
+                        "flight_plans_0304": flight_plans_0304,
+                        "generated_path_ids": variant_generated_path_ids,
+                        "core_total_ms": (time.perf_counter() - variant_start) * 1000.0,
+                    }
+
+            def _store_general_variant(result: Dict[str, Any]) -> None:
+                nonlocal total_imp_files, total_fp_files
+                variant_no = int(result["variant_no"])
+                variant_store_start = time.perf_counter()
+                requested_plan_id = result.get("requested_plan_id")
+                option_code = int(result["option_code"])
+                iter_out_root = Path(result["iter_out_root"])
+                mp_json = result["mp_json"]
+                imp_id_map = result["imp_id_map"]
+                missions = result["missions"]
+                flight_plans_0303 = result["flight_plans_0303"]
+                flight_plans_0304 = result["flight_plans_0304"]
+                generated_path_ids.update(int(val) for val in (result.get("generated_path_ids") or set()) if val is not None)
+
+                plan_id_value = requested_plan_id if requested_plan_id is not None else mp_json.get("missionPlanID")
+                try:
+                    preferred_plan_id = int(plan_id_value)
+                except Exception:
+                    preferred_plan_id = None
+                plan_id = _allocate_plan_id(preferred_plan_id)
+                mp_json["missionPlanID"] = plan_id
+                imp_id_map = _allocate_imp_id_map(mp_json)
+
+                step_t0 = time.perf_counter()
+                imp_pkgs = d0302.build_mission_packages(missions, cmpk_id=cmpk_id, plan_pkg_map=imp_id_map)
+                step_ms = (time.perf_counter() - step_t0) * 1000.0
+                self.log_sig.emit(
+                    f"[TIME] build_0302 (variant={variant_no}): {step_ms:.1f} ms, packages={len(imp_pkgs)}"
+                )
+
+                step_t0 = time.perf_counter()
+                imp_write_rows: list[tuple[Path, Any]] = []
+                for pkg in imp_pkgs:
+                    imp_id = pkg.get("individualMissionPackageID") or pkg.get("individualMissionPlanPackageID")
+                    if imp_id is None:
+                        continue
+                    try:
+                        generated_imp_ids.add(int(imp_id))
+                    except Exception:
+                        pass
+                    imp_write_rows.append((dir_imp / f"{int(imp_id)}.json", pkg))
+                _write_json_batch(imp_write_rows, pretty=True)
+                total_imp_files += len(imp_pkgs)
+                step_ms = (time.perf_counter() - step_t0) * 1000.0
+                self.log_sig.emit(
+                    f"[TIME] write_0302 (variant={variant_no}): {step_ms:.1f} ms, files={len(imp_pkgs)}"
+                )
+
+                def _dump_fp(target_dir, fps):
+                    rows: list[tuple[Path, Any]] = []
+                    for fp in fps:
+                        pid = fp.get("pathID")
+                        if pid is None:
+                            continue
+                        rows.append((target_dir / f"{int(pid)}.json", fp))
+                        try:
+                            stored_path_ids.add(int(pid))
+                        except Exception:
+                            pass
+                    _write_json_batch(rows, pretty=True)
+                    return len(rows)
+
+                step_t0 = time.perf_counter()
+                fp_count_0303 = _dump_fp(dir_fp, flight_plans_0303)
+                fp_count_0304 = _dump_fp(dir_fp, flight_plans_0304)
+                total_fp_files += fp_count_0303 + fp_count_0304
+                step_ms = (time.perf_counter() - step_t0) * 1000.0
+                self.log_sig.emit(
+                    f"[TIME] write_FlightPath (variant={variant_no}): {step_ms:.1f} ms, files={fp_count_0303 + fp_count_0304}"
+                )
+
+                variant_total_ms = float(result.get("core_total_ms") or 0.0) + (time.perf_counter() - variant_store_start) * 1000.0
+                step_t0 = time.perf_counter()
+                mp_json["planningTime"] = variant_total_ms
+                write_json(dir_mp / f"{plan_id}.json", mp_json, pretty=True, ensure_ascii=False, skip_if_unchanged=True)
+                step_ms = (time.perf_counter() - step_t0) * 1000.0
+                self.log_sig.emit(f"[TIME] write_0301 (variant={variant_no}): {step_ms:.1f} ms")
+                self.log_sig.emit(
+                    f"[OK] Stored variant {variant_no}: MissionPlanID={plan_id}, IMP={len(imp_pkgs)}, FlightPath={fp_count_0303 + fp_count_0304}"
+                )
+                self.log_sig.emit(f"[TIME] variant_total (variant={variant_no}): {variant_total_ms:.1f} ms")
+
+                generated_plan_ids.append(plan_id)
+                option_codes_out.append(int(option_code))
+                self.log_sig.emit(
+                    f"[INFO] Option mapping #{variant_no}: planID={plan_id}, optionCode={option_code}({option_code_to_label(option_code)})"
+                )
+                try:
+                    shutil.rmtree(iter_out_root)
+                except Exception:
+                    pass
+
+            variant_loop_indices = range(plan_count)
+            if general_parallel_replan:
+                max_workers = min(plan_count, 3)
+                self.log_sig.emit(
+                    f"[INFO] 일반 재계획 옵션 병렬 생성 활성화: variants={plan_count}, workers={max_workers}"
+                )
+                parallel_specs = [
+                    {
+                        "idx": idx,
+                        "variant_no": idx + 1,
+                        "requested_plan_id": plan_ids[idx],
+                        "option_code": int(option_codes[idx]),
+                        "cmpk_source_path": Path(cmpk_path),
+                        "runtime_payload": _variant_runtime_override_payload(option_labels[idx] if idx < len(option_labels) else ""),
+                    }
+                    for idx in range(plan_count)
+                ]
+                parallel_results: Dict[int, Dict[str, Any]] = {}
+                try:
+                    with concurrent.futures.ThreadPoolExecutor(
+                        max_workers=max_workers,
+                        thread_name_prefix="PlanVariant",
+                    ) as executor:
+                        future_map = {
+                            executor.submit(_run_general_variant_core, spec): spec
+                            for spec in parallel_specs
+                        }
+                        for future in concurrent.futures.as_completed(future_map):
+                            spec = future_map[future]
+                            try:
+                                parallel_results[int(spec["idx"])] = future.result()
+                            except _VariantCoreError as exc:
+                                for pending in future_map:
+                                    if pending is not future:
+                                        pending.cancel()
+                                _record_issue(exc.code, exc.message, detail={"variant": exc.variant_no, **exc.detail}, status="error")
+                                plan_log_summary.update({"stop_reason": exc.code, "variant": exc.variant_no, **exc.detail})
+                                _notify_failure_once(exc.code, detail={"variant": exc.variant_no, **exc.detail})
+                                self._plan_status = "임무계획 실패"
+                                self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
+                                return
+                    for idx in range(plan_count):
+                        _store_general_variant(parallel_results[idx])
+                    variant_loop_indices = range(0)
+                except Exception as exc:
+                    self.log_sig.emit(f"[ERR] 일반 재계획 병렬 생성 실패: {exc}")
+                    raise
+
+            for idx in variant_loop_indices:
+                variant_no = idx + 1
+                requested_plan_id = plan_ids[idx]
+                option_code = option_codes[idx]
+                option_label = option_labels[idx] if idx < len(option_labels) else ""
+                attack_exclusion_selected = idx in attack_exclusion_option_indices
+                cmpk_source_path = cmpk_path
+                variant_attack_context: Optional[Dict[str, Any]] = None
+                variant_prior_context: Optional[Dict[str, Any]] = None
+                attack_option_selected = idx in attack_option_indices
+                if attack_exclusion_selected:
+                    self.log_sig.emit(f"[variant {variant_no}] 공격 배제 전용 재개 파이프라인 적용")
+                    exclusion_ctx = _filter_context_by_indices(ctx, [idx])
+                    if attack_exclusion_source_plan_id is not None:
+                        exclusion_ctx["sourceMissionPlanID"] = attack_exclusion_source_plan_id
+                    exclusion_t0 = time.perf_counter()
+                    exclusion_result = run_attack_exclusion_pipeline(
+                        exclusion_ctx,
+                        log_callback=self._append_log_line,
+                    )
+                    exclusion_ms = (time.perf_counter() - exclusion_t0) * 1000.0
+                    exclusion_payload = (exclusion_result or {}).get("result") or {}
+                    exclusion_plan_id = exclusion_payload.get("missionPlanID")
+                    if exclusion_plan_id is None:
+                        message = "공격 배제 재개 임무 생성에 실패했습니다."
+                        if exclusion_payload.get("error") == "no_updates":
+                            message = "공격 배제 재개 임무를 만들 수 있는 UAV가 없습니다."
+                        self.log_sig.emit(f"[ERR] {message} (variant={variant_no})")
+                        _record_issue(
+                            "attack_exclusion_failed",
+                            message,
+                            detail={"variant": variant_no, "payload": exclusion_payload},
+                        )
+                        plan_log_summary.update({"stop_reason": "attack_exclusion_failed", "variant": variant_no})
+                        _notify_failure_once("attack_exclusion_failed", detail={"variant": variant_no})
+                        return
+                    try:
+                        generated_plan_ids.append(int(exclusion_plan_id))
+                    except Exception:
+                        generated_plan_ids.append(exclusion_plan_id)
+                    option_codes_out.append(int(option_code))
+                    self.log_sig.emit(
+                        f"[OK] 공격 배제 variant 저장: MissionPlanID={exclusion_plan_id} "
+                        f"(elapsed={exclusion_ms:.1f} ms)"
+                    )
+                    self.log_sig.emit(
+                        f"[INFO] Option mapping #{variant_no}: planID={exclusion_plan_id}, "
+                        f"optionCode={option_code}({option_code_to_label(option_code)})"
+                    )
+                    continue
+                if attack_option_selected and attack_cmpk_path is not None:
+                    cmpk_source_path = attack_cmpk_path
+                    self.log_sig.emit(
+                        f"[variant {variant_no}] 공격 전용 0201 적용: {cmpk_source_path.name}"
+                    )
+                if attack_option_selected:
+                    if shared_attack_context:
+                        variant_attack_context = copy.deepcopy(shared_attack_context)
+                    elif attack_cmpk_path is not None:
+                        variant_attack_context = self._load_attack_context(cmpk_source_path)
+                if idx in prior_variant_contexts:
+                    prior_info = prior_variant_contexts[idx]
+                    cmpk_source_path = prior_info["path"]
+                    variant_prior_context = prior_info.get("context")
+                    self.log_sig.emit(
+                        f"[variant {variant_no}] 선행임무 0201 적용: {cmpk_source_path.name}"
+                    )
+
+                try:
+                    source_key = str(Path(cmpk_source_path).resolve())
+                except Exception:
+                    source_key = str(cmpk_source_path)
+                cached_filtered = filtered_cmpk_cache.get(source_key)
+                if cached_filtered is not None:
+                    cmpk_source_path = cached_filtered
+                else:
+                    try:
+                        cmpk_variant_data = json.loads(Path(cmpk_source_path).read_text(encoding="utf-8"))
+                    except Exception as exc:
+                        self.log_sig.emit(
+                            f"[ERR] [variant {variant_no}] 0201 소스 로드 실패: {cmpk_source_path} ({exc})"
+                        )
+                        detail_payload = {"path": str(cmpk_source_path), "error": str(exc), "variant": variant_no}
+                        _record_issue(
+                            "variant_0201_load_failed",
+                            f"variant {variant_no} failed to load source 0201",
+                            detail=detail_payload,
+                        )
+                        _notify_failure_once("variant_0201_load_failed", exc=exc, detail=detail_payload)
+                        self._plan_status = "임무계획 실패"
+                        self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
+                        return
+
+                    filtered_result = _filter_input_missions_payload(cmpk_variant_data)
+                    if filtered_result is not None:
+                        v_filtered = filtered_result.get("filtered_list") or []
+                        v_removed = filtered_result.get("removed_ids") or []
+                        v_converted = filtered_result.get("converted_ids") or []
+                        v_width = filtered_result.get("width_adjusted_ids") or []
+                        v_active = filtered_result.get("active_ids") or []
+                        v_original_count = int(filtered_result.get("original_count") or 0)
+
+                        if not v_filtered:
+                            self.log_sig.emit(
+                                f"[WARN] [variant {variant_no}] 필터 후 유효 임무 없음 (source={Path(cmpk_source_path).name})"
+                            )
+                            plan_log_status = "skipped"
+                            _record_issue(
+                                "variant_0201_filter_empty",
+                                f"variant {variant_no} filtered 0201 has no missions",
+                                detail={
+                                    "variant": variant_no,
+                                    "path": str(cmpk_source_path),
+                                    "removed": v_removed,
+                                    "mission_whitelist": sorted(mission_whitelist) if mission_whitelist else [],
+                                },
+                                status="skipped",
+                            )
+                            plan_log_summary.update(
+                                {
+                                    "stop_reason": "variant_0201_filter_empty",
+                                    "variant": variant_no,
+                                    "source_path": str(cmpk_source_path),
+                                }
+                            )
+                            self._plan_status = "replan_skipped"
+                            self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
+                            return
+
+                        needs_variant_filter = (
+                            len(v_filtered) != v_original_count
+                            or bool(v_converted)
+                            or bool(v_width)
+                            or (mission_whitelist and set(v_active) != mission_whitelist)
+                        )
+                        if needs_variant_filter:
+                            cmpk_variant_data["inputMissionList"] = v_filtered
+                            filtered_dir = out_root_base / "_filtered"
+                            filtered_dir.mkdir(parents=True, exist_ok=True)
+                            variant_filtered_path = filtered_dir / f"{Path(cmpk_source_path).stem}_v{variant_no:02d}.json"
+                            try:
+                                variant_filtered_path.write_text(
+                                    json.dumps(cmpk_variant_data, ensure_ascii=False, indent=2),
+                                    encoding="utf-8",
+                                )
+                                cmpk_source_path = variant_filtered_path
+                                removed_summary = ", ".join(v_removed) if v_removed else "-"
+                                converted_summary = ", ".join(v_converted) if v_converted else "-"
+                                width_summary = ", ".join(v_width) if v_width else "-"
+                                self.log_sig.emit(
+                                    f"[variant {variant_no}] 0201 필터 적용 "
+                                    f"(removed={removed_summary}, converted={converted_summary}, widthAdjusted={width_summary})"
+                                )
+                            except Exception as exc:
+                                self.log_sig.emit(
+                                    f"[WARN] [variant {variant_no}] 필터된 0201 저장 실패: {exc}"
+                                )
+                    filtered_cmpk_cache[source_key] = Path(cmpk_source_path)
+
+                iter_out_root = out_root_base / f'variant_{variant_no:02d}'
+                if iter_out_root.exists():
+                    shutil.rmtree(iter_out_root)
+                iter_out_root.mkdir(parents=True, exist_ok=True)
+
+                runtime_payload = _variant_runtime_override_payload(option_label)
+                if runtime_payload:
+                    self.log_sig.emit(
+                        f"[variant {variant_no}] 일반 재계획 모드 적용: preset={runtime_payload.get('preset_key')}"
+                    )
+
+                with runtime_settings_override(runtime_payload):
+                    variant_start = time.perf_counter()
+                    step_t0 = time.perf_counter()
+                    self.log_sig.emit(f"[STEP 1.{variant_no}] Divide & Pattern start")
+                    imp_paths = run_divide_and_pattern(
+                        str(cmpk_source_path),
+                        str(mrpk_path),
+                        str(iter_out_root),
+                        log=lambda msg, n=variant_no: self.log_sig.emit(f"[variant {n}] {msg}"),
+                        option_code=int(option_code),
+                    )
+                    if not imp_paths:
+                        self.log_sig.emit(f"[ERR] IMP generation failed (variant={variant_no})")
+                        _record_issue("imp_generation_failed", f"IMP generation failed (variant={variant_no})", status="error")
+                        plan_log_summary.update({"stop_reason": "imp_generation_failed", "variant": variant_no})
+                        _notify_failure_once("imp_generation_failed", detail={"variant": variant_no})
+                        self._plan_status = "임무계획 실패"
+                        self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
+                        return
+                    step_ms = (time.perf_counter() - step_t0) * 1000.0
+                    self.log_sig.emit(
+                        f"[TIME] divide_and_pattern (variant={variant_no}): {step_ms:.1f} ms"
+                    )
+                    self.log_sig.emit(f"[OK] IMP generated: {len(imp_paths)} file(s) (variant={variant_no})")
+
+                    step_t0 = time.perf_counter()
+                    mp_tmp = iter_out_root / f"MissionPlan_{int(time.time()*1000)}.json"
+                    mp_json = build_mission_plan_0301(
+                        str(cmpk_source_path),
+                        str(mrpk_path),
+                        imp_paths,
+                        str(mp_tmp),
+                    )
+                    if not isinstance(mp_json, dict):
+                        with mp_tmp.open(encoding='utf-8') as f:
+                            mp_json = json.load(f)
+                    imp_id_map = {a.get('aircraftID'): a.get('individualMissionPackageID') for a in mp_json.get('aircraftList', [])}
+                    step_ms = (time.perf_counter() - step_t0) * 1000.0
+                    self.log_sig.emit(
+                        f"[TIME] build_0301+load (variant={variant_no}): {step_ms:.1f} ms"
+                    )
+                    self.log_sig.emit(f"[OK] MissionPlan built: {mp_tmp.name} (variant={variant_no})")
+
+                    step_t0 = time.perf_counter()
+                    missions = []
+                    loaded_imp_packages = _load_imp_packages(list(imp_paths))
+                    for aid, pkg in loaded_imp_packages:
+                        for im in pkg.get('individualMissionList', []):
+                            im_copy = dict(im)
+                            im_copy['aircraftID'] = aid
+                            if 'individualMissionPlanPackageID' not in im_copy and imp_id_map:
+                                im_copy['individualMissionPlanPackageID'] = imp_id_map.get(aid)
+                            missions.append(im_copy)
+                    step_ms = (time.perf_counter() - step_t0) * 1000.0
+                    self.log_sig.emit(
+                        f"[TIME] collect_missions (variant={variant_no}): {step_ms:.1f} ms, count={len(missions)}"
+                    )
+
+                    step_t0 = time.perf_counter()
+                    pid_map = _assign_fresh_path_ids(missions, generated_path_ids)
+                    step_ms = (time.perf_counter() - step_t0) * 1000.0
+                    self.log_sig.emit(
+                        f"[TIME] pathID_mapping (variant={variant_no}): {step_ms:.1f} ms"
+                    )
+                    self.log_sig.emit(f"[INFO] pathID mapping done for 0302/0303/0304 (variant={variant_no})")
+
+                    manned = [im for im in missions if int(im.get('aircraftID', 0)) in (1, 2, 3)]
+                    unmanned = [im for im in missions if int(im.get('aircraftID', 0)) in (4, 5, 6)]
+                    wp_alloc = d0303._WPAllocator()
+                    try:
+                        payload_values = (runtime_payload.get("values") or {}) if isinstance(runtime_payload, dict) else {}
+                        manned_plan_mode = str(payload_values.get("manned_plan_mode") or "normal").strip().lower()
+                    except Exception:
+                        manned_plan_mode = "normal"
+
+                def _build_0303():
+                    start = time.perf_counter()
+                    with runtime_settings_override(runtime_payload):
+                        plans = d0303.build_flight_plans(
+                            unmanned,
+                            wp_alloc,
+                            uav_cruise_speed,
+                            turn_step_deg=uav_turn_step,
+                            ref0203=mrpk_data,
+                        )
+                    return plans, (time.perf_counter() - start) * 1000.0
+
+                def _build_0304():
+                    start = time.perf_counter()
+                    plans = d0304.build_lah_flight_plans_fixed(
+                        manned,
+                        cruise_speed=15.0,
+                        manned_plan_mode=manned_plan_mode,
+                        wp_alloc=wp_alloc,
+                    )
+                    return plans, (time.perf_counter() - start) * 1000.0
+
+                flight_plans_0303: list[dict] = []
+                flight_plans_0304: list[dict] = []
+                elapsed_0303_ms = 0.0
+                elapsed_0304_ms = 0.0
+
+                if unmanned and manned:
+                    self.log_sig.emit(f"[INFO] FlightPath build mode: parallel (variant={variant_no})")
+                    parallel_start = time.perf_counter()
+                    # Build 0303/0304 in parallel to reduce wall time when both are present.
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="PlanFP") as executor:
+                        futures = {
+                            executor.submit(_build_0303): "0303",
+                            executor.submit(_build_0304): "0304",
+                        }
+                        for future in concurrent.futures.as_completed(futures):
+                            label = futures[future]
+                            try:
+                                plans, elapsed_ms = future.result()
+                            except Exception as exc:
+                                self.log_sig.emit(f"[ERR] FlightPath build failed ({label}): {exc}")
+                                raise
+                            if label == "0303":
+                                flight_plans_0303 = plans
+                                elapsed_0303_ms = elapsed_ms
+                            else:
+                                flight_plans_0304 = plans
+                                elapsed_0304_ms = elapsed_ms
+                    parallel_ms = (time.perf_counter() - parallel_start) * 1000.0
+                    self.log_sig.emit(
+                        "[INFO] FlightPath build time (parallel): "
+                        f"0303={elapsed_0303_ms:.1f} ms, 0304={elapsed_0304_ms:.1f} ms, wall={parallel_ms:.1f} ms"
+                    )
+                else:
+                    if unmanned or manned:
+                        self.log_sig.emit(f"[INFO] FlightPath build mode: sequential (variant={variant_no})")
+                    if unmanned:
+                        flight_plans_0303, elapsed_0303_ms = _build_0303()
+                    if manned:
+                        flight_plans_0304, elapsed_0304_ms = _build_0304()
+                    if unmanned or manned:
+                        parts = []
+                        if unmanned:
+                            parts.append(f"0303={elapsed_0303_ms:.1f} ms")
+                        if manned:
+                            parts.append(f"0304={elapsed_0304_ms:.1f} ms")
+                        self.log_sig.emit(
+                            "[INFO] FlightPath build time (sequential): " + ", ".join(parts)
+                        )
+
+                custom_t0 = None
+                if variant_attack_context or variant_prior_context:
+                    custom_t0 = time.perf_counter()
+
+                if variant_attack_context:
+                    self._apply_attack_customizations(
+                        missions,
+                        flight_plans_0304 or [],
+                        variant_attack_context,
+                        variant_no,
+                        replan_detail=shared_attack_detail,
+                    )
+                if variant_prior_context:
+                    _apply_prior_mission_customizations(
+                        missions,
+                        flight_plans_0303,
+                        variant_prior_context,
+                        variant_no,
+                        pid_map,
+                        generated_path_ids,
+                    )
+                if custom_t0 is not None:
+                    custom_ms = (time.perf_counter() - custom_t0) * 1000.0
+                    self.log_sig.emit(
+                        f"[TIME] customizations (variant={variant_no}): {custom_ms:.1f} ms"
+                    )
+
+                for fp in (flight_plans_0303 or []) + (flight_plans_0304 or []):
+                    pid_val = fp.get('pathID')
+                    if pid_val is not None:
+                        try:
+                            generated_path_ids.add(int(pid_val))
+                        except Exception:
+                            pass
+
+                fixed3 = _enforce_fp_path_ids(flight_plans_0303, pid_map)
+                fixed4 = _enforce_fp_path_ids(flight_plans_0304, pid_map)
+                if fixed3 or fixed4:
+                    self.log_sig.emit(f"[INFO] FlightPath pathID enforced (variant={variant_no}): 0303={fixed3}, 0304={fixed4}")
+                if not flight_plans_0303 and not flight_plans_0304:
+                    self.log_sig.emit(f"[ERR] FlightPath generation failed (variant={variant_no})")
+                    _record_issue("flightpath_generation_failed", f"FlightPath generation failed (variant={variant_no})")
+                    plan_log_summary.update({"stop_reason": "flightpath_generation_failed", "variant": variant_no})
+                    _notify_failure_once("flightpath_generation_failed", detail={"variant": variant_no})
+                    return
+                self.log_sig.emit(f"[OK] FlightPath counts (variant={variant_no}): 0303={len(flight_plans_0303)} / 0304={len(flight_plans_0304)}")
+
+                expected_path_ids = {int(pid) for pid in pid_map.values() if pid is not None}
+
+                def _collect_valid_path_ids(fps):
+                    collected: Set[int] = set()
+                    for fp in fps or []:
+                        path_id = fp.get("pathID")
+                        if path_id is None:
+                            continue
+                        # Formation followers may not have explicit waypoints.
+                        if fp.get("isFormationFlight"):
+                            try:
+                                collected.add(int(path_id))
+                            except Exception:
+                                pass
+                            continue
+                        waypoints = fp.get("waypointList")
+                        if not waypoints:
+                            waypoints = fp.get("lahWaypointList")
+                        if not waypoints:
+                            continue
+                        try:
+                            collected.add(int(path_id))
+                        except Exception:
+                            continue
+                    return collected
+
+                available_path_ids = _collect_valid_path_ids(flight_plans_0303)
+                available_path_ids.update(_collect_valid_path_ids(flight_plans_0304))
+                missing_path_ids = sorted(pid for pid in expected_path_ids if pid not in available_path_ids)
+                if missing_path_ids:
+                    missing_summary = ", ".join(str(pid) for pid in missing_path_ids)
+                    self.log_sig.emit(
+                        f"[ERR] FlightPath generation incomplete (variant={variant_no}): missing pathID(s) {missing_summary}"
+                    )
+                    _record_issue("flightpath_missing_ids", f"missing pathID(s) {missing_summary}")
+                    plan_log_summary.update({"stop_reason": "flightpath_missing_ids", "missing_paths": missing_summary})
+                    _notify_failure_once("flightpath_missing_ids", detail={"missing_paths": missing_summary, "variant": variant_no})
+                    self._plan_status = "임무계획 실패"
+                    self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
+                    return
+
+                plan_id_value = requested_plan_id if requested_plan_id is not None else mp_json.get('missionPlanID')
+                try:
+                    preferred_plan_id = int(plan_id_value)
+                except Exception:
+                    preferred_plan_id = None
+                plan_id = _allocate_plan_id(preferred_plan_id)
+                mp_json['missionPlanID'] = plan_id
+                imp_id_map = _allocate_imp_id_map(mp_json)
+                plan_meta_entry = plan_meta_map.setdefault(plan_id, {})
+                if variant_attack_context:
+                    attack_meta = {
+                        "attack": True,
+                        "targetCount": int(variant_attack_context.get("targetCount") or 1),
+                        "targetID": variant_attack_context.get("targetID"),
+                    }
+                    if shared_attack_detail:
+                        attack_meta["replanDetail"] = shared_attack_detail
+                    plan_meta_entry.update(attack_meta)
+                if variant_prior_context:
+                    try:
+                        prior_mid = int(variant_prior_context.get("priorMissionID") or 0)
+                    except Exception:
+                        prior_mid = 0
+                    try:
+                        prior_input_id = int(variant_prior_context.get("inputMissionID") or 0)
+                    except Exception:
+                        prior_input_id = 0
+                    plan_meta_entry.update(
+                        {
+                            "priorMission": True,
+                            "priorMissionID": prior_mid,
+                            "inputMissionID": prior_input_id,
+                        }
+                    )
+
+                step_t0 = time.perf_counter()
+                imp_pkgs = d0302.build_mission_packages(missions, cmpk_id=cmpk_id, plan_pkg_map=imp_id_map)
+                step_ms = (time.perf_counter() - step_t0) * 1000.0
+                self.log_sig.emit(
+                    f"[TIME] build_0302 (variant={variant_no}): {step_ms:.1f} ms, packages={len(imp_pkgs)}"
+                )
+                step_t0 = time.perf_counter()
+                imp_write_rows: list[tuple[Path, Any]] = []
+                for pkg in imp_pkgs:
+                    imp_id = pkg.get('individualMissionPackageID') or pkg.get('individualMissionPlanPackageID')
+                    if imp_id is None:
+                        continue
+                    try:
+                        generated_imp_ids.add(int(imp_id))
+                    except Exception:
+                        pass
+                    imp_write_rows.append((dir_imp / f"{int(imp_id)}.json", pkg))
+                _write_json_batch(imp_write_rows, pretty=True)
+                total_imp_files += len(imp_pkgs)
+                step_ms = (time.perf_counter() - step_t0) * 1000.0
+                self.log_sig.emit(
+                    f"[TIME] write_0302 (variant={variant_no}): {step_ms:.1f} ms, files={len(imp_pkgs)}"
+                )
+
+                def _dump_fp(target_dir, fps):
+                    rows: list[tuple[Path, Any]] = []
+                    for fp in fps:
+                        pid = fp.get('pathID')
+                        if pid is None:
+                            continue
+                        rows.append((target_dir / f"{int(pid)}.json", fp))
+                        try:
+                            stored_path_ids.add(int(pid))
+                        except Exception:
+                            pass
+                    _write_json_batch(rows, pretty=True)
+                    return len(rows)
+
+                step_t0 = time.perf_counter()
+                fp_count_0303 = _dump_fp(dir_fp, flight_plans_0303)
+                fp_count_0304 = _dump_fp(dir_fp, flight_plans_0304)
+                total_fp_files += fp_count_0303 + fp_count_0304
+                step_ms = (time.perf_counter() - step_t0) * 1000.0
+                self.log_sig.emit(
+                    f"[TIME] write_FlightPath (variant={variant_no}): {step_ms:.1f} ms, files={fp_count_0303 + fp_count_0304}"
+                )
+
+                step_t0 = time.perf_counter()
+                mp_json["planningTime"] = float((time.perf_counter() - variant_start) * 1000.0)
+                write_json(dir_mp / f"{plan_id}.json", mp_json, pretty=True, ensure_ascii=False, skip_if_unchanged=True)
+                step_ms = (time.perf_counter() - step_t0) * 1000.0
+                self.log_sig.emit(
+                    f"[TIME] write_0301 (variant={variant_no}): {step_ms:.1f} ms"
+                )
+
+                self.log_sig.emit(f"[OK] Stored variant {variant_no}: MissionPlanID={plan_id}, IMP={len(imp_pkgs)}, FlightPath={fp_count_0303 + fp_count_0304}")
+                total_ms = (time.perf_counter() - variant_start) * 1000.0
+                self.log_sig.emit(
+                    f"[TIME] variant_total (variant={variant_no}): {total_ms:.1f} ms"
+                )
+
+                generated_plan_ids.append(plan_id)
+                option_codes_out.append(int(option_code))
+                self.log_sig.emit(
+                    f"[INFO] Option mapping #{variant_no}: "
+                    f"planID={plan_id}, optionCode={option_code}({option_code_to_label(option_code)})"
+                )
+
+                try:
+                    shutil.rmtree(iter_out_root)
+                except Exception:
+                    pass
+
+            try:
+                if out_root_base.exists():
+                    shutil.rmtree(out_root_base)
+            except Exception:
+                pass
+
+            self.log_sig.emit(f"[OK] Stored mission data: MissionPlan={len(generated_plan_ids)}, IndividualMission={total_imp_files}, FlightPath={total_fp_files}")
+            _record_step("store_output", "ok", detail={"plan_count": len(generated_plan_ids), "imp_files": total_imp_files, "flightpath_files": total_fp_files})
+
+            self._last_mission_plan_ids = generated_plan_ids
+            self._last_mission_plan_id = generated_plan_ids[0] if generated_plan_ids else None
+            self.visual_refresh.emit()
+            ctx['plan_ids'] = generated_plan_ids
+            ctx['option_names'] = option_codes_out
+            ctx["_option_meta"] = dict(plan_meta_map)
+            self._active_plan_context = ctx
+
+            try:
+                input_pkg_id_int = int(ctx.get('inputMissionPackageID'))
+            except Exception:
+                input_pkg_id_int = None
+            try:
+                ref_pkg_id_int = int(ctx.get('missionReferencePackageID'))
+            except Exception:
+                ref_pkg_id_int = None
+
+            plan_id_set = {int(pid) for pid in generated_plan_ids if pid is not None}
+            imp_id_set = {int(val) for val in generated_imp_ids if val is not None}
+            path_id_set = {int(val) for val in stored_path_ids if val is not None}
+
+            if input_pkg_id_int is not None:
+                self._session_scope['packages'].add(input_pkg_id_int)
+            self._session_scope['plans'].update(plan_id_set)
+            self._session_scope['individual_packages'].update(imp_id_set)
+            self._session_scope['paths'].update(path_id_set)
+            self._plan_status = "임무계획 완료"
+            self._submit_id_tab_update(
+                scope=self._session_scope,
+                cmpk_id=input_pkg_id_int,
+                mrpk_id=ref_pkg_id_int,
+                plan_state=self._plan_status,
+            )
+
+            # 강제 전송 여부는 옵션/재계획 레벨(4)에 따라 결정
+            force_direct_update = bool(ctx.get("force_direct_update"))
+            try:
+                replan_level_val = int(ctx.get("replan_level", 0))
+            except Exception:
+                replan_level_val = 0
+            if replan_level_val == 4:
+                force_direct_update = True
+
+
+            self._schedule_plan_delivery(
+                generated_plan_ids,
+                option_codes_out,
+                reason,
+                plan_meta_map,
+                force_direct_update=force_direct_update,
+            )
+            summary_info = {
+                "mode": "legacy",
+                "plan_ids": list(generated_plan_ids),
+                "option_codes": list(option_codes_out),
+            }
+            plan_log_status = "success"
+            plan_log_summary.update(summary_info)
+            if plan_log:
+                try:
+                    plan_log.set_plan_ids(generated_plan_ids)
+                    plan_log.update_summary(summary_info)
+                    _record_step(
+                        "replan_pipeline",
+                        "success",
+                        detail={"plan_ids": list(generated_plan_ids), "option_codes": list(option_codes_out)},
+                    )
+                except Exception:
+                    pass
+            success = True
+
+        except Exception as exc:
+            self.log_sig.emit(f"[ERR] Replan pipeline failed: {exc}")
+            try:
+                trace_text = traceback.format_exc().strip()
+                if trace_text:
+                    self.log_sig.emit("[TRACE] " + trace_text)
+            except Exception:
+                pass
+            self._pipeline_logger.log_event(session_id, "error", f"Replan pipeline failed: {exc}")
+            plan_log_status = "error"
+            plan_log_stop_reason = plan_log_stop_reason or "exception"
+            try:
+                _record_issue("exception", f"{exc}", detail={"reason": reason})
+                plan_log_summary.setdefault("stop_reason", plan_log_stop_reason)
+                plan_log_summary.setdefault("exception", str(exc))
+            except Exception:
+                pass
+            _notify_failure_once(plan_log_stop_reason or "exception", exc=exc, detail=dict(plan_log_summary))
+        finally:
+            if not success and self._planning_timer_started_at is not None:
+                try:
+                    self._mark_planning_metric_finish(reason, success=False)
+                except Exception:
+                    pass
+            self._initplan_running = False
+            final_status = "success" if success else plan_log_status
+            summary_payload: Dict[str, Any] = {}
+            if plan_log_summary:
+                summary_payload.update(plan_log_summary)
+            if summary_info:
+                try:
+                    summary_payload.update(summary_info)
+                except Exception:
+                    pass
+            if plan_log:
+                try:
+                    if plan_log_stop_reason and final_status != "success":
+                        plan_log.set_stop_reason(plan_log_stop_reason)
+                    plan_log.set_plan_ids(
+                        getattr(self, "_last_mission_plan_ids", None) or ctx.get("plan_ids") or []
+                    )
+                    plan_log.finalize(final_status, summary=summary_payload or summary_info)
+                except Exception:
+                    pass
+            try:
+                self._mission_plan_logger.clear_active()
+            except Exception:
+                pass
+            self._active_plan_log_run = None
+            status_text = (
+                "success"
+                if success
+                else (final_status if final_status in ("success", "error") else "error")
+            )
+            self._pipeline_logger.close_session(session_id, status_text, summary=summary_info or summary_payload)
+
+    def _finalize_attack_pipeline(
+        self,
+        ctx: Dict[str, Any],
+        attack_result: Dict[str, Any],
+        attack_updates: Dict[str, Any],
+        reason: str,
+        session_id: Optional[str],
+        *,
+        schedule_delivery: bool = True,
+        plan_log=None,
+    ) -> None:
+        try:
+            attack_plan_id = int(attack_updates.get("mission_plan_id"))
+        except Exception:
+            attack_plan_id = None
+
+        provided_plan_ids = list(ctx.get("plan_ids") or [])
+        plan_ids = []
+        if attack_plan_id is None:
+            if provided_plan_ids:
+                try:
+                    attack_plan_id = int(provided_plan_ids[0])
+                except Exception:
+                    attack_plan_id = None
+        if attack_plan_id is not None:
+            plan_ids = [attack_plan_id]
+        else:
+            plan_ids = list(provided_plan_ids)
+        if not plan_ids:
+            raise RuntimeError("Attack pipeline produced no mission plan IDs.")
+
+        option_names = list(ctx.get("option_names") or [])
+        while len(option_names) < len(plan_ids):
+            option_names.append(option_names[-1] if option_names else f"option{len(option_names) + 1}")
+
+        plan_meta_map = dict(ctx.get("_option_meta") or {})
+        if attack_plan_id:
+            attack_meta = plan_meta_map.setdefault(attack_plan_id, {})
+            attack_meta.update(
+                {
+                    "attack": True,
+                    "attackContext": {
+                        "logPath": attack_result.get("log_path"),
+                        "missionUpdates": attack_updates,
+                    },
+                }
+            )
+
+        if plan_log:
+            try:
+                plan_log.set_plan_ids(plan_ids)
+                plan_log.update_summary(
+                    {"attack_plan_ids": list(plan_ids), "attack_log": attack_result.get("log_path")}
+                )
+                plan_log.add_step(
+                    "attack_pipeline",
+                    "success",
+                    detail={"plan_ids": list(plan_ids), "log_path": attack_result.get("log_path")},
+                )
+            except Exception:
+                pass
+
+        ctx["plan_ids"] = plan_ids
+        ctx["option_names"] = option_names
+        ctx["_option_meta"] = plan_meta_map
+        self._active_plan_context = ctx
+        self._last_mission_plan_ids = plan_ids
+        self._last_mission_plan_id = plan_ids[0] if plan_ids else None
+        self.visual_refresh.emit()
+
+        def _safe_int(value):
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return None
+
+        input_pkg_id_int = _safe_int(ctx.get("inputMissionPackageID"))
+        ref_pkg_id_int = _safe_int(ctx.get("missionReferencePackageID"))
+
+        plan_id_set = {int(pid) for pid in plan_ids if pid is not None}
+        generated_imp_ids, generated_path_ids = self._collect_attack_generated_ids(attack_updates)
+        self._session_scope["plans"].update(plan_id_set)
+        self._session_scope["individual_packages"].update(generated_imp_ids)
+        self._session_scope["paths"].update(generated_path_ids)
+        self._plan_status = "임무재계획 완료"
+        self._submit_id_tab_update(
+            scope=self._session_scope,
+            cmpk_id=input_pkg_id_int,
+            mrpk_id=ref_pkg_id_int,
+            plan_state=self._plan_status,
+        )
+
+        summary = ", ".join(str(pid) for pid in plan_ids)
+        self.log_sig.emit(f"[ATTACK] 공격 임무 계획 완료 (planIds={summary})")
+        self._pipeline_logger.log_event(
+            session_id,
+            "info",
+            "Attack pipeline complete",
+            detail={
+                "plan_ids": plan_ids,
+                "log_path": attack_result.get("log_path"),
+            },
+        )
+
+        if schedule_delivery:
+            self._schedule_plan_delivery(
+                plan_ids,
+                option_names,
+                reason,
+                plan_meta_map,
+                force_direct_update=False,
+            )
+
+    def _collect_attack_generated_ids(self, attack_updates: Dict[str, Any]) -> tuple[Set[int], Set[int]]:
+        imp_ids: Set[int] = set()
+        path_ids: Set[int] = set()
+        aircraft_entries = attack_updates.get("aircraft") if isinstance(attack_updates, dict) else None
+        if not isinstance(aircraft_entries, list):
+            return imp_ids, path_ids
+        for entry in aircraft_entries:
+            if not isinstance(entry, dict):
+                continue
+            pkg = entry.get("individualMissionPackageID")
+            if pkg is not None:
+                try:
+                    imp_ids.add(int(pkg))
+                except Exception:
+                    pass
+            for mission in entry.get("missions") or []:
+                if not isinstance(mission, dict):
+                    continue
+                pid = mission.get("pathID")
+                if pid is not None:
+                    try:
+                        path_ids.add(int(pid))
+                    except Exception:
+                        pass
+            for block in (entry.get("tracking") or {}, entry.get("resume") or {}):
+                if not isinstance(block, dict):
+                    continue
+                pid = block.get("pathID")
+                if pid is not None:
+                    try:
+                        path_ids.add(int(pid))
+                    except Exception:
+                        pass
+            flight_paths = entry.get("flightPaths")
+            if isinstance(flight_paths, dict):
+                for pid in flight_paths.values():
+                    self._try_add_path_from_value(path_ids, pid)
+            extra_path = entry.get("pathID")
+            if extra_path is not None:
+                try:
+                    path_ids.add(int(extra_path))
+                except Exception:
+                    pass
+        return imp_ids, path_ids
+
+    @staticmethod
+    def _try_add_path_from_value(target_set: Set[int], value: Any) -> None:
+        if value is None:
+            return
+        str_value = str(value).strip()
+        if not str_value:
+            return
+        if str_value.isdigit():
+            try:
+                target_set.add(int(str_value))
+                return
+            except Exception:
+                pass
+        candidate = Path(str_value)
+        if candidate.stem and candidate.stem.isdigit():
+            try:
+                target_set.add(int(candidate.stem))
+                return
+            except Exception:
+                pass
+        try:
+            cleaned = "".join(ch for ch in str_value if ch.isdigit())
+            if cleaned:
+                target_set.add(int(cleaned))
+        except Exception:
+            pass
+
+    def _try_run_prior_mission_pipeline(
+        self,
+        ctx: Dict[str, Any],
+        reason: str,
+        *,
+        session_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        try:
+            replan_level = int(ctx.get("replan_level", ctx.get("replanLevel", 0)))
+        except Exception:
+            replan_level = 0
+        detail = ctx.get("replan_detail")
+        if replan_level != 4:
+            return None
+
+        if isinstance(detail, dict):
+            self.log_sig.emit("[PRIOR] Level-4 prior mission request detected. Using dedicated pipeline.")
+        else:
+            self.log_sig.emit("[PRIOR] Level-4 prior mission request but replanDetail missing/invalid → running prior pipeline with empty detail.")
+            detail = {} if detail is None else {"_raw": detail}
+
+        result = run_prior_mission_pipeline(
+            ctx,
+            detail,
+            reason,
+            log=lambda msg: self.log_sig.emit(msg),
+        )
+        if not result:
+            self.log_sig.emit("[PRIOR] Prior mission pipeline unavailable. Falling back to legacy replan flow.")
+            if session_id:
+                self._pipeline_logger.log_event(session_id, "warn", "Prior mission pipeline unavailable")
+            return None
+
+        generated_plan_ids = result.plan_ids
+        option_names = result.option_names
+        plan_meta_map = result.plan_meta_map
+
+        ctx["plan_ids"] = generated_plan_ids
+        ctx["option_names"] = option_names
+        ctx["_option_meta"] = dict(plan_meta_map)
+
+        self._active_plan_context = ctx
+        self._last_mission_plan_ids = generated_plan_ids
+        self._last_mission_plan_id = generated_plan_ids[0] if generated_plan_ids else None
+        self.visual_refresh.emit()
+
+        # delivery를 먼저 큐잉한다. (이후 메타/GUI 갱신 중 예외가 나도 0903 누락 방지)
+        self._deliver_prior_direct_now(
+            generated_plan_ids,
+            reason,
+            option_names=option_names,
+            option_meta=plan_meta_map,
+        )
+
+        def _to_optional_int(value: Any) -> Optional[int]:
+            if value is None:
+                return None
+            try:
+                iv = int(value)
+            except Exception:
+                return None
+            return iv if iv > 0 else None
+
+        input_pkg_id_int = _to_optional_int(ctx.get("inputMissionPackageID"))
+        ref_pkg_id_int = _to_optional_int(ctx.get("missionReferencePackageID"))
+
+        plan_id_set = {int(pid) for pid in generated_plan_ids if pid is not None}
+        imp_id_set = {int(val) for val in result.generated_imp_ids if val is not None}
+        path_id_set = {int(val) for val in result.generated_path_ids if val is not None}
+
+        if input_pkg_id_int is not None:
+            self._session_scope["packages"].add(input_pkg_id_int)
+        self._session_scope["plans"].update(plan_id_set)
+        self._session_scope["individual_packages"].update(imp_id_set)
+        self._session_scope["paths"].update(path_id_set)
+
+        self._plan_status = "임무계획 완료"
+        self._submit_id_tab_update(
+            scope=self._session_scope,
+            cmpk_id=input_pkg_id_int,
+            mrpk_id=ref_pkg_id_int,
+            plan_state=self._plan_status,
+        )
+
+        self.log_sig.emit(
+            f"[PRIOR] Prior mission pipeline complete (planIds={generated_plan_ids}, log={result.log_path})"
+        )
+        summary = {
+            "plan_ids": list(generated_plan_ids),
+            "option_names": list(option_names),
+            "log_path": str(result.log_path),
+        }
+        if session_id:
+            self._pipeline_logger.log_event(
+                session_id, "info", "Prior mission pipeline complete", detail=summary
+            )
+        return summary
+
+    def _try_run_path_deviation_replan_pipeline(
+        self,
+        ctx: Dict[str, Any],
+        reason: str,
+        *,
+        session_id: Optional[str] = None,
+    ) -> tuple[bool, Optional[Dict[str, Any]]]:
+        return self._try_run_path_deviation_replan_pipeline_impl(
+            ctx,
+            reason,
+            session_id=session_id,
+        )
+
+    def _try_run_imaging_schedule_replan_pipeline(
+        self,
+        ctx: Dict[str, Any],
+        reason: str,
+        *,
+        session_id: Optional[str] = None,
+    ) -> tuple[bool, Optional[Dict[str, Any]]]:
+        try:
+            replan_level = int(ctx.get("replan_level", ctx.get("replanLevel", 0)))
+        except Exception:
+            replan_level = 0
+        detail = ctx.get("replan_detail")
+        plan_ids = list(ctx.get("plan_ids") or [])
+        reason_text = str(reason or ctx.get("reason") or "").strip()
+        store_detail = self._load_imaging_schedule_detail_from_store(plan_ids)
+        is_reason_match = _is_imaging_schedule_reason_text(reason_text)
+        detail_trigger = ""
+        if isinstance(detail, dict):
+            detail_trigger = str(detail.get("triggerType") or "").strip()
+        if replan_level != 3:
+            return False, None
+        if not (detail_trigger == "imagingScheduleDeviation" or is_reason_match or store_detail):
+            return False, None
+        if not isinstance(detail, dict) or not detail:
+            detail = dict(store_detail or {})
+            ctx["replan_detail"] = detail
+        elif isinstance(store_detail, dict) and store_detail:
+            merged_detail = dict(store_detail)
+            merged_detail.update(detail)
+            detail = merged_detail
+            ctx["replan_detail"] = detail
+
+        self._log_imaging_schedule_event(
+            "mission_receive",
+            {
+                "reason": reason_text,
+                "replanLevel": replan_level,
+                "planIDs": plan_ids,
+                "detailTriggerType": detail_trigger or None,
+                "storeDetailLoaded": bool(store_detail),
+                "detailKeys": sorted(detail.keys()) if isinstance(detail, dict) else [],
+            },
+        )
+
+        self.log_sig.emit("[IMGSCH] Level-3 imaging schedule request detected. Using dedicated pipeline.")
+        result = run_imaging_schedule_replan_pipeline(
+            ctx,
+            detail,
+            reason,
+            log=lambda msg: self.log_sig.emit(msg),
+        )
+        if not result:
+            self.log_sig.emit("[IMGSCH] Dedicated imaging-schedule pipeline failed.")
+            if session_id:
+                self._pipeline_logger.log_event(
+                    session_id,
+                    "error",
+                    "Imaging-schedule pipeline failed",
+                )
+            self._log_imaging_schedule_event(
+                "mission_pipeline_failed",
+                {
+                    "reason": reason_text,
+                    "planIDs": plan_ids,
+                    "detailKeys": sorted(detail.keys()) if isinstance(detail, dict) else [],
+                },
+            )
+            return True, None
+
+        generated_plan_ids = result.plan_ids
+        option_names = result.option_names
+        plan_meta_map = result.plan_meta_map
+
+        ctx["plan_ids"] = generated_plan_ids
+        ctx["option_names"] = option_names
+        ctx["_option_meta"] = dict(plan_meta_map)
+
+        self._active_plan_context = ctx
+        self._last_mission_plan_ids = generated_plan_ids
+        self._last_mission_plan_id = generated_plan_ids[0] if generated_plan_ids else None
+        self.visual_refresh.emit()
+
+        self._deliver_imaging_schedule_direct_now(
+            generated_plan_ids,
+            reason,
+            option_names=option_names,
+            option_meta=plan_meta_map,
+        )
+
+        def _to_optional_int(value: Any) -> Optional[int]:
+            if value is None:
+                return None
+            try:
+                iv = int(value)
+            except Exception:
+                return None
+            return iv if iv > 0 else None
+
+        input_pkg_id_int = _to_optional_int(ctx.get("inputMissionPackageID"))
+        ref_pkg_id_int = _to_optional_int(ctx.get("missionReferencePackageID"))
+
+        if input_pkg_id_int is not None:
+            self._session_scope["packages"].add(input_pkg_id_int)
+        self._session_scope["plans"].update(int(pid) for pid in generated_plan_ids if pid is not None)
+        self._session_scope["individual_packages"].update(
+            int(val) for val in result.generated_imp_ids if val is not None
+        )
+        self._session_scope["paths"].update(
+            int(val) for val in result.generated_path_ids if val is not None
+        )
+
+        self._plan_status = "임무계획 완료"
+        self._submit_id_tab_update(
+            scope=self._session_scope,
+            cmpk_id=input_pkg_id_int,
+            mrpk_id=ref_pkg_id_int,
+            plan_state=self._plan_status,
+        )
+
+        summary = {
+            "plan_ids": list(generated_plan_ids),
+            "option_names": list(option_names),
+            "log_path": str(result.log_path),
+            "replaced_waypoint_id": int(result.replaced_waypoint_id),
+            "new_waypoint_id": int(result.new_waypoint_id),
+        }
+        self.log_sig.emit(
+            f"[IMGSCH] Imaging-schedule pipeline complete (planIds={generated_plan_ids}, log={result.log_path})"
+        )
+        if session_id:
+            self._pipeline_logger.log_event(
+                session_id,
+                "info",
+                "Imaging-schedule pipeline complete",
+                detail=summary,
+            )
+        return True, summary
+
+    def _try_run_path_deviation_replan_pipeline_impl(
+        self,
+        ctx: Dict[str, Any],
+        reason: str,
+        *,
+        session_id: Optional[str] = None,
+    ) -> tuple[bool, Optional[Dict[str, Any]]]:
+        try:
+            replan_level = int(ctx.get("replan_level", ctx.get("replanLevel", 0)))
+        except Exception:
+            replan_level = 0
+        detail = ctx.get("replan_detail")
+        plan_ids = list(ctx.get("plan_ids") or [])
+        reason_text = str(reason or ctx.get("reason") or "").strip()
+        store_detail = self._load_path_deviation_detail_from_store(plan_ids)
+        is_reason_match = _is_path_deviation_reason_text(reason_text)
+        detail_trigger = ""
+        if isinstance(detail, dict):
+            detail_trigger = str(detail.get("triggerType") or "").strip()
+        if replan_level != 3:
+            return False, None
+        if not (detail_trigger == "pathDeviation" or is_reason_match or store_detail):
+            return False, None
+        if not isinstance(detail, dict) or not detail:
+            detail = dict(store_detail or {})
+            ctx["replan_detail"] = detail
+        elif isinstance(store_detail, dict) and store_detail:
+            merged_detail = dict(store_detail)
+            merged_detail.update(detail)
+            detail = merged_detail
+            ctx["replan_detail"] = detail
+
+        self._log_path_deviation_event(
+            "mission_receive",
+            {
+                "reason": reason_text,
+                "replanLevel": replan_level,
+                "planIDs": plan_ids,
+                "detailTriggerType": detail_trigger or None,
+                "storeDetailLoaded": bool(store_detail),
+                "detailKeys": sorted(detail.keys()) if isinstance(detail, dict) else [],
+            },
+        )
+
+        self.log_sig.emit("[PATHDEV] Level-3 path deviation request detected. Using dedicated pipeline.")
+        result = run_path_deviation_replan_pipeline(
+            ctx,
+            detail,
+            reason,
+            log=lambda msg: self.log_sig.emit(msg),
+        )
+        if not result:
+            self.log_sig.emit("[PATHDEV] Dedicated path-deviation pipeline failed.")
+            if session_id:
+                self._pipeline_logger.log_event(
+                    session_id,
+                    "error",
+                    "Path-deviation pipeline failed",
+                )
+            self._log_path_deviation_event(
+                "mission_pipeline_failed",
+                {
+                    "reason": reason_text,
+                    "planIDs": plan_ids,
+                    "detailKeys": sorted(detail.keys()) if isinstance(detail, dict) else [],
+                },
+            )
+            return True, None
+
+        generated_plan_ids = result.plan_ids
+        option_names = result.option_names
+        plan_meta_map = result.plan_meta_map
+
+        ctx["plan_ids"] = generated_plan_ids
+        ctx["option_names"] = option_names
+        ctx["_option_meta"] = dict(plan_meta_map)
+
+        self._active_plan_context = ctx
+        self._last_mission_plan_ids = generated_plan_ids
+        self._last_mission_plan_id = generated_plan_ids[0] if generated_plan_ids else None
+        self.visual_refresh.emit()
+
+        self._deliver_path_deviation_direct_now(
+            generated_plan_ids,
+            reason,
+            option_names=option_names,
+            option_meta=plan_meta_map,
+        )
+
+        def _to_optional_int(value: Any) -> Optional[int]:
+            if value is None:
+                return None
+            try:
+                iv = int(value)
+            except Exception:
+                return None
+            return iv if iv > 0 else None
+
+        input_pkg_id_int = _to_optional_int(ctx.get("inputMissionPackageID"))
+        ref_pkg_id_int = _to_optional_int(ctx.get("missionReferencePackageID"))
+
+        if input_pkg_id_int is not None:
+            self._session_scope["packages"].add(input_pkg_id_int)
+        self._session_scope["plans"].update(int(pid) for pid in generated_plan_ids if pid is not None)
+        self._session_scope["individual_packages"].update(
+            int(val) for val in result.generated_imp_ids if val is not None
+        )
+        self._session_scope["paths"].update(
+            int(val) for val in result.generated_path_ids if val is not None
+        )
+
+        self._plan_status = "임무계획 완료"
+        self._submit_id_tab_update(
+            scope=self._session_scope,
+            cmpk_id=input_pkg_id_int,
+            mrpk_id=ref_pkg_id_int,
+            plan_state=self._plan_status,
+        )
+
+        summary = {
+            "plan_ids": list(generated_plan_ids),
+            "option_names": list(option_names),
+            "log_path": str(result.log_path),
+            "removed_waypoint_id": int(result.removed_waypoint_id),
+            "inserted_waypoint_id": int(result.inserted_waypoint_id),
+        }
+        self.log_sig.emit(
+            f"[PATHDEV] Path-deviation pipeline complete (planIds={generated_plan_ids}, log={result.log_path})"
+        )
+        if session_id:
+            self._pipeline_logger.log_event(
+                session_id,
+                "info",
+                "Path-deviation pipeline complete",
+                detail=summary,
+            )
+        return True, summary
+
+    @staticmethod
+    def _load_imaging_schedule_detail_from_store(plan_ids: List[int]) -> Optional[Dict[str, Any]]:
+        for value in plan_ids or []:
+            try:
+                plan_id = int(value)
+            except Exception:
+                continue
+            payload = imaging_schedule_replan_store.load_detail(plan_id)
+            if payload:
+                return payload
+        return None
+
+    def _log_imaging_schedule_event(self, stage: str, payload: Dict[str, Any]) -> None:
+        try:
+            imaging_schedule_replan_store.save_event(stage, payload)
+        except Exception:
+            pass
+
+    def _deliver_imaging_schedule_direct_now(
+        self,
+        plan_ids: List[int],
+        reason: str,
+        *,
+        option_names: Optional[List[str]] = None,
+        option_meta: Optional[Dict[int, Dict[str, Any]]] = None,
+    ) -> None:
+        valid_ids: List[int] = []
+        for value in plan_ids or []:
+            try:
+                pid = int(value)
+            except Exception:
+                continue
+            if pid > 0 and pid not in valid_ids:
+                valid_ids.append(pid)
+        if not valid_ids:
+            self.log_sig.emit("[IMGSCH][DELIVERY] skipped: no valid missionPlanID")
+            return
+
+        self.log_sig.emit(
+            f"[IMGSCH][DELIVERY] direct push start (planIds={', '.join(str(v) for v in valid_ids)})"
+        )
+        self._schedule_plan_delivery(
+            valid_ids,
+            list(option_names or []),
+            reason,
+            dict(option_meta or {}),
+            force_direct_update=True,
+        )
+
+    @staticmethod
+    def _load_path_deviation_detail_from_store(plan_ids: List[int]) -> Optional[Dict[str, Any]]:
+        for value in plan_ids or []:
+            try:
+                plan_id = int(value)
+            except Exception:
+                continue
+            payload = path_deviation_replan_store.load_detail(plan_id)
+            if payload:
+                return payload
+        return None
+
+    def _log_path_deviation_event(self, stage: str, payload: Dict[str, Any]) -> None:
+        try:
+            path_deviation_replan_store.save_event(stage, payload)
+        except Exception:
+            pass
+
+    def _deliver_path_deviation_direct_now(
+        self,
+        plan_ids: List[int],
+        reason: str,
+        *,
+        option_names: Optional[List[str]] = None,
+        option_meta: Optional[Dict[int, Dict[str, Any]]] = None,
+    ) -> None:
+        valid_ids: List[int] = []
+        for value in plan_ids or []:
+            try:
+                pid = int(value)
+            except Exception:
+                continue
+            if pid > 0 and pid not in valid_ids:
+                valid_ids.append(pid)
+        if not valid_ids:
+            self.log_sig.emit("[PATHDEV][DELIVERY] skipped: no valid missionPlanID")
+            return
+
+        self.log_sig.emit(
+            f"[PATHDEV][DELIVERY] direct push start (planIds={', '.join(str(v) for v in valid_ids)})"
+        )
+        self._schedule_plan_delivery(
+            valid_ids,
+            list(option_names or []),
+            reason,
+            dict(option_meta or {}),
+            force_direct_update=True,
+        )
+
+    def _deliver_prior_direct_now(
+        self,
+        plan_ids: List[int],
+        reason: str,
+        *,
+        option_names: Optional[List[str]] = None,
+        option_meta: Optional[Dict[int, Dict[str, Any]]] = None,
+    ) -> None:
+        valid_ids: List[int] = []
+        for value in plan_ids or []:
+            try:
+                pid = int(value)
+            except Exception:
+                continue
+            if pid > 0 and pid not in valid_ids:
+                valid_ids.append(pid)
+        if not valid_ids:
+            self.log_sig.emit("[PRIOR][DELIVERY] skipped: no valid missionPlanID")
+            return
+
+        self.log_sig.emit(
+            f"[PRIOR][DELIVERY] direct push start (planIds={', '.join(str(v) for v in valid_ids)})"
+        )
+        # GUI 전송 경로(0301 버튼 경유 + 0903 순차 푸시)를 그대로 사용한다.
+        # force_direct_update=True 이면 0901/0701을 건너뛰고 0903(+0702 fallback)만 송신한다.
+        self._schedule_plan_delivery(
+            valid_ids,
+            list(option_names or []),
+            reason,
+            dict(option_meta or {}),
+            force_direct_update=True,
+        )
+
+    def closeEvent(self, event):
+        try:
+            self._hb_0102_enabled = False
+            self._hb_0102_stop.set()
+            for msg_id, handler in getattr(self, "_input_listener_refs", []):
+                unregister_listener(msg_id, handler)
+        except Exception:
+            pass
+        super().closeEvent(event)
+
+    def _schedule_plan_delivery(
+        self,
+        plan_ids,
+        option_names,
+        reason,
+        option_meta=None,
+        *,
+        force_direct_update: bool = False,
+    ):
+        safe_reason = _sanitize_reason(reason, "init-plan")
+        new_plan_ids = [pid for pid in (plan_ids or []) if pid is not None]
+        new_option_names = list(option_names or [])
+        while len(new_option_names) < len(new_plan_ids):
+            new_option_names.append(f"option{len(new_option_names) + 1}")
+
+        # Prior/force-direct 흐름은 옵션 생성(0901) 병합 없이 최신 플랜만 전달
+        if force_direct_update:
+            try:
+                self._attack_delivery_buffer.clear()
+            except Exception:
+                self._attack_delivery_buffer = []
+            self._pending_plan_push = None
+
+        if getattr(self, "_attack_delivery_buffer", None):
+            for buf in self._attack_delivery_buffer:
+                buf_ids = list(buf.get("plan_ids") or [])
+                buf_names = list(buf.get("option_names") or [])
+                for idx, pid in enumerate(buf_ids):
+                    try:
+                        pid_int = int(pid)
+                    except Exception:
+                        continue
+                    if pid_int in new_plan_ids:
+                        continue
+                    new_plan_ids.append(pid_int)
+                    if idx < len(buf_names):
+                        new_option_names.append(str(buf_names[idx]))
+                    else:
+                        new_option_names.append(f"option{len(new_option_names) + 1}")
+                try:
+                    buf_meta = dict(buf.get("option_meta") or {})
+                    if buf_meta:
+                        option_meta = dict(option_meta or {})
+                        option_meta.update(buf_meta)
+                except Exception:
+                    pass
+            self._attack_delivery_buffer.clear()
+
+        if self._pending_plan_push:
+            pending = self._pending_plan_push
+            merged_ids = list(pending.get("plan_ids") or [])
+            merged_names = list(pending.get("option_names") or [])
+            merged_meta = dict(pending.get("option_meta") or {})
+
+            for idx, pid in enumerate(new_plan_ids):
+                try:
+                    pid_int = int(pid)
+                except Exception:
+                    continue
+                if pid_int in merged_ids:
+                    continue
+                merged_ids.append(pid_int)
+                if idx < len(new_option_names):
+                    merged_names.append(new_option_names[idx])
+                else:
+                    merged_names.append(f"option{len(merged_names) + 1}")
+
+            merged_meta.update(dict(option_meta or {}))
+            pending["plan_ids"] = merged_ids
+            pending["option_names"] = merged_names
+            pending["option_meta"] = merged_meta
+            pending["force_direct_update"] = pending.get("force_direct_update") or bool(force_direct_update)
+            self._pending_plan_push = pending
+            summary = ", ".join(str(pid) for pid in merged_ids) or "-"
+            self.log_sig.emit(f"[STEP 4] 0301 push merged (planIds={summary})")
+            return
+
+        self._pending_plan_push = {
+            "plan_ids": new_plan_ids,
+            "option_names": new_option_names,
+            "reason": safe_reason,
+            "option_meta": dict(option_meta or {}),
+            "force_direct_update": bool(force_direct_update),
+        }
+        try:
+            self._scheduled_0301_plan_ids = [int(pid) for pid in new_plan_ids if pid is not None]
+        except Exception:
+            self._scheduled_0301_plan_ids = list(new_plan_ids)
+        summary = ", ".join(str(pid) for pid in new_plan_ids) or "-"
+        self.log_sig.emit(f"[STEP 4] 0301 push queued (planIds={summary})")
+        self.start_push_seq.emit()
+
+
+# ───────── 엔트리 ─────────
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    load_shared_stylesheet(app, PROJECT_ROOT)
+    win = MainWindow()
+    win.show()
+    position_window_from_env(app, win)
+    sys.exit(app.exec_())

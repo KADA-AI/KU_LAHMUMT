@@ -1,0 +1,54 @@
+{
+  "assignments": {
+    "5": {
+      "aircraft_id": 5,
+      "active": true,
+      "source_plan_id": 700000174,
+      "attack_plan_id": 700000175,
+      "original_path_id": 500001026,
+      "original_individual_mission_id": 900004528,
+      "original_current_waypoint_id": 131,
+      "last_nonzero_waypoint_id": 131,
+      "last_nonzero_coordinate": {
+        "latitude": 37.91349792480469,
+        "longitude": 128.19105529785156,
+        "altitude": 1513.0
+      },
+      "handoff_waypoint_id": null,
+      "handoff_coordinate": null,
+      "tracking_path_id": 500001036,
+      "tracking_individual_mission_id": 900004548,
+      "resume_path_id": 500001037,
+      "resume_individual_mission_id": 900004549,
+      "target_id": 5,
+      "auto_tracking_engaged": false,
+      "registered_at": "2026-03-12T04:56:13.627412+00:00",
+      "updated_at": "2026-03-12T04:56:50.237145+00:00"
+    },
+    "6": {
+      "aircraft_id": 6,
+      "active": true,
+      "source_plan_id": 700000172,
+      "attack_plan_id": 700000173,
+      "original_path_id": 600001022,
+      "original_individual_mission_id": 900004480,
+      "original_current_waypoint_id": 184,
+      "last_nonzero_waypoint_id": 170,
+      "last_nonzero_coordinate": {
+        "latitude": 37.91030502319336,
+        "longitude": 128.17913818359375,
+        "altitude": 1232.0
+      },
+      "handoff_waypoint_id": null,
+      "handoff_coordinate": null,
+      "tracking_path_id": 600001032,
+      "tracking_individual_mission_id": 900004491,
+      "resume_path_id": 600001033,
+      "resume_individual_mission_id": 900004492,
+      "target_id": 2,
+      "auto_tracking_engaged": false,
+      "registered_at": "2026-03-12T04:55:12.643644+00:00",
+      "updated_at": "2026-03-12T04:56:50.237162+00:00"
+    }
+  }
+}

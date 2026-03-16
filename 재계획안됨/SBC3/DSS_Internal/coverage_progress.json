@@ -1,0 +1,683 @@
+{
+  "timestamp_ms": 826533429482,
+  "mission_plan_id": 700000004,
+  "plan_coverage": {
+    "coverage_percent": 17,
+    "covered_area_m2": 1622325.274,
+    "planned_area_m2": 9500737.512,
+    "coverage_enabled": true
+  },
+  "input_coverage": {
+    "1": {
+      "coverage_percent": 98,
+      "covered_area_m2": 1622325.274,
+      "planned_area_m2": 1649865.276,
+      "coverage_enabled": true
+    },
+    "2": {
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 366917.693,
+      "coverage_enabled": true
+    },
+    "3": {
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 359126.644,
+      "coverage_enabled": true
+    },
+    "4": {
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 1990465.891,
+      "coverage_enabled": true
+    },
+    "5": {
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 228891.599,
+      "coverage_enabled": true
+    },
+    "6": {
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 488075.241,
+      "coverage_enabled": true
+    },
+    "7": {
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 1876079.087,
+      "coverage_enabled": true
+    },
+    "8": {
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 488075.242,
+      "coverage_enabled": true
+    },
+    "9": {
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 228893.21,
+      "coverage_enabled": true
+    },
+    "10": {
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 530525.64,
+      "coverage_enabled": true
+    },
+    "11": {
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 1293821.989,
+      "coverage_enabled": true
+    }
+  },
+  "package_coverage": {
+    "4": {
+      "coverage_percent": 12,
+      "covered_area_m2": 329973.195,
+      "planned_area_m2": 2715487.984,
+      "coverage_enabled": true
+    },
+    "5": {
+      "coverage_percent": 25,
+      "covered_area_m2": 962379.767,
+      "planned_area_m2": 3810000.843,
+      "coverage_enabled": true
+    },
+    "6": {
+      "coverage_percent": 11,
+      "covered_area_m2": 329972.312,
+      "planned_area_m2": 2975248.685,
+      "coverage_enabled": true
+    }
+  },
+  "missions": [
+    {
+      "aircraft_id": 4,
+      "input_id": 1,
+      "mission_id": 900000730,
+      "mission_type": 6,
+      "coverage_enabled": true,
+      "coverage_percent": 100,
+      "covered_area_m2": 329973.195,
+      "planned_area_m2": 329973.195,
+      "done": false
+    },
+    {
+      "aircraft_id": 4,
+      "input_id": 2,
+      "mission_id": 900000731,
+      "mission_type": 6,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 122304.798,
+      "done": false
+    },
+    {
+      "aircraft_id": 4,
+      "input_id": 3,
+      "mission_id": 900000732,
+      "mission_type": 3,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 34293.858,
+      "done": false
+    },
+    {
+      "aircraft_id": 4,
+      "input_id": 3,
+      "mission_id": 900000733,
+      "mission_type": 3,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 48173.922,
+      "done": false
+    },
+    {
+      "aircraft_id": 4,
+      "input_id": 4,
+      "mission_id": 900000734,
+      "mission_type": 6,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 663462.744,
+      "done": false
+    },
+    {
+      "aircraft_id": 4,
+      "input_id": 5,
+      "mission_id": 900000735,
+      "mission_type": 3,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 43042.232,
+      "done": false
+    },
+    {
+      "aircraft_id": 4,
+      "input_id": 5,
+      "mission_id": 900000736,
+      "mission_type": 3,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 64800.607,
+      "done": false
+    },
+    {
+      "aircraft_id": 4,
+      "input_id": 6,
+      "mission_id": 900000737,
+      "mission_type": 6,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 162692.524,
+      "done": false
+    },
+    {
+      "aircraft_id": 4,
+      "input_id": 7,
+      "mission_id": 900000738,
+      "mission_type": 3,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 141241.867,
+      "done": false
+    },
+    {
+      "aircraft_id": 4,
+      "input_id": 7,
+      "mission_id": 900000739,
+      "mission_type": 3,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 191084.454,
+      "done": false
+    },
+    {
+      "aircraft_id": 4,
+      "input_id": 7,
+      "mission_id": 900000740,
+      "mission_type": 3,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 38903.979,
+      "done": false
+    },
+    {
+      "aircraft_id": 4,
+      "input_id": 7,
+      "mission_id": 900000741,
+      "mission_type": 3,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 29349.991,
+      "done": false
+    },
+    {
+      "aircraft_id": 4,
+      "input_id": 8,
+      "mission_id": 900000742,
+      "mission_type": 6,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 162690.971,
+      "done": false
+    },
+    {
+      "aircraft_id": 4,
+      "input_id": 9,
+      "mission_id": 900000743,
+      "mission_type": 3,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 41776.834,
+      "done": false
+    },
+    {
+      "aircraft_id": 4,
+      "input_id": 9,
+      "mission_id": 900000744,
+      "mission_type": 3,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 33566.879,
+      "done": false
+    },
+    {
+      "aircraft_id": 4,
+      "input_id": 10,
+      "mission_id": 900000745,
+      "mission_type": 6,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 176841.783,
+      "done": false
+    },
+    {
+      "aircraft_id": 4,
+      "input_id": 11,
+      "mission_id": 900000746,
+      "mission_type": 6,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 431287.346,
+      "done": false
+    },
+    {
+      "aircraft_id": 5,
+      "input_id": 1,
+      "mission_id": 900000747,
+      "mission_type": 6,
+      "coverage_enabled": true,
+      "coverage_percent": 100,
+      "covered_area_m2": 329973.055,
+      "planned_area_m2": 329973.055,
+      "done": true
+    },
+    {
+      "aircraft_id": 5,
+      "input_id": 1,
+      "mission_id": 900000852,
+      "mission_type": 6,
+      "coverage_enabled": true,
+      "coverage_percent": 100,
+      "covered_area_m2": 329973.055,
+      "planned_area_m2": 329973.055,
+      "done": true
+    },
+    {
+      "aircraft_id": 5,
+      "input_id": 1,
+      "mission_id": 900000940,
+      "mission_type": 6,
+      "coverage_enabled": true,
+      "coverage_percent": 92,
+      "covered_area_m2": 302433.657,
+      "planned_area_m2": 329973.055,
+      "done": false
+    },
+    {
+      "aircraft_id": 5,
+      "input_id": 2,
+      "mission_id": 900000941,
+      "mission_type": 6,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 122305.898,
+      "done": false
+    },
+    {
+      "aircraft_id": 5,
+      "input_id": 3,
+      "mission_id": 900000942,
+      "mission_type": 3,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 49222.607,
+      "done": false
+    },
+    {
+      "aircraft_id": 5,
+      "input_id": 3,
+      "mission_id": 900000943,
+      "mission_type": 3,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 68098.671,
+      "done": false
+    },
+    {
+      "aircraft_id": 5,
+      "input_id": 4,
+      "mission_id": 900000944,
+      "mission_type": 6,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 663488.631,
+      "done": false
+    },
+    {
+      "aircraft_id": 5,
+      "input_id": 5,
+      "mission_id": 900000945,
+      "mission_type": 3,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 51277.8,
+      "done": false
+    },
+    {
+      "aircraft_id": 5,
+      "input_id": 5,
+      "mission_id": 900000946,
+      "mission_type": 3,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 37003.075,
+      "done": false
+    },
+    {
+      "aircraft_id": 5,
+      "input_id": 6,
+      "mission_id": 900000947,
+      "mission_type": 6,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 162691.747,
+      "done": false
+    },
+    {
+      "aircraft_id": 5,
+      "input_id": 7,
+      "mission_id": 900000948,
+      "mission_type": 3,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 214643.692,
+      "done": false
+    },
+    {
+      "aircraft_id": 5,
+      "input_id": 7,
+      "mission_id": 900000949,
+      "mission_type": 3,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 238063.994,
+      "done": false
+    },
+    {
+      "aircraft_id": 5,
+      "input_id": 7,
+      "mission_id": 900000950,
+      "mission_type": 3,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 186811.443,
+      "done": false
+    },
+    {
+      "aircraft_id": 5,
+      "input_id": 7,
+      "mission_id": 900000951,
+      "mission_type": 3,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 165723.517,
+      "done": false
+    },
+    {
+      "aircraft_id": 5,
+      "input_id": 8,
+      "mission_id": 900000952,
+      "mission_type": 6,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 162691.747,
+      "done": false
+    },
+    {
+      "aircraft_id": 5,
+      "input_id": 9,
+      "mission_id": 900000953,
+      "mission_type": 3,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 46013.82,
+      "done": false
+    },
+    {
+      "aircraft_id": 5,
+      "input_id": 9,
+      "mission_id": 900000954,
+      "mission_type": 3,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 43929.159,
+      "done": false
+    },
+    {
+      "aircraft_id": 5,
+      "input_id": 10,
+      "mission_id": 900000955,
+      "mission_type": 6,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 176841.88,
+      "done": false
+    },
+    {
+      "aircraft_id": 5,
+      "input_id": 11,
+      "mission_id": 900000956,
+      "mission_type": 6,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 431273.997,
+      "done": false
+    },
+    {
+      "aircraft_id": 6,
+      "input_id": 1,
+      "mission_id": 900000764,
+      "mission_type": 6,
+      "coverage_enabled": true,
+      "coverage_percent": 100,
+      "covered_area_m2": 329972.312,
+      "planned_area_m2": 329972.916,
+      "done": false
+    },
+    {
+      "aircraft_id": 6,
+      "input_id": 2,
+      "mission_id": 900000765,
+      "mission_type": 6,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 122306.997,
+      "done": false
+    },
+    {
+      "aircraft_id": 6,
+      "input_id": 3,
+      "mission_id": 900000766,
+      "mission_type": 3,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 98176.646,
+      "done": false
+    },
+    {
+      "aircraft_id": 6,
+      "input_id": 3,
+      "mission_id": 900000767,
+      "mission_type": 3,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 61160.94,
+      "done": false
+    },
+    {
+      "aircraft_id": 6,
+      "input_id": 4,
+      "mission_id": 900000768,
+      "mission_type": 6,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 663514.516,
+      "done": false
+    },
+    {
+      "aircraft_id": 6,
+      "input_id": 5,
+      "mission_id": 900000769,
+      "mission_type": 3,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 20433.879,
+      "done": false
+    },
+    {
+      "aircraft_id": 6,
+      "input_id": 5,
+      "mission_id": 900000770,
+      "mission_type": 3,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 12334.006,
+      "done": false
+    },
+    {
+      "aircraft_id": 6,
+      "input_id": 6,
+      "mission_id": 900000771,
+      "mission_type": 6,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 162690.97,
+      "done": false
+    },
+    {
+      "aircraft_id": 6,
+      "input_id": 7,
+      "mission_id": 900000772,
+      "mission_type": 3,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 67796.712,
+      "done": false
+    },
+    {
+      "aircraft_id": 6,
+      "input_id": 7,
+      "mission_id": 900000773,
+      "mission_type": 3,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 84343.359,
+      "done": false
+    },
+    {
+      "aircraft_id": 6,
+      "input_id": 7,
+      "mission_id": 900000774,
+      "mission_type": 3,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 320376.371,
+      "done": false
+    },
+    {
+      "aircraft_id": 6,
+      "input_id": 7,
+      "mission_id": 900000775,
+      "mission_type": 3,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 197739.708,
+      "done": false
+    },
+    {
+      "aircraft_id": 6,
+      "input_id": 8,
+      "mission_id": 900000776,
+      "mission_type": 6,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 162692.524,
+      "done": false
+    },
+    {
+      "aircraft_id": 6,
+      "input_id": 9,
+      "mission_id": 900000777,
+      "mission_type": 3,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 29332.491,
+      "done": false
+    },
+    {
+      "aircraft_id": 6,
+      "input_id": 9,
+      "mission_id": 900000778,
+      "mission_type": 3,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 34274.027,
+      "done": false
+    },
+    {
+      "aircraft_id": 6,
+      "input_id": 10,
+      "mission_id": 900000779,
+      "mission_type": 6,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 176841.977,
+      "done": false
+    },
+    {
+      "aircraft_id": 6,
+      "input_id": 11,
+      "mission_id": 900000780,
+      "mission_type": 6,
+      "coverage_enabled": true,
+      "coverage_percent": 0,
+      "covered_area_m2": 0.0,
+      "planned_area_m2": 431260.646,
+      "done": false
+    }
+  ]
+}

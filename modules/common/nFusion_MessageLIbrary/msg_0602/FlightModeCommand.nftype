@@ -1,0 +1,19 @@
+uint flightMode:
+ - 길이 : 4
+ - min : 0
+ - Max : 9
+ - unit : N/A
+ - 비고 : 비행모드
+ - enum : 0=Not Used, 1=자동이륙(Not Used), 2=자동착륙(Not Used), 3=통제권이양지 이동, 4=전술집결지 이동, 5=RTB, 6=편대비행, 7=경로이동비행, 8=점항법비행, 9=표적추적비행
+
+PathFollowing pathFollowing:
+ - 비고 : FlightMode가 7일 경우 사용
+
+TargetTracking targetTracking:
+ - 비고 : FlightMode가 9일 경우 사용
+
+LoiterProperty loiterProperty:
+ - 비고 : FlightMode가 8일 경우 사용
+
+CommonType.FormationInfo formationInfo:
+ - 비고 : FlightMode가 6일 경우 사용

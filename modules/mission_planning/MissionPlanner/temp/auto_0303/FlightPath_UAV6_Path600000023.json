@@ -1,0 +1,885 @@
+{
+  "timestamp": 826331827447,
+  "Source": "MMR",
+  "pathID": 600000023,
+  "aircraftID": 6,
+  "isFormationFlight": false,
+  "waypointList": [
+    {
+      "waypointID": 1043,
+      "coordinate": {
+        "latitude": 38.320969,
+        "longitude": 127.47305,
+        "altitude": 912
+      },
+      "speed": 27.78,
+      "eta": 2500,
+      "ecf": 1.0,
+      "nextWaypointID": 1044,
+      "waypointPassType": 1,
+      "filmingProperty": {
+        "fieldOfView": 1.8,
+        "sensorType": 1,
+        "operationMode": 1,
+        "coordinateOrientation": {
+          "coordinate": {
+            "latitude": 38.31770068196402,
+            "longitude": 127.46056181325237,
+            "altitude": 0
+          }
+        }
+      },
+      "isDone": false
+    },
+    {
+      "waypointID": 1044,
+      "coordinate": {
+        "latitude": 38.32721085634167,
+        "longitude": 127.49631658818767,
+        "altitude": 1077
+      },
+      "speed": 27.78,
+      "eta": 0,
+      "ecf": 1.0,
+      "nextWaypointID": 0,
+      "waypointPassType": 1,
+      "filmingProperty": {
+        "fieldOfView": 1.8,
+        "sensorType": 1,
+        "operationMode": 2,
+        "lineSearch": {
+          "coordinateList": [
+            {
+              "latitude": 38.31770068196402,
+              "longitude": 127.46056181325237,
+              "altitude": 463
+            },
+            {
+              "latitude": 38.318611,
+              "longitude": 127.460288,
+              "altitude": 428
+            },
+            {
+              "latitude": 38.31952202461854,
+              "longitude": 127.46001509297271,
+              "altitude": 392
+            },
+            {
+              "latitude": 38.31968671447309,
+              "longitude": 127.46043119678211,
+              "altitude": 401
+            },
+            {
+              "latitude": 38.318727,
+              "longitude": 127.460719,
+              "altitude": 428
+            },
+            {
+              "latitude": 38.317767174966235,
+              "longitude": 127.46100739323445,
+              "altitude": 455
+            },
+            {
+              "latitude": 38.31783366796844,
+              "longitude": 127.46145297321652,
+              "altitude": 441
+            },
+            {
+              "latitude": 38.318843,
+              "longitude": 127.46115,
+              "altitude": 432
+            },
+            {
+              "latitude": 38.31985140432764,
+              "longitude": 127.46084730059152,
+              "altitude": 424
+            },
+            {
+              "latitude": 38.3200160941822,
+              "longitude": 127.46126340440092,
+              "altitude": 436
+            },
+            {
+              "latitude": 38.318958,
+              "longitude": 127.461581,
+              "altitude": 435
+            },
+            {
+              "latitude": 38.31790016097065,
+              "longitude": 127.46189855319861,
+              "altitude": 434
+            },
+            {
+              "latitude": 38.31796665397286,
+              "longitude": 127.46234413318068,
+              "altitude": 434
+            },
+            {
+              "latitude": 38.319074,
+              "longitude": 127.462012,
+              "altitude": 444
+            },
+            {
+              "latitude": 38.32018078403675,
+              "longitude": 127.46167950821034,
+              "altitude": 455
+            },
+            {
+              "latitude": 38.3203454738913,
+              "longitude": 127.46209561201974,
+              "altitude": 466
+            },
+            {
+              "latitude": 38.319189,
+              "longitude": 127.462443,
+              "altitude": 457
+            },
+            {
+              "latitude": 38.318033146975075,
+              "longitude": 127.46278971316275,
+              "altitude": 448
+            },
+            {
+              "latitude": 38.318099639977284,
+              "longitude": 127.46323529314483,
+              "altitude": 457
+            },
+            {
+              "latitude": 38.319305,
+              "longitude": 127.462874,
+              "altitude": 470
+            },
+            {
+              "latitude": 38.32051016374585,
+              "longitude": 127.46251171582915,
+              "altitude": 483
+            },
+            {
+              "latitude": 38.3206748536004,
+              "longitude": 127.46292781963855,
+              "altitude": 503
+            },
+            {
+              "latitude": 38.31942,
+              "longitude": 127.463304,
+              "altitude": 490
+            },
+            {
+              "latitude": 38.31816613297949,
+              "longitude": 127.4636808731269,
+              "altitude": 476
+            },
+            {
+              "latitude": 38.3182326259817,
+              "longitude": 127.46412645310899,
+              "altitude": 474
+            },
+            {
+              "latitude": 38.319536,
+              "longitude": 127.463735,
+              "altitude": 504
+            },
+            {
+              "latitude": 38.32083954345495,
+              "longitude": 127.46334392344797,
+              "altitude": 533
+            },
+            {
+              "latitude": 38.3210042333095,
+              "longitude": 127.46376002725736,
+              "altitude": 552
+            },
+            {
+              "latitude": 38.319652,
+              "longitude": 127.464166,
+              "altitude": 508
+            },
+            {
+              "latitude": 38.318299118983916,
+              "longitude": 127.46457203309106,
+              "altitude": 465
+            },
+            {
+              "latitude": 38.318365611986124,
+              "longitude": 127.46501761307313,
+              "altitude": 477
+            },
+            {
+              "latitude": 38.319767,
+              "longitude": 127.464597,
+              "altitude": 525
+            },
+            {
+              "latitude": 38.32116892316405,
+              "longitude": 127.46417613106678,
+              "altitude": 573
+            },
+            {
+              "latitude": 38.3213336130186,
+              "longitude": 127.46459223487618,
+              "altitude": 583
+            },
+            {
+              "latitude": 38.319883,
+              "longitude": 127.465028,
+              "altitude": 531
+            },
+            {
+              "latitude": 38.31843210498833,
+              "longitude": 127.46546319305521,
+              "altitude": 479
+            },
+            {
+              "latitude": 38.31849859799054,
+              "longitude": 127.46590877303728,
+              "altitude": 472
+            },
+            {
+              "latitude": 38.319998,
+              "longitude": 127.465459,
+              "altitude": 522
+            },
+            {
+              "latitude": 38.32149830287315,
+              "longitude": 127.46500833868559,
+              "altitude": 573
+            },
+            {
+              "latitude": 38.3216629927277,
+              "longitude": 127.46542444249499,
+              "altitude": 569
+            },
+            {
+              "latitude": 38.320114,
+              "longitude": 127.465889,
+              "altitude": 516
+            },
+            {
+              "latitude": 38.31856509099275,
+              "longitude": 127.46635435301936,
+              "altitude": 463
+            },
+            {
+              "latitude": 38.318631583994964,
+              "longitude": 127.46679993300144,
+              "altitude": 436
+            },
+            {
+              "latitude": 38.32023,
+              "longitude": 127.46632,
+              "altitude": 494
+            },
+            {
+              "latitude": 38.32182768258225,
+              "longitude": 127.4658405463044,
+              "altitude": 552
+            },
+            {
+              "latitude": 38.3219923724368,
+              "longitude": 127.4662566501138,
+              "altitude": 535
+            },
+            {
+              "latitude": 38.320345,
+              "longitude": 127.466751,
+              "altitude": 474
+            },
+            {
+              "latitude": 38.31869807699717,
+              "longitude": 127.46724551298351,
+              "altitude": 413
+            },
+            {
+              "latitude": 38.31876456999938,
+              "longitude": 127.4676910929656,
+              "altitude": 400
+            },
+            {
+              "latitude": 38.320461,
+              "longitude": 127.467182,
+              "altitude": 457
+            },
+            {
+              "latitude": 38.32215706229135,
+              "longitude": 127.46667275392322,
+              "altitude": 514
+            },
+            {
+              "latitude": 38.3223217521459,
+              "longitude": 127.46708885773262,
+              "altitude": 491
+            },
+            {
+              "latitude": 38.320576,
+              "longitude": 127.467613,
+              "altitude": 440
+            },
+            {
+              "latitude": 38.31883106300159,
+              "longitude": 127.46813667294767,
+              "altitude": 389
+            },
+            {
+              "latitude": 38.318897556003805,
+              "longitude": 127.46858225292974,
+              "altitude": 407
+            },
+            {
+              "latitude": 38.320692,
+              "longitude": 127.468044,
+              "altitude": 438
+            },
+            {
+              "latitude": 38.32248644200046,
+              "longitude": 127.46750496154203,
+              "altitude": 468
+            },
+            {
+              "latitude": 38.32265113185501,
+              "longitude": 127.46792106535143,
+              "altitude": 452
+            },
+            {
+              "latitude": 38.320808,
+              "longitude": 127.468474,
+              "altitude": 433
+            },
+            {
+              "latitude": 38.31896404900601,
+              "longitude": 127.46902783291182,
+              "altitude": 414
+            },
+            {
+              "latitude": 38.31903054200822,
+              "longitude": 127.46947341289389,
+              "altitude": 401
+            },
+            {
+              "latitude": 38.320923,
+              "longitude": 127.468905,
+              "altitude": 416
+            },
+            {
+              "latitude": 38.32281582170956,
+              "longitude": 127.46833716916085,
+              "altitude": 430
+            },
+            {
+              "latitude": 38.32298051156411,
+              "longitude": 127.46875327297025,
+              "altitude": 419
+            },
+            {
+              "latitude": 38.321039,
+              "longitude": 127.469336,
+              "altitude": 408
+            },
+            {
+              "latitude": 38.31909703501043,
+              "longitude": 127.46991899287598,
+              "altitude": 396
+            },
+            {
+              "latitude": 38.31916352801264,
+              "longitude": 127.47036457285805,
+              "altitude": 381
+            },
+            {
+              "latitude": 38.321154,
+              "longitude": 127.469767,
+              "altitude": 393
+            },
+            {
+              "latitude": 38.32314520141866,
+              "longitude": 127.46916937677966,
+              "altitude": 405
+            },
+            {
+              "latitude": 38.32330989127321,
+              "longitude": 127.46958548058906,
+              "altitude": 397
+            },
+            {
+              "latitude": 38.32127,
+              "longitude": 127.470198,
+              "altitude": 390
+            },
+            {
+              "latitude": 38.31923002101485,
+              "longitude": 127.47081015284012,
+              "altitude": 383
+            },
+            {
+              "latitude": 38.31929651401706,
+              "longitude": 127.4712557328222,
+              "altitude": 377
+            },
+            {
+              "latitude": 38.321386,
+              "longitude": 127.470629,
+              "altitude": 381
+            },
+            {
+              "latitude": 38.32347458112776,
+              "longitude": 127.47000158439847,
+              "altitude": 385
+            },
+            {
+              "latitude": 38.32363927098231,
+              "longitude": 127.47041768820787,
+              "altitude": 392
+            },
+            {
+              "latitude": 38.321501,
+              "longitude": 127.47106,
+              "altitude": 381
+            },
+            {
+              "latitude": 38.31936300701927,
+              "longitude": 127.47170131280427,
+              "altitude": 370
+            },
+            {
+              "latitude": 38.31942950002148,
+              "longitude": 127.47214689278636,
+              "altitude": 365
+            },
+            {
+              "latitude": 38.321617,
+              "longitude": 127.47149,
+              "altitude": 380
+            },
+            {
+              "latitude": 38.32380396083686,
+              "longitude": 127.47083379201729,
+              "altitude": 395
+            },
+            {
+              "latitude": 38.32396865069141,
+              "longitude": 127.47124989582669,
+              "altitude": 410
+            },
+            {
+              "latitude": 38.321732,
+              "longitude": 127.471921,
+              "altitude": 392
+            },
+            {
+              "latitude": 38.31949599302369,
+              "longitude": 127.47259247276843,
+              "altitude": 373
+            },
+            {
+              "latitude": 38.3195624860259,
+              "longitude": 127.4730380527505,
+              "altitude": 377
+            },
+            {
+              "latitude": 38.321848,
+              "longitude": 127.472352,
+              "altitude": 392
+            },
+            {
+              "latitude": 38.32413334054596,
+              "longitude": 127.4716659996361,
+              "altitude": 407
+            },
+            {
+              "latitude": 38.32429803040051,
+              "longitude": 127.4720821034455,
+              "altitude": 414
+            },
+            {
+              "latitude": 38.321964,
+              "longitude": 127.472783,
+              "altitude": 396
+            },
+            {
+              "latitude": 38.31962897902811,
+              "longitude": 127.47348363273258,
+              "altitude": 378
+            },
+            {
+              "latitude": 38.31969547203032,
+              "longitude": 127.47392921271465,
+              "altitude": 363
+            },
+            {
+              "latitude": 38.322079,
+              "longitude": 127.473214,
+              "altitude": 394
+            },
+            {
+              "latitude": 38.32446272025506,
+              "longitude": 127.47249820725492,
+              "altitude": 424
+            },
+            {
+              "latitude": 38.32462741010961,
+              "longitude": 127.47291431106432,
+              "altitude": 425
+            },
+            {
+              "latitude": 38.322195,
+              "longitude": 127.473645,
+              "altitude": 385
+            },
+            {
+              "latitude": 38.319761965032534,
+              "longitude": 127.47437479269674,
+              "altitude": 345
+            },
+            {
+              "latitude": 38.31982845803474,
+              "longitude": 127.4748203726788,
+              "altitude": 325
+            },
+            {
+              "latitude": 38.32231,
+              "longitude": 127.474075,
+              "altitude": 381
+            },
+            {
+              "latitude": 38.324792099964164,
+              "longitude": 127.47333041487373,
+              "altitude": 437
+            },
+            {
+              "latitude": 38.32495678981872,
+              "longitude": 127.47374651868313,
+              "altitude": 423
+            },
+            {
+              "latitude": 38.322426,
+              "longitude": 127.474506,
+              "altitude": 368
+            },
+            {
+              "latitude": 38.31989495103695,
+              "longitude": 127.47526595266088,
+              "altitude": 313
+            },
+            {
+              "latitude": 38.31996144403916,
+              "longitude": 127.47571153264296,
+              "altitude": 296
+            },
+            {
+              "latitude": 38.322541,
+              "longitude": 127.474937,
+              "altitude": 354
+            },
+            {
+              "latitude": 38.32512147967327,
+              "longitude": 127.47416262249254,
+              "altitude": 411
+            },
+            {
+              "latitude": 38.32528616952782,
+              "longitude": 127.47457872630194,
+              "altitude": 388
+            },
+            {
+              "latitude": 38.322657,
+              "longitude": 127.475368,
+              "altitude": 339
+            },
+            {
+              "latitude": 38.32002793704137,
+              "longitude": 127.47615711262503,
+              "altitude": 290
+            },
+            {
+              "latitude": 38.32009443004358,
+              "longitude": 127.47660269260712,
+              "altitude": 296
+            },
+            {
+              "latitude": 38.322773,
+              "longitude": 127.475799,
+              "altitude": 336
+            },
+            {
+              "latitude": 38.32545085938237,
+              "longitude": 127.47499483011136,
+              "altitude": 377
+            },
+            {
+              "latitude": 38.32561554923692,
+              "longitude": 127.47541093392076,
+              "altitude": 355
+            },
+            {
+              "latitude": 38.322888,
+              "longitude": 127.47623,
+              "altitude": 332
+            },
+            {
+              "latitude": 38.32016092304579,
+              "longitude": 127.47704827258919,
+              "altitude": 309
+            },
+            {
+              "latitude": 38.320227416048,
+              "longitude": 127.47749385257126,
+              "altitude": 320
+            },
+            {
+              "latitude": 38.323004,
+              "longitude": 127.47666,
+              "altitude": 333
+            },
+            {
+              "latitude": 38.32578023909147,
+              "longitude": 127.47582703773017,
+              "altitude": 346
+            },
+            {
+              "latitude": 38.32594492894602,
+              "longitude": 127.47624314153957,
+              "altitude": 328
+            },
+            {
+              "latitude": 38.323119,
+              "longitude": 127.477091,
+              "altitude": 338
+            },
+            {
+              "latitude": 38.32029390905021,
+              "longitude": 127.47793943255334,
+              "altitude": 347
+            },
+            {
+              "latitude": 38.32036040205242,
+              "longitude": 127.47838501253541,
+              "altitude": 351
+            },
+            {
+              "latitude": 38.323235,
+              "longitude": 127.477522,
+              "altitude": 338
+            },
+            {
+              "latitude": 38.32610961880057,
+              "longitude": 127.47665924534898,
+              "altitude": 325
+            },
+            {
+              "latitude": 38.32627430865512,
+              "longitude": 127.47707534915838,
+              "altitude": 325
+            },
+            {
+              "latitude": 38.323351,
+              "longitude": 127.477953,
+              "altitude": 334
+            },
+            {
+              "latitude": 38.32042689505463,
+              "longitude": 127.4788305925175,
+              "altitude": 344
+            },
+            {
+              "latitude": 38.32049338805684,
+              "longitude": 127.47927617249957,
+              "altitude": 322
+            },
+            {
+              "latitude": 38.323466,
+              "longitude": 127.478384,
+              "altitude": 330
+            },
+            {
+              "latitude": 38.32643899850967,
+              "longitude": 127.4774914529678,
+              "altitude": 337
+            },
+            {
+              "latitude": 38.32660368836422,
+              "longitude": 127.4779075567772,
+              "altitude": 355
+            },
+            {
+              "latitude": 38.323582,
+              "longitude": 127.478815,
+              "altitude": 338
+            },
+            {
+              "latitude": 38.32055988105905,
+              "longitude": 127.47972175248164,
+              "altitude": 320
+            },
+            {
+              "latitude": 38.320626374061256,
+              "longitude": 127.48016733246372,
+              "altitude": 300
+            },
+            {
+              "latitude": 38.323697,
+              "longitude": 127.479246,
+              "altitude": 336
+            },
+            {
+              "latitude": 38.32676837821877,
+              "longitude": 127.47832366058661,
+              "altitude": 372
+            },
+            {
+              "latitude": 38.32693306807332,
+              "longitude": 127.47873976439601,
+              "altitude": 381
+            },
+            {
+              "latitude": 38.323813,
+              "longitude": 127.479676,
+              "altitude": 345
+            },
+            {
+              "latitude": 38.32069286706347,
+              "longitude": 127.48061291244579,
+              "altitude": 309
+            },
+            {
+              "latitude": 38.32075936006568,
+              "longitude": 127.48105849242786,
+              "altitude": 317
+            },
+            {
+              "latitude": 38.323929,
+              "longitude": 127.480107,
+              "altitude": 355
+            },
+            {
+              "latitude": 38.32709775792787,
+              "longitude": 127.47915586820542,
+              "altitude": 393
+            },
+            {
+              "latitude": 38.327262447782424,
+              "longitude": 127.47957197201482,
+              "altitude": 423
+            },
+            {
+              "latitude": 38.324044,
+              "longitude": 127.480538,
+              "altitude": 376
+            },
+            {
+              "latitude": 38.32082585306789,
+              "longitude": 127.48150407240995,
+              "altitude": 328
+            },
+            {
+              "latitude": 38.320892346070096,
+              "longitude": 127.48194965239202,
+              "altitude": 349
+            },
+            {
+              "latitude": 38.32416,
+              "longitude": 127.480969,
+              "altitude": 391
+            },
+            {
+              "latitude": 38.32742713763698,
+              "longitude": 127.47998807582424,
+              "altitude": 433
+            },
+            {
+              "latitude": 38.32759182749153,
+              "longitude": 127.48040417963364,
+              "altitude": 453
+            },
+            {
+              "latitude": 38.324275,
+              "longitude": 127.4814,
+              "altitude": 405
+            },
+            {
+              "latitude": 38.32095883907231,
+              "longitude": 127.4823952323741,
+              "altitude": 357
+            },
+            {
+              "latitude": 38.32102533207452,
+              "longitude": 127.48284081235617,
+              "altitude": 368
+            },
+            {
+              "latitude": 38.324391,
+              "longitude": 127.481831,
+              "altitude": 416
+            },
+            {
+              "latitude": 38.32775651734608,
+              "longitude": 127.48082028344305,
+              "altitude": 463
+            },
+            {
+              "latitude": 38.32792120720063,
+              "longitude": 127.48123638725245,
+              "altitude": 486
+            },
+            {
+              "latitude": 38.324507,
+              "longitude": 127.482261,
+              "altitude": 430
+            },
+            {
+              "latitude": 38.32109182507673,
+              "longitude": 127.48328639233824,
+              "altitude": 373
+            },
+            {
+              "latitude": 38.321158318078936,
+              "longitude": 127.48373197232033,
+              "altitude": 381
+            },
+            {
+              "latitude": 38.324622,
+              "longitude": 127.482692,
+              "altitude": 432
+            },
+            {
+              "latitude": 38.32808589705518,
+              "longitude": 127.48165249106187,
+              "altitude": 483
+            },
+            {
+              "latitude": 38.32825058690973,
+              "longitude": 127.48206859487127,
+              "altitude": 496
+            },
+            {
+              "latitude": 38.324738,
+              "longitude": 127.483123,
+              "altitude": 448
+            },
+            {
+              "latitude": 38.32122481108115,
+              "longitude": 127.4841775523024,
+              "altitude": 399
+            },
+            {
+              "latitude": 38.32129130408336,
+              "longitude": 127.48462313228448,
+              "altitude": 409
+            },
+            {
+              "latitude": 38.324853,
+              "longitude": 127.483554,
+              "altitude": 458
+            },
+            {
+              "latitude": 38.32841527676428,
+              "longitude": 127.48248469868068,
+              "altitude": 507
+            }
+          ],
+          "searchSpeed": 555.05,
+          "interpolationPoints": 3
+        }
+      },
+      "isDone": false
+    }
+  ]
+}

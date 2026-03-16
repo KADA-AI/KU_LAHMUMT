@@ -1,0 +1,367 @@
+# -*- coding: utf-8 -*-
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, Callable
+
+from modules.common import path_deviation_replan_store
+from modules.monitoring.logic.init_replan import allocate_mission_plan_ids, collect_input_mission_ids
+from modules.monitoring.logic.mission_update import load_db_json
+from modules.monitoring.logic.turn_radius_monitor import AircraftTurnView, TRACKED_AIRCRAFT_IDS
+
+
+REPLAN_LEVEL = 3
+REPLAN_REASON = "000 무인기 경로 미추종으로 인한 재계획"
+OPTION_NAME = "비행/촬영"
+TRIGGER_TYPE = "pathDeviation"
+
+
+def _coerce_int(value: object | None) -> int | None:
+    try:
+        if value is None:
+            return None
+        return int(value)
+    except Exception:
+        return None
+
+
+def _coerce_float(value: object | None) -> float | None:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except Exception:
+        return None
+
+
+def _extract_waypoint_id(value: object | None) -> int | None:
+    if isinstance(value, dict):
+        return _coerce_int(
+            value.get("waypointID")
+            or value.get("WaypointID")
+            or value.get("waypointId")
+        )
+    return _coerce_int(value)
+
+
+@dataclass(frozen=True)
+class SourceMissionArtifacts:
+    input_mission_package_id: int | None
+    input_mission_ids: list[int]
+    individual_mission_package_id: int
+    individual_mission_id: int
+    path_id: int
+
+
+@dataclass
+class PathDeviationReplanState:
+    last_trigger_key_by_aircraft: dict[int, tuple[int, int, int, int]] = field(default_factory=dict)
+
+
+class PathDeviationReplanCoordinator:
+    def __init__(
+        self,
+        *,
+        now_fn: Callable[[], int],
+        logger: Callable[[str], None] | None = None,
+    ) -> None:
+        self._now_ms = now_fn
+        self._log = logger
+        self._state = PathDeviationReplanState()
+
+    def on_turn_monitor_views(
+        self,
+        views: dict[int, AircraftTurnView] | None,
+        *,
+        enabled: bool = True,
+        system_mode: int | None,
+        current_mission_plan_id: int | None,
+        aircraft_filter: Callable[[int], bool] | None = None,
+    ) -> tuple[list[dict[str, Any]], list[str]]:
+        logs: list[str] = []
+        if not enabled:
+            return [], logs
+        if system_mode not in (3, 4):
+            return [], logs
+        if current_mission_plan_id is None:
+            return [], logs
+        if not isinstance(views, dict):
+            return [], logs
+
+        payloads: list[dict[str, Any]] = []
+        for aircraft_id in TRACKED_AIRCRAFT_IDS:
+            view = views.get(int(aircraft_id))
+            if view is None:
+                continue
+            if not self._is_trigger_view(view):
+                continue
+            if aircraft_filter is not None:
+                try:
+                    if not bool(aircraft_filter(int(aircraft_id))):
+                        continue
+                except Exception:
+                    continue
+
+            current_waypoint_id = _coerce_int(view.current_waypoint_id)
+            if current_waypoint_id is None or current_waypoint_id <= 0:
+                continue
+
+            artifacts = self._resolve_source_artifacts(
+                source_plan_id=int(current_mission_plan_id),
+                aircraft_id=int(aircraft_id),
+                current_waypoint_id=int(current_waypoint_id),
+            )
+            if artifacts is None:
+                logs.append(
+                    f"[0401] path-deviation replan skipped: source artifacts unresolved "
+                    f"(aircraftID={aircraft_id}, currentWP={current_waypoint_id})"
+                )
+                continue
+
+            alt_waypoint_id = _coerce_int(view.alternate_waypoint_id)
+            alt_coordinate = dict(view.alternate_waypoint_coordinate or {})
+            alt_lat = _coerce_float(alt_coordinate.get("latitude"))
+            alt_lon = _coerce_float(alt_coordinate.get("longitude"))
+            if alt_waypoint_id is None or alt_waypoint_id <= 0 or alt_lat is None or alt_lon is None:
+                continue
+
+            trigger_key = (
+                int(current_mission_plan_id),
+                int(aircraft_id),
+                int(current_waypoint_id),
+                int(alt_waypoint_id),
+            )
+            if self._state.last_trigger_key_by_aircraft.get(int(aircraft_id)) == trigger_key:
+                continue
+
+            mission_plan_ids = allocate_mission_plan_ids(1)
+            if not mission_plan_ids:
+                logs.append(
+                    f"[0401] path-deviation replan skipped: MissionPlanID allocation failed "
+                    f"(aircraftID={aircraft_id})"
+                )
+                continue
+
+            mission_plan_id = int(mission_plan_ids[0])
+            now_ts = int(self._now_ms())
+            payload = self._build_payload(
+                timestamp_ms=now_ts,
+                mission_plan_id=mission_plan_id,
+                source_plan_id=int(current_mission_plan_id),
+                aircraft_id=int(aircraft_id),
+                current_waypoint_id=int(current_waypoint_id),
+                alt_waypoint_id=int(alt_waypoint_id),
+                alt_latitude=alt_lat,
+                alt_longitude=alt_lon,
+                view=view,
+                artifacts=artifacts,
+                replan_reason=REPLAN_REASON,
+            )
+            detail_payload = dict(payload.get("replanDetail") or {})
+            self._persist_detail(int(mission_plan_id), detail_payload)
+            payloads.append(payload)
+            self._state.last_trigger_key_by_aircraft[int(aircraft_id)] = trigger_key
+            logs.append(
+                f"[0401] path-deviation replan prepared "
+                f"(aircraftID={aircraft_id}, currentWP={current_waypoint_id}, altWP={alt_waypoint_id}, "
+                f"missionPlanID={mission_plan_id}, reason={REPLAN_REASON})"
+            )
+
+        return payloads, logs
+
+    def _build_payload(
+        self,
+        *,
+        timestamp_ms: int,
+        mission_plan_id: int,
+        source_plan_id: int,
+        aircraft_id: int,
+        current_waypoint_id: int,
+        alt_waypoint_id: int,
+        alt_latitude: float,
+        alt_longitude: float,
+        view: AircraftTurnView,
+        artifacts: SourceMissionArtifacts,
+        replan_reason: str,
+    ) -> dict[str, Any]:
+        input_ids = list(artifacts.input_mission_ids or [])
+        if not input_ids:
+            input_ids = [0]
+        detail_payload = {
+            "trigger": "0401",
+            "triggerType": TRIGGER_TYPE,
+            "sourceMissionPlanID": int(source_plan_id),
+            "aircraftID": int(aircraft_id),
+            "inputMissionPackageID": int(artifacts.input_mission_package_id)
+            if artifacts.input_mission_package_id is not None
+            else None,
+            "individualMissionPackageID": int(artifacts.individual_mission_package_id),
+            "individualMissionID": int(artifacts.individual_mission_id),
+            "pathID": int(artifacts.path_id),
+            "currentWaypointID": int(current_waypoint_id),
+            "alternateWaypointID": int(alt_waypoint_id),
+            "alternateWaypointCoordinate": {
+                "latitude": float(alt_latitude),
+                "longitude": float(alt_longitude),
+            },
+            "alternateWaypointEtaS": _coerce_float(view.alternate_waypoint_eta_s),
+            "spiralState": str(view.spiral_state or "none"),
+            "spiralAngleDeg": _coerce_float(view.spiral_angle_deg),
+            "idealRadiusM": _coerce_float(view.ideal_radius_m),
+            "actualRadiusM": _coerce_float(view.actual_radius_m),
+            "turnRateDegS": _coerce_float(view.turn_rate_dps),
+            "selectedReplanReason": str(replan_reason),
+            "timestamp": int(timestamp_ms),
+        }
+        option_block = [
+            {
+                "optionID": 1,
+                "optionName": OPTION_NAME,
+                "missionPlanID": int(mission_plan_id),
+            }
+        ]
+        return {
+            "timestamp": int(timestamp_ms),
+            "source": "MSM",
+            "inputMissionPackageID": int(artifacts.input_mission_package_id)
+            if artifacts.input_mission_package_id is not None
+            else 0,
+            "replanRequestTime": {"replanRequestTimestamp": int(timestamp_ms)},
+            "replanLevel": int(REPLAN_LEVEL),
+            "replanRequest": str(replan_reason),
+            "replanReason": str(replan_reason),
+            "inputMissionIDList": [{"inputMissionID": int(mission_id)} for mission_id in input_ids],
+            "individualMissionIDList": [
+                {"individualMissionID": int(artifacts.individual_mission_id)}
+            ],
+            "pendingOptionList": option_block,
+            "replanDetail": detail_payload,
+        }
+
+    def _is_trigger_view(self, view: AircraftTurnView) -> bool:
+        if not isinstance(view, AircraftTurnView):
+            return False
+        if not view.has_data or not view.is_turning:
+            return False
+        if str(view.spiral_state or "none") != "warning":
+            return False
+        current_waypoint_id = _coerce_int(view.current_waypoint_id)
+        if current_waypoint_id is None or current_waypoint_id <= 0:
+            return False
+        alt_waypoint_id = _coerce_int(view.alternate_waypoint_id)
+        if alt_waypoint_id is None or alt_waypoint_id <= 0:
+            return False
+        coordinate = view.alternate_waypoint_coordinate
+        if not isinstance(coordinate, dict):
+            return False
+        return (
+            _coerce_float(coordinate.get("latitude")) is not None
+            and _coerce_float(coordinate.get("longitude")) is not None
+        )
+
+    def _resolve_source_artifacts(
+        self,
+        *,
+        source_plan_id: int,
+        aircraft_id: int,
+        current_waypoint_id: int,
+    ) -> SourceMissionArtifacts | None:
+        plan_data = load_db_json("MissionPlan", source_plan_id)
+        if not plan_data:
+            return None
+
+        input_mission_package_id = _coerce_int(
+            plan_data.get("inputMissionPackageID")
+            or plan_data.get("InputMissionPackageID")
+            or plan_data.get("inputMissionPackageId")
+        )
+
+        aircraft_entry = None
+        for entry in plan_data.get("aircraftList") or []:
+            if not isinstance(entry, dict):
+                continue
+            if _coerce_int(entry.get("aircraftID")) == int(aircraft_id):
+                aircraft_entry = entry
+                break
+        if not isinstance(aircraft_entry, dict):
+            return None
+
+        imp_id = _coerce_int(
+            aircraft_entry.get("individualMissionPackageID")
+            or aircraft_entry.get("individualMissionPlanPackageID")
+            or aircraft_entry.get("individualMissionPackageId")
+        )
+        if imp_id is None or imp_id <= 0:
+            return None
+
+        imp_data = load_db_json("IndividualMissionPlan", imp_id)
+        mission_list = imp_data.get("individualMissionList") or []
+        for mission in mission_list:
+            if not isinstance(mission, dict):
+                continue
+            path_id = _coerce_int(mission.get("pathID"))
+            individual_mission_id = _coerce_int(mission.get("individualMissionID"))
+            if path_id is None or path_id <= 0 or individual_mission_id is None or individual_mission_id <= 0:
+                continue
+            fp_data = load_db_json("FlightPath", path_id)
+            waypoint_list = fp_data.get("waypointList") or fp_data.get("lahWaypointList") or []
+            waypoint_ids = [
+                int(wp_id)
+                for wp_id in (_extract_waypoint_id((waypoint or {}).get("waypointID")) for waypoint in waypoint_list)
+                if wp_id is not None and int(wp_id) > 0
+            ]
+            if int(current_waypoint_id) not in waypoint_ids:
+                continue
+
+            related = mission.get("relatedMission") or {}
+            input_mission_ids: list[int] = []
+            related_input_mission_id = _coerce_int(
+                related.get("inputMissionID")
+                if isinstance(related, dict)
+                else None
+            )
+            if related_input_mission_id is not None and related_input_mission_id > 0:
+                input_mission_ids = [int(related_input_mission_id)]
+            if not input_mission_ids and input_mission_package_id is not None:
+                input_plan = load_db_json("InputMissionPlan", input_mission_package_id)
+                seen_ids: set[int] = set()
+                for item in input_plan.get("inputMissionList") or []:
+                    if not isinstance(item, dict):
+                        continue
+                    mission_id = _coerce_int(item.get("inputMissionID"))
+                    if mission_id is None or mission_id <= 0 or mission_id in seen_ids:
+                        continue
+                    if bool(item.get("isDone")):
+                        continue
+                    seen_ids.add(int(mission_id))
+                    input_mission_ids.append(int(mission_id))
+            if not input_mission_ids:
+                input_mission_ids = [int(value) for value in collect_input_mission_ids() if _coerce_int(value)]
+            if not input_mission_ids:
+                input_mission_ids = [0]
+
+            return SourceMissionArtifacts(
+                input_mission_package_id=input_mission_package_id,
+                input_mission_ids=input_mission_ids,
+                individual_mission_package_id=int(imp_id),
+                individual_mission_id=int(individual_mission_id),
+                path_id=int(path_id),
+            )
+        return None
+
+    def _persist_detail(self, mission_plan_id: int, detail_payload: dict[str, Any]) -> None:
+        try:
+            detail_path = path_deviation_replan_store.save_detail(int(mission_plan_id), detail_payload)
+        except Exception:
+            detail_path = None
+        try:
+            path_deviation_replan_store.save_event(
+                "monitor_dispatch",
+                {
+                    "missionPlanID": int(mission_plan_id),
+                    "detailPath": str(detail_path) if detail_path is not None else None,
+                    "detail": dict(detail_payload or {}),
+                },
+            )
+        except Exception:
+            pass

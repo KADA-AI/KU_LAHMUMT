@@ -1,0 +1,218 @@
+{
+  "timestamp": 826618620337,
+  "Source": "MMR",
+  "individualMissionPackageID": 800000030,
+  "aircraftID": 5,
+  "individualMissionList": [
+    {
+      "individualMissionID": 900000197,
+      "isDone": false,
+      "relatedMission": {
+        "relatedMissionType": 1,
+        "inputMissionID": 7,
+        "priorMissionID": 0
+      },
+      "individualMissionInfo": {
+        "individualMissionType": 3,
+        "patternType": 3,
+        "autoZoomIn": true,
+        "BEARING": 100.11095205348624,
+        "SPEED": 140.0,
+        "FOV": 5.6,
+        "SEP": 620.0,
+        "MOVE_BEARING": 100.11095205348624,
+        "areaList": [
+          {
+            "isHole": false,
+            "coordinateList": [
+              {
+                "latitude": 37.918045434044274,
+                "longitude": 128.17040596058646,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.917151134044275,
+                "longitude": 128.1940119605865,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.91180966306268,
+                "longitude": 128.19228954900254,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.914835122090615,
+                "longitude": 128.17078341063055,
+                "altitude": 0
+              }
+            ]
+          }
+        ],
+        "targetID": null
+      },
+      "pathID": 500000032
+    },
+    {
+      "individualMissionID": 900000198,
+      "isDone": false,
+      "relatedMission": {
+        "relatedMissionType": 1,
+        "inputMissionID": 8,
+        "priorMissionID": 0
+      },
+      "individualMissionInfo": {
+        "individualMissionType": 6,
+        "patternType": 8,
+        "autoZoomIn": true,
+        "BEARING": 151.4719824512173,
+        "SPEED": 125.0,
+        "FOV": 3.8,
+        "SEP": 465.0,
+        "MOVE_BEARING": 151.4719824512173,
+        "lineList": [
+          {
+            "width": 500.0,
+            "coordinateList": [
+              {
+                "latitude": 37.9102675247004,
+                "longitude": 128.18734084878483,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.90640652470041,
+                "longitude": 128.19000084878482,
+                "altitude": 0
+              }
+            ]
+          }
+        ],
+        "targetID": null
+      },
+      "pathID": 500000033
+    },
+    {
+      "individualMissionID": 900000199,
+      "isDone": false,
+      "relatedMission": {
+        "relatedMissionType": 1,
+        "inputMissionID": 9,
+        "priorMissionID": 0
+      },
+      "individualMissionInfo": {
+        "individualMissionType": 3,
+        "patternType": 3,
+        "autoZoomIn": true,
+        "BEARING": 169.7255491718778,
+        "SPEED": 140.0,
+        "FOV": 5.6,
+        "SEP": 620.0,
+        "MOVE_BEARING": 169.7255491718778,
+        "areaList": [
+          {
+            "isHole": false,
+            "coordinateList": [
+              {
+                "latitude": 37.9021147171153,
+                "longitude": 128.19160580176484,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.90208608606472,
+                "longitude": 128.1889673403348,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.9054641763115,
+                "longitude": 128.188191261121,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.9053982171153,
+                "longitude": 128.1921668017648,
+                "altitude": 0
+              }
+            ]
+          }
+        ],
+        "targetID": null
+      },
+      "pathID": 500000034
+    },
+    {
+      "individualMissionID": 900000200,
+      "isDone": false,
+      "relatedMission": {
+        "relatedMissionType": 1,
+        "inputMissionID": 10,
+        "priorMissionID": 0
+      },
+      "individualMissionInfo": {
+        "individualMissionType": 6,
+        "patternType": 8,
+        "autoZoomIn": true,
+        "BEARING": 187.77845818591962,
+        "SPEED": 125.0,
+        "FOV": 3.8,
+        "SEP": 465.0,
+        "MOVE_BEARING": 187.77845818591962,
+        "lineList": [
+          {
+            "width": 500.0,
+            "coordinateList": [
+              {
+                "latitude": 37.90193606875368,
+                "longitude": 128.1911199717106,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.89719906875368,
+                "longitude": 128.1902999717106,
+                "altitude": 0
+              }
+            ]
+          }
+        ],
+        "targetID": null
+      },
+      "pathID": 500000035
+    },
+    {
+      "individualMissionID": 900000201,
+      "isDone": false,
+      "relatedMission": {
+        "relatedMissionType": 1,
+        "inputMissionID": 11,
+        "priorMissionID": 0
+      },
+      "individualMissionInfo": {
+        "individualMissionType": 6,
+        "patternType": 8,
+        "autoZoomIn": true,
+        "BEARING": 246.4739859618319,
+        "SPEED": 125.0,
+        "FOV": 3.8,
+        "SEP": 465.0,
+        "MOVE_BEARING": 246.4739859618319,
+        "lineList": [
+          {
+            "width": 500.0,
+            "coordinateList": [
+              {
+                "latitude": 37.89544396848916,
+                "longitude": 128.18861625959,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.890804968489164,
+                "longitude": 128.17511625959,
+                "altitude": 0
+              }
+            ]
+          }
+        ],
+        "targetID": null
+      },
+      "pathID": 500000036
+    }
+  ]
+}

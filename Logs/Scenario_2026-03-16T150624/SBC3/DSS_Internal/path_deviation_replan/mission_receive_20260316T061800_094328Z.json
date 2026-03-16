@@ -1,0 +1,34 @@
+{
+  "reason": "000 무인기 경로 미추종으로 인한 재계획",
+  "replanLevel": 3,
+  "planIDs": [
+    700000110
+  ],
+  "detailTriggerType": null,
+  "storeDetailLoaded": true,
+  "detailKeys": [
+    "actualRadiusM",
+    "aircraftID",
+    "alternateWaypointCoordinate",
+    "alternateWaypointEtaS",
+    "alternateWaypointID",
+    "currentWaypointID",
+    "idealRadiusM",
+    "individualMissionID",
+    "individualMissionPackageID",
+    "inputMissionPackageID",
+    "missionPlanID",
+    "pathID",
+    "savedAt",
+    "selectedReplanReason",
+    "sourceMissionPlanID",
+    "spiralAngleDeg",
+    "spiralState",
+    "timestamp",
+    "trigger",
+    "triggerType",
+    "turnRateDegS"
+  ],
+  "savedAt": "2026-03-16T06:18:00.095432+00:00",
+  "stage": "mission_receive"
+}

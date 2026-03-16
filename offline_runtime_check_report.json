@@ -1,0 +1,93 @@
+{
+  "timestamp_utc": "2026-03-11T06:56:00.666612+00:00",
+  "python_executable": "C:\\Users\\rain9\\Desktop\\LAH_MUMT\\branNew\\miniconda3\\envs\\lahku\\python.exe",
+  "project_root": "C:\\Users\\rain9\\Desktop\\LAH_MUMT\\branNew\\DSS_KU",
+  "overall_pass": false,
+  "results": [
+    {
+      "name": "Base imports",
+      "ok": true,
+      "required": true,
+      "detail": "ok",
+      "data": {
+        "imports": {
+          "numpy": "2.2.6",
+          "PIL": "11.3.0",
+          "affine": "2.4.0",
+          "shapely": "2.1.1",
+          "rasterio": "1.4.3",
+          "folium": "0.20.0",
+          "PyQt5": "unknown",
+          "pythonnet": "unknown"
+        }
+      }
+    },
+    {
+      "name": "pythonnet coreclr load",
+      "ok": true,
+      "required": true,
+      "detail": "ok",
+      "data": {
+        "runtime": "coreclr loaded"
+      }
+    },
+    {
+      "name": "osgeo.gdal import",
+      "ok": true,
+      "required": true,
+      "detail": "ok",
+      "data": {
+        "gdal_version_info": "3120000"
+      }
+    },
+    {
+      "name": "GeoTIFF resource open",
+      "ok": true,
+      "required": true,
+      "detail": "ok",
+      "data": {
+        "tif_count": 14,
+        "sample_file": "C:\\Users\\rain9\\Desktop\\LAH_MUMT\\branNew\\DSS_KU\\resource\\Hongik_48km.tif",
+        "sample_size": [
+          1611,
+          1606
+        ],
+        "sample_band_count": 1
+      }
+    },
+    {
+      "name": "Attack assistance subprocess",
+      "ok": true,
+      "required": true,
+      "detail": "ok",
+      "data": {
+        "attack_point": {
+          "lat": 37.56259936151982,
+          "lon": 126.95960905155327,
+          "alt_m": 88
+        },
+        "distance_friendly_m": 962.3346488526051,
+        "distance_enemy_m": 2807.7840685086007,
+        "raster_sources_count": 2
+      }
+    },
+    {
+      "name": "Simulation web offline assets",
+      "ok": false,
+      "required": true,
+      "detail": "RuntimeError: map_style.js offline label guard is missing",
+      "data": {}
+    },
+    {
+      "name": "nFusion settings sanity",
+      "ok": true,
+      "required": true,
+      "detail": "ok",
+      "data": {
+        "network_address": "192.168.20.",
+        "local_domain": 10,
+        "external_domain": 100
+      }
+    }
+  ]
+}

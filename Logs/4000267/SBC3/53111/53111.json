@@ -1,0 +1,2697 @@
+[
+  {
+    "presenceVector": 0,
+    "timestamp": 826454556022,
+    "missionPlanID": 800000262,
+    "aircraftID": 1,
+    "missionSegmentN": 4,
+    "missionSegmentList": [
+      {
+        "missionSegmentID": 70000001,
+        "isDone": false,
+        "missionSegmentType": 1,
+        "individualMissionListN": 1,
+        "individualMissionList": [
+          {
+            "individualMissionID": 900001714,
+            "isDone": false,
+            "waypointListN": 6,
+            "waypointList": [
+              {
+                "waypointID": 1,
+                "coordinate": {
+                  "latitude": 38.044697,
+                  "longitude": 127.26591,
+                  "altitude": 745
+                },
+                "speed": 15.0,
+                "eta": 0,
+                "nextWaypointID": 2,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 2,
+                "coordinate": {
+                  "latitude": 38.079487,
+                  "longitude": 127.273506,
+                  "altitude": 745
+                },
+                "speed": 15.0,
+                "eta": 261212,
+                "nextWaypointID": 3,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 3,
+                "coordinate": {
+                  "latitude": 38.103954,
+                  "longitude": 127.26411,
+                  "altitude": 745
+                },
+                "speed": 15.0,
+                "eta": 450399,
+                "nextWaypointID": 4,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 4,
+                "coordinate": {
+                  "latitude": 38.10429,
+                  "longitude": 127.26424,
+                  "altitude": 745
+                },
+                "speed": 15.0,
+                "eta": 453004,
+                "nextWaypointID": 5,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 5,
+                "coordinate": {
+                  "latitude": 38.104897,
+                  "longitude": 127.2648,
+                  "altitude": 745
+                },
+                "speed": 15.0,
+                "eta": 458587,
+                "nextWaypointID": 6,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 6,
+                "coordinate": {
+                  "latitude": 38.127556,
+                  "longitude": 127.29192,
+                  "altitude": 745
+                },
+                "speed": 15.0,
+                "eta": 689306,
+                "nextWaypointID": 0,
+                "hovering": 30,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "missionSegmentID": 70000002,
+        "isDone": false,
+        "missionSegmentType": 2,
+        "individualMissionListN": 1,
+        "individualMissionList": [
+          {
+            "individualMissionID": 900001715,
+            "isDone": false,
+            "waypointListN": 1,
+            "waypointList": [
+              {
+                "waypointID": 7,
+                "coordinate": {
+                  "latitude": 38.14629,
+                  "longitude": 127.340065,
+                  "altitude": 973
+                },
+                "speed": 15.0,
+                "eta": 0,
+                "nextWaypointID": 0,
+                "hovering": 30,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "missionSegmentID": 70000003,
+        "isDone": false,
+        "missionSegmentType": 1,
+        "individualMissionListN": 1,
+        "individualMissionList": [
+          {
+            "individualMissionID": 900001716,
+            "isDone": false,
+            "waypointListN": 6,
+            "waypointList": [
+              {
+                "waypointID": 8,
+                "coordinate": {
+                  "latitude": 38.12948,
+                  "longitude": 127.347015,
+                  "altitude": 826
+                },
+                "speed": 15.0,
+                "eta": 0,
+                "nextWaypointID": 9,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 9,
+                "coordinate": {
+                  "latitude": 38.093906,
+                  "longitude": 127.38814,
+                  "altitude": 826
+                },
+                "speed": 15.0,
+                "eta": 356439,
+                "nextWaypointID": 10,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 10,
+                "coordinate": {
+                  "latitude": 38.09308,
+                  "longitude": 127.388596,
+                  "altitude": 826
+                },
+                "speed": 15.0,
+                "eta": 363143,
+                "nextWaypointID": 11,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 11,
+                "coordinate": {
+                  "latitude": 38.092476,
+                  "longitude": 127.38862,
+                  "altitude": 826
+                },
+                "speed": 15.0,
+                "eta": 367608,
+                "nextWaypointID": 12,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 12,
+                "coordinate": {
+                  "latitude": 38.05611,
+                  "longitude": 127.382675,
+                  "altitude": 826
+                },
+                "speed": 15.0,
+                "eta": 638919,
+                "nextWaypointID": 13,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 13,
+                "coordinate": {
+                  "latitude": 38.03522,
+                  "longitude": 127.36631,
+                  "altitude": 826
+                },
+                "speed": 15.0,
+                "eta": 820706,
+                "nextWaypointID": 0,
+                "hovering": 30,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "missionSegmentID": 70000004,
+        "isDone": false,
+        "missionSegmentType": 1,
+        "individualMissionListN": 1,
+        "individualMissionList": [
+          {
+            "individualMissionID": 900001717,
+            "isDone": false,
+            "waypointListN": 3,
+            "waypointList": [
+              {
+                "waypointID": 14,
+                "coordinate": {
+                  "latitude": 38.032528,
+                  "longitude": 127.36565,
+                  "altitude": 825
+                },
+                "speed": 15.0,
+                "eta": 0,
+                "nextWaypointID": 15,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 15,
+                "coordinate": {
+                  "latitude": 38.027534,
+                  "longitude": 127.314514,
+                  "altitude": 825
+                },
+                "speed": 15.0,
+                "eta": 301526,
+                "nextWaypointID": 16,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 16,
+                "coordinate": {
+                  "latitude": 38.039417,
+                  "longitude": 127.27649,
+                  "altitude": 825
+                },
+                "speed": 15.0,
+                "eta": 540794,
+                "nextWaypointID": 0,
+                "hovering": 30,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "presenceVector": 0,
+    "timestamp": 826454556096,
+    "missionPlanID": 800000263,
+    "aircraftID": 2,
+    "missionSegmentN": 4,
+    "missionSegmentList": [
+      {
+        "missionSegmentID": 70000001,
+        "isDone": false,
+        "missionSegmentType": 1,
+        "individualMissionListN": 1,
+        "individualMissionList": [
+          {
+            "individualMissionID": 900001718,
+            "isDone": false,
+            "waypointListN": 6,
+            "waypointList": [
+              {
+                "waypointID": 17,
+                "coordinate": {
+                  "latitude": 38.045597,
+                  "longitude": 127.26591,
+                  "altitude": 756
+                },
+                "speed": 15.0,
+                "eta": 0,
+                "nextWaypointID": 18,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 18,
+                "coordinate": {
+                  "latitude": 38.080387,
+                  "longitude": 127.273506,
+                  "altitude": 756
+                },
+                "speed": 15.0,
+                "eta": 261212,
+                "nextWaypointID": 19,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 19,
+                "coordinate": {
+                  "latitude": 38.10485,
+                  "longitude": 127.26411,
+                  "altitude": 756
+                },
+                "speed": 15.0,
+                "eta": 450399,
+                "nextWaypointID": 20,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 20,
+                "coordinate": {
+                  "latitude": 38.10519,
+                  "longitude": 127.26424,
+                  "altitude": 756
+                },
+                "speed": 15.0,
+                "eta": 453004,
+                "nextWaypointID": 21,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 21,
+                "coordinate": {
+                  "latitude": 38.105797,
+                  "longitude": 127.2648,
+                  "altitude": 756
+                },
+                "speed": 15.0,
+                "eta": 458587,
+                "nextWaypointID": 22,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 22,
+                "coordinate": {
+                  "latitude": 38.128456,
+                  "longitude": 127.29192,
+                  "altitude": 756
+                },
+                "speed": 15.0,
+                "eta": 689306,
+                "nextWaypointID": 0,
+                "hovering": 30,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "missionSegmentID": 70000002,
+        "isDone": false,
+        "missionSegmentType": 2,
+        "individualMissionListN": 1,
+        "individualMissionList": [
+          {
+            "individualMissionID": 900001719,
+            "isDone": false,
+            "waypointListN": 1,
+            "waypointList": [
+              {
+                "waypointID": 23,
+                "coordinate": {
+                  "latitude": 38.14719,
+                  "longitude": 127.340065,
+                  "altitude": 1016
+                },
+                "speed": 15.0,
+                "eta": 0,
+                "nextWaypointID": 0,
+                "hovering": 30,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "missionSegmentID": 70000003,
+        "isDone": false,
+        "missionSegmentType": 1,
+        "individualMissionListN": 1,
+        "individualMissionList": [
+          {
+            "individualMissionID": 900001720,
+            "isDone": false,
+            "waypointListN": 6,
+            "waypointList": [
+              {
+                "waypointID": 24,
+                "coordinate": {
+                  "latitude": 38.13038,
+                  "longitude": 127.347015,
+                  "altitude": 835
+                },
+                "speed": 15.0,
+                "eta": 0,
+                "nextWaypointID": 25,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 25,
+                "coordinate": {
+                  "latitude": 38.094807,
+                  "longitude": 127.38814,
+                  "altitude": 835
+                },
+                "speed": 15.0,
+                "eta": 356439,
+                "nextWaypointID": 26,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 26,
+                "coordinate": {
+                  "latitude": 38.09398,
+                  "longitude": 127.388596,
+                  "altitude": 835
+                },
+                "speed": 15.0,
+                "eta": 363143,
+                "nextWaypointID": 27,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 27,
+                "coordinate": {
+                  "latitude": 38.093376,
+                  "longitude": 127.38862,
+                  "altitude": 835
+                },
+                "speed": 15.0,
+                "eta": 367608,
+                "nextWaypointID": 28,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 28,
+                "coordinate": {
+                  "latitude": 38.057007,
+                  "longitude": 127.382675,
+                  "altitude": 835
+                },
+                "speed": 15.0,
+                "eta": 638919,
+                "nextWaypointID": 29,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 29,
+                "coordinate": {
+                  "latitude": 38.03612,
+                  "longitude": 127.36631,
+                  "altitude": 835
+                },
+                "speed": 15.0,
+                "eta": 820706,
+                "nextWaypointID": 0,
+                "hovering": 30,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "missionSegmentID": 70000004,
+        "isDone": false,
+        "missionSegmentType": 1,
+        "individualMissionListN": 1,
+        "individualMissionList": [
+          {
+            "individualMissionID": 900001721,
+            "isDone": false,
+            "waypointListN": 3,
+            "waypointList": [
+              {
+                "waypointID": 30,
+                "coordinate": {
+                  "latitude": 38.03343,
+                  "longitude": 127.36565,
+                  "altitude": 877
+                },
+                "speed": 15.0,
+                "eta": 0,
+                "nextWaypointID": 31,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 31,
+                "coordinate": {
+                  "latitude": 38.028435,
+                  "longitude": 127.314514,
+                  "altitude": 877
+                },
+                "speed": 15.0,
+                "eta": 301526,
+                "nextWaypointID": 32,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 32,
+                "coordinate": {
+                  "latitude": 38.040318,
+                  "longitude": 127.27649,
+                  "altitude": 877
+                },
+                "speed": 15.0,
+                "eta": 540794,
+                "nextWaypointID": 0,
+                "hovering": 30,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "presenceVector": 0,
+    "timestamp": 826454556158,
+    "missionPlanID": 800000264,
+    "aircraftID": 3,
+    "missionSegmentN": 4,
+    "missionSegmentList": [
+      {
+        "missionSegmentID": 70000001,
+        "isDone": false,
+        "missionSegmentType": 1,
+        "individualMissionListN": 1,
+        "individualMissionList": [
+          {
+            "individualMissionID": 900001722,
+            "isDone": false,
+            "waypointListN": 6,
+            "waypointList": [
+              {
+                "waypointID": 33,
+                "coordinate": {
+                  "latitude": 38.043797,
+                  "longitude": 127.26591,
+                  "altitude": 766
+                },
+                "speed": 15.0,
+                "eta": 0,
+                "nextWaypointID": 34,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 34,
+                "coordinate": {
+                  "latitude": 38.078587,
+                  "longitude": 127.273506,
+                  "altitude": 766
+                },
+                "speed": 15.0,
+                "eta": 261212,
+                "nextWaypointID": 35,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 35,
+                "coordinate": {
+                  "latitude": 38.103054,
+                  "longitude": 127.26411,
+                  "altitude": 766
+                },
+                "speed": 15.0,
+                "eta": 450399,
+                "nextWaypointID": 36,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 36,
+                "coordinate": {
+                  "latitude": 38.10339,
+                  "longitude": 127.26424,
+                  "altitude": 766
+                },
+                "speed": 15.0,
+                "eta": 453004,
+                "nextWaypointID": 37,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 37,
+                "coordinate": {
+                  "latitude": 38.103996,
+                  "longitude": 127.2648,
+                  "altitude": 766
+                },
+                "speed": 15.0,
+                "eta": 458587,
+                "nextWaypointID": 38,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 38,
+                "coordinate": {
+                  "latitude": 38.126656,
+                  "longitude": 127.29192,
+                  "altitude": 766
+                },
+                "speed": 15.0,
+                "eta": 689306,
+                "nextWaypointID": 0,
+                "hovering": 30,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "missionSegmentID": 70000002,
+        "isDone": false,
+        "missionSegmentType": 2,
+        "individualMissionListN": 1,
+        "individualMissionList": [
+          {
+            "individualMissionID": 900001723,
+            "isDone": false,
+            "waypointListN": 1,
+            "waypointList": [
+              {
+                "waypointID": 39,
+                "coordinate": {
+                  "latitude": 38.14539,
+                  "longitude": 127.340065,
+                  "altitude": 964
+                },
+                "speed": 15.0,
+                "eta": 0,
+                "nextWaypointID": 0,
+                "hovering": 30,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "missionSegmentID": 70000003,
+        "isDone": false,
+        "missionSegmentType": 1,
+        "individualMissionListN": 1,
+        "individualMissionList": [
+          {
+            "individualMissionID": 900001724,
+            "isDone": false,
+            "waypointListN": 6,
+            "waypointList": [
+              {
+                "waypointID": 40,
+                "coordinate": {
+                  "latitude": 38.12858,
+                  "longitude": 127.347015,
+                  "altitude": 844
+                },
+                "speed": 15.0,
+                "eta": 0,
+                "nextWaypointID": 41,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 41,
+                "coordinate": {
+                  "latitude": 38.09301,
+                  "longitude": 127.38814,
+                  "altitude": 844
+                },
+                "speed": 15.0,
+                "eta": 356439,
+                "nextWaypointID": 42,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 42,
+                "coordinate": {
+                  "latitude": 38.09218,
+                  "longitude": 127.388596,
+                  "altitude": 844
+                },
+                "speed": 15.0,
+                "eta": 363143,
+                "nextWaypointID": 43,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 43,
+                "coordinate": {
+                  "latitude": 38.091576,
+                  "longitude": 127.38862,
+                  "altitude": 844
+                },
+                "speed": 15.0,
+                "eta": 367608,
+                "nextWaypointID": 44,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 44,
+                "coordinate": {
+                  "latitude": 38.05521,
+                  "longitude": 127.382675,
+                  "altitude": 844
+                },
+                "speed": 15.0,
+                "eta": 638919,
+                "nextWaypointID": 45,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 45,
+                "coordinate": {
+                  "latitude": 38.034325,
+                  "longitude": 127.36631,
+                  "altitude": 844
+                },
+                "speed": 15.0,
+                "eta": 820706,
+                "nextWaypointID": 0,
+                "hovering": 30,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "missionSegmentID": 70000004,
+        "isDone": false,
+        "missionSegmentType": 1,
+        "individualMissionListN": 1,
+        "individualMissionList": [
+          {
+            "individualMissionID": 900001725,
+            "isDone": false,
+            "waypointListN": 3,
+            "waypointList": [
+              {
+                "waypointID": 46,
+                "coordinate": {
+                  "latitude": 38.031628,
+                  "longitude": 127.36565,
+                  "altitude": 854
+                },
+                "speed": 15.0,
+                "eta": 0,
+                "nextWaypointID": 47,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 47,
+                "coordinate": {
+                  "latitude": 38.026634,
+                  "longitude": 127.314514,
+                  "altitude": 854
+                },
+                "speed": 15.0,
+                "eta": 301526,
+                "nextWaypointID": 48,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 48,
+                "coordinate": {
+                  "latitude": 38.03852,
+                  "longitude": 127.27649,
+                  "altitude": 854
+                },
+                "speed": 15.0,
+                "eta": 540794,
+                "nextWaypointID": 0,
+                "hovering": 30,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "presenceVector": 0,
+    "timestamp": 826454781127,
+    "missionPlanID": 800000262,
+    "aircraftID": 1,
+    "missionSegmentN": 4,
+    "missionSegmentList": [
+      {
+        "missionSegmentID": 70000001,
+        "isDone": false,
+        "missionSegmentType": 1,
+        "individualMissionListN": 1,
+        "individualMissionList": [
+          {
+            "individualMissionID": 900001714,
+            "isDone": false,
+            "waypointListN": 6,
+            "waypointList": [
+              {
+                "waypointID": 1,
+                "coordinate": {
+                  "latitude": 38.044697,
+                  "longitude": 127.26591,
+                  "altitude": 745
+                },
+                "speed": 15.0,
+                "eta": 0,
+                "nextWaypointID": 2,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 2,
+                "coordinate": {
+                  "latitude": 38.079487,
+                  "longitude": 127.273506,
+                  "altitude": 745
+                },
+                "speed": 15.0,
+                "eta": 261212,
+                "nextWaypointID": 3,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 3,
+                "coordinate": {
+                  "latitude": 38.103954,
+                  "longitude": 127.26411,
+                  "altitude": 745
+                },
+                "speed": 15.0,
+                "eta": 450399,
+                "nextWaypointID": 4,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 4,
+                "coordinate": {
+                  "latitude": 38.10429,
+                  "longitude": 127.26424,
+                  "altitude": 745
+                },
+                "speed": 15.0,
+                "eta": 453004,
+                "nextWaypointID": 5,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 5,
+                "coordinate": {
+                  "latitude": 38.104897,
+                  "longitude": 127.2648,
+                  "altitude": 745
+                },
+                "speed": 15.0,
+                "eta": 458587,
+                "nextWaypointID": 6,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 6,
+                "coordinate": {
+                  "latitude": 38.127556,
+                  "longitude": 127.29192,
+                  "altitude": 745
+                },
+                "speed": 15.0,
+                "eta": 689306,
+                "nextWaypointID": 0,
+                "hovering": 30,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "missionSegmentID": 70000002,
+        "isDone": false,
+        "missionSegmentType": 2,
+        "individualMissionListN": 1,
+        "individualMissionList": [
+          {
+            "individualMissionID": 900001715,
+            "isDone": false,
+            "waypointListN": 1,
+            "waypointList": [
+              {
+                "waypointID": 7,
+                "coordinate": {
+                  "latitude": 38.14629,
+                  "longitude": 127.340065,
+                  "altitude": 973
+                },
+                "speed": 15.0,
+                "eta": 0,
+                "nextWaypointID": 0,
+                "hovering": 30,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "missionSegmentID": 70000003,
+        "isDone": false,
+        "missionSegmentType": 1,
+        "individualMissionListN": 1,
+        "individualMissionList": [
+          {
+            "individualMissionID": 900001716,
+            "isDone": false,
+            "waypointListN": 6,
+            "waypointList": [
+              {
+                "waypointID": 8,
+                "coordinate": {
+                  "latitude": 38.12948,
+                  "longitude": 127.347015,
+                  "altitude": 826
+                },
+                "speed": 15.0,
+                "eta": 0,
+                "nextWaypointID": 9,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 9,
+                "coordinate": {
+                  "latitude": 38.093906,
+                  "longitude": 127.38814,
+                  "altitude": 826
+                },
+                "speed": 15.0,
+                "eta": 356439,
+                "nextWaypointID": 10,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 10,
+                "coordinate": {
+                  "latitude": 38.09308,
+                  "longitude": 127.388596,
+                  "altitude": 826
+                },
+                "speed": 15.0,
+                "eta": 363143,
+                "nextWaypointID": 11,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 11,
+                "coordinate": {
+                  "latitude": 38.092476,
+                  "longitude": 127.38862,
+                  "altitude": 826
+                },
+                "speed": 15.0,
+                "eta": 367608,
+                "nextWaypointID": 12,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 12,
+                "coordinate": {
+                  "latitude": 38.05611,
+                  "longitude": 127.382675,
+                  "altitude": 826
+                },
+                "speed": 15.0,
+                "eta": 638919,
+                "nextWaypointID": 13,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 13,
+                "coordinate": {
+                  "latitude": 38.03522,
+                  "longitude": 127.36631,
+                  "altitude": 826
+                },
+                "speed": 15.0,
+                "eta": 820706,
+                "nextWaypointID": 0,
+                "hovering": 30,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "missionSegmentID": 70000004,
+        "isDone": false,
+        "missionSegmentType": 1,
+        "individualMissionListN": 1,
+        "individualMissionList": [
+          {
+            "individualMissionID": 900001717,
+            "isDone": false,
+            "waypointListN": 3,
+            "waypointList": [
+              {
+                "waypointID": 14,
+                "coordinate": {
+                  "latitude": 38.032528,
+                  "longitude": 127.36565,
+                  "altitude": 825
+                },
+                "speed": 15.0,
+                "eta": 0,
+                "nextWaypointID": 15,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 15,
+                "coordinate": {
+                  "latitude": 38.027534,
+                  "longitude": 127.314514,
+                  "altitude": 825
+                },
+                "speed": 15.0,
+                "eta": 301526,
+                "nextWaypointID": 16,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 16,
+                "coordinate": {
+                  "latitude": 38.039417,
+                  "longitude": 127.27649,
+                  "altitude": 825
+                },
+                "speed": 15.0,
+                "eta": 540794,
+                "nextWaypointID": 0,
+                "hovering": 30,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "presenceVector": 0,
+    "timestamp": 826454781127,
+    "missionPlanID": 800000262,
+    "aircraftID": 1,
+    "missionSegmentN": 4,
+    "missionSegmentList": [
+      {
+        "missionSegmentID": 70000001,
+        "isDone": false,
+        "missionSegmentType": 1,
+        "individualMissionListN": 1,
+        "individualMissionList": [
+          {
+            "individualMissionID": 900001714,
+            "isDone": false,
+            "waypointListN": 6,
+            "waypointList": [
+              {
+                "waypointID": 1,
+                "coordinate": {
+                  "latitude": 38.044697,
+                  "longitude": 127.26591,
+                  "altitude": 745
+                },
+                "speed": 15.0,
+                "eta": 0,
+                "nextWaypointID": 2,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 2,
+                "coordinate": {
+                  "latitude": 38.079487,
+                  "longitude": 127.273506,
+                  "altitude": 745
+                },
+                "speed": 15.0,
+                "eta": 261212,
+                "nextWaypointID": 3,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 3,
+                "coordinate": {
+                  "latitude": 38.103954,
+                  "longitude": 127.26411,
+                  "altitude": 745
+                },
+                "speed": 15.0,
+                "eta": 450399,
+                "nextWaypointID": 4,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 4,
+                "coordinate": {
+                  "latitude": 38.10429,
+                  "longitude": 127.26424,
+                  "altitude": 745
+                },
+                "speed": 15.0,
+                "eta": 453004,
+                "nextWaypointID": 5,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 5,
+                "coordinate": {
+                  "latitude": 38.104897,
+                  "longitude": 127.2648,
+                  "altitude": 745
+                },
+                "speed": 15.0,
+                "eta": 458587,
+                "nextWaypointID": 6,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 6,
+                "coordinate": {
+                  "latitude": 38.127556,
+                  "longitude": 127.29192,
+                  "altitude": 745
+                },
+                "speed": 15.0,
+                "eta": 689306,
+                "nextWaypointID": 0,
+                "hovering": 30,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "missionSegmentID": 70000002,
+        "isDone": false,
+        "missionSegmentType": 2,
+        "individualMissionListN": 1,
+        "individualMissionList": [
+          {
+            "individualMissionID": 900001715,
+            "isDone": false,
+            "waypointListN": 1,
+            "waypointList": [
+              {
+                "waypointID": 7,
+                "coordinate": {
+                  "latitude": 38.14629,
+                  "longitude": 127.340065,
+                  "altitude": 973
+                },
+                "speed": 15.0,
+                "eta": 0,
+                "nextWaypointID": 0,
+                "hovering": 30,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "missionSegmentID": 70000003,
+        "isDone": false,
+        "missionSegmentType": 1,
+        "individualMissionListN": 1,
+        "individualMissionList": [
+          {
+            "individualMissionID": 900001716,
+            "isDone": false,
+            "waypointListN": 6,
+            "waypointList": [
+              {
+                "waypointID": 8,
+                "coordinate": {
+                  "latitude": 38.12948,
+                  "longitude": 127.347015,
+                  "altitude": 826
+                },
+                "speed": 15.0,
+                "eta": 0,
+                "nextWaypointID": 9,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 9,
+                "coordinate": {
+                  "latitude": 38.093906,
+                  "longitude": 127.38814,
+                  "altitude": 826
+                },
+                "speed": 15.0,
+                "eta": 356439,
+                "nextWaypointID": 10,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 10,
+                "coordinate": {
+                  "latitude": 38.09308,
+                  "longitude": 127.388596,
+                  "altitude": 826
+                },
+                "speed": 15.0,
+                "eta": 363143,
+                "nextWaypointID": 11,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 11,
+                "coordinate": {
+                  "latitude": 38.092476,
+                  "longitude": 127.38862,
+                  "altitude": 826
+                },
+                "speed": 15.0,
+                "eta": 367608,
+                "nextWaypointID": 12,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 12,
+                "coordinate": {
+                  "latitude": 38.05611,
+                  "longitude": 127.382675,
+                  "altitude": 826
+                },
+                "speed": 15.0,
+                "eta": 638919,
+                "nextWaypointID": 13,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 13,
+                "coordinate": {
+                  "latitude": 38.03522,
+                  "longitude": 127.36631,
+                  "altitude": 826
+                },
+                "speed": 15.0,
+                "eta": 820706,
+                "nextWaypointID": 0,
+                "hovering": 30,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "missionSegmentID": 70000004,
+        "isDone": false,
+        "missionSegmentType": 1,
+        "individualMissionListN": 1,
+        "individualMissionList": [
+          {
+            "individualMissionID": 900001717,
+            "isDone": false,
+            "waypointListN": 3,
+            "waypointList": [
+              {
+                "waypointID": 14,
+                "coordinate": {
+                  "latitude": 38.032528,
+                  "longitude": 127.36565,
+                  "altitude": 825
+                },
+                "speed": 15.0,
+                "eta": 0,
+                "nextWaypointID": 15,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 15,
+                "coordinate": {
+                  "latitude": 38.027534,
+                  "longitude": 127.314514,
+                  "altitude": 825
+                },
+                "speed": 15.0,
+                "eta": 301526,
+                "nextWaypointID": 16,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 16,
+                "coordinate": {
+                  "latitude": 38.039417,
+                  "longitude": 127.27649,
+                  "altitude": 825
+                },
+                "speed": 15.0,
+                "eta": 540794,
+                "nextWaypointID": 0,
+                "hovering": 30,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "presenceVector": 0,
+    "timestamp": 826454781129,
+    "missionPlanID": 800000263,
+    "aircraftID": 2,
+    "missionSegmentN": 4,
+    "missionSegmentList": [
+      {
+        "missionSegmentID": 70000001,
+        "isDone": false,
+        "missionSegmentType": 1,
+        "individualMissionListN": 1,
+        "individualMissionList": [
+          {
+            "individualMissionID": 900001718,
+            "isDone": false,
+            "waypointListN": 6,
+            "waypointList": [
+              {
+                "waypointID": 17,
+                "coordinate": {
+                  "latitude": 38.045597,
+                  "longitude": 127.26591,
+                  "altitude": 756
+                },
+                "speed": 15.0,
+                "eta": 0,
+                "nextWaypointID": 18,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 18,
+                "coordinate": {
+                  "latitude": 38.080387,
+                  "longitude": 127.273506,
+                  "altitude": 756
+                },
+                "speed": 15.0,
+                "eta": 261212,
+                "nextWaypointID": 19,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 19,
+                "coordinate": {
+                  "latitude": 38.10485,
+                  "longitude": 127.26411,
+                  "altitude": 756
+                },
+                "speed": 15.0,
+                "eta": 450399,
+                "nextWaypointID": 20,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 20,
+                "coordinate": {
+                  "latitude": 38.10519,
+                  "longitude": 127.26424,
+                  "altitude": 756
+                },
+                "speed": 15.0,
+                "eta": 453004,
+                "nextWaypointID": 21,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 21,
+                "coordinate": {
+                  "latitude": 38.105797,
+                  "longitude": 127.2648,
+                  "altitude": 756
+                },
+                "speed": 15.0,
+                "eta": 458587,
+                "nextWaypointID": 22,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 22,
+                "coordinate": {
+                  "latitude": 38.128456,
+                  "longitude": 127.29192,
+                  "altitude": 756
+                },
+                "speed": 15.0,
+                "eta": 689306,
+                "nextWaypointID": 0,
+                "hovering": 30,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "missionSegmentID": 70000002,
+        "isDone": false,
+        "missionSegmentType": 2,
+        "individualMissionListN": 1,
+        "individualMissionList": [
+          {
+            "individualMissionID": 900001719,
+            "isDone": false,
+            "waypointListN": 1,
+            "waypointList": [
+              {
+                "waypointID": 23,
+                "coordinate": {
+                  "latitude": 38.14719,
+                  "longitude": 127.340065,
+                  "altitude": 1016
+                },
+                "speed": 15.0,
+                "eta": 0,
+                "nextWaypointID": 0,
+                "hovering": 30,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "missionSegmentID": 70000003,
+        "isDone": false,
+        "missionSegmentType": 1,
+        "individualMissionListN": 1,
+        "individualMissionList": [
+          {
+            "individualMissionID": 900001720,
+            "isDone": false,
+            "waypointListN": 6,
+            "waypointList": [
+              {
+                "waypointID": 24,
+                "coordinate": {
+                  "latitude": 38.13038,
+                  "longitude": 127.347015,
+                  "altitude": 835
+                },
+                "speed": 15.0,
+                "eta": 0,
+                "nextWaypointID": 25,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 25,
+                "coordinate": {
+                  "latitude": 38.094807,
+                  "longitude": 127.38814,
+                  "altitude": 835
+                },
+                "speed": 15.0,
+                "eta": 356439,
+                "nextWaypointID": 26,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 26,
+                "coordinate": {
+                  "latitude": 38.09398,
+                  "longitude": 127.388596,
+                  "altitude": 835
+                },
+                "speed": 15.0,
+                "eta": 363143,
+                "nextWaypointID": 27,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 27,
+                "coordinate": {
+                  "latitude": 38.093376,
+                  "longitude": 127.38862,
+                  "altitude": 835
+                },
+                "speed": 15.0,
+                "eta": 367608,
+                "nextWaypointID": 28,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 28,
+                "coordinate": {
+                  "latitude": 38.057007,
+                  "longitude": 127.382675,
+                  "altitude": 835
+                },
+                "speed": 15.0,
+                "eta": 638919,
+                "nextWaypointID": 29,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 29,
+                "coordinate": {
+                  "latitude": 38.03612,
+                  "longitude": 127.36631,
+                  "altitude": 835
+                },
+                "speed": 15.0,
+                "eta": 820706,
+                "nextWaypointID": 0,
+                "hovering": 30,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "missionSegmentID": 70000004,
+        "isDone": false,
+        "missionSegmentType": 1,
+        "individualMissionListN": 1,
+        "individualMissionList": [
+          {
+            "individualMissionID": 900001721,
+            "isDone": false,
+            "waypointListN": 3,
+            "waypointList": [
+              {
+                "waypointID": 30,
+                "coordinate": {
+                  "latitude": 38.03343,
+                  "longitude": 127.36565,
+                  "altitude": 877
+                },
+                "speed": 15.0,
+                "eta": 0,
+                "nextWaypointID": 31,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 31,
+                "coordinate": {
+                  "latitude": 38.028435,
+                  "longitude": 127.314514,
+                  "altitude": 877
+                },
+                "speed": 15.0,
+                "eta": 301526,
+                "nextWaypointID": 32,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 32,
+                "coordinate": {
+                  "latitude": 38.040318,
+                  "longitude": 127.27649,
+                  "altitude": 877
+                },
+                "speed": 15.0,
+                "eta": 540794,
+                "nextWaypointID": 0,
+                "hovering": 30,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "presenceVector": 0,
+    "timestamp": 826454781131,
+    "missionPlanID": 800000264,
+    "aircraftID": 3,
+    "missionSegmentN": 4,
+    "missionSegmentList": [
+      {
+        "missionSegmentID": 70000001,
+        "isDone": false,
+        "missionSegmentType": 1,
+        "individualMissionListN": 1,
+        "individualMissionList": [
+          {
+            "individualMissionID": 900001722,
+            "isDone": false,
+            "waypointListN": 6,
+            "waypointList": [
+              {
+                "waypointID": 33,
+                "coordinate": {
+                  "latitude": 38.043797,
+                  "longitude": 127.26591,
+                  "altitude": 766
+                },
+                "speed": 15.0,
+                "eta": 0,
+                "nextWaypointID": 34,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 34,
+                "coordinate": {
+                  "latitude": 38.078587,
+                  "longitude": 127.273506,
+                  "altitude": 766
+                },
+                "speed": 15.0,
+                "eta": 261212,
+                "nextWaypointID": 35,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 35,
+                "coordinate": {
+                  "latitude": 38.103054,
+                  "longitude": 127.26411,
+                  "altitude": 766
+                },
+                "speed": 15.0,
+                "eta": 450399,
+                "nextWaypointID": 36,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 36,
+                "coordinate": {
+                  "latitude": 38.10339,
+                  "longitude": 127.26424,
+                  "altitude": 766
+                },
+                "speed": 15.0,
+                "eta": 453004,
+                "nextWaypointID": 37,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 37,
+                "coordinate": {
+                  "latitude": 38.103996,
+                  "longitude": 127.2648,
+                  "altitude": 766
+                },
+                "speed": 15.0,
+                "eta": 458587,
+                "nextWaypointID": 38,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 38,
+                "coordinate": {
+                  "latitude": 38.126656,
+                  "longitude": 127.29192,
+                  "altitude": 766
+                },
+                "speed": 15.0,
+                "eta": 689306,
+                "nextWaypointID": 0,
+                "hovering": 30,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "missionSegmentID": 70000002,
+        "isDone": false,
+        "missionSegmentType": 2,
+        "individualMissionListN": 1,
+        "individualMissionList": [
+          {
+            "individualMissionID": 900001723,
+            "isDone": false,
+            "waypointListN": 1,
+            "waypointList": [
+              {
+                "waypointID": 39,
+                "coordinate": {
+                  "latitude": 38.14539,
+                  "longitude": 127.340065,
+                  "altitude": 964
+                },
+                "speed": 15.0,
+                "eta": 0,
+                "nextWaypointID": 0,
+                "hovering": 30,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "missionSegmentID": 70000003,
+        "isDone": false,
+        "missionSegmentType": 1,
+        "individualMissionListN": 1,
+        "individualMissionList": [
+          {
+            "individualMissionID": 900001724,
+            "isDone": false,
+            "waypointListN": 6,
+            "waypointList": [
+              {
+                "waypointID": 40,
+                "coordinate": {
+                  "latitude": 38.12858,
+                  "longitude": 127.347015,
+                  "altitude": 844
+                },
+                "speed": 15.0,
+                "eta": 0,
+                "nextWaypointID": 41,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 41,
+                "coordinate": {
+                  "latitude": 38.09301,
+                  "longitude": 127.38814,
+                  "altitude": 844
+                },
+                "speed": 15.0,
+                "eta": 356439,
+                "nextWaypointID": 42,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 42,
+                "coordinate": {
+                  "latitude": 38.09218,
+                  "longitude": 127.388596,
+                  "altitude": 844
+                },
+                "speed": 15.0,
+                "eta": 363143,
+                "nextWaypointID": 43,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 43,
+                "coordinate": {
+                  "latitude": 38.091576,
+                  "longitude": 127.38862,
+                  "altitude": 844
+                },
+                "speed": 15.0,
+                "eta": 367608,
+                "nextWaypointID": 44,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 44,
+                "coordinate": {
+                  "latitude": 38.05521,
+                  "longitude": 127.382675,
+                  "altitude": 844
+                },
+                "speed": 15.0,
+                "eta": 638919,
+                "nextWaypointID": 45,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 45,
+                "coordinate": {
+                  "latitude": 38.034325,
+                  "longitude": 127.36631,
+                  "altitude": 844
+                },
+                "speed": 15.0,
+                "eta": 820706,
+                "nextWaypointID": 0,
+                "hovering": 30,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "missionSegmentID": 70000004,
+        "isDone": false,
+        "missionSegmentType": 1,
+        "individualMissionListN": 1,
+        "individualMissionList": [
+          {
+            "individualMissionID": 900001725,
+            "isDone": false,
+            "waypointListN": 3,
+            "waypointList": [
+              {
+                "waypointID": 46,
+                "coordinate": {
+                  "latitude": 38.031628,
+                  "longitude": 127.36565,
+                  "altitude": 854
+                },
+                "speed": 15.0,
+                "eta": 0,
+                "nextWaypointID": 47,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 47,
+                "coordinate": {
+                  "latitude": 38.026634,
+                  "longitude": 127.314514,
+                  "altitude": 854
+                },
+                "speed": 15.0,
+                "eta": 301526,
+                "nextWaypointID": 48,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 48,
+                "coordinate": {
+                  "latitude": 38.03852,
+                  "longitude": 127.27649,
+                  "altitude": 854
+                },
+                "speed": 15.0,
+                "eta": 540794,
+                "nextWaypointID": 0,
+                "hovering": 30,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "presenceVector": 0,
+    "timestamp": 826454781170,
+    "missionPlanID": 800000268,
+    "aircraftID": 2,
+    "missionSegmentN": 1,
+    "missionSegmentList": [
+      {
+        "missionSegmentID": 70000001,
+        "isDone": false,
+        "missionSegmentType": 1,
+        "individualMissionListN": 2,
+        "individualMissionList": [
+          {
+            "individualMissionID": 900001759,
+            "isDone": false,
+            "waypointListN": 2,
+            "waypointList": [
+              {
+                "waypointID": 1,
+                "coordinate": {
+                  "latitude": 38.056847,
+                  "longitude": 127.268425,
+                  "altitude": 755
+                },
+                "speed": 30.0,
+                "eta": 0,
+                "nextWaypointID": 2,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 2,
+                "coordinate": {
+                  "latitude": 38.051315,
+                  "longitude": 127.272675,
+                  "altitude": 481
+                },
+                "speed": 30.0,
+                "eta": 0,
+                "nextWaypointID": 0,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 1001,
+                  "weaponType": 1
+                }
+              }
+            ]
+          },
+          {
+            "individualMissionID": 900001760,
+            "isDone": false,
+            "waypointListN": 2,
+            "waypointList": [
+              {
+                "waypointID": 3,
+                "coordinate": {
+                  "latitude": 38.05149,
+                  "longitude": 127.27272,
+                  "altitude": 481
+                },
+                "speed": 30.0,
+                "eta": 0,
+                "nextWaypointID": 4,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 4,
+                "coordinate": {
+                  "latitude": 38.128197,
+                  "longitude": 127.29269,
+                  "altitude": 755
+                },
+                "speed": 30.0,
+                "eta": 0,
+                "nextWaypointID": 0,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "presenceVector": 0,
+    "timestamp": 826454781172,
+    "missionPlanID": 800000264,
+    "aircraftID": 3,
+    "missionSegmentN": 4,
+    "missionSegmentList": [
+      {
+        "missionSegmentID": 70000001,
+        "isDone": false,
+        "missionSegmentType": 1,
+        "individualMissionListN": 1,
+        "individualMissionList": [
+          {
+            "individualMissionID": 900001722,
+            "isDone": false,
+            "waypointListN": 6,
+            "waypointList": [
+              {
+                "waypointID": 33,
+                "coordinate": {
+                  "latitude": 38.043797,
+                  "longitude": 127.26591,
+                  "altitude": 766
+                },
+                "speed": 15.0,
+                "eta": 0,
+                "nextWaypointID": 34,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 34,
+                "coordinate": {
+                  "latitude": 38.078587,
+                  "longitude": 127.273506,
+                  "altitude": 766
+                },
+                "speed": 15.0,
+                "eta": 261212,
+                "nextWaypointID": 35,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 35,
+                "coordinate": {
+                  "latitude": 38.103054,
+                  "longitude": 127.26411,
+                  "altitude": 766
+                },
+                "speed": 15.0,
+                "eta": 450399,
+                "nextWaypointID": 36,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 36,
+                "coordinate": {
+                  "latitude": 38.10339,
+                  "longitude": 127.26424,
+                  "altitude": 766
+                },
+                "speed": 15.0,
+                "eta": 453004,
+                "nextWaypointID": 37,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 37,
+                "coordinate": {
+                  "latitude": 38.103996,
+                  "longitude": 127.2648,
+                  "altitude": 766
+                },
+                "speed": 15.0,
+                "eta": 458587,
+                "nextWaypointID": 38,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 38,
+                "coordinate": {
+                  "latitude": 38.126656,
+                  "longitude": 127.29192,
+                  "altitude": 766
+                },
+                "speed": 15.0,
+                "eta": 689306,
+                "nextWaypointID": 0,
+                "hovering": 30,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "missionSegmentID": 70000002,
+        "isDone": false,
+        "missionSegmentType": 2,
+        "individualMissionListN": 1,
+        "individualMissionList": [
+          {
+            "individualMissionID": 900001723,
+            "isDone": false,
+            "waypointListN": 1,
+            "waypointList": [
+              {
+                "waypointID": 39,
+                "coordinate": {
+                  "latitude": 38.14539,
+                  "longitude": 127.340065,
+                  "altitude": 964
+                },
+                "speed": 15.0,
+                "eta": 0,
+                "nextWaypointID": 0,
+                "hovering": 30,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "missionSegmentID": 70000003,
+        "isDone": false,
+        "missionSegmentType": 1,
+        "individualMissionListN": 1,
+        "individualMissionList": [
+          {
+            "individualMissionID": 900001724,
+            "isDone": false,
+            "waypointListN": 6,
+            "waypointList": [
+              {
+                "waypointID": 40,
+                "coordinate": {
+                  "latitude": 38.12858,
+                  "longitude": 127.347015,
+                  "altitude": 844
+                },
+                "speed": 15.0,
+                "eta": 0,
+                "nextWaypointID": 41,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 41,
+                "coordinate": {
+                  "latitude": 38.09301,
+                  "longitude": 127.38814,
+                  "altitude": 844
+                },
+                "speed": 15.0,
+                "eta": 356439,
+                "nextWaypointID": 42,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 42,
+                "coordinate": {
+                  "latitude": 38.09218,
+                  "longitude": 127.388596,
+                  "altitude": 844
+                },
+                "speed": 15.0,
+                "eta": 363143,
+                "nextWaypointID": 43,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 43,
+                "coordinate": {
+                  "latitude": 38.091576,
+                  "longitude": 127.38862,
+                  "altitude": 844
+                },
+                "speed": 15.0,
+                "eta": 367608,
+                "nextWaypointID": 44,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 44,
+                "coordinate": {
+                  "latitude": 38.05521,
+                  "longitude": 127.382675,
+                  "altitude": 844
+                },
+                "speed": 15.0,
+                "eta": 638919,
+                "nextWaypointID": 45,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 45,
+                "coordinate": {
+                  "latitude": 38.034325,
+                  "longitude": 127.36631,
+                  "altitude": 844
+                },
+                "speed": 15.0,
+                "eta": 820706,
+                "nextWaypointID": 0,
+                "hovering": 30,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "missionSegmentID": 70000004,
+        "isDone": false,
+        "missionSegmentType": 1,
+        "individualMissionListN": 1,
+        "individualMissionList": [
+          {
+            "individualMissionID": 900001725,
+            "isDone": false,
+            "waypointListN": 3,
+            "waypointList": [
+              {
+                "waypointID": 46,
+                "coordinate": {
+                  "latitude": 38.031628,
+                  "longitude": 127.36565,
+                  "altitude": 854
+                },
+                "speed": 15.0,
+                "eta": 0,
+                "nextWaypointID": 47,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 47,
+                "coordinate": {
+                  "latitude": 38.026634,
+                  "longitude": 127.314514,
+                  "altitude": 854
+                },
+                "speed": 15.0,
+                "eta": 301526,
+                "nextWaypointID": 48,
+                "hovering": 0,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              },
+              {
+                "waypointID": 48,
+                "coordinate": {
+                  "latitude": 38.03852,
+                  "longitude": 127.27649,
+                  "altitude": 854
+                },
+                "speed": 15.0,
+                "eta": 540794,
+                "nextWaypointID": 0,
+                "hovering": 30,
+                "attack": {
+                  "targetID": 0,
+                  "weaponType": 0
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+]

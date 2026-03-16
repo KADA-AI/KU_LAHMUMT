@@ -1,0 +1,9 @@
+bool isHole:
+ - 길이 : 1
+ - min : 0
+ - Max : 1
+ - unit : deg
+ - 비고 : 영역 제외 여부
+ - enum : 0=영역 미제외, 1=영역 제외
+
+List<Coordinate> coordinateList

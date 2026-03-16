@@ -1,0 +1,13 @@
+# MissionID 0401 유무인기 상태정보
+
+ulong timestamp:
+ - 길이 : 8
+ - min : 0
+ - Max : 2^64-1
+ - unit : ms
+ - 비고 : 2000년 1월 1일부터 ms
+
+string source:
+ - 비고 : 메시지를 전송하는 모듈 이름
+
+List<AgentState> agentStateList

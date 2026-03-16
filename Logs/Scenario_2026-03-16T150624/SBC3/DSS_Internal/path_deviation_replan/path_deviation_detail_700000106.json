@@ -1,0 +1,26 @@
+{
+  "trigger": "0401",
+  "triggerType": "pathDeviation",
+  "sourceMissionPlanID": 700000105,
+  "aircraftID": 5,
+  "inputMissionPackageID": 100,
+  "individualMissionPackageID": 800000460,
+  "individualMissionID": 900002914,
+  "pathID": 500000486,
+  "currentWaypointID": 905001,
+  "alternateWaypointID": 905002,
+  "alternateWaypointCoordinate": {
+    "latitude": 38.142177035693194,
+    "longitude": 127.29248221687338
+  },
+  "alternateWaypointEtaS": 8.0,
+  "spiralState": "warning",
+  "spiralAngleDeg": 259.95222674036717,
+  "idealRadiusM": 340.0,
+  "actualRadiusM": 341.71325366600513,
+  "turnRateDegS": 5.03016305909082,
+  "selectedReplanReason": "000 무인기 경로 미추종으로 인한 재계획",
+  "timestamp": 826957070507,
+  "missionPlanID": 700000106,
+  "savedAt": "2026-03-16T06:17:50.507136+00:00"
+}

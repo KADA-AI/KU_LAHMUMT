@@ -1,0 +1,368 @@
+[
+  {
+    "presenceVector": 0,
+    "timestamp": 826606355130,
+    "inputMissionPackageID": 1,
+    "missionType": 1,
+    "dateAndNight": 1,
+    "aircraftIDsN": 6,
+    "aircraftIDs": [
+      {
+        "aircraftID": 1
+      },
+      {
+        "aircraftID": 2
+      },
+      {
+        "aircraftID": 3
+      },
+      {
+        "aircraftID": 4
+      },
+      {
+        "aircraftID": 5
+      },
+      {
+        "aircraftID": 6
+      }
+    ],
+    "inputMissionListN": 11,
+    "inputMissionList": [
+      {
+        "inputMissionID": 1,
+        "sequenceNumber": 0,
+        "inputMissionType": 1,
+        "isDone": false,
+        "shapeType": 2,
+        "coordinate": null,
+        "polyline": {
+          "width": 1000,
+          "coordinateListN": 2,
+          "coordinateList": [
+            {
+              "latitude": 37.894535,
+              "longitude": 128.1523,
+              "altitude": 0
+            },
+            {
+              "latitude": 37.903297,
+              "longitude": 128.15442,
+              "altitude": 0
+            }
+          ]
+        },
+        "polygons": null
+      },
+      {
+        "inputMissionID": 2,
+        "sequenceNumber": 1,
+        "inputMissionType": 1,
+        "isDone": false,
+        "shapeType": 2,
+        "coordinate": null,
+        "polyline": {
+          "width": 1000,
+          "coordinateListN": 2,
+          "coordinateList": [
+            {
+              "latitude": 37.903297,
+              "longitude": 128.15442,
+              "altitude": 0
+            },
+            {
+              "latitude": 37.90589,
+              "longitude": 128.15701,
+              "altitude": 0
+            }
+          ]
+        },
+        "polygons": null
+      },
+      {
+        "inputMissionID": 3,
+        "sequenceNumber": 2,
+        "inputMissionType": 2,
+        "isDone": false,
+        "shapeType": 3,
+        "coordinate": null,
+        "polyline": null,
+        "polygons": {
+          "areaListN": 1,
+          "areaList": [
+            {
+              "isHole": false,
+              "coordinateListN": 4,
+              "coordinateList": [
+                {
+                  "latitude": 37.90955,
+                  "longitude": 128.15459,
+                  "altitude": 0
+                },
+                {
+                  "latitude": 37.90589,
+                  "longitude": 128.15459,
+                  "altitude": 0
+                },
+                {
+                  "latitude": 37.90589,
+                  "longitude": 128.163,
+                  "altitude": 0
+                },
+                {
+                  "latitude": 37.90937,
+                  "longitude": 128.16322,
+                  "altitude": 0
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "inputMissionID": 4,
+        "sequenceNumber": 3,
+        "inputMissionType": 1,
+        "isDone": false,
+        "shapeType": 2,
+        "coordinate": null,
+        "polyline": {
+          "width": 1000,
+          "coordinateListN": 2,
+          "coordinateList": [
+            {
+              "latitude": 37.907127,
+              "longitude": 128.16307,
+              "altitude": 0
+            },
+            {
+              "latitude": 37.904213,
+              "longitude": 128.18541,
+              "altitude": 0
+            }
+          ]
+        },
+        "polygons": null
+      },
+      {
+        "inputMissionID": 5,
+        "sequenceNumber": 4,
+        "inputMissionType": 2,
+        "isDone": false,
+        "shapeType": 3,
+        "coordinate": null,
+        "polyline": null,
+        "polygons": {
+          "areaListN": 1,
+          "areaList": [
+            {
+              "isHole": false,
+              "coordinateListN": 4,
+              "coordinateList": [
+                {
+                  "latitude": 37.90537,
+                  "longitude": 128.18536,
+                  "altitude": 0
+                },
+                {
+                  "latitude": 37.90221,
+                  "longitude": 128.18549,
+                  "altitude": 0
+                },
+                {
+                  "latitude": 37.902275,
+                  "longitude": 128.19148,
+                  "altitude": 0
+                },
+                {
+                  "latitude": 37.90526,
+                  "longitude": 128.19199,
+                  "altitude": 0
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "inputMissionID": 6,
+        "sequenceNumber": 5,
+        "inputMissionType": 1,
+        "isDone": false,
+        "shapeType": 2,
+        "coordinate": null,
+        "polyline": {
+          "width": 1000,
+          "coordinateListN": 2,
+          "coordinateList": [
+            {
+              "latitude": 37.905334,
+              "longitude": 128.1875,
+              "altitude": 0
+            },
+            {
+              "latitude": 37.909195,
+              "longitude": 128.18484,
+              "altitude": 0
+            }
+          ]
+        },
+        "polygons": null
+      },
+      {
+        "inputMissionID": 7,
+        "sequenceNumber": 6,
+        "inputMissionType": 2,
+        "isDone": false,
+        "shapeType": 3,
+        "coordinate": null,
+        "polyline": null,
+        "polygons": {
+          "areaListN": 1,
+          "areaList": [
+            {
+              "isHole": false,
+              "coordinateListN": 4,
+              "coordinateList": [
+                {
+                  "latitude": 37.917805,
+                  "longitude": 128.17154,
+                  "altitude": 0
+                },
+                {
+                  "latitude": 37.909725,
+                  "longitude": 128.17249,
+                  "altitude": 0
+                },
+                {
+                  "latitude": 37.90896,
+                  "longitude": 128.19041,
+                  "altitude": 0
+                },
+                {
+                  "latitude": 37.916992,
+                  "longitude": 128.193,
+                  "altitude": 0
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "inputMissionID": 8,
+        "sequenceNumber": 7,
+        "inputMissionType": 1,
+        "isDone": false,
+        "shapeType": 2,
+        "coordinate": null,
+        "polyline": {
+          "width": 1000,
+          "coordinateListN": 2,
+          "coordinateList": [
+            {
+              "latitude": 37.909195,
+              "longitude": 128.18484,
+              "altitude": 0
+            },
+            {
+              "latitude": 37.905334,
+              "longitude": 128.1875,
+              "altitude": 0
+            }
+          ]
+        },
+        "polygons": null
+      },
+      {
+        "inputMissionID": 9,
+        "sequenceNumber": 8,
+        "inputMissionType": 2,
+        "isDone": false,
+        "shapeType": 3,
+        "coordinate": null,
+        "polyline": null,
+        "polygons": {
+          "areaListN": 1,
+          "areaList": [
+            {
+              "isHole": false,
+              "coordinateListN": 4,
+              "coordinateList": [
+                {
+                  "latitude": 37.90537,
+                  "longitude": 128.18536,
+                  "altitude": 0
+                },
+                {
+                  "latitude": 37.90221,
+                  "longitude": 128.18549,
+                  "altitude": 0
+                },
+                {
+                  "latitude": 37.902275,
+                  "longitude": 128.19148,
+                  "altitude": 0
+                },
+                {
+                  "latitude": 37.90526,
+                  "longitude": 128.19199,
+                  "altitude": 0
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "inputMissionID": 10,
+        "sequenceNumber": 9,
+        "inputMissionType": 1,
+        "isDone": false,
+        "shapeType": 2,
+        "coordinate": null,
+        "polyline": {
+          "width": 1000,
+          "coordinateListN": 2,
+          "coordinateList": [
+            {
+              "latitude": 37.90224,
+              "longitude": 128.1883,
+              "altitude": 0
+            },
+            {
+              "latitude": 37.897503,
+              "longitude": 128.18748,
+              "altitude": 0
+            }
+          ]
+        },
+        "polygons": null
+      },
+      {
+        "inputMissionID": 11,
+        "sequenceNumber": 10,
+        "inputMissionType": 1,
+        "isDone": false,
+        "shapeType": 2,
+        "coordinate": null,
+        "polyline": {
+          "width": 1000,
+          "coordinateListN": 2,
+          "coordinateList": [
+            {
+              "latitude": 37.897503,
+              "longitude": 128.18748,
+              "altitude": 0
+            },
+            {
+              "latitude": 37.892864,
+              "longitude": 128.17398,
+              "altitude": 0
+            }
+          ]
+        },
+        "polygons": null
+      }
+    ]
+  }
+]
