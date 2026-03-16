@@ -1,5 +1,5 @@
 {
-  "preset_key": "bearing_ver_sweep",
+  "preset_key": "dubins_mode",
   "algo_key": "algo2",
   "values": {
     "cruise_speed_mps": 40.0,
@@ -7,7 +7,8 @@
     "default_sweep_separation_m": 1000.0,
     "area_sweep_mode": "vertical",
     "area_split_mode": "single_stage",
-    "search_speed_weight": 1.2,
+    "uav_plan_mode": "dub_path",
+    "search_speed_weight": 1.1,
     "fov_deg": 2.4,
     "db_fov_weight": 1.0,
     "altitude_m": 610,

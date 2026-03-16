@@ -80,6 +80,10 @@ class MissionAlgoConfigTab(QWidget):
             "ops_sim": "작전모사",
             "capstone": "종합과제 전용",
         }))
+        form.addRow("UAV plan mode", self._combo("uav_plan_mode", {
+            "normal": "Normal",
+            "dub_path": "Dub Path",
+        }))
         return box
 
     def _build_sweep_group(self) -> QGroupBox:
@@ -199,6 +203,7 @@ class MissionAlgoConfigTab(QWidget):
                 "area_sweep_mode": "parallel",
                 "area_split_mode": "two_stage",
                 "manned_plan_mode": "normal",
+                "uav_plan_mode": "normal",
                 "search_speed_weight": 1.2,
                 "fov_deg": 2.4,
                 "db_fov_weight": 1.0,
@@ -235,6 +240,7 @@ class MissionAlgoConfigTab(QWidget):
             "bearing_par_sweep": "Bearing_Par_Sweep Mode",
             "bearing_ver_sweep": "Bearing_Ver_Sweep Mode",
             "nadir_mode": "Nadir Mode",
+            "dubins_mode": "Dubins Mode",
             "custom": "Custom",
         }
 
@@ -250,6 +256,7 @@ class MissionAlgoConfigTab(QWidget):
                     "area_sweep_mode": "parallel",
                     "area_split_mode": "two_stage",
                     "manned_plan_mode": "normal",
+                    "uav_plan_mode": "normal",
                     "search_speed_weight": 1.2,
                     "fov_deg": 2.4,
                     "db_fov_weight": 1.0,
@@ -290,6 +297,7 @@ class MissionAlgoConfigTab(QWidget):
                     "area_sweep_mode": "vertical",
                     "area_split_mode": "two_stage",
                     "manned_plan_mode": "normal",
+                    "uav_plan_mode": "normal",
                     "search_speed_weight": 1.2,
                     "fov_deg": 2.4,
                     "db_fov_weight": 1.0,
@@ -330,6 +338,48 @@ class MissionAlgoConfigTab(QWidget):
                     "area_sweep_mode": "nadir",
                     "area_split_mode": "two_stage",
                     "manned_plan_mode": "normal",
+                    "uav_plan_mode": "normal",
+                    "search_speed_weight": 1.2,
+                    "fov_deg": 2.4,
+                    "db_fov_weight": 1.0,
+                    "altitude_m": 610,
+                    "sweep_entry_offset_m": 1500.0,
+                    "sweep_merge_heading_deg": 5.0,
+                    "sweep_line_interp_points": 3,
+                    "min_sweep_len_m": 3.0,
+                    "min_route_spacing_m": 200.0,
+                    "default_search_speed_multiplier": 16.0,
+                    "point_fov_deg": 66.638654,
+                    "area_nadir_fov_deg": 31.2,
+                    "entry_hold_fov_deg": 10.0,
+                    "entry_hold_gimbal_pitch": -90.0,
+                    "entry_hold_gimbal_yaw": 0.0,
+                    "loiter_radius_m": 800.0,
+                    "loiter_direction": 1,
+                    "loiter_time_s": 30.0,
+                    "loiter_speed_mps": 30.0,
+                    "enhanced_area_review_enabled": True,
+                    "enhanced_area_review_max_segment_m": 550.0,
+                    "enhanced_auto_fov_from_db": True,
+                    "area_dubins_entry_links_enabled": False,
+                },
+                "flyover": {
+                    "entry_offset": False,
+                    "dubins_prefix": False,
+                    "all_wps": False,
+                },
+            },
+            "dubins_mode": {
+                "preset_key": "dubins_mode",
+                "algo_key": "algo2",
+                "values": {
+                    "cruise_speed_mps": 40.0,
+                    "turn_step_deg": 15.0,
+                    "default_sweep_separation_m": 1000.0,
+                    "area_sweep_mode": "vertical",
+                    "area_split_mode": "two_stage",
+                    "manned_plan_mode": "normal",
+                    "uav_plan_mode": "dub_path",
                     "search_speed_weight": 1.2,
                     "fov_deg": 2.4,
                     "db_fov_weight": 1.0,
@@ -403,7 +453,8 @@ class MissionAlgoConfigTab(QWidget):
             idx = combo.findData(payload.get("algo_key", "algo2"))
             combo.setCurrentIndex(max(idx, 0))
             area_sweep_combo: QComboBox = self._widgets["area_sweep_mode"]
-            area_sweep_idx = area_sweep_combo.findData(values.get("area_sweep_mode", "parallel"))
+            area_mode_value = values.get("area_sweep_mode", "parallel")
+            area_sweep_idx = area_sweep_combo.findData(area_mode_value)
             area_sweep_combo.setCurrentIndex(max(area_sweep_idx, 0))
             area_split_combo: QComboBox = self._widgets["area_split_mode"]
             area_split_idx = area_split_combo.findData(values.get("area_split_mode", "two_stage"))
@@ -411,6 +462,10 @@ class MissionAlgoConfigTab(QWidget):
             manned_mode_combo: QComboBox = self._widgets["manned_plan_mode"]
             manned_mode_idx = manned_mode_combo.findData(values.get("manned_plan_mode", "normal"))
             manned_mode_combo.setCurrentIndex(max(manned_mode_idx, 0))
+            uav_mode_combo: QComboBox = self._widgets["uav_plan_mode"]
+            uav_mode_value = values.get("uav_plan_mode", "normal")
+            uav_mode_idx = uav_mode_combo.findData(uav_mode_value)
+            uav_mode_combo.setCurrentIndex(max(uav_mode_idx, 0))
             self._widgets["cruise_speed_mps"].setValue(float(values.get("cruise_speed_mps", 40.0)))
             self._widgets["turn_step_deg"].setValue(float(values.get("turn_step_deg", 15.0)))
             self._widgets["default_sweep_separation_m"].setValue(float(values.get("default_sweep_separation_m", 600.0)))
@@ -450,6 +505,7 @@ class MissionAlgoConfigTab(QWidget):
                 "area_sweep_mode": str(self._widgets["area_sweep_mode"].currentData() or "parallel"),
                 "area_split_mode": str(self._widgets["area_split_mode"].currentData() or "two_stage"),
                 "manned_plan_mode": str(self._widgets["manned_plan_mode"].currentData() or "normal"),
+                "uav_plan_mode": str(self._widgets["uav_plan_mode"].currentData() or "normal"),
                 "search_speed_weight": float(self._widgets["search_speed_weight"].value()),
                 "fov_deg": float(self._widgets["fov_deg"].value()),
                 "db_fov_weight": float(self._widgets["db_fov_weight"].value()),
@@ -542,7 +598,7 @@ class MissionAlgoConfigTab(QWidget):
         fov_widget = self._widgets.get("fov_deg")
         db_fov_weight_widget = self._widgets.get("db_fov_weight")
         if area_mode_widget is not None:
-            area_mode_widget.setEnabled(is_custom)
+            area_mode_widget.setEnabled(True)
         if sep_widget is not None:
             sep_widget.setEnabled(True)
         if fov_widget is not None:

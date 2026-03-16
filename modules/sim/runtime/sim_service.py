@@ -797,6 +797,7 @@ class SimulationService:
         self._filming_props: dict[str, dict | None] = {}
         self._filming_targets: dict[str, tuple[float, float, float] | None] = {}
         self._filming_wp_ids: dict[str, int | None] = {}
+        self._filming_max_sep_m: dict[str, float | None] = {}
         self._line_search_state: dict[str, object | None] = {}
         self._line_search_debug: dict[str, object | None] = {}
         self._tracking_state: dict[str, TrackingState] = {}
@@ -1353,6 +1354,7 @@ class SimulationService:
             self._filming_props = {}
             self._filming_targets = {}
             self._filming_wp_ids = {}
+            self._filming_max_sep_m = {}
             self._line_search_state = {}
             self._line_search_debug = {}
             self._history.clear()
@@ -1858,8 +1860,27 @@ class SimulationService:
         all_latlons: list[tuple[float, float]] = []
         flight_by_path: dict[int, dict] = {}
         flight_by_aircraft: dict[int, list[int]] = {}
+        path_sep_by_id: dict[int, float] = {}
         tracking_overrides_by_aircraft: dict[int, dict[str, Any]] = {}
         formation_by_aircraft: dict[int, FormationSpec] = {}
+
+        for entry in individual_mission_plans:
+            if not isinstance(entry, dict):
+                continue
+            for im in entry.get("individualMissionList") or []:
+                if not isinstance(im, dict):
+                    continue
+                try:
+                    path_id = int(im.get("pathID"))
+                except Exception:
+                    path_id = None
+                info = im.get("individualMissionInfo") or {}
+                try:
+                    sep_m = float(info.get("SEP"))
+                except Exception:
+                    sep_m = None
+                if path_id is not None and sep_m is not None and sep_m > 0.0:
+                    path_sep_by_id[int(path_id)] = float(sep_m)
 
         for entry in flight_paths:
             if not isinstance(entry, dict):
@@ -1888,6 +1909,7 @@ class SimulationService:
                 flight_by_path[path_id] = data
                 if aircraft_id > 0:
                     flight_by_aircraft.setdefault(aircraft_id, []).append(path_id)
+            path_sep_m = path_sep_by_id.get(int(path_id)) if path_id is not None else None
 
             waypoints: list[dict] = []
             for wp in waypoints_raw:
@@ -1939,6 +1961,7 @@ class SimulationService:
                         "filming": filming,
                         "attack": attack if isinstance(attack, dict) else None,
                         "path_id": path_id,
+                        "sep_m": path_sep_m,
                     }
                 )
 
@@ -2071,6 +2094,7 @@ class SimulationService:
                     data = flight_by_path.get(pid)
                     if not isinstance(data, dict):
                         continue
+                    path_sep_m = path_sep_by_id.get(int(pid))
                     wps = _extract_waypoints(data)
                     if not wps:
                         continue
@@ -2136,6 +2160,7 @@ class SimulationService:
                                 "path_id": pid,
                                 "input_mission_id": entry.get("input_mission_id"),
                                 "individual_mission_id": entry.get("individual_mission_id"),
+                                "sep_m": path_sep_m,
                             }
                         )
                     end_idx = len(combined) - 1
@@ -2198,6 +2223,7 @@ class SimulationService:
                     data = flight_by_path.get(pid_int)
                     if not isinstance(data, dict):
                         continue
+                    path_sep_m = path_sep_by_id.get(int(pid_int))
                     wps = _extract_waypoints(data)
                     if not wps:
                         continue
@@ -2260,6 +2286,7 @@ class SimulationService:
                                 "filming": filming,
                                 "attack": attack if isinstance(attack, dict) else None,
                                 "path_id": pid_int,
+                                "sep_m": path_sep_m,
                             }
                         )
                 if len(combined) < 2:
@@ -2290,6 +2317,7 @@ class SimulationService:
                 if prefix < 1 or prefix > 6:
                     continue
                 aircraft_id = prefix
+                path_sep_m = path_sep_by_id.get(int(pid))
                 wps = _extract_waypoints(data)
                 if not wps:
                     continue
@@ -2350,11 +2378,12 @@ class SimulationService:
                         "hover_time": hover_time,
                         "loiter": loiter,
                         "pass_type": pass_type,
-                        "filming": filming,
-                        "attack": attack if isinstance(attack, dict) else None,
-                        "path_id": pid,
-                    }
-                )
+                                "filming": filming,
+                                "attack": attack if isinstance(attack, dict) else None,
+                                "path_id": pid,
+                                "sep_m": path_sep_m,
+                            }
+                        )
             if combined_by_aircraft:
                 for aircraft_id, combined in combined_by_aircraft.items():
                     if len(combined) < 2:
@@ -4130,7 +4159,7 @@ class SimulationService:
                 return
         if state is not None:
             if self._target_is_ignored_in_info(int(state.target_id)):
-                self._stop_tracking(simv, advance=False)
+                self._stop_tracking(simv, advance=True)
                 return
             if not state.target.alive:
                 self._stop_tracking(simv, advance=state.advance_on_complete)
@@ -4284,6 +4313,7 @@ class SimulationService:
             self._line_search_state[label] = None
             self._filming_props[label] = tracking.filming_prop
             self._filming_wp_ids[label] = tracking.saved_wp_id
+            self._filming_max_sep_m[label] = None
             self._filming_targets[label] = (
                 float(tracking.target.x),
                 float(tracking.target.y),
@@ -4294,11 +4324,18 @@ class SimulationService:
         tgt = controller.current_target()
         filming_prop = tgt.filming if tgt else None
         current_wp_id = tgt.wp_id if tgt else None
+        current_max_sep_m = None
+        try:
+            if tgt is not None and getattr(tgt, "sep_m", None) is not None:
+                current_max_sep_m = float(getattr(tgt, "sep_m"))
+        except Exception:
+            current_max_sep_m = None
 
         if filming_prop is None:
             self._line_search_state[label] = None
             self._filming_props[label] = None
             self._filming_wp_ids[label] = current_wp_id
+            self._filming_max_sep_m[label] = current_max_sep_m
             if getattr(controller, "is_loitering", False):
                 center = getattr(controller, "loiter_center", None)
                 if isinstance(center, (tuple, list)) and len(center) == 3:
@@ -4316,6 +4353,7 @@ class SimulationService:
             self._line_search_state[label] = None
             self._filming_props[label] = filming_prop
             self._filming_wp_ids[label] = current_wp_id
+            self._filming_max_sep_m[label] = current_max_sep_m
             self._filming_targets[label] = self._default_downward_target(simv.vehicle)
             return
 
@@ -4338,11 +4376,13 @@ class SimulationService:
             self._line_search_state[label] = None
             self._filming_props[label] = filming_prop
             self._filming_wp_ids[label] = current_wp_id
+            self._filming_max_sep_m[label] = current_max_sep_m
             self._filming_targets[label] = self._default_downward_target(simv.vehicle)
             return
 
         self._filming_props[label] = filming_prop
         self._filming_wp_ids[label] = current_wp_id
+        self._filming_max_sep_m[label] = current_max_sep_m
         self._filming_targets[label] = result.target or self._default_downward_target(simv.vehicle)
         self._line_search_state[label] = result.state
         if result.reset_debug or result.debug is not None:
@@ -4388,6 +4428,7 @@ class SimulationService:
         self._filming_props = {}
         self._filming_targets = {}
         self._filming_wp_ids = {}
+        self._filming_max_sep_m = {}
         self._line_search_state = {}
         self._line_search_debug = {}
         self._history.clear()
@@ -4415,6 +4456,7 @@ class SimulationService:
                         individual_mission_id=wp.get("individual_mission_id"),
                         path_id=wp.get("path_id") or path.path_id,
                         pass_type=wp.get("pass_type"),
+                        sep_m=wp.get("sep_m"),
                     )
                 )
 
@@ -5355,6 +5397,9 @@ class SimulationService:
                     "lon": float(t_lon),
                     "alt": float(target[2]),
                 }
+            max_sep_m = self._filming_max_sep_m.get(simv.label)
+            if isinstance(max_sep_m, (int, float)) and float(max_sep_m) > 0.0:
+                entry["filmingMaxSep"] = float(max_sep_m)
             filming_prop = self._filming_props.get(simv.label)
             if isinstance(filming_prop, dict):
                 entry["filmingMode"] = filming_prop.get("operationMode")

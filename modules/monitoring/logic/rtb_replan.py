@@ -64,15 +64,26 @@ def _pending_input_ids_from_package(package_id: int | None) -> list[int]:
 
 
 @dataclass
+class PendingRtbTrigger:
+    first_seen_ms: int
+    trigger_type: str
+    cause: str
+    reason: str
+
+
+@dataclass
 class RtbReplanState:
     availability_overrides: dict[int, bool] = field(default_factory=dict)
     triggered_aircraft: set[int] = field(default_factory=set)
+    pending_by_aircraft: dict[int, PendingRtbTrigger] = field(default_factory=dict)
 
 
 class RtbReplanCoordinator:
     REPLAN_LEVEL = 1
     RTB_FLIGHT_MODE = 5
     ABNORMAL_HEALTH_VALUE = 2
+    SIGNAL_LOSS_GRACE_MS = 10_000
+    REPLAN_HOLD_MS = 5_000
     UAV_IDS = (4, 5, 6)
     OPTION_CODES: tuple[int, ...] = DEFAULT_OPTION_CODE_SEQUENCE
 
@@ -94,6 +105,7 @@ class RtbReplanCoordinator:
         self,
         agent_states: Iterable[dict[str, Any]] | None,
         *,
+        timestamp_ms: int | None = None,
         system_mode: int | None,
         current_mission_plan_id: int | None,
         aircraft_filter: Callable[[int], bool] | None = None,
@@ -101,7 +113,9 @@ class RtbReplanCoordinator:
     ) -> tuple[list[dict[str, Any]], list[str]]:
         with self._lock:
             logs: list[str] = []
+            now_ts = int(timestamp_ms) if timestamp_ms is not None else int(self._now_ms())
             if not agent_states:
+                self._clear_inactive_aircraft(set())
                 return [], logs
 
             suppressed_ids: set[int] = set()
@@ -119,7 +133,7 @@ class RtbReplanCoordinator:
                     continue
                 if not self._is_uav_state(aircraft_id, state.get("is_unmanned")):
                     continue
-                trigger_type = self._classify_trigger_type(state)
+                trigger_type = self._classify_trigger_type(state, timestamp_ms=now_ts)
                 if not trigger_type:
                     continue
                 if int(aircraft_id) in suppressed_ids:
@@ -135,9 +149,18 @@ class RtbReplanCoordinator:
                     except Exception:
                         continue
                 enriched_state = dict(state)
+                reason, cause = self._resolve_rtb_reason(
+                    aircraft_id=int(aircraft_id),
+                    state=enriched_state,
+                    trigger_type=trigger_type,
+                    timestamp_ms=now_ts,
+                )
                 enriched_state["_rtb_trigger_type"] = trigger_type
+                enriched_state["_rtb_reason"] = reason
+                enriched_state["_rtb_cause"] = cause
                 rtb_state_by_aircraft[int(aircraft_id)] = enriched_state
 
+            self._clear_inactive_aircraft(set(rtb_state_by_aircraft))
             if not rtb_state_by_aircraft:
                 return [], logs
 
@@ -146,6 +169,8 @@ class RtbReplanCoordinator:
                 self._state.availability_overrides[int(aircraft_id)] = False
 
             if system_mode not in (3, 4):
+                for aircraft_id in unique_aircraft:
+                    self._state.pending_by_aircraft.pop(int(aircraft_id), None)
                 logs.append(
                     f"[0401] RTB/abnormal-state detected but replan skipped: mode={system_mode} (need 3/4)"
                 )
@@ -156,11 +181,40 @@ class RtbReplanCoordinator:
             for aircraft_id in unique_aircraft:
                 if aircraft_id in self._state.triggered_aircraft:
                     continue
+                active_state = rtb_state_by_aircraft.get(int(aircraft_id)) or {}
+                trigger_type = str(active_state.get("_rtb_trigger_type") or "unexpectedRTB")
+                cause = str(active_state.get("_rtb_cause") or "unknown")
+                reason = str(active_state.get("_rtb_reason") or "")
+                pending = self._state.pending_by_aircraft.get(int(aircraft_id))
+                if (
+                    pending is None
+                    or pending.trigger_type != trigger_type
+                    or pending.cause != cause
+                ):
+                    self._state.pending_by_aircraft[int(aircraft_id)] = PendingRtbTrigger(
+                        first_seen_ms=now_ts,
+                        trigger_type=trigger_type,
+                        cause=cause,
+                        reason=reason,
+                    )
+                    logs.append(
+                        "[0401] RTB replan pending "
+                        f"({_aircraft_display_label(aircraft_id)}, aircraftID={aircraft_id}, "
+                        f"trigger={trigger_type}, cause={cause}, hold={self.REPLAN_HOLD_MS/1000:.1f}s)"
+                    )
+                    continue
+                if now_ts - int(pending.first_seen_ms) < int(self.REPLAN_HOLD_MS):
+                    continue
+
                 payload = self._build_replan_payload(
                     aircraft_id=int(aircraft_id),
-                    state=rtb_state_by_aircraft.get(int(aircraft_id)) or {},
+                    state=active_state,
                     mission_ids=mission_ids,
                     package_id=package_id,
+                    timestamp_ms=now_ts,
+                    trigger_type=trigger_type,
+                    reason=reason,
+                    cause=cause,
                 )
                 if payload is None:
                     logs.append(
@@ -169,16 +223,18 @@ class RtbReplanCoordinator:
                     )
                     continue
                 self._state.triggered_aircraft.add(int(aircraft_id))
+                self._state.pending_by_aircraft.pop(int(aircraft_id), None)
                 payloads.append(payload)
                 detail = payload.get("replanDetail") if isinstance(payload, dict) else None
-                cause = "unknown"
-                trigger = "unknown"
+                logged_cause = "unknown"
+                logged_trigger = "unknown"
                 if isinstance(detail, dict):
-                    cause = str(detail.get("rtbCause") or "unknown")
-                    trigger = str(detail.get("triggerType") or "unknown")
+                    logged_cause = str(detail.get("rtbCause") or "unknown")
+                    logged_trigger = str(detail.get("triggerType") or "unknown")
                 logs.append(
                     "[0401] RTB replan prepared "
-                    f"({_aircraft_display_label(aircraft_id)}, aircraftID={aircraft_id}, trigger={trigger}, cause={cause})"
+                    f"({_aircraft_display_label(aircraft_id)}, aircraftID={aircraft_id}, "
+                    f"trigger={logged_trigger}, cause={logged_cause})"
                 )
 
             return payloads, logs
@@ -209,6 +265,10 @@ class RtbReplanCoordinator:
         state: dict[str, Any],
         mission_ids: list[int],
         package_id: int | None,
+        timestamp_ms: int,
+        trigger_type: str,
+        reason: str,
+        cause: str,
     ) -> dict[str, Any] | None:
         option_count = len(self.OPTION_CODES)
         option_codes = ensure_option_code_sequence(self.OPTION_CODES, option_count)
@@ -226,16 +286,13 @@ class RtbReplanCoordinator:
                 }
             )
 
-        ts = int(self._now_ms())
-        reason, cause = self._resolve_rtb_reason(aircraft_id=aircraft_id, state=state)
         actual_flight_mode = _coerce_int(state.get("flight_mode"))
         actual_health = _coerce_int(state.get("health"))
-        trigger_type = str(state.get("_rtb_trigger_type") or self._classify_trigger_type(state) or "unexpectedRTB")
         return {
-            "timestamp": ts,
+            "timestamp": int(timestamp_ms),
             "source": "MSM",
             "inputMissionPackageID": int(package_id) if package_id is not None else 0,
-            "replanRequestTime": {"replanRequestTimestamp": ts},
+            "replanRequestTime": {"replanRequestTimestamp": int(timestamp_ms)},
             "replanLevel": int(self.REPLAN_LEVEL),
             "replanRequest": reason,
             "inputMissionIDList": [{"inputMissionID": int(mission_id)} for mission_id in mission_ids],
@@ -249,18 +306,27 @@ class RtbReplanCoordinator:
                 "rtbCause": cause,
                 "fuelWarning": _coerce_int(state.get("fuel_warning")),
                 "payloadHealth": _coerce_int(state.get("payload_health")),
+                "datalinkConnected": state.get("datalink_connected"),
+                "lastSignalTime": _coerce_int(state.get("last_signal_time")),
                 "reason": reason,
             },
         }
 
-    def _classify_trigger_type(self, state: dict[str, Any] | None) -> str | None:
+    def _classify_trigger_type(
+        self,
+        state: dict[str, Any] | None,
+        *,
+        timestamp_ms: int | None,
+    ) -> str | None:
         flight_mode = _coerce_int((state or {}).get("flight_mode"))
         health = _coerce_int((state or {}).get("health"))
         payload_health = _coerce_int((state or {}).get("payload_health"))
-        if flight_mode == self.RTB_FLIGHT_MODE:
-            return "unexpectedRTB"
+        if self._has_signal_loss(state, timestamp_ms=timestamp_ms):
+            return "communicationLossRTB"
         if health == self.ABNORMAL_HEALTH_VALUE or payload_health == self.ABNORMAL_HEALTH_VALUE:
             return "abnormalHealthRTB"
+        if flight_mode == self.RTB_FLIGHT_MODE:
+            return "unexpectedRTB"
         return None
 
     def _resolve_rtb_reason(
@@ -268,29 +334,49 @@ class RtbReplanCoordinator:
         *,
         aircraft_id: int,
         state: dict[str, Any] | None,
+        trigger_type: str | None,
+        timestamp_ms: int | None,
     ) -> tuple[str, str]:
         health = _coerce_int((state or {}).get("health"))
         payload_health = _coerce_int((state or {}).get("payload_health"))
         fuel_warning = _coerce_int((state or {}).get("fuel_warning"))
         suffix = f"{_aircraft_display_label(aircraft_id)} RTB"
-        fuel_issue = fuel_warning is not None and int(fuel_warning) >= 2
+        signal_issue = self._has_signal_loss(state, timestamp_ms=timestamp_ms)
         health_issue = health == self.ABNORMAL_HEALTH_VALUE
         payload_issue = payload_health == self.ABNORMAL_HEALTH_VALUE
-        if fuel_issue and health_issue and payload_issue:
-            return f"연료 부족 및 기체/임무장비 고장으로 인한 {suffix}", "fuel_health_payload"
-        if fuel_issue and health_issue:
-            return f"연료 부족 및 기체 고장으로 인한 {suffix}", "fuel_health"
-        if fuel_issue and payload_issue:
-            return f"연료 부족 및 임무장비 고장으로 인한 {suffix}", "fuel_payload"
-        if fuel_issue:
-            return f"연료 부족으로 인한 {suffix}", "fuel"
-        if health_issue and payload_issue:
-            return f"기체 및 임무장비 고장으로 인한 {suffix}", "health_payload"
+        fuel_issue = fuel_warning is not None and int(fuel_warning) >= 2
+
+        if signal_issue:
+            return f"통신 두절로 인한 {suffix}", "signal_loss"
         if health_issue:
-            return f"기체 고장으로 인한 {suffix}", "health"
+            return f"무인기 고장으로 인한 {suffix}", "health"
         if payload_issue:
             return f"임무장비 고장으로 인한 {suffix}", "payload"
+        if fuel_issue:
+            return f"연료 부족으로 인한 {suffix}", "fuel"
+        if str(trigger_type or "").strip() == "unexpectedRTB":
+            return f"비정상 상태로 인한 {suffix}", "unexpected_rtb"
         return f"비정상 상태로 인한 {suffix}", "unknown"
+
+    def _has_signal_loss(
+        self,
+        state: dict[str, Any] | None,
+        *,
+        timestamp_ms: int | None,
+    ) -> bool:
+        _ = timestamp_ms
+        return (state or {}).get("datalink_connected") is False
+
+    def _clear_inactive_aircraft(self, active_aircraft: set[int]) -> None:
+        tracked_ids = set(int(aid) for aid in self._state.availability_overrides.keys())
+        tracked_ids.update(int(aid) for aid in self._state.pending_by_aircraft.keys())
+        tracked_ids.update(int(aid) for aid in self._state.triggered_aircraft)
+        for aircraft_id in tracked_ids:
+            if int(aircraft_id) in active_aircraft:
+                continue
+            self._state.availability_overrides.pop(int(aircraft_id), None)
+            self._state.pending_by_aircraft.pop(int(aircraft_id), None)
+            self._state.triggered_aircraft.discard(int(aircraft_id))
 
     def _is_uav_state(self, aircraft_id: int, is_unmanned: object) -> bool:
         if int(aircraft_id) in self.UAV_IDS:

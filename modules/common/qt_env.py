@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import sys
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -35,6 +36,29 @@ def _first_existing(paths: Iterable[Path]) -> Optional[Path]:
     return None
 
 
+def _qt_root_candidates(base: Optional[Path]) -> list[Path]:
+    roots: list[Path] = []
+
+    conda_prefix = os.environ.get("CONDA_PREFIX") or sys.prefix
+    if conda_prefix:
+        conda_library = Path(conda_prefix) / "Library"
+        if conda_library.exists():
+            roots.append(conda_library)
+
+    if base is not None:
+        roots.extend([base / "Qt", base / "Qt5", base / "Qt6"])
+
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for root in roots:
+        key = str(root.resolve()) if root.exists() else str(root)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(root)
+    return unique
+
+
 def ensure_qt_platform(force: bool = False) -> None:
     """
     Guarantee Qt platform plugins (qwindows, etc.) are discoverable at runtime.
@@ -52,14 +76,15 @@ def ensure_qt_platform(force: bool = False) -> None:
     if base is None:
         return
 
-    qt_roots = [base / "Qt", base / "Qt5", base / "Qt6"]
+    qt_roots = _qt_root_candidates(base)
     plugin_dir = _first_existing(root / "plugins" for root in qt_roots)
+    platform_plugin_dir = _first_existing(root / "plugins" / "platforms" for root in qt_roots)
     if plugin_dir:
         os.environ.setdefault("QT_PLUGIN_PATH", str(plugin_dir))
         # QT_QPA_PLATFORM_PLUGIN_PATH overrides Qt's internal search order, so
         # only override it when not already provided by the user (or force=True).
-        if force or not os.environ.get("QT_QPA_PLATFORM_PLUGIN_PATH"):
-            os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = str(plugin_dir)
+        if platform_plugin_dir and (force or not os.environ.get("QT_QPA_PLATFORM_PLUGIN_PATH")):
+            os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = str(platform_plugin_dir)
 
     bin_dir = _first_existing(root / "bin" for root in qt_roots)
     if bin_dir:

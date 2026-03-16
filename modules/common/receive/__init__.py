@@ -10,6 +10,7 @@ from .message0001_receiver import NoticeInfoReceiver_0001
 from .message0101_receiver import SystemOperationModeReceiver_0101
 from .message0102_receiver import ModuleStatusReceiver_0102  # 클래스명은 자동 생성에 맞게
 from .message0103_receiver import SWStatusReceiver_0103      # 클래스명은 자동 생성에 맞게
+from .message0104_receiver import TotalStatusReceiver_0104
 
 from .message0201_receiver import InputMissionPlanReceiver_0201
 from .message0202_receiver import PriorMissionInfoReceiver_0202

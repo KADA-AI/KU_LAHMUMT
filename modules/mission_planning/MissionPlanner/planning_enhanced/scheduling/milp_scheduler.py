@@ -357,6 +357,34 @@ def _takeover_centroid(mrpk: Optional[Dict[str, Any]]) -> Optional[Coord]:
     return _centroid(coords)
 
 
+def _takeover_map(mrpk: Optional[Dict[str, Any]]) -> Dict[int, Coord]:
+    if not isinstance(mrpk, dict):
+        return {}
+    arr = mrpk.get("takeOverInfoList")
+    if not isinstance(arr, list):
+        return {}
+    out: Dict[int, Coord] = {}
+    for item in arr:
+        if not isinstance(item, dict):
+            continue
+        try:
+            aid = int(item.get("aircraftID"))
+        except Exception:
+            continue
+        cc = _norm_coord(item.get("coordinate"))
+        if cc is not None:
+            out[int(aid)] = cc
+    return out
+
+
+def _takeover_for_uav(take_over_map: Optional[Dict[int, Coord]], uav_id: int, fallback: Optional[Coord]) -> Optional[Coord]:
+    if isinstance(take_over_map, dict):
+        cc = take_over_map.get(int(uav_id))
+        if cc is not None:
+            return cc
+    return fallback
+
+
 def _build_slots(split_result: SplitRunResult, uav_ids: List[int]) -> List[ScheduleSlot]:
     grouped: Dict[Tuple[int, int, int, int], List[SplitPiece]] = {}
     slot_members: Dict[Tuple[int, int, int], List[Tuple[int, int, int, int]]] = {}
@@ -488,7 +516,7 @@ def _move_time_sec(distance_m: float, speed_mps: float) -> float:
 def _solve_with_milp_legacy(
     slots: List[ScheduleSlot],
     uav_ids: List[int],
-    take_over: Optional[Coord],
+    take_over_map: Optional[Dict[int, Coord]],
     time_limit_s: float,
     mip_gap: float,
 ) -> _SolveResult:
@@ -520,9 +548,10 @@ def _solve_with_milp_legacy(
     # Precompute tables.
     vel_table: Dict[Tuple[int, int], List[float]] = {}
     exec_table: Dict[Tuple[int, int, int], float] = {}
-    init_move: Dict[Tuple[int, int], float] = {}
+    init_move: Dict[Tuple[int, int, int], float] = {}
     trans_move: Dict[Tuple[int, int, int], float] = {}
     speed_penalty: Dict[Tuple[int, int, int], float] = {}
+    take_over_fallback = _centroid(list((take_over_map or {}).values()))
 
     for g, slot in enumerate(slots):
         for i, cand in enumerate(slot.candidates):
@@ -536,7 +565,9 @@ def _solve_with_milp_legacy(
             for k, vel in enumerate(vels):
                 exec_table[(g, i, k)] = _exec_time_sec(cand.distance_m, vel)
                 speed_penalty[(g, i, k)] = (float(vel) - vmin) / den
-            init_move[(g, i)] = _distance_m(take_over, cand.start_point) / 40.0 if g == 0 else 0.0
+            for u in uav_ids:
+                take_over = _takeover_for_uav(take_over_map, u, take_over_fallback)
+                init_move[(g, i, u)] = _distance_m(take_over, cand.start_point) / 40.0 if g == 0 else 0.0
 
     for g in range(n_slots - 1):
         slot_a = slots[g]
@@ -601,7 +632,7 @@ def _solve_with_milp_legacy(
             prob += E[(g, u)] == S[(g, u)] + pulp.lpSum(exec_expr)
 
             if g == 0:
-                init_expr = [init_move[(g, i)] * x[(g, i, u)] for i in range(len(slot.candidates))]
+                init_expr = [init_move[(g, i, u)] * x[(g, i, u)] for i in range(len(slot.candidates))]
                 prob += S[(g, u)] >= pulp.lpSum(init_expr)
             else:
                 move_expr = []
@@ -635,7 +666,7 @@ def _solve_with_milp_legacy(
         for j in range(len(slots[g + 1].candidates))
         for u in uav_ids
     ) + pulp.lpSum(
-        init_move[(0, i)] * x[(0, i, u)]
+        init_move[(0, i, u)] * x[(0, i, u)]
         for i in range(len(slots[0].candidates))
         for u in uav_ids
     )
@@ -706,7 +737,7 @@ def _solve_with_milp_legacy(
 def _solve_with_milp_barrier(
     slots: List[ScheduleSlot],
     uav_ids: List[int],
-    take_over: Optional[Coord],
+    take_over_map: Optional[Dict[int, Coord]],
     time_limit_s: float,
     mip_gap: float,
 ) -> _SolveResult:
@@ -738,14 +769,15 @@ def _solve_with_milp_barrier(
     # Precompute tables.
     vel_table: Dict[Tuple[int, int], List[float]] = {}
     exec_table: Dict[Tuple[int, int, int], float] = {}
-    init_dist: Dict[Tuple[int, int], float] = {}
+    init_dist: Dict[Tuple[int, int, int], float] = {}
     trans_dist: Dict[Tuple[int, int, int], float] = {}
-    init_move_t: Dict[Tuple[int, int, int], float] = {}
+    init_move_t: Dict[Tuple[int, int, int, int], float] = {}
     trans_move_t: Dict[Tuple[int, int, int, int], float] = {}
     speed_penalty: Dict[Tuple[int, int, int], float] = {}
     move_penalty: Dict[int, float] = {}
     move_speeds = list(_MOVE_SPEED_CANDS_MPS)
     vmax_move = max(move_speeds) if move_speeds else 60.0
+    take_over_fallback = _centroid(list((take_over_map or {}).values()))
 
     for g, slot in enumerate(slots):
         for i, cand in enumerate(slot.candidates):
@@ -759,10 +791,12 @@ def _solve_with_milp_barrier(
             for k, vel in enumerate(vels):
                 exec_table[(g, i, k)] = _exec_time_sec(cand.distance_m, vel)
                 speed_penalty[(g, i, k)] = (float(vel) - vmin) / den
-            d0 = _distance_m(take_over, cand.start_point) if g == 0 else 0.0
-            init_dist[(g, i)] = float(d0)
-            for m_idx, mps in enumerate(move_speeds):
-                init_move_t[(g, i, m_idx)] = _move_time_sec(d0, mps)
+            for u in uav_ids:
+                take_over = _takeover_for_uav(take_over_map, u, take_over_fallback)
+                d0 = _distance_m(take_over, cand.start_point) if g == 0 else 0.0
+                init_dist[(g, i, u)] = float(d0)
+                for m_idx, mps in enumerate(move_speeds):
+                    init_move_t[(g, i, u, m_idx)] = _move_time_sec(d0, mps)
 
     for g in range(n_slots - 1):
         slot_a = slots[g]
@@ -876,7 +910,7 @@ def _solve_with_milp_barrier(
                 init_expr = []
                 for i in range(len(slot.candidates)):
                     for m_idx, _ in enumerate(move_speeds):
-                        init_expr.append(init_move_t[(0, i, m_idx)] * y0[(i, u, m_idx)])
+                        init_expr.append(init_move_t[(0, i, u, m_idx)] * y0[(i, u, m_idx)])
                 arrival_expr = pulp.lpSum(init_expr)
                 prob += B[0] >= arrival_expr
             else:
@@ -931,7 +965,7 @@ def _solve_with_milp_barrier(
         for u in uav_ids
         for m_idx, _ in enumerate(move_speeds)
     ) + pulp.lpSum(
-        init_move_t[(0, i, m_idx)] * y0[(i, u, m_idx)]
+        init_move_t[(0, i, u, m_idx)] * y0[(i, u, m_idx)]
         for i in range(len(slots[0].candidates))
         for u in uav_ids
         for m_idx, _ in enumerate(move_speeds)
@@ -1050,13 +1084,14 @@ def _solve_with_milp_barrier(
 def _solve_greedy(
     slots: List[ScheduleSlot],
     uav_ids: List[int],
-    take_over: Optional[Coord],
+    take_over_map: Optional[Dict[int, Coord]],
 ) -> _SolveResult:
     t0 = time.perf_counter()
     selected: Dict[Tuple[int, int], Tuple[int, float]] = {}
     move_speed_mps: Dict[Tuple[int, int], float] = {}
     cur_time = {u: 0.0 for u in uav_ids}
-    cur_pos = {u: take_over for u in uav_ids}
+    take_over_fallback = _centroid(list((take_over_map or {}).values()))
+    cur_pos = {u: _takeover_for_uav(take_over_map, u, take_over_fallback) for u in uav_ids}
 
     for g, slot in enumerate(slots):
         remaining = list(range(len(slot.candidates)))
@@ -1100,7 +1135,7 @@ def _build_timeline_and_apply_legacy(
     split_result: SplitRunResult,
     slots: List[ScheduleSlot],
     uav_ids: List[int],
-    take_over: Optional[Coord],
+    take_over_map: Optional[Dict[int, Coord]],
     selected: Dict[Tuple[int, int], Tuple[int, float]],
 ) -> Dict[str, Any]:
     piece_map: Dict[Tuple[int, int], SplitPiece] = {
@@ -1108,7 +1143,8 @@ def _build_timeline_and_apply_legacy(
     }
 
     cur_t = {u: 0.0 for u in uav_ids}
-    cur_pos = {u: take_over for u in uav_ids}
+    take_over_fallback = _centroid(list((take_over_map or {}).values()))
+    cur_pos = {u: _takeover_for_uav(take_over_map, u, take_over_fallback) for u in uav_ids}
     timelines: List[Dict[str, Any]] = []
     slot_assignments: List[Dict[str, Any]] = []
 
@@ -1251,7 +1287,7 @@ def _build_timeline_and_apply_barrier(
     split_result: SplitRunResult,
     slots: List[ScheduleSlot],
     uav_ids: List[int],
-    take_over: Optional[Coord],
+    take_over_map: Optional[Dict[int, Coord]],
     selected: Dict[Tuple[int, int], Tuple[int, float]],
     move_speed_mps: Optional[Dict[Tuple[int, int], float]] = None,
 ) -> Dict[str, Any]:
@@ -1264,7 +1300,8 @@ def _build_timeline_and_apply_barrier(
 
     # First pass: gather per-slot/per-uav task & move geometry/time.
     per_slot_u: Dict[Tuple[int, int], Dict[str, Any]] = {}
-    cur_pos = {u: take_over for u in uav_ids}
+    take_over_fallback = _centroid(list((take_over_map or {}).values()))
+    cur_pos = {u: _takeover_for_uav(take_over_map, u, take_over_fallback) for u in uav_ids}
     for g, slot in enumerate(slots):
         next_pos = dict(cur_pos)
         for u in uav_ids:
@@ -1563,12 +1600,12 @@ def run_milp_scheduling(
     if sync_mode not in {"legacy", "barrier"}:
         sync_mode = "barrier"
 
-    take_over = _takeover_centroid(mrpk)
+    take_over_map = _takeover_map(mrpk)
     if sync_mode == "legacy":
         solved = _solve_with_milp_legacy(
             slots=slots,
             uav_ids=uav_ids,
-            take_over=take_over,
+            take_over_map=take_over_map,
             time_limit_s=time_limit_s,
             mip_gap=mip_gap,
         )
@@ -1576,19 +1613,19 @@ def run_milp_scheduling(
         solved = _solve_with_milp_barrier(
             slots=slots,
             uav_ids=uav_ids,
-            take_over=take_over,
+            take_over_map=take_over_map,
             time_limit_s=time_limit_s,
             mip_gap=mip_gap,
         )
     if not solved.selected:
-        solved = _solve_greedy(slots=slots, uav_ids=uav_ids, take_over=take_over)
+        solved = _solve_greedy(slots=slots, uav_ids=uav_ids, take_over_map=take_over_map)
 
     if sync_mode == "legacy":
         timeline_payload = _build_timeline_and_apply_legacy(
             split_result=split_result,
             slots=slots,
             uav_ids=uav_ids,
-            take_over=take_over,
+            take_over_map=take_over_map,
             selected=solved.selected,
         )
     else:
@@ -1596,7 +1633,7 @@ def run_milp_scheduling(
             split_result=split_result,
             slots=slots,
             uav_ids=uav_ids,
-            take_over=take_over,
+            take_over_map=take_over_map,
             selected=solved.selected,
             move_speed_mps=solved.move_speed_mps,
         )

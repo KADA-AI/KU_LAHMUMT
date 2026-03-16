@@ -1544,6 +1544,8 @@ def _apply_line_search_speed_from_paths(wps: list[OrderedDict], cruise_speed: fl
         return
     for idx in range(1, len(wps)):
         wp = wps[idx]
+        if wp.get("_skip_path_search_speed_recalc"):
+            continue
         prev_wp = wps[idx - 1]
         fp = wp.get("filmingProperty") or OrderedDict()
         line_search = fp.get("lineSearch")
@@ -2146,6 +2148,7 @@ def build_flight_plans(
                     anchor_list = planner.offset_wps
 
                     merged_coords: list[dict] = []
+                    merged_sweep_speeds: list[float] = []
                     for sw_idx, sw in enumerate(planner.sweeps):
                         s_xy, e_xy = sw
                         if sw_idx % 2:
@@ -2162,18 +2165,36 @@ def build_flight_plans(
                             "longitude": e_lon,
                             "altitude": _dem_alt(e_lat, e_lon),
                         })
-                    if merged_coords:
-                        full_sweep_coords = merged_coords
-                        full_sweep_interp_points = SWEEP_LINE_INTERP_POINTS
-                        merged_width = _avg_sweep_width_m(
-                            merged_coords,
-                            points_per_line=2,
-                        )
-                        full_sweep_speed = spacing_based_search_speed(
-                            sweep_len_m=merged_width,
+                        sweep_speed = spacing_based_search_speed(
+                            sweep_len_m=_avg_sweep_width_m([
+                                {"latitude": s_lat, "longitude": s_lon, "altitude": _dem_alt(s_lat, s_lon)},
+                                {"latitude": e_lat, "longitude": e_lon, "altitude": _dem_alt(e_lat, e_lon)},
+                            ]),
                             spacing_m=spacing_line,
                             cruise_speed_mps=mission_cruise_speed,
                         )
+                        if sweep_speed is None:
+                            sweep_speed = mission_default_search_speed
+                        merged_sweep_speeds.append(float(sweep_speed))
+                    if merged_coords:
+                        full_sweep_coords = merged_coords
+                        full_sweep_interp_points = SWEEP_LINE_INTERP_POINTS
+                        if _runtime_uav_plan_mode() == "dub_path":
+                            if merged_sweep_speeds:
+                                full_sweep_speed = round(
+                                    sum(merged_sweep_speeds) / max(len(merged_sweep_speeds), 1),
+                                    2,
+                                )
+                        if full_sweep_speed is None:
+                            merged_width = _avg_sweep_width_m(
+                                merged_coords,
+                                points_per_line=2,
+                            )
+                            full_sweep_speed = spacing_based_search_speed(
+                                sweep_len_m=merged_width,
+                                spacing_m=spacing_line,
+                                cruise_speed_mps=mission_cruise_speed,
+                            )
                         if full_sweep_speed is None:
                             full_sweep_speed = mission_default_search_speed
                 else:
@@ -2366,6 +2387,7 @@ def build_flight_plans(
                 "pathID": miss["pathID"],
                 "aircraftID": aid,
                 "wplist": wplist,
+                "_mission_sep_m": float(mission_sep_m),
                 "_entry_anchor": entry_anchor,
                 "_entry_offset_m": entry_offset_m,
                 "_entry_disabled": bool(entry_disabled),
@@ -2380,6 +2402,7 @@ def build_flight_plans(
             if mtype in (3, 4, 6) and is_area_mission:
                 packet["_is_area"] = True
                 packet["_area_sweep_mode"] = str(area_sweep_mode or "parallel")
+                packet["_area_bearing_deg"] = float(bearing)
                 if mission_pattern_type == 3:
                     packet["_area_nadir"] = True
             if full_sweep_coords:
@@ -2422,6 +2445,7 @@ def build_flight_plans(
         is_area_pkt = bool(pkt.get("_is_area"))
         is_area_nadir = bool(pkt.get("_area_nadir"))
         area_sweep_mode = str(pkt.get("_area_sweep_mode") or "parallel").strip().lower()
+        uav_plan_mode = _runtime_uav_plan_mode()
         sweep_indices = [idx for idx, wp in enumerate(wps) if _has_line_search(wp)]
         entry_wp: OrderedDict | None = None
         merge_mode = SWEEP_MERGE_MODE
@@ -2557,6 +2581,19 @@ def build_flight_plans(
                 reference_coord = entry_anchor if isinstance(entry_anchor, dict) else None
 
             sweep_items = _orient_sweep_items(sweep_items, reference_coord)
+            if uav_plan_mode == "dub_path" and is_area_pkt:
+                oriented_wps: list[OrderedDict] = []
+                for item in sweep_items:
+                    wp = item["wp"]
+                    fp = wp.get("filmingProperty") or OrderedDict()
+                    ls = fp.get("lineSearch") or OrderedDict()
+                    coords = deepcopy(item.get("coords") or [])
+                    if coords:
+                        ls["coordinateList"] = coords
+                        fp["lineSearch"] = ls
+                    oriented_wps.append(wp)
+                if oriented_wps:
+                    wps[:] = oriented_wps
             first_item = sweep_items[0]
             first_idx = int(first_item["idx"])
             first_wp = first_item["wp"]
@@ -2566,23 +2603,143 @@ def build_flight_plans(
             first_search_speed = first_item.get("search_speed")
             first_interp_points = first_item.get("interp_points")
             records = sweep_items[1:]
+            forced_remove_indices: list[int] = []
 
             if first_coords and records:
                 start_target = deepcopy(first_coords[0])
                 first_fov = first_fp.get("fieldOfView", FOV_DEG)
-                first_wp["filmingProperty"] = OrderedDict([
-                    ("fieldOfView", first_fov),
-                    ("sensorType", SENSOR_EO_IR),
-                    ("operationMode", OPMODE_POINT),
-                    ("coordinateOrientation", OrderedDict([
-                        ("coordinate", OrderedDict([
-                            ("latitude", float(start_target.get("latitude", 0.0))),
-                            ("longitude", float(start_target.get("longitude", 0.0))),
-                            ("altitude", 0),
-                        ]))
-                    ])),
-                ])
-                if area_sweep_mode == "parallel" and norm >= 1.0:
+                close_takeover_line_entry = False
+                close_takeover_sep_m = 0.0
+                close_takeover_route_m = 0.0
+                close_takeover_scan_end_idx: int | None = None
+                close_takeover_progress_xy: tuple[float, float] | None = None
+                takeover_coord: OrderedDict | None = None
+                if (
+                    uav_plan_mode == "dub_path"
+                    and is_alg2
+                    and (not is_area_pkt)
+                    and isinstance(entry_anchor, dict)
+                ):
+                    close_takeover_sep_m = float(pkt.get("_mission_sep_m", 0.0) or 0.0)
+                    if close_takeover_sep_m > 0.0:
+                        takeover_coord = _coord_with_altitude(entry_anchor, _mission_wp_alt)
+                        close_takeover_compare_coord = _coord_midpoint(first_coords)
+                        if not isinstance(close_takeover_compare_coord, dict):
+                            close_takeover_compare_coord = start_target if isinstance(start_target, dict) else first_coord
+                        close_takeover_route_m = _dist_between_coords(takeover_coord, close_takeover_compare_coord)
+                        if close_takeover_route_m < close_takeover_sep_m:
+                            close_takeover_line_entry = True
+
+                if close_takeover_line_entry and takeover_coord is not None:
+                    entry_wp = OrderedDict([
+                        ("waypointID", 0),
+                        ("coordinate", OrderedDict(takeover_coord)),
+                        ("speed", cruise_speed),
+                        ("eta", 0),
+                        ("ecf", 0.0),
+                        ("nextWaypointID", 0),
+                        ("waypointPassType", PASS_FLYOVER),
+                        ("filmingProperty", _mk_filming(
+                            operation_mode=OPMODE_HOLD,
+                            fov=first_fov,
+                            sensor=SENSOR_EO_IR,
+                            gimbal_pitch=ENTRY_HOLD_GIMBAL_PITCH,
+                            gimbal_yaw=ENTRY_HOLD_GIMBAL_YAW,
+                        )),
+                    ])
+                elif not close_takeover_line_entry:
+                    if uav_plan_mode == "dub_path" and is_area_pkt:
+                        start_lat = float(start_target.get("latitude", 0.0))
+                        start_lon = float(start_target.get("longitude", 0.0))
+                        hold_lat = start_lat
+                        hold_lon = start_lon
+                        try:
+                            area_sep_m = float(pkt.get("_mission_sep_m", 0.0) or 0.0)
+                        except Exception:
+                            area_sep_m = 0.0
+                        hold_offset_m = max(0.0, float(area_sep_m) * (2.0 / 3.0))
+                        lateral_xy: tuple[float, float] | None = None
+                        area_bearing_rad: float | None = None
+                        try:
+                            raw_area_bearing = pkt.get("_area_bearing_deg")
+                            if raw_area_bearing is not None:
+                                area_bearing_rad = math.radians(float(raw_area_bearing))
+                        except Exception:
+                            area_bearing_rad = None
+                        if hold_offset_m >= 1.0 and area_bearing_rad is not None:
+                            lateral_xy = (
+                                -math.cos(float(area_bearing_rad)),
+                                math.sin(float(area_bearing_rad)),
+                            )
+                        if hold_offset_m >= 1.0 and lateral_xy is None and len(first_coords) >= 2:
+                            try:
+                                sweep_dx, sweep_dy = _vector_between(first_coords[0], first_coords[1])
+                                sweep_norm = math.hypot(sweep_dx, sweep_dy)
+                                if sweep_norm >= 1.0:
+                                    left_xy = (-sweep_dy / sweep_norm, sweep_dx / sweep_norm)
+                                    right_xy = (sweep_dy / sweep_norm, -sweep_dx / sweep_norm)
+                                    ref_left_xy: tuple[float, float] | None = None
+                                    hold_heading_rad: float | None = prev_heading_by_aircraft.get(aid)
+                                    if hold_heading_rad is None and isinstance(prev_tail_coord, dict):
+                                        try:
+                                            if _dist_between_coords(prev_tail_coord, start_target) > 1.0:
+                                                hold_heading_rad = _heading_rad_between_coords(prev_tail_coord, start_target)
+                                        except Exception:
+                                            hold_heading_rad = None
+                                    if hold_heading_rad is not None:
+                                        ref_left_xy = (
+                                            -math.sin(float(hold_heading_rad)),
+                                            math.cos(float(hold_heading_rad)),
+                                        )
+                                    if ref_left_xy is not None:
+                                        lateral_xy = left_xy if (
+                                            (left_xy[0] * ref_left_xy[0]) + (left_xy[1] * ref_left_xy[1])
+                                        ) >= (
+                                            (right_xy[0] * ref_left_xy[0]) + (right_xy[1] * ref_left_xy[1])
+                                        ) else right_xy
+                                    else:
+                                        lateral_xy = left_xy
+                            except Exception:
+                                lateral_xy = None
+                        if hold_offset_m >= 1.0 and lateral_xy is not None:
+                            hold_lat, hold_lon = xy_to_llh(
+                                float(lateral_xy[0]) * hold_offset_m,
+                                float(lateral_xy[1]) * hold_offset_m,
+                                start_lat,
+                                start_lon,
+                            )
+                        first_wp["coordinate"] = OrderedDict([
+                            ("latitude", round(hold_lat, 6)),
+                            ("longitude", round(hold_lon, 6)),
+                            ("altitude", _mission_wp_alt(hold_lat, hold_lon)),
+                        ])
+                        first_wp["waypointPassType"] = PASS_FLYBY
+                        first_wp["filmingProperty"] = _mk_filming(
+                            operation_mode=OPMODE_HOLD,
+                            fov=first_fov,
+                            sensor=SENSOR_EO_IR,
+                            gimbal_pitch=ENTRY_HOLD_GIMBAL_PITCH,
+                            gimbal_yaw=ENTRY_HOLD_GIMBAL_YAW,
+                        )
+                    else:
+                        first_wp["filmingProperty"] = OrderedDict([
+                            ("fieldOfView", first_fov),
+                            ("sensorType", SENSOR_EO_IR),
+                            ("operationMode", OPMODE_POINT),
+                            ("coordinateOrientation", OrderedDict([
+                                ("coordinate", OrderedDict([
+                                    ("latitude", float(start_target.get("latitude", 0.0))),
+                                    ("longitude", float(start_target.get("longitude", 0.0))),
+                                    ("altitude", 0),
+                                ]))
+                            ])),
+                        ])
+                if (
+                    (not close_takeover_line_entry)
+                    and area_sweep_mode == "parallel"
+                    and norm >= 1.0
+                    and not (uav_plan_mode == "dub_path" and is_area_pkt)
+                ):
                     first_shift_m = min(120.0, max(0.0, dynamic_entry_offset_m * 0.2))
                     if first_shift_m >= 1.0:
                         first_shift_xy = (-ux * first_shift_m, -uy * first_shift_m)
@@ -2611,21 +2768,131 @@ def build_flight_plans(
                         return None
                     return deepcopy(full_coords_all[s:min(e, len(full_coords_all))])
 
+                if close_takeover_line_entry and takeover_coord is not None:
+                    try:
+                        rep0 = records[0]
+                        rep0_sweep_idx = rep0.get("sweep_idx")
+                        rep0_coord = rep0.get("coord") or rep0["wp"].get("coordinate") or {}
+                        base_progress_xy = _vector_between(first_coord, rep0_coord)
+                        base_route_span_m = math.hypot(base_progress_xy[0], base_progress_xy[1])
+                        if base_route_span_m >= 1.0:
+                            close_takeover_route_m = max(float(close_takeover_sep_m) * 2.0, 1.0)
+                            close_takeover_progress_xy = (
+                                (float(base_progress_xy[0]) / float(base_route_span_m)) * float(close_takeover_route_m),
+                                (float(base_progress_xy[1]) / float(base_route_span_m)) * float(close_takeover_route_m),
+                            )
+                        if first_sweep_idx is not None and rep0_sweep_idx is not None and full_coords_all:
+                            span_count = max(1, int(rep0_sweep_idx) - int(first_sweep_idx) + 1)
+                            meters_per_sweep = base_route_span_m / max(float(span_count), 1.0)
+                            target_scan_m = close_takeover_route_m + close_takeover_sep_m
+                            sweep_count = max(1, int(math.ceil(target_scan_m / max(meters_per_sweep, 1.0))))
+                            max_sweep_idx = max(0, (len(full_coords_all) // 2) - 1)
+                            close_takeover_scan_end_idx = min(max_sweep_idx, int(first_sweep_idx) + sweep_count - 1)
+                    except Exception:
+                        close_takeover_progress_xy = None
+                        close_takeover_route_m = 0.0
+                        close_takeover_scan_end_idx = None
+
+                    if close_takeover_progress_xy is not None and close_takeover_route_m >= 1.0:
+                        tk_lat = float(takeover_coord.get("latitude", 0.0))
+                        tk_lon = float(takeover_coord.get("longitude", 0.0))
+                        wp2_lat, wp2_lon = xy_to_llh(
+                            float(close_takeover_progress_xy[0]),
+                            float(close_takeover_progress_xy[1]),
+                            tk_lat,
+                            tk_lon,
+                        )
+                        first_wp["coordinate"] = OrderedDict([
+                            ("latitude", round(wp2_lat, 6)),
+                            ("longitude", round(wp2_lon, 6)),
+                            ("altitude", _mission_wp_alt(wp2_lat, wp2_lon)),
+                        ])
+
+                    initial_scan_coords = _segment_full_coords(first_sweep_idx, close_takeover_scan_end_idx)
+                    if initial_scan_coords:
+                        initial_scan_spans = _collect_sweep_spans(initial_scan_coords, 2)
+                        initial_width = None
+                        if initial_scan_spans:
+                            initial_width = round(sum(initial_scan_spans) / len(initial_scan_spans), 2)
+                        initial_speed = spacing_based_search_speed(
+                            sweep_len_m=initial_width,
+                            spacing_m=sweep_spacing_m,
+                            cruise_speed_mps=mission_cruise_speed,
+                        )
+                        if initial_speed is None:
+                            initial_speed = first_search_speed
+                        if initial_speed is None:
+                            initial_speed = mission_default_search_speed
+                        first_wp["filmingProperty"] = _mk_filming(
+                            operation_mode=OPMODE_LINE,
+                            fov=first_fov,
+                            sensor=SENSOR_EO_IR,
+                            line_search=OrderedDict([
+                                ("coordinateList", _interpolate_line_coords(
+                                    initial_scan_coords,
+                                    SWEEP_LINE_INTERP_POINTS,
+                                )),
+                                ("searchSpeed", initial_speed),
+                                ("interpolationPoints", SWEEP_LINE_INTERP_POINTS),
+                            ]),
+                        )
+                        if close_takeover_scan_end_idx is not None:
+                            kept_records = [
+                                record for record in records
+                                if record.get("sweep_idx") is None or int(record.get("sweep_idx")) > int(close_takeover_scan_end_idx)
+                            ]
+                            forced_remove_indices.extend(
+                                int(record["idx"]) for record in records
+                                if int(record["idx"]) not in {int(kept["idx"]) for kept in kept_records}
+                            )
+                            records = kept_records
+                        if close_takeover_progress_xy is not None and close_takeover_route_m >= 1.0:
+                            prog_ux = float(close_takeover_progress_xy[0]) / float(close_takeover_route_m)
+                            prog_uy = float(close_takeover_progress_xy[1]) / float(close_takeover_route_m)
+                            filtered_records: list[dict] = []
+                            for record in records:
+                                rec_coord = record.get("coord") or record["wp"].get("coordinate") or {}
+                                rec_dx, rec_dy = _vector_between(takeover_coord, rec_coord)
+                                rec_progress_m = (rec_dx * prog_ux) + (rec_dy * prog_uy)
+                                if rec_progress_m > float(close_takeover_route_m) + 1.0:
+                                    filtered_records.append(record)
+                            forced_remove_indices.extend(
+                                int(record["idx"]) for record in records
+                                if int(record["idx"]) not in {int(kept["idx"]) for kept in filtered_records}
+                            )
+                            records = filtered_records
+                elif close_takeover_line_entry:
+                    first_wp["filmingProperty"] = _mk_filming(
+                        operation_mode=OPMODE_HOLD,
+                        fov=first_fov,
+                        sensor=SENSOR_EO_IR,
+                        gimbal_pitch=ENTRY_HOLD_GIMBAL_PITCH,
+                        gimbal_yaw=ENTRY_HOLD_GIMBAL_YAW,
+                    )
+
                 if merge_mode == "all":
+                    ordered_items = [first_item] + records
                     full_coords = pkt.get("fullSweepCoords") or []
                     full_speed = pkt.get("fullSweepSearchSpeed")
                     interp_points = pkt.get("fullSweepInterpPoints") or SWEEP_LINE_INTERP_POINTS
                     width_points = 2
                     if not full_coords:
-                        ordered_items = [first_item] + records
                         for item in ordered_items:
                             full_coords.extend(deepcopy(item.get("coords") or []))
                     else:
                         ordered_full_coords: list[dict] = []
-                        for item in [first_item] + records:
+                        for item in ordered_items:
                             ordered_full_coords.extend(deepcopy(item.get("coords") or []))
                         if ordered_full_coords:
                             full_coords = ordered_full_coords
+                    if full_speed is None and uav_plan_mode == "dub_path" and is_area_pkt:
+                        raw_speeds = [
+                            float(item.get("search_speed"))
+                            for item in ordered_items
+                            if item.get("search_speed") is not None
+                        ]
+                        if raw_speeds:
+                            full_speed = round(sum(raw_speeds) / max(len(raw_speeds), 1), 2)
                     if full_speed is None:
                         full_width = _avg_sweep_width_m(full_coords, points_per_line=width_points)
                         full_speed = spacing_based_search_speed(
@@ -2637,10 +2904,12 @@ def build_flight_plans(
                         full_speed = first_search_speed
                     if full_speed is None:
                         full_speed = mission_default_search_speed
+                    if uav_plan_mode == "dub_path" and is_area_pkt:
+                        full_speed = min(float(full_speed), float(mission_default_search_speed))
 
                     rep = records[-1]
                     rep_fp = rep["fp"]
-                    if full_coords:
+                    if full_coords and not (uav_plan_mode == "dub_path" and is_area_pkt):
                         start_target = _coord_midpoint(first_item.get("coords") or [])
                         end_target = _coord_midpoint(rep.get("coords") or [])
                         rep_coord = rep["wp"].get("coordinate") or {}
@@ -2671,6 +2940,9 @@ def build_flight_plans(
                         ("searchSpeed", full_speed),
                         ("interpolationPoints", interp_points),
                     ])
+                    if uav_plan_mode == "dub_path" and is_area_pkt:
+                        rep["wp"]["_skip_path_search_speed_recalc"] = True
+                        rep["wp"]["waypointPassType"] = PASS_FLYOVER
                     wps[:] = [first_wp, rep["wp"]]
                 else:
                     groups: list[list[int]] = []
@@ -2718,8 +2990,10 @@ def build_flight_plans(
                     if is_alg2 and not is_area_pkt:
                         groups = [[idx] for idx in range(len(records))]
 
-                    to_remove: list[int] = []
+                    to_remove: list[int] = list(dict.fromkeys(forced_remove_indices))
                     prev_sweep_idx = first_sweep_idx
+                    if close_takeover_line_entry and close_takeover_scan_end_idx is not None:
+                        prev_sweep_idx = close_takeover_scan_end_idx
                     for g_idx, group in enumerate(groups):
                         rep_pos = group[-1]
                         rep = records[rep_pos]
@@ -2729,6 +3003,8 @@ def build_flight_plans(
                         used_segment_coords = False
                         start_sweep_idx = prev_sweep_idx
                         if g_idx > 0 and start_sweep_idx is not None:
+                            start_sweep_idx = start_sweep_idx + 1
+                        elif close_takeover_line_entry and start_sweep_idx is not None:
                             start_sweep_idx = start_sweep_idx + 1
                         segment_coords = _segment_full_coords(start_sweep_idx, rep.get("sweep_idx"))
                         if segment_coords:
@@ -2897,6 +3173,8 @@ def build_flight_plans(
         pkt.pop("_is_area", None)
         pkt.pop("_area_nadir", None)
         pkt.pop("_area_sweep_mode", None)
+        pkt.pop("_area_bearing_deg", None)
+        pkt.pop("_mission_sep_m", None)
         pkt.pop("_entry_anchor", None)
         pkt.pop("_entry_offset_m", None)
         pkt.pop("_entry_disabled", None)
@@ -2967,6 +3245,10 @@ def build_flight_plans(
         _apply_line_search_speed_from_paths(wps, mission_cruise_speed)
         _annotate_eta_ms_inplace(wps, default_speed_mps=mission_cruise_speed)
 
+        for wp in wps:
+            if "_skip_path_search_speed_recalc" in wp:
+                del wp["_skip_path_search_speed_recalc"]
+
         total_eta = sum(max(0, int(w.get("eta", 0))) for w in wps) or 1
         cum = 0
         for wp in wps:
@@ -3030,6 +3312,8 @@ def build_flight_plans(
     result = []
     for pkt in packets:
         pkt.pop("_area_sweep_mode", None)
+        pkt.pop("_area_bearing_deg", None)
+        pkt.pop("_mission_sep_m", None)
         pkt.pop("_entry_anchor", None)
         pkt.pop("_entry_offset_m", None)
         formation_info = pkt.get("formationInfo")
@@ -3061,3 +3345,15 @@ def _runtime_area_sweep_mode() -> str:
     if raw in {"nadir", "directdown", "bf_nadir"}:
         return "nadir"
     return "parallel"
+
+
+def _runtime_uav_plan_mode() -> str:
+    if _get_runtime_str is None:
+        return "normal"
+    try:
+        raw = str(_get_runtime_str("uav_plan_mode", "normal") or "normal").strip().lower()
+    except Exception:
+        return "normal"
+    if raw == "dub_path":
+        return "dub_path"
+    return "normal"

@@ -57,6 +57,7 @@ class CSCTabBase(QWidget):
             '0101': None,
             '0102': 5,
             '0103': 5,
+            '0104': None,
             '0201': None,
             '0202': None,
             '0203': None,

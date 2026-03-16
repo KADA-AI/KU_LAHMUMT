@@ -1331,6 +1331,33 @@ class MainWindow(QMainWindow):
             f"[0902] replan request sent (level={level}, reason={reason}, planIds={plan_summary})"
         )
 
+    def _maybe_send_rtb_notice(self, payload: dict) -> None:
+        detail = payload.get("replanDetail")
+        if not isinstance(detail, dict):
+            return
+        if str(detail.get("trigger") or "").strip() != "0401":
+            return
+        if str(detail.get("rtbCause") or "").strip().lower() != "payload":
+            return
+        try:
+            aircraft_id = int(detail.get("aircraftID"))
+        except Exception:
+            aircraft_id = None
+        notice_key = (aircraft_id, "payload_rtb")
+        if notice_key in self._sent_notice_keys:
+            return
+        if aircraft_id is not None and 4 <= aircraft_id <= 6:
+            aircraft_label = f"무인기 {aircraft_id - 3}번"
+        elif aircraft_id is not None and 1 <= aircraft_id <= 3:
+            aircraft_label = f"유인기 {aircraft_id}번"
+        elif aircraft_id is not None:
+            aircraft_label = f"항공기 {aircraft_id}번"
+        else:
+            aircraft_label = "해당 항공기"
+        notice_text = f"{aircraft_label} 임무장비 고장으로 재계획 요청"
+        self._send_0001_notice(notice_text)
+        self._sent_notice_keys.add(notice_key)
+
     def _plan_option_meta(self, mission_plan_id: int) -> dict[str, object] | None:
         meta = self._replan_option_meta_by_plan_id.get(int(mission_plan_id))
         return dict(meta) if isinstance(meta, dict) else None
@@ -2082,6 +2109,7 @@ class MainWindow(QMainWindow):
                         suppressed_aircraft = ()
                 replan_payloads, logs = rtb_coord.on_agent_states(
                     states,
+                    timestamp_ms=ts,
                     system_mode=self._system_mode_code,
                     current_mission_plan_id=self._current_mission_plan_id,
                     aircraft_filter=self._is_aircraft_in_current_plan,
@@ -2093,6 +2121,7 @@ class MainWindow(QMainWindow):
                 for body in replan_payloads:
                     if isinstance(body, dict):
                         self._send_0902(body)
+                        self._maybe_send_rtb_notice(body)
         except Exception as exc:
             self._append_log_line(f"[0902] rtb-on-0401 error: {exc}")
         path_dev_suppressed_aircraft: set[int] = set()

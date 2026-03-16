@@ -28,6 +28,7 @@ const TRAIL_MAX_METERS = 2000;
 const TRAIL_MIN_SEGMENT_M = 4;
 const TRAIL_WIDTH = 2.0;
 const TRAIL_Z_OFFSET_M = 0.8;
+const EXCEEDED_SEP_COLOR = "#ef4444";
 const VISUAL_UPDATE_HZ = 15;
 const VISUAL_UPDATE_INTERVAL_MS = 1000 / VISUAL_UPDATE_HZ;
 const FOOTPRINT_VISUAL_SAMPLE_INTERVAL_MS = VISUAL_UPDATE_INTERVAL_MS;
@@ -152,6 +153,14 @@ const distMeters = (a, b) => {
   const dz = b.z - a.z;
   const m2u = (a.m2u + b.m2u) * 0.5 || 1e-6;
   return Math.hypot(dx, dy, dz) / m2u;
+};
+
+const groundDistanceMeters = (origin, point) => {
+  const local = llToLocalMeters(origin, point);
+  if (!local) {
+    return null;
+  }
+  return Math.hypot(local.x, local.y);
 };
 
 const llToLocalMeters = (origin, point) => {
@@ -751,8 +760,12 @@ export const initVehicleMarkers = (map) => {
   const filmingLineLayers = new Map();
   const trailLineLayers = new Map();
   let mercatorByAgent = new Map();
+  let filmingMercatorByAgent = new Map();
+  let filmingSepByAgent = new Map();
+  let filmingMaxSepByAgent = new Map();
   let labelContainer = null;
   const labelElements = new Map();
+  const sepLabelElements = new Map();
   let footprintSource = null;
   let footprintTrailSource = null;
   const footprintHistory = new Map();
@@ -934,6 +947,9 @@ export const initVehicleMarkers = (map) => {
     const lineBuffers = new Map();
     const footprintLineFeatures = [];
     const footprintFillFeatures = [];
+    const nextFilmingMercator = new Map();
+    const nextFilmingSep = new Map();
+    const nextFilmingMaxSep = new Map();
     AGENTS.forEach((agent) => lineBuffers.set(agent, []));
     const nextMercator = new Map();
     AGENTS.forEach((agent) => {
@@ -966,6 +982,18 @@ export const initVehicleMarkers = (map) => {
           [filming.lon, filming.lat],
           tAlt,
         );
+        nextFilmingMercator.set(agent, tCoord);
+        const sepMeters = groundDistanceMeters(
+          { lat: entry.lat, lon: entry.lon },
+          { lat: filming.lat, lon: filming.lon },
+        );
+        if (Number.isFinite(sepMeters)) {
+          nextFilmingSep.set(agent, sepMeters);
+        }
+        const maxSepMeters = Number(entry.filmingMaxSep);
+        if (Number.isFinite(maxSepMeters) && maxSepMeters > 0) {
+          nextFilmingMaxSep.set(agent, maxSepMeters);
+        }
         filmingPoints.push(
           tCoord.x,
           tCoord.y,
@@ -996,6 +1024,9 @@ export const initVehicleMarkers = (map) => {
       }
     });
     mercatorByAgent = nextMercator;
+    filmingMercatorByAgent = nextFilmingMercator;
+    filmingSepByAgent = nextFilmingSep;
+    filmingMaxSepByAgent = nextFilmingMaxSep;
     return { points, filmingPoints, lineBuffers, footprintLineFeatures, footprintFillFeatures };
   };
 
@@ -1018,8 +1049,14 @@ export const initVehicleMarkers = (map) => {
       filmingPointLayer.setVisible(filmingPoints.length > 0);
     }
     filmingLineLayers.forEach((layer, agent) => {
+      const sepMeters = filmingSepByAgent.get(agent);
+      const maxSepMeters = filmingMaxSepByAgent.get(agent);
+      const isSepExceeded =
+        Number.isFinite(sepMeters) &&
+        Number.isFinite(maxSepMeters) &&
+        sepMeters > maxSepMeters;
       if (typeof layer.setColor === "function") {
-        layer.setColor(colors[agent] || "#ffffff");
+        layer.setColor(isSepExceeded ? EXCEEDED_SEP_COLOR : (colors[agent] || "#ffffff"));
       }
       const buf = lineBuffers.get(agent) || [];
       layer.updatePositions(buf);
@@ -1106,6 +1143,31 @@ export const initVehicleMarkers = (map) => {
     return el;
   };
 
+  const ensureSepLabelElement = (agent, color) => {
+    let el = sepLabelElements.get(agent);
+    if (!el) {
+      el = document.createElement("div");
+      el.style.position = "absolute";
+      el.style.transform = "translate(-50%, -50%)";
+      el.style.padding = "2px 6px";
+      el.style.borderRadius = "999px";
+      el.style.fontSize = "11px";
+      el.style.fontWeight = "700";
+      el.style.letterSpacing = "0.02em";
+      el.style.whiteSpace = "nowrap";
+      el.style.color = color || "#e7eddc";
+      el.style.background = "rgba(15, 23, 42, 0.72)";
+      el.style.border = `1px solid ${color || "#e7eddc"}33`;
+      el.style.textShadow = "0 1px 2px rgba(0,0,0,0.45)";
+      el.style.boxShadow = "0 4px 12px rgba(0,0,0,0.18)";
+      el.style.opacity = "0.92";
+      el.style.pointerEvents = "none";
+      labelContainer.appendChild(el);
+      sepLabelElements.set(agent, el);
+    }
+    return el;
+  };
+
   const updateLabelPositions = (matrix) => {
     if (!labelContainer) {
       return;
@@ -1119,15 +1181,68 @@ export const initVehicleMarkers = (map) => {
     labelElements.forEach((el) => {
       el.style.display = "none";
     });
+    sepLabelElements.forEach((el) => {
+      el.style.display = "none";
+    });
     mercatorByAgent.forEach((coord, agent) => {
-      const point = projectToScreen(matrix, coord.x, coord.y, coord.z, width, height);
+      let point = projectToScreen(matrix, coord.x, coord.y, coord.z, width, height);
+      if (!point) {
+        const entry = currentPositions[agent];
+        if (entry && Number.isFinite(entry.lon) && Number.isFinite(entry.lat)) {
+          const projected = map.project([entry.lon, entry.lat]);
+          point = { x: projected.x, y: projected.y };
+        }
+      }
       if (!point) {
         return;
       }
       const el = ensureLabelElement(agent, colors[agent] || "#e7eddc");
+      const sepMeters = filmingSepByAgent.get(agent);
+      const maxSepMeters = filmingMaxSepByAgent.get(agent);
+      const isSepExceeded =
+        Number.isFinite(sepMeters) &&
+        Number.isFinite(maxSepMeters) &&
+        sepMeters > maxSepMeters;
+      el.textContent = Number.isFinite(sepMeters)
+        ? `${agent} | ${Math.round(sepMeters)}m`
+        : agent;
+      el.style.color = isSepExceeded ? EXCEEDED_SEP_COLOR : (colors[agent] || "#e7eddc");
       el.style.left = `${point.x}px`;
       el.style.top = `${point.y}px`;
       el.style.display = "block";
+
+      const filmingCoord = filmingMercatorByAgent.get(agent);
+      if (!filmingCoord || !Number.isFinite(sepMeters)) {
+        return;
+      }
+      let filmingPoint = projectToScreen(
+        matrix,
+        filmingCoord.x,
+        filmingCoord.y,
+        filmingCoord.z,
+        width,
+        height,
+      );
+      if (!filmingPoint) {
+        const filming = currentPositions[agent]?.filmingTarget;
+        if (filming && Number.isFinite(filming.lon) && Number.isFinite(filming.lat)) {
+          const projected = map.project([filming.lon, filming.lat]);
+          filmingPoint = { x: projected.x, y: projected.y };
+        }
+      }
+      if (!filmingPoint) {
+        return;
+      }
+      const midX = (point.x + filmingPoint.x) * 0.5;
+      const midY = (point.y + filmingPoint.y) * 0.5;
+      const sepEl = ensureSepLabelElement(agent, colors[agent] || "#e7eddc");
+      sepEl.textContent = `SEP ${Math.round(sepMeters)}m`;
+      sepEl.style.color = isSepExceeded ? EXCEEDED_SEP_COLOR : (colors[agent] || "#e7eddc");
+      sepEl.style.border = `1px solid ${(isSepExceeded ? EXCEEDED_SEP_COLOR : (colors[agent] || "#e7eddc"))}33`;
+      sepEl.style.background = isSepExceeded ? "rgba(127, 29, 29, 0.82)" : "rgba(15, 23, 42, 0.72)";
+      sepEl.style.left = `${midX}px`;
+      sepEl.style.top = `${midY}px`;
+      sepEl.style.display = "block";
     });
   };
 

@@ -88,6 +88,7 @@ def _load_message_ids() -> tuple[list[str], list[str]]:
         "0101",
         "0102",
         "0103",
+        "0104",
         "0201",
         "0202",
         "0203",

@@ -587,6 +587,7 @@ class PlanningCanvas(QWidget):
             coords: List[Tuple[float, float]] = []
             sweep_lines: List[Tuple[List[Tuple[float, float]], int]] = []
             sweep_points: List[Tuple[float, float]] = []
+            sweep_marker_points: List[Tuple[float, float]] = []
             for wp in wps:
                 if not isinstance(wp, dict):
                     continue
@@ -601,17 +602,21 @@ class PlanningCanvas(QWidget):
                         if len(ls_coords) >= 2:
                             interp_points = int(ls.get("interpolationPoints", 0) or 0)
                             sweep_lines.append((ls_coords, interp_points))
+                            sweep_marker_points.extend(ls_coords)
                     cor = fp.get("coordinateOrientation")
                     if isinstance(cor, dict):
                         target_xy = coord_to_xy(cor.get("coordinate", {}))
                         if target_xy is not None:
                             sweep_points.append(target_xy)
+                            sweep_marker_points.append(target_xy)
             traversal_points = list(coords)
 
             route_color = _uav_color(aid, 245) if aid > 0 else _qcolor("#111827", 240)
             if sweep_lines:
-                sweep_pen = QPen(_qcolor("#0f766e", 165), 1.6)
+                sweep_pen = QPen(_qcolor("#0f766e", 150), 1.0)
                 sweep_pen.setStyle(Qt.SolidLine)
+                sweep_pen.setCapStyle(Qt.RoundCap)
+                sweep_pen.setJoinStyle(Qt.RoundJoin)
                 painter.setPen(sweep_pen)
                 for ls_coords, interp_points in sweep_lines:
                     chunk = max(2, int(interp_points))
@@ -623,26 +628,46 @@ class PlanningCanvas(QWidget):
                         if len(seg) >= 2:
                             self._draw_polyline(painter, seg)
             elif len(sweep_points) >= 2:
-                sweep_pen = QPen(_qcolor("#0f766e", 165), 1.6)
+                sweep_pen = QPen(_qcolor("#0f766e", 150), 1.0)
                 sweep_pen.setStyle(Qt.SolidLine)
+                sweep_pen.setCapStyle(Qt.RoundCap)
+                sweep_pen.setJoinStyle(Qt.RoundJoin)
                 painter.setPen(sweep_pen)
                 self._draw_polyline(painter, sweep_points)
 
+            if sweep_marker_points:
+                self._draw_point_markers(
+                    painter,
+                    sweep_marker_points,
+                    _qcolor("#0f766e", 170),
+                    radius=2.2,
+                    pen_width=0.8,
+                )
+
             if len(traversal_points) >= 2:
-                route_outline_pen = QPen(QColor(15, 23, 42, 180), 6.4)
+                route_outline_pen = QPen(QColor(15, 23, 42, 150), 4.2)
                 route_outline_pen.setStyle(Qt.SolidLine)
                 route_outline_pen.setCapStyle(Qt.RoundCap)
                 route_outline_pen.setJoinStyle(Qt.RoundJoin)
                 painter.setPen(route_outline_pen)
                 self._draw_polyline(painter, traversal_points)
 
-                route_pen = QPen(route_color, 4.2)
+                route_pen = QPen(route_color, 2.6)
                 route_pen.setStyle(Qt.SolidLine)
                 route_pen.setCapStyle(Qt.RoundCap)
                 route_pen.setJoinStyle(Qt.RoundJoin)
                 painter.setPen(route_pen)
                 self._draw_polyline(painter, traversal_points)
                 self._draw_path_arrows(painter, traversal_points, route_color)
+
+            if traversal_points:
+                self._draw_point_markers(
+                    painter,
+                    traversal_points,
+                    route_color,
+                    radius=3.8,
+                    pen_width=1.0,
+                )
 
             label_pool = coords
             if not label_pool:
@@ -669,8 +694,9 @@ class PlanningCanvas(QWidget):
             painter.drawRoundedRect(rect, 5.0, 5.0)
             painter.drawText(rect, Qt.AlignCenter, label)
 
-            for idx, point_xy in enumerate(traversal_points, start=1):
-                self._draw_number_badge(painter, point_xy, str(idx), route_color, diameter=32.0)
+            if len(traversal_points) <= 16:
+                for idx, point_xy in enumerate(traversal_points, start=1):
+                    self._draw_number_badge(painter, point_xy, str(idx), route_color, diameter=24.0)
 
     def _draw_draft_input(self, painter: QPainter) -> None:
         if not self._state.draft_points_xy:
@@ -769,6 +795,25 @@ class PlanningCanvas(QWidget):
                 Qt.AlignLeft | Qt.AlignVCenter,
                 str(idx),
             )
+
+    def _draw_point_markers(
+        self,
+        painter: QPainter,
+        points_xy: Sequence[Tuple[float, float]],
+        color: QColor,
+        *,
+        radius: float = 3.6,
+        pen_width: float = 1.1,
+    ) -> None:
+        if not points_xy:
+            return
+        painter.save()
+        painter.setPen(QPen(QColor("#ffffff"), pen_width))
+        painter.setBrush(color)
+        for point_xy in points_xy:
+            screen = self.world_to_screen(point_xy[0], point_xy[1])
+            painter.drawEllipse(screen, radius, radius)
+        painter.restore()
 
     def _draw_arrow(
         self,
@@ -1153,6 +1198,13 @@ class DivisionPlannerWindow(QMainWindow):
         except Exception:
             return 550.0
 
+    def _uav_plan_mode(self) -> str:
+        try:
+            raw = str(get_runtime_str("uav_plan_mode", "normal") or "normal").strip().lower()
+        except Exception:
+            raw = "normal"
+        return "dub_path" if raw == "dub_path" else "normal"
+
     def _visible_uav_ids(self) -> List[int]:
         out: List[int] = []
         mapping = (
@@ -1410,9 +1462,11 @@ class DivisionPlannerWindow(QMainWindow):
 
             packages_0302 = build_0302_packages_from_split_with_lah(split_result, cmpk=self._cmpk_payload)
             _prepare_legacy_missionplanner_path()
+            uav_plan_mode = self._uav_plan_mode()
             fp_0303, fp_0304 = build_0303_0304_from_0302_packages(
                 packages_0302,
                 mrpk=self._mrpk_payload,
+                uav_plan_mode=uav_plan_mode,
             )
 
             out_root = self._output_root()
@@ -1440,6 +1494,7 @@ class DivisionPlannerWindow(QMainWindow):
                     f"Final split pieces: {len(split_result.pieces)}",
                     f"Cached expected paths: {len(self.state.expected_paths)}",
                     f"Actual 0303 paths: {len(fp_0303)}",
+                    f"UAV plan mode: {uav_plan_mode}",
                 ]
             )
             for piece in split_result.pieces:

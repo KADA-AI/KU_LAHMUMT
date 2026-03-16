@@ -1589,6 +1589,7 @@ class MainWindow(QMainWindow):
             "default_sweep_separation_m": float(sweep_sep),
             "area_sweep_mode": str(values.get("area_sweep_mode", "parallel") or "parallel"),
             "area_split_mode": str(values.get("area_split_mode", "two_stage") or "two_stage"),
+            "uav_plan_mode": str(values.get("uav_plan_mode", "normal") or "normal"),
             "search_speed_weight": float(search_weight),
             "fov_deg": float(fov_deg),
             "db_fov_weight": float(db_fov_weight),
@@ -1624,7 +1625,7 @@ class MainWindow(QMainWindow):
         if not isinstance(flyover, dict):
             flyover = {}
         preset_key = str(payload.get("preset_key") or "custom")
-        if preset_key not in ("bearing_par_sweep", "bearing_ver_sweep", "nadir_mode", "custom"):
+        if preset_key not in ("bearing_par_sweep", "bearing_ver_sweep", "nadir_mode", "dubins_mode", "custom"):
             preset_key = "custom"
         normalized_payload = {
             "preset_key": preset_key,
@@ -1681,6 +1682,7 @@ class MainWindow(QMainWindow):
                     f"preset={str((payload or {}).get('preset_key') or 'custom')}, "
                     f"areaMode={str((payload or {}).get('values', {}).get('area_sweep_mode', 'parallel'))}, "
                     f"areaSplit={str((payload or {}).get('values', {}).get('area_split_mode', 'two_stage'))}, "
+                    f"uavPlan={str((payload or {}).get('values', {}).get('uav_plan_mode', 'normal'))}, "
                     f"autoFovDb={bool((payload or {}).get('values', {}).get('enhanced_auto_fov_from_db', True))})"
                 )
         except Exception as exc:
@@ -2800,7 +2802,18 @@ class MainWindow(QMainWindow):
         self._active_plan_context = ctx
         summary = ", ".join(str(pid) for pid in ctx.get("plan_ids", [])) or "-"
         self._append_log_line(f"[AUTO] 0902 received (planIds={summary})")
-        self._schedule_replan_pipeline(delay_ms=100)
+        self._schedule_replan_pipeline(delay_ms=self._replan_delay_ms_for_payload(payload))
+
+    def _replan_delay_ms_for_payload(self, payload: Dict[str, Any]) -> int:
+        detail = payload.get("replanDetail")
+        if not isinstance(detail, dict):
+            return 100
+        if str(detail.get("trigger") or "").strip() != "0401":
+            return 100
+        trigger_type = str(detail.get("triggerType") or "").strip()
+        if trigger_type in {"communicationLossRTB", "abnormalHealthRTB", "unexpectedRTB"}:
+            return 55_000
+        return 100
 
     def _should_use_attack_pipeline(self, ctx: Dict[str, Any]) -> bool:
         reason_text = str(ctx.get("reason") or "").strip()

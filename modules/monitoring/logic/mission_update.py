@@ -23,6 +23,19 @@ def _coerce_float(value: object) -> float | None:
         return None
 
 
+def _coerce_bool(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "y", "on"}:
+        return True
+    if text in {"0", "false", "no", "n", "off"}:
+        return False
+    return None
+
+
 def _derive_cumulative_etas(raw_etas: list[float]) -> tuple[list[float], bool]:
     """Return cumulative ETAs and whether the raw values looked cumulative."""
     if not raw_etas:
@@ -291,6 +304,19 @@ def extract_0401_agent_states(payload: object | None) -> tuple[int | None, list[
     def _extract_last_signal(item: dict[str, Any]) -> int | None:
         return _coerce_int(item.get("lastSignalTime") or item.get("LastSignalTime"))
 
+    def _extract_manned_datalink(item: dict[str, Any]) -> dict[int, bool | None]:
+        manned_info = item.get("mannedInfo") or item.get("MannedInfo") or {}
+        if not isinstance(manned_info, dict):
+            return {}
+        datalink = manned_info.get("datalinkStatus") or manned_info.get("DatalinkStatus") or {}
+        if not isinstance(datalink, dict):
+            return {}
+        return {
+            4: _coerce_bool(datalink.get("isConnectedToUAV1", datalink.get("uav1"))),
+            5: _coerce_bool(datalink.get("isConnectedToUAV2", datalink.get("uav2"))),
+            6: _coerce_bool(datalink.get("isConnectedToUAV3", datalink.get("uav3"))),
+        }
+
     def _extract_footprint(item: dict[str, Any], info: object, camera_mode: object) -> list[dict[str, Any]]:
         corners: list[dict[str, Any]] = []
         for container in (info, camera_mode, item):
@@ -321,6 +347,22 @@ def extract_0401_agent_states(payload: object | None) -> tuple[int | None, list[
                     return legacy
         return corners
 
+    datalink_votes: dict[int, list[bool]] = {4: [], 5: [], 6: []}
+    for item in raw_list:
+        if not isinstance(item, dict):
+            continue
+        for aircraft_id, connected in _extract_manned_datalink(item).items():
+            if connected is None:
+                continue
+            datalink_votes.setdefault(int(aircraft_id), []).append(bool(connected))
+
+    datalink_connected_by_uav: dict[int, bool | None] = {}
+    for aircraft_id, votes in datalink_votes.items():
+        if not votes:
+            datalink_connected_by_uav[int(aircraft_id)] = None
+        else:
+            datalink_connected_by_uav[int(aircraft_id)] = any(bool(v) for v in votes)
+
     for item in raw_list:
         if not isinstance(item, dict):
             continue
@@ -329,20 +371,24 @@ def extract_0401_agent_states(payload: object | None) -> tuple[int | None, list[
         camera_mode = item.get("cameraMode") or item.get("CameraMode") or {}
         fuel_val = _extract_fuel(item, unmanned_info)
         fuel_warning = _extract_fuel_warning(unmanned_info, flight_mode_info, item)
+        aircraft_id = _coerce_int(item.get("aircraftID") or item.get("AircraftID"))
         states.append(
             {
-                "aircraft_id": _coerce_int(item.get("aircraftID") or item.get("AircraftID")),
+                "aircraft_id": aircraft_id,
                 "health": _coerce_int(item.get("health") or item.get("Health")),
                 "last_signal_time": _extract_last_signal(item),
                 "is_unmanned": item.get("isUnmanned")
                 if "isUnmanned" in item or "IsUnmanned" in item
-                else (_coerce_int(item.get("aircraftID") or item.get("AircraftID")) or 0) >= 4,
+                else (aircraft_id or 0) >= 4,
                 "current_waypoint_id": _extract_current_waypoint(unmanned_info, flight_mode_info, item),
                 "on_mission": _extract_on_mission(unmanned_info, flight_mode_info, item),
                 "flight_mode": _extract_flight_mode(unmanned_info, flight_mode_info, item),
                 "payload_health": _extract_payload_health(unmanned_info, flight_mode_info, item),
                 "fuel_liters": fuel_val,
                 "fuel_warning": fuel_warning,
+                "datalink_connected": datalink_connected_by_uav.get(int(aircraft_id), None)
+                if aircraft_id is not None and aircraft_id >= 4
+                else None,
                 "footprint_corners": _extract_footprint(item, unmanned_info, camera_mode),
             }
         )

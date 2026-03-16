@@ -178,6 +178,7 @@ def _dict_to_InputMission(data: dict):
     obj = _new('InputMission')
     if "inputMissionID" in data: _try_set(obj, "inputMissionID", int(data["inputMissionID"]))
     if "inputMissionType" in data: _try_set(obj, "inputMissionType", int(data["inputMissionType"]))
+    if "regionType" in data: _try_set(obj, "regionType", int(data["regionType"]))
     if "isDone" in data: _try_set(obj, "isDone", bool(data["isDone"]))
     if "missionDetail" in data and isinstance(data["missionDetail"], dict):
         _try_set(obj, "missionDetail", _dict_to_MissionDetail(data["missionDetail"]))

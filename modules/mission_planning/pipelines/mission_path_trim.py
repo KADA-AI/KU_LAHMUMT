@@ -47,6 +47,61 @@ def sweep_cut_points(entry: Dict[str, Any] | None) -> int:
     return 0
 
 
+def count_sweep_points_in_waypoints(waypoints: List[Dict[str, Any]]) -> int:
+    total = 0
+    for wp in waypoints or []:
+        if not isinstance(wp, dict):
+            continue
+        fp = wp.get("filmingProperty")
+        if not isinstance(fp, dict):
+            continue
+        line_search = fp.get("lineSearch")
+        if not isinstance(line_search, dict):
+            continue
+        coords = line_search.get("coordinateList")
+        if not isinstance(coords, list):
+            continue
+        total += len(coords)
+    return total
+
+
+def scale_line_search_speed(
+    waypoints: List[Dict[str, Any]],
+    factor: float,
+) -> int:
+    if not waypoints:
+        return 0
+    try:
+        scale = float(factor)
+    except Exception:
+        scale = 1.0
+    if scale <= 0.0 or abs(scale - 1.0) <= 1e-9:
+        return 0
+
+    changed = 0
+    for wp in waypoints:
+        if not isinstance(wp, dict):
+            continue
+        fp = wp.get("filmingProperty")
+        if not isinstance(fp, dict):
+            continue
+        line_search = fp.get("lineSearch")
+        if not isinstance(line_search, dict):
+            continue
+        speed = line_search.get("searchSpeed")
+        try:
+            speed_value = float(speed)
+        except Exception:
+            continue
+        if speed_value <= 0.0:
+            continue
+        line_search["searchSpeed"] = round(speed_value * scale, 2)
+        fp["lineSearch"] = line_search
+        wp["filmingProperty"] = fp
+        changed += 1
+    return changed
+
+
 def trim_waypoints_by_is_done_prefix(
     waypoints: List[Dict[str, Any]],
 ) -> Tuple[List[Dict[str, Any]], int | None]:

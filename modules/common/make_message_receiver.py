@@ -204,6 +204,7 @@ CLASS_NAME_OVERRIDES = {
     "0101": "SystemOperationMode",
     "0102": "ModuleStatus",
     "0103": "SWStatus",
+    "0104": "TotalStatus",
     "0201": "InputMissionPlan",
     "0202": "PriorMissionInfo",
     "0203": "MissionReferenceInfo",

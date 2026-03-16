@@ -4,6 +4,7 @@ import json
 from copy import deepcopy
 import importlib.util
 import math
+from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -51,8 +52,10 @@ from modules.mission_planning.pipelines.prior_mission_pipeline_impl import (
     warm_prior_mission_pipeline,
 )
 from modules.mission_planning.pipelines.mission_path_trim import (
+    count_sweep_points_in_waypoints,
     load_sweep_progress,
     relink_waypoints,
+    scale_line_search_speed,
     sweep_cut_points,
     trim_waypoints_by_sweep_points,
 )
@@ -64,6 +67,10 @@ ATTACK_ENTRY_OFFSET_METERS = 100.0
 ATTACK_RESUME_OFFSET_METERS = 20.0
 ATTACK_MANNED_CANDIDATES = (2, 3)
 _MISSION_PLAN_START = 700_000_001
+_RESUME_SEARCH_SPEED_SCALE = 1.3
+_ATTACK_FAST_NUM_ARC_RAYS = 360
+_ATTACK_POINT_CACHE_MAX = 16
+_ATTACK_POINT_CACHE: "OrderedDict[Tuple[float, ...], Dict[str, Any]]" = OrderedDict()
 
 
 def warm_attack_plan_pipeline() -> Dict[str, Any]:
@@ -82,6 +89,15 @@ def warm_attack_plan_pipeline() -> Dict[str, Any]:
     status["compute_attack_point_available"] = callable(
         getattr(attack_assist, "calculate_attack_point", None)
     )
+    try:
+        raster_paths = attack_assist.detect_raster_paths()
+        status["attack_raster_count"] = len(raster_paths)
+        gather = getattr(attack_assist, "_gather_raster_infos", None)
+        if callable(gather):
+            infos = gather(raster_paths)
+            status["attack_raster_info_cached"] = len(infos)
+    except BaseException as exc:
+        status["attack_raster_warm_error"] = str(exc)
     return status
 
 
@@ -721,6 +737,18 @@ def _compute_attack_point(
     except Exception as exc:
         return None, f"Failed to import lah_attack_assistance: {exc}"
 
+    cache_key = (
+        round(float(friendly[1]), 5),
+        round(float(friendly[0]), 5),
+        round(float(enemy[1]), 5),
+        round(float(enemy[0]), 5),
+        float(_ATTACK_FAST_NUM_ARC_RAYS),
+    )
+    cached = _ATTACK_POINT_CACHE.get(cache_key)
+    if isinstance(cached, dict):
+        _ATTACK_POINT_CACHE.move_to_end(cache_key)
+        return dict(cached), None
+
     try:
         raster_paths = attack_assist.detect_raster_paths()
         elevation, geotransform, used_rasters = attack_assist.load_elevation(
@@ -729,12 +757,14 @@ def _compute_attack_point(
             radius_m=attack_assist.ANALYSIS_RADIUS_METERS,
         )
         enemy_px = attack_assist.ensure_point_inside(enemy, geotransform, elevation)
+        num_rays = int(getattr(attack_assist, "NUM_ARC_RAYS", _ATTACK_FAST_NUM_ARC_RAYS) or _ATTACK_FAST_NUM_ARC_RAYS)
+        num_rays = max(180, min(num_rays, _ATTACK_FAST_NUM_ARC_RAYS))
         arc = attack_assist.compute_cover_disk(
             elevation,
             geotransform,
             enemy_px,
             radius_m=attack_assist.ANALYSIS_RADIUS_METERS,
-            num_rays=attack_assist.NUM_ARC_RAYS,
+            num_rays=num_rays,
         )
         cell_data = attack_assist.compute_cell_data(arc)
         polygons = attack_assist.build_danger_polygons(
@@ -761,17 +791,19 @@ def _compute_attack_point(
         )
         # Use terrain altitude with a fixed safety offset (DEM + 300m)
         altitude_int = _normalize_altitude_value(altitude + 300.0 if altitude is not None else 300.0)
-        return (
-            {
-                "latitude": best["centroid"][1],
-                "longitude": best["centroid"][0],
-                "altitude": altitude_int,
-                "friendly_distance_m": best["friendly_distance"],
-                "enemy_distance_m": best["enemy_distance"],
-                "raster_sources": used_rasters,
-            },
-            None,
-        )
+        result = {
+            "latitude": best["centroid"][1],
+            "longitude": best["centroid"][0],
+            "altitude": altitude_int,
+            "friendly_distance_m": best["friendly_distance"],
+            "enemy_distance_m": best["enemy_distance"],
+            "raster_sources": used_rasters,
+        }
+        _ATTACK_POINT_CACHE[cache_key] = dict(result)
+        _ATTACK_POINT_CACHE.move_to_end(cache_key)
+        while len(_ATTACK_POINT_CACHE) > _ATTACK_POINT_CACHE_MAX:
+            _ATTACK_POINT_CACHE.popitem(last=False)
+        return (result, None)
     except Exception as exc:
         return None, f"Attack point computation error: {exc}"
 
@@ -1729,6 +1761,8 @@ def _split_done_resume_path(
             f"(forcedStartWP={_to_int((resume_waypoints[0] or {}).get('waypointID'))})."
         )
 
+    done_sweep_points = count_sweep_points_in_waypoints(done_waypoints)
+
     if append_replan_anchor and done_waypoints and resume_waypoints:
         anchor_coord_src = replan_coordinate if isinstance(replan_coordinate, dict) else {}
         anchor_lat = _to_float(anchor_coord_src.get("latitude"))
@@ -1816,7 +1850,8 @@ def _split_done_resume_path(
     progress_entry = None
     if sweep_progress and artifacts.path_id is not None:
         progress_entry = sweep_progress.get(int(artifacts.path_id))
-    cut_points = sweep_cut_points(progress_entry)
+    raw_cut_points = sweep_cut_points(progress_entry)
+    cut_points = max(0, int(raw_cut_points) - int(done_sweep_points))
     if cut_points > 0 and resume_waypoints:
         resume_waypoints, removed_points = trim_waypoints_by_sweep_points(
             resume_waypoints,
@@ -1826,7 +1861,8 @@ def _split_done_resume_path(
         if removed_points > 0:
             emit(
                 f"[ATTACK][UAV] Resume sweep trim applied "
-                f"(cutPoints={removed_points}, pathID={artifacts.path_id})."
+                f"(cutPoints={removed_points}, rawCutPoints={raw_cut_points}, "
+                f"doneSweepPoints={done_sweep_points}, pathID={artifacts.path_id})."
             )
 
     for wp in done_waypoints:
@@ -1844,6 +1880,12 @@ def _split_done_resume_path(
             emit=emit,
             log_prefix="[ATTACK][UAV]",
         )
+        scaled = scale_line_search_speed(resume_waypoints, _RESUME_SEARCH_SPEED_SCALE)
+        if scaled > 0:
+            emit(
+                f"[ATTACK][UAV] Resume searchSpeed scaled "
+                f"(factor={_RESUME_SEARCH_SPEED_SCALE:.2f}, waypoints={scaled})."
+            )
         relink_waypoints(resume_waypoints)
     return done_waypoints, resume_waypoints, removed_wp_id
 

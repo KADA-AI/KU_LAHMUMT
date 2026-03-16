@@ -114,6 +114,8 @@ def _to_dict_InputMission(obj):
     if _v is not None: d['inputMissionID'] = int(_v)
     _v = _get(obj, 'inputMissionType', 'InputMissionType')
     if _v is not None: d['inputMissionType'] = int(_v)
+    _v = _get(obj, 'regionType', 'RegionType')
+    if _v is not None: d['regionType'] = int(_v)
     _v = _get(obj, 'isDone', 'IsDone')
     if _v is not None: d['isDone'] = bool(_v)
     _sub = _get(obj, 'missionDetail', 'MissionDetail')

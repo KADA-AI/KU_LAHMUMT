@@ -288,6 +288,7 @@ def gen_value(field_name: str, type_token: str, ctx_msg_id: str, obj_context: Op
     # 기본
     if base in ("uint32","int32","uint64","int64"):
         if lname == "timestamp": return now_ms_2000()
+        if lname == "regiontype": return random.randint(0, 20)
         if lname in ("health","currentindividualmissionprogress"): return random.randint(0,100)
         return random.randint(0, 1000) if base.startswith("u") else random.randint(-1000, 1000)
     if base in ("float32","float64"):
@@ -456,6 +457,7 @@ def _gen_InputMission(source: str = "DS"):
     obj = {}
     obj["inputMissionID"] = gen_value("inputMissionID", "uint32", MSG_ID, obj, 0)
     obj["inputMissionType"] = gen_value("inputMissionType", "uint32", MSG_ID, obj, 0)
+    obj["regionType"] = gen_value("regionType", "uint32", MSG_ID, obj, 0)
     obj["isDone"] = gen_value("isDone", "bool", MSG_ID, obj, 0)
     obj["missionDetail"] = _gen_MissionDetail(source=source)
     return obj

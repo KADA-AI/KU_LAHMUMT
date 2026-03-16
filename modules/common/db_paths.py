@@ -31,6 +31,21 @@ def _default_base_root() -> Path:
     return DEFAULT_SCENARIO_BASE
 
 
+def _info_mtime() -> float | None:
+    try:
+        return INFO_PATH.stat().st_mtime
+    except FileNotFoundError:
+        return None
+
+
+def _mkdir_if_possible(path: Path) -> bool:
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return False
+    return True
+
+
 def _ensure_base_root_unlocked(persist: bool = False) -> str:
     base = _cache.get("base_root")
     if base:
@@ -101,6 +116,49 @@ def _write_info_unlocked(info: Dict[str, Any]) -> None:
     INFO_PATH.parent.mkdir(parents=True, exist_ok=True)
     with INFO_PATH.open("w", encoding="utf-8") as fh:
         json.dump(info, fh, ensure_ascii=False, indent=2, sort_keys=True)
+
+
+def _set_cached_db_root_unlocked(
+    db_root: Path,
+    *,
+    source: Optional[str],
+    scenario_dir: Optional[Path] = None,
+    timestamp_ms: Optional[int] = None,
+    iso: Optional[str] = None,
+    agency: Optional[str] = None,
+    base_root: Path | str | None = None,
+    persist: bool = False,
+) -> Path:
+    base_value = base_root or _cache.get("base_root") or _default_base_root()
+    base_str = str(base_value)
+    _cache.update({
+        "db_root": db_root,
+        "scenario_dir": scenario_dir,
+        "timestamp_ms": timestamp_ms,
+        "iso": iso,
+        "agency": agency,
+        "source": source,
+        "base_root": base_str,
+    })
+    if persist:
+        _write_info_unlocked(_current_info_dict())
+    _cache["mtime"] = _info_mtime()
+    _set_env_unlocked(db_root, scenario_dir)
+    return db_root
+
+
+def _reset_to_local_defaults_unlocked(source: str) -> Path:
+    base_root = _default_base_root()
+    if not _mkdir_if_possible(base_root):
+        raise PermissionError(f"Unable to prepare local scenario root: {base_root}")
+    if not _mkdir_if_possible(LEGACY_DB_ROOT):
+        raise PermissionError(f"Unable to prepare local DB root: {LEGACY_DB_ROOT}")
+    return _set_cached_db_root_unlocked(
+        LEGACY_DB_ROOT,
+        source=source,
+        base_root=base_root,
+        persist=True,
+    )
 
 
 def _refresh_cache_unlocked() -> None:
@@ -188,20 +246,17 @@ def bootstrap_db_root() -> Path:
         _refresh_cache_unlocked()
         cached_path = _cache.get("db_root")
         if cached_path is not None:
-            cached_path.mkdir(parents=True, exist_ok=True)
-            _set_env_unlocked(cached_path, _cache.get("scenario_dir"))
-            return cached_path
+            if _mkdir_if_possible(cached_path):
+                _set_env_unlocked(cached_path, _cache.get("scenario_dir"))
+                return cached_path
+            return _reset_to_local_defaults_unlocked("bootstrap-fallback")
         env_path = os.environ.get(ENV_DB_ROOT)
         if env_path:
             path = Path(env_path)
-            path.mkdir(parents=True, exist_ok=True)
-            _cache.update({"db_root": path})
-            _set_env_unlocked(path, None)
-            return path
-        LEGACY_DB_ROOT.mkdir(parents=True, exist_ok=True)
-        _cache.update({"db_root": LEGACY_DB_ROOT})
-        _set_env_unlocked(LEGACY_DB_ROOT, None)
-        return LEGACY_DB_ROOT
+            if _mkdir_if_possible(path):
+                return _set_cached_db_root_unlocked(path, source="env")
+            return _reset_to_local_defaults_unlocked("env-fallback")
+        return _reset_to_local_defaults_unlocked("bootstrap-default")
 
 
 def get_active_db_root() -> Path:
@@ -209,9 +264,10 @@ def get_active_db_root() -> Path:
         _refresh_cache_unlocked()
         path = _cache.get("db_root")
         if path is None:
-            return bootstrap_db_root()
-        path.mkdir(parents=True, exist_ok=True)
-        return path
+            return _reset_to_local_defaults_unlocked("active-db-default")
+        if _mkdir_if_possible(path):
+            return path
+        return _reset_to_local_defaults_unlocked("active-db-fallback")
 
 
 def get_active_db_root_str() -> str:
@@ -248,12 +304,24 @@ def activate_scenario(timestamp_ms: int, agency: Optional[str] = None, *, copy_l
         is_custom_base = base_root.resolve() != default_base.resolve()
     except Exception:
         is_custom_base = base_root != default_base
-    base_root.mkdir(parents=True, exist_ok=True)
+    if not _mkdir_if_possible(base_root):
+        base_root = default_base
+        is_custom_base = False
+    if not _mkdir_if_possible(base_root):
+        raise PermissionError(f"Unable to prepare scenario root: {base_root}")
     scenario_dir = base_root / f"{SCENARIO_PREFIX}{iso}"
     agency_dir = scenario_dir / agency_code
     db_dir = agency_dir
     with _lock:
-        agency_dir.mkdir(parents=True, exist_ok=True)
+        if not _mkdir_if_possible(agency_dir):
+            if base_root != default_base:
+                base_root = default_base
+                scenario_dir = base_root / f"{SCENARIO_PREFIX}{iso}"
+                agency_dir = scenario_dir / agency_code
+                db_dir = agency_dir
+                is_custom_base = False
+            if not _mkdir_if_possible(agency_dir):
+                raise PermissionError(f"Unable to prepare scenario DB root: {agency_dir}")
         copy_from_legacy = copy_legacy and not is_custom_base
         if copy_from_legacy and not _dir_has_files(db_dir):
             _copy_legacy_into(db_dir)
@@ -269,7 +337,7 @@ def activate_scenario(timestamp_ms: int, agency: Optional[str] = None, *, copy_l
         }
         _write_info_unlocked(info)
         _cache.update({
-            "mtime": INFO_PATH.stat().st_mtime,
+            "mtime": _info_mtime(),
             "db_root": db_dir,
             "scenario_dir": scenario_dir,
             "timestamp_ms": info["timestamp_ms"],
@@ -298,7 +366,7 @@ def set_manual_db_root(path: str | Path, *, source: str = "manual") -> Dict[str,
     with _lock:
         _write_info_unlocked(info)
         _cache.update({
-            "mtime": INFO_PATH.stat().st_mtime,
+            "mtime": _info_mtime(),
             "db_root": dest,
             "scenario_dir": None,
             "timestamp_ms": None,
@@ -321,10 +389,7 @@ def set_scenario_base_root(path: str | Path | None) -> Dict[str, Any]:
         info = _current_info_dict()
         info["base_root"] = base_str
         _write_info_unlocked(info)
-        try:
-            _cache["mtime"] = INFO_PATH.stat().st_mtime
-        except FileNotFoundError:
-            _cache["mtime"] = None
+        _cache["mtime"] = _info_mtime()
         _set_env_unlocked(_cache.get("db_root"), _cache.get("scenario_dir"))
         return info
 

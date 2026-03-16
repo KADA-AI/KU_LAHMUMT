@@ -54,6 +54,7 @@ class WaypointTarget:
     individual_mission_id: int | None = None
     path_id: int | None = None
     pass_type: int | None = None
+    sep_m: float | None = None
 
 
 def _merge_gains(data: dict, fallback: PIDGains) -> PIDGains:
@@ -164,6 +165,7 @@ class WaypointPIDController:
                 individual_mission_id = wp.get("individual_mission_id")
                 path_id = wp.get("path_id")
                 pass_type = wp.get("pass_type")
+                sep_m = wp.get("sep_m")
                 if isinstance(pos, (list, tuple)) and len(pos) == 3:
                     self.targets.append(
                         WaypointTarget(
@@ -180,6 +182,7 @@ class WaypointPIDController:
                             else None,
                             path_id=int(path_id) if path_id is not None else None,
                             pass_type=int(pass_type) if pass_type is not None else None,
+                            sep_m=float(sep_m) if sep_m is not None else None,
                         )
                     )
             elif isinstance(wp, (list, tuple)) and len(wp) == 3:

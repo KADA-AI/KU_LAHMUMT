@@ -1,5 +1,6 @@
 from __future__ import annotations
-
+import itertools
+import math
 from typing import Any, Dict, List, Optional
 
 from . import split_algorithms as sa
@@ -29,6 +30,108 @@ def _extract_takeover_centroid(mrpk: Dict[str, Any]) -> Optional[Dict[str, float
     if not coords:
         return None
     return _centroid_llh(coords)
+
+
+def _extract_takeover_map(mrpk: Dict[str, Any]) -> Dict[int, Dict[str, float]]:
+    infos = mrpk.get("takeOverInfoList")
+    if not isinstance(infos, list):
+        return {}
+    out: Dict[int, Dict[str, float]] = {}
+    for item in infos:
+        if not isinstance(item, dict):
+            continue
+        aid = item.get("aircraftID")
+        coord = item.get("coordinate")
+        if not isinstance(aid, int) or not isinstance(coord, dict):
+            continue
+        if "latitude" not in coord or "longitude" not in coord:
+            continue
+        out[int(aid)] = {
+            "latitude": float(coord["latitude"]),
+            "longitude": float(coord["longitude"]),
+            "altitude": float(coord.get("altitude", 0.0)),
+        }
+    return out
+
+
+def _dist_m(a: Dict[str, Any] | None, b: Dict[str, Any] | None) -> float:
+    if not isinstance(a, dict) or not isinstance(b, dict):
+        return float("inf")
+    try:
+        lat1 = float(a["latitude"])
+        lon1 = float(a["longitude"])
+        lat2 = float(b["latitude"])
+        lon2 = float(b["longitude"])
+    except Exception:
+        return float("inf")
+    deg_m = 111_132.0
+    dx = (lon2 - lon1) * deg_m * math.cos(math.radians((lat1 + lat2) / 2.0))
+    dy = (lat2 - lat1) * deg_m
+    return math.hypot(dx, dy)
+
+
+def _piece_entry_point(piece: SplitPiece) -> Optional[Dict[str, float]]:
+    data = piece.data if isinstance(piece, SplitPiece) else {}
+    if not isinstance(data, dict):
+        return None
+    for key in ("Centerline", "coordinateList", "rawCoordinateList"):
+        coords = data.get(key)
+        if isinstance(coords, list) and coords:
+            pt = coords[0]
+            if isinstance(pt, dict) and "latitude" in pt and "longitude" in pt:
+                return {
+                    "latitude": float(pt["latitude"]),
+                    "longitude": float(pt["longitude"]),
+                    "altitude": float(pt.get("altitude", 0.0)),
+                }
+    return None
+
+
+def _assign_group_by_takeover_distance(
+    pieces: List[SplitPiece],
+    uav_ids: List[int],
+    takeover_map: Dict[int, Dict[str, float]],
+) -> Dict[int, int]:
+    if not pieces or not uav_ids:
+        return {}
+
+    entry_by_piece = {idx: _piece_entry_point(piece) for idx, piece in enumerate(pieces)}
+    usable_uavs = [aid for aid in uav_ids if isinstance(takeover_map.get(aid), dict)]
+    if not usable_uavs:
+        return {}
+
+    if len(pieces) <= len(usable_uavs) and len(usable_uavs) <= 8:
+        best_cost = float("inf")
+        best_map: Dict[int, int] | None = None
+        for candidate_uavs in itertools.permutations(usable_uavs, len(pieces)):
+            cost = 0.0
+            mapping: Dict[int, int] = {}
+            for piece_idx, aid in enumerate(candidate_uavs):
+                cost += _dist_m(takeover_map.get(aid), entry_by_piece.get(piece_idx))
+                mapping[piece_idx] = aid
+            if cost < best_cost:
+                best_cost = cost
+                best_map = mapping
+        if best_map is not None:
+            return best_map
+
+    assigned: Dict[int, int] = {}
+    used_uavs: set[int] = set()
+    for piece_idx, piece in enumerate(pieces):
+        best_aid = None
+        best_cost = float("inf")
+        for aid in usable_uavs:
+            if len(pieces) <= len(usable_uavs) and aid in used_uavs:
+                continue
+            cost = _dist_m(takeover_map.get(aid), entry_by_piece.get(piece_idx))
+            if cost < best_cost:
+                best_cost = cost
+                best_aid = aid
+        if best_aid is None:
+            continue
+        assigned[piece_idx] = best_aid
+        used_uavs.add(best_aid)
+    return assigned
 
 
 def _mission_entry_point(mission: Dict[str, Any]) -> Optional[Dict[str, float]]:
@@ -98,6 +201,7 @@ def run_split_pipeline(
 
     uav_count = len(uav_ids) if uav_ids else 1
     prev_pt = _extract_takeover_centroid(mrpk)
+    takeover_map = _extract_takeover_map(mrpk)
 
     all_pieces: List[SplitPiece] = []
     directions: List[DirectionDebug] = []
@@ -224,9 +328,20 @@ def run_split_pipeline(
                 prev_pt = _centroid_llh(centers)
 
     if apply_assignment:
-        assigned = assign_pieces_round_robin(len(all_pieces), uav_ids)
-        for piece, aid in zip(all_pieces, assigned):
-            piece.assigned_uav = aid
+        grouped: Dict[int, List[SplitPiece]] = {}
+        for piece in all_pieces:
+            grouped.setdefault(int(piece.parent_order), []).append(piece)
+
+        for parent_order in sorted(grouped.keys()):
+            group = grouped[parent_order]
+            assigned_group = _assign_group_by_takeover_distance(group, uav_ids, takeover_map)
+            if assigned_group:
+                for idx, piece in enumerate(group):
+                    piece.assigned_uav = assigned_group.get(idx)
+            else:
+                assigned = assign_pieces_round_robin(len(group), uav_ids)
+                for piece, aid in zip(group, assigned):
+                    piece.assigned_uav = aid
 
     if apply_scheduling:
         scheduled = schedule_by_parent_order(all_pieces)

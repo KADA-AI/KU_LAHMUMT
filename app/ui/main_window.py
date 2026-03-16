@@ -20,7 +20,7 @@ from modules.common.process_console import (
     should_show_module_consoles,
 )
 
-APP_TITLE = "KU Mission Decision Support Dashboard (v1.1.0)"
+APP_TITLE = "KU Mission Decision Support Dashboard (v1.1.3)"
 REFERENCE_PDF_PATH = db_paths.PROJECT_ROOT / "ref" / "04. 모듈 간 인터페이스 설계-v7-20260116_175548.pdf"
 if not REFERENCE_PDF_PATH.exists():
     REFERENCE_PDF_PATH = db_paths.PROJECT_ROOT / "ref" / "04. 모듈 간 인터페이스 설계-v7-20250917_133206.pdf"

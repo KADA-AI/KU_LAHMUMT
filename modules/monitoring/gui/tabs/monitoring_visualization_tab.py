@@ -39,6 +39,7 @@ from typing import Callable
 
 
 _EPOCH2000_MS = 946684800000
+_SIGNAL_OK_GRACE_MS = 10000
 _OPERATION_OVERRIDE_SECONDS = 5.0
 
 
@@ -2085,7 +2086,7 @@ class MonitoringVisualizationTab(QWidget):
             return False
         if ls <= 0:
             return False
-        return abs(ts - ls) <= 7000
+        return abs(ts - ls) <= _SIGNAL_OK_GRACE_MS
 
     @staticmethod
     def _availability_stage_priority(stage: str | None) -> int:

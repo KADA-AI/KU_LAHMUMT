@@ -7,7 +7,7 @@ class ReceivedDatabase(object):
         "0000",
         "0001",
         # 010x 시스템 운용/상태
-        "0101", "0102", "0103",
+        "0101", "0102", "0103", "0104",
         # 020x 임무 입력/선행/참조
         "0201", "0202", "0203",
         # 030x 계획류
@@ -15,15 +15,15 @@ class ReceivedDatabase(object):
         # 040x 상황/상태
         "0401", "0402",
         # 050x 임무 상태/진전(세분)
-        "0501", "0502", "0503", "0504"
+        "0501", "0502", "0503", "0504",
         # 060x 기타(예: 링크/시스템 등)
-        "0601",
+        "0601", "0602",
         # 070x 옵션/결과
         "0701", "0702",
         # 080x 명령
         "0801", "0802", "0803", "0804", "0805", "0806",
         # 090x 운용자 요청
-        "0901", "0902", "0903",
+        "0901", "0902", "0903", "0904",
     ]
 
     def __new__(cls, *args, **kwargs):
@@ -57,6 +57,8 @@ class ReceivedDatabase(object):
     def set_received_0102(self, value): self.received_0102 = value
     def get_received_0103(self): return self.received_0103
     def set_received_0103(self, value): self.received_0103 = value
+    def get_received_0104(self): return self.received_0104
+    def set_received_0104(self, value): self.received_0104 = value
 
     # 0201/0202/0203
     def get_received_0201(self): return self.received_0201
@@ -125,6 +127,8 @@ class ReceivedDatabase(object):
     def set_received_0902(self, value): self.received_0902 = value
     def get_received_0903(self): return self.received_0903
     def set_received_0903(self, value): self.received_0903 = value
+    def get_received_0904(self): return self.received_0904
+    def set_received_0904(self, value): self.received_0904 = value
 
 
 # 싱글톤 인스턴스

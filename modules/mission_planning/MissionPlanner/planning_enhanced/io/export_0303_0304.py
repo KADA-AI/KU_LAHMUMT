@@ -18,6 +18,7 @@ try:
         load_runtime_settings,
         load_runtime_values,
         load_runtime_flyover,
+        runtime_override,
         get_runtime_float,
         get_runtime_int,
         get_runtime_str,
@@ -27,6 +28,7 @@ except Exception:
         load_runtime_settings,
         load_runtime_values,
         load_runtime_flyover,
+        runtime_override,
         get_runtime_float,
         get_runtime_int,
         get_runtime_str,
@@ -48,12 +50,27 @@ def _to_float(value: Any, default: float = 0.0) -> float:
 
 def _import_runtime_modules():
     try:
-        from data_def import d0303, d0304, search_speed  # type: ignore
-        import config as mp_config  # type: ignore
-    except Exception:
         from ...data_def import d0303, d0304, search_speed  # type: ignore
         from ... import config as mp_config  # type: ignore
+    except Exception:
+        try:
+            from modules.mission_planning.MissionPlanner.data_def import d0303, d0304, search_speed  # type: ignore
+            from modules.mission_planning.MissionPlanner import config as mp_config  # type: ignore
+        except Exception:
+            from data_def import d0303, d0304, search_speed  # type: ignore
+            import config as mp_config  # type: ignore
     return reload(d0303), reload(d0304), search_speed, mp_config
+
+
+def _payload_with_uav_plan_mode(payload: Dict[str, Any], uav_plan_mode: Optional[str]) -> Dict[str, Any]:
+    mode = str(uav_plan_mode or "").strip().lower()
+    if mode not in {"dub_path"}:
+        return dict(payload) if isinstance(payload, dict) else {}
+    base = dict(payload) if isinstance(payload, dict) else {}
+    values = dict(load_runtime_values(payload))
+    values["uav_plan_mode"] = mode
+    base["values"] = values
+    return base
 
 
 def _apply_runtime_params(d0303, search_speed_module, mp_config_module) -> tuple[float, float]:
@@ -166,9 +183,11 @@ def build_0303_0304_from_0302_packages(
     mrpk: Optional[Dict[str, Any]] = None,
     cruise_speed_mps: Optional[float] = None,
     lah_cruise_speed_mps: Optional[float] = None,
+    uav_plan_mode: Optional[str] = None,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     d0303, d0304, search_speed, mp_config = _import_runtime_modules()
     runtime_payload = load_runtime_settings()
+    uav_runtime_payload = _payload_with_uav_plan_mode(runtime_payload, uav_plan_mode)
     cfg_cruise_speed, cfg_turn_step = _apply_runtime_params(d0303, search_speed, mp_config)
     manned_plan_mode = str(get_runtime_str("manned_plan_mode", "normal", runtime_payload) or "normal").strip().lower()
     effective_uav_cruise = float(cruise_speed_mps) if cruise_speed_mps and float(cruise_speed_mps) > 0.0 else float(cfg_cruise_speed)
@@ -181,12 +200,13 @@ def build_0303_0304_from_0302_packages(
     flight_plans_0304: List[Dict[str, Any]] = []
 
     def _build_0303() -> List[Dict[str, Any]]:
-        return d0303.build_flight_plans(
-            missions=uav_missions,
-            cruise_speed=float(effective_uav_cruise),
-            turn_step_deg=float(cfg_turn_step),
-            ref0203=mrpk if isinstance(mrpk, dict) else None,
-        )
+        with runtime_override(uav_runtime_payload):
+            return d0303.build_flight_plans(
+                missions=uav_missions,
+                cruise_speed=float(effective_uav_cruise),
+                turn_step_deg=float(cfg_turn_step),
+                ref0203=mrpk if isinstance(mrpk, dict) else None,
+            )
 
     def _build_0304() -> List[Dict[str, Any]]:
         return d0304.build_lah_flight_plans_fixed(

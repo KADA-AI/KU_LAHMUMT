@@ -4,7 +4,9 @@ import argparse
 import json
 import math
 import os
+from collections import OrderedDict
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Iterable, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
@@ -38,6 +40,9 @@ DANGER_MIN_CELLS = 40
 ATTACK_CANDIDATE_COUNT = 3
 ANALYSIS_MARGIN_METERS = 1000.0
 
+_ELEVATION_CACHE_MAX = 4
+_ELEVATION_CACHE: "OrderedDict[Tuple[Any, ...], Tuple[np.ndarray, Tuple[float, ...], Tuple[str, ...]]]" = OrderedDict()
+
 
 @dataclass
 class ArcResult:
@@ -70,7 +75,24 @@ def _list_tif_files(directory: str) -> List[str]:
     return tif_candidates
 
 
+def _raster_signature(raster_paths: Sequence[str]) -> Tuple[Tuple[str, int, int], ...]:
+    signature: List[Tuple[str, int, int]] = []
+    for path in raster_paths:
+        abspath = os.path.abspath(path)
+        try:
+            stat = os.stat(abspath)
+            signature.append((abspath, int(stat.st_mtime_ns), int(stat.st_size)))
+        except OSError:
+            signature.append((abspath, 0, 0))
+    return tuple(signature)
+
+
 def detect_raster_paths(preferred_path: Optional[str] = None) -> List[str]:
+    return list(_detect_raster_paths_cached(preferred_path))
+
+
+@lru_cache(maxsize=8)
+def _detect_raster_paths_cached(preferred_path: Optional[str] = None) -> Tuple[str, ...]:
     """
     Returns every available GeoTIFF path. If preferred_path points to a file it is used directly,
     if it points to a directory the *.tif files inside are returned. With no preferred_path the
@@ -94,7 +116,7 @@ def detect_raster_paths(preferred_path: Optional[str] = None) -> List[str]:
         raise FileNotFoundError(
             "No GeoTIFF (*.tif) files found. Place them under 'resource/' (or provide --raster-path)."
         )
-    return candidates
+    return tuple(candidates)
 
 
 def detect_raster_path(resources_dir: str = "resource") -> str:
@@ -122,8 +144,15 @@ def _dataset_bounds_from_transform(
 
 
 def _gather_raster_infos(raster_paths: Sequence[str]) -> List[RasterInfo]:
+    return list(_gather_raster_infos_cached(_raster_signature(raster_paths)))
+
+
+@lru_cache(maxsize=8)
+def _gather_raster_infos_cached(
+    raster_signature: Tuple[Tuple[str, int, int], ...],
+) -> Tuple[RasterInfo, ...]:
     infos: List[RasterInfo] = []
-    for path in raster_paths:
+    for path, _mtime_ns, _size in raster_signature:
         dataset = gdal.Open(path, gdal.GA_ReadOnly)
         if dataset is None:
             continue
@@ -146,7 +175,7 @@ def _gather_raster_infos(raster_paths: Sequence[str]) -> List[RasterInfo]:
         dataset = None
     if not infos:
         raise RuntimeError("Failed to read metadata from any GeoTIFF resources.")
-    return infos
+    return tuple(infos)
 
 
 def _bounds_intersect(a: Tuple[float, float, float, float], b: Tuple[float, float, float, float]) -> bool:
@@ -180,8 +209,18 @@ def load_elevation(
     if not raster_paths:
         raise FileNotFoundError("No GeoTIFF resources were provided.")
 
-    infos = _gather_raster_infos(raster_paths)
+    raster_sig = _raster_signature(raster_paths)
+    infos = _gather_raster_infos_cached(raster_sig)
     bounds = _analysis_bounds(center_world, radius_m, margin_m)
+    cache_key = (
+        raster_sig,
+        tuple(round(float(value), 6) for value in bounds),
+    )
+    cached = _ELEVATION_CACHE.get(cache_key)
+    if cached is not None:
+        _ELEVATION_CACHE.move_to_end(cache_key)
+        elevation_cached, geotransform_cached, used_paths_cached = cached
+        return elevation_cached, geotransform_cached, list(used_paths_cached)
     intersecting_infos = [info for info in infos if _bounds_intersect(info.bounds, bounds)]
     if not intersecting_infos:
         raise RuntimeError(
@@ -234,7 +273,13 @@ def load_elevation(
     band = None
     mosaic = None
     used_paths = [info.path for info in intersecting_infos]
-    return elevation, geotransform, used_paths
+    elevation.setflags(write=False)
+    geotransform_tuple = tuple(float(value) for value in geotransform)
+    _ELEVATION_CACHE[cache_key] = (elevation, geotransform_tuple, tuple(used_paths))
+    _ELEVATION_CACHE.move_to_end(cache_key)
+    while len(_ELEVATION_CACHE) > _ELEVATION_CACHE_MAX:
+        _ELEVATION_CACHE.popitem(last=False)
+    return elevation, geotransform_tuple, used_paths
 
 
 def world_to_pixel(x: float, y: float, geotransform: Optional[Sequence[float]]):

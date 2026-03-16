@@ -13,7 +13,9 @@ from modules.common import db_paths, agent_status_snapshot, prior_replan_store
 from modules.mission_planning._paths import mission_planner_data_def_root
 from modules.mission_planning.runtime.json_io import write_json
 from modules.mission_planning.pipelines.mission_path_trim import (
+    count_sweep_points_in_waypoints,
     load_sweep_progress,
+    scale_line_search_speed,
     sweep_cut_points,
     trim_waypoints_by_sweep_points,
     relink_waypoints,
@@ -27,6 +29,7 @@ _PRIOR_DEFAULT_LOITER_SECONDS = 50
 _PRIOR_APPROACH_BASE_OFFSET_M = 250.0  # was 100m
 _PRIOR_APPROACH_FAR_OFFSET_M = 450.0   # was 300m
 _RTB_FLIGHT_MODE = 5
+_RESUME_SEARCH_SPEED_SCALE = 1.3
 _ID_ALLOCATOR_MOD: Optional[ModuleType] = None
 _MISSION_HELPERS_MOD: Optional[ModuleType] = None
 
@@ -1477,6 +1480,8 @@ def _apply_resume_path_trimming(
             f"(forcedStartWP={_to_int((resume_waypoints[0] or {}).get('waypointID'))})."
         )
 
+    done_sweep_points = count_sweep_points_in_waypoints(done_waypoints)
+
     # Append replan anchor waypoint to done path to preserve visualization continuity.
     if done_waypoints and resume_waypoints and isinstance(current_coord, dict):
         anchor_lat = _to_float(current_coord.get("latitude"))
@@ -1557,7 +1562,8 @@ def _apply_resume_path_trimming(
     progress_entry = None
     if sweep_progress and artifacts.path_id is not None:
         progress_entry = sweep_progress.get(int(artifacts.path_id))
-    cut_points = sweep_cut_points(progress_entry)
+    raw_cut_points = sweep_cut_points(progress_entry)
+    cut_points = max(0, int(raw_cut_points) - int(done_sweep_points))
     if cut_points > 0 and resume_waypoints:
         resume_waypoints, removed_points = trim_waypoints_by_sweep_points(
             resume_waypoints,
@@ -1567,7 +1573,8 @@ def _apply_resume_path_trimming(
         if removed_points > 0:
             emit(
                 f"[PRIOR][UAV] Resume sweep trim applied "
-                f"(cutPoints={removed_points}, pathID={artifacts.path_id})."
+                f"(cutPoints={removed_points}, rawCutPoints={raw_cut_points}, "
+                f"doneSweepPoints={done_sweep_points}, pathID={artifacts.path_id})."
             )
 
     for wp in done_waypoints:
@@ -1584,6 +1591,12 @@ def _apply_resume_path_trimming(
             resume_waypoints,
             emit=emit,
         )
+        scaled = scale_line_search_speed(resume_waypoints, _RESUME_SEARCH_SPEED_SCALE)
+        if scaled > 0:
+            emit(
+                f"[PRIOR][UAV] Resume searchSpeed scaled "
+                f"(factor={_RESUME_SEARCH_SPEED_SCALE:.2f}, waypoints={scaled})."
+            )
         relink_waypoints(resume_waypoints)
     resume_fp_data["waypointList"] = resume_waypoints
     return done_waypoints, resume_waypoints, removed_wp_id

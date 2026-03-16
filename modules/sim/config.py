@@ -39,7 +39,7 @@ WEB_DIR = _env_path("SIM_WEB_DIR", SIM_DIR / "web")
 MBTILES_PATH = _env_path("SIM_MBTILES_PATH", RESOURCE_DIR / "korea.mbtiles")
 DEM_DIR = _env_path("SIM_DEM_DIR", RESOURCE_DIR)
 
-SERVER_HOST = os.getenv("SIM_SERVER_HOST", "192.168.100.251")
+SERVER_HOST = os.getenv("SIM_SERVER_HOST", "127.0.0.1")
 SERVER_PORT = _env_int("SIM_SERVER_PORT", 8000)
 
 # Map defaults (Jipo-ri focus)
