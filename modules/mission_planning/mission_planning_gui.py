@@ -3699,6 +3699,21 @@ class MainWindow(QMainWindow):
                     return "-"
                 return ", ".join(str(v) for v in values[:limit])
 
+            def _is_single_point_coordinate_only_mission(mission: Any) -> bool:
+                if not isinstance(mission, dict):
+                    return False
+                detail = mission.get("missionDetail")
+                if not isinstance(detail, dict):
+                    return False
+                line_list = detail.get("lineList")
+                area_list = detail.get("areaList")
+                if isinstance(line_list, list) and line_list:
+                    return False
+                if isinstance(area_list, list) and area_list:
+                    return False
+                coord_list = detail.get("coordinateList")
+                return isinstance(coord_list, list) and len(coord_list) == 1
+
             self.log_sig.emit("[CHECK] 0201/0203 필수 데이터 확인 시작")
             mission_list = _require_list(cmpk_data or {}, "inputMissionList", "0201 inputMissionList")
             aircraft_list = _require_list(cmpk_data or {}, "availableAircraftList", "0201 availableAircraftList")
@@ -3774,6 +3789,7 @@ class MainWindow(QMainWindow):
             unknown_type: list[Any] = []
             type_zero: list[Any] = []
             line_only_violation: list[Any] = []
+            skipped_single_point_coordinate_only: list[Any] = []
             for mission in mission_list:
                 if not isinstance(mission, dict):
                     missing_detail.append("?")
@@ -3784,6 +3800,9 @@ class MainWindow(QMainWindow):
                 detail = mission.get("missionDetail")
                 if not isinstance(detail, dict):
                     missing_detail.append(mid)
+                    continue
+                if _is_single_point_coordinate_only_mission(mission):
+                    skipped_single_point_coordinate_only.append(mid)
                     continue
                 mtype_raw = mission.get("inputMissionType")
                 try:
@@ -3810,7 +3829,7 @@ class MainWindow(QMainWindow):
             if mission_list:
                 self.log_sig.emit(
                     "[CHECK] 0201 임무: total={total} missingID={mid} missingDetail={md} "
-                    "missingShape={ms} unknownType={ut} typeZero={tz} lineOnlyViolation={lv}".format(
+                    "missingShape={ms} unknownType={ut} typeZero={tz} lineOnlyViolation={lv} skippedSinglePoint={sp}".format(
                         total=len(mission_list),
                         mid=len(missing_id),
                         md=len(missing_detail),
@@ -3818,8 +3837,14 @@ class MainWindow(QMainWindow):
                         ut=len(unknown_type),
                         tz=len(type_zero),
                         lv=len(line_only_violation),
+                        sp=len(skipped_single_point_coordinate_only),
                     )
                 )
+                if skipped_single_point_coordinate_only:
+                    self.log_sig.emit(
+                        "[INFO] 0201 single-point coordinate-only 임무는 무시합니다: "
+                        f"{_summarize_ids(skipped_single_point_coordinate_only)}"
+                    )
                 if missing_id or missing_detail or missing_shape or unknown_type or type_zero or line_only_violation:
                     self.log_sig.emit(
                         "[DETAIL] 0201 문제 샘플: missingID={mid} missingDetail={md} "
@@ -3932,6 +3957,7 @@ class MainWindow(QMainWindow):
                     "aircrafts": len(aircraft_list),
                     "uavs": uav_count,
                     "lahs": lah_count,
+                    "skippedSinglePointCoordinateOnly": len(skipped_single_point_coordinate_only),
                     "takeOver": len(take_over_list),
                     "handOver": len(hand_over_list),
                     "flightArea": len(flight_area_list),
@@ -3956,6 +3982,7 @@ class MainWindow(QMainWindow):
                 removed_ids: list[str] = []
                 converted_ids: list[str] = []
                 width_adjusted_ids: list[str] = []
+                skipped_single_point_ids: list[str] = []
                 active_ids: list[int] = []
 
                 for mission in mission_list_local:
@@ -3966,6 +3993,10 @@ class MainWindow(QMainWindow):
                         mid_int = int(mid_raw)
                     except Exception:
                         mid_int = None
+                    if _is_single_point_coordinate_only_mission(mission):
+                        skipped_single_point_ids.append(str(mid_raw))
+                        removed_ids.append(str(mid_raw))
+                        continue
                     if mission_whitelist and (mid_int is None or mid_int not in mission_whitelist):
                         removed_ids.append(str(mid_raw))
                         continue
@@ -4008,6 +4039,7 @@ class MainWindow(QMainWindow):
                     "removed_ids": removed_ids,
                     "converted_ids": converted_ids,
                     "width_adjusted_ids": width_adjusted_ids,
+                    "skipped_single_point_ids": skipped_single_point_ids,
                     "active_ids": active_ids,
                     "original_count": len(mission_list_local),
                 }
@@ -4019,6 +4051,7 @@ class MainWindow(QMainWindow):
                 removed_ids: list[str] = []
                 converted_ids: list[str] = []
                 width_adjusted_ids: list[str] = []
+                skipped_single_point_ids: list[str] = []
                 active_ids: list[int] = []
                 for mission in mission_list:
                     mid_raw = mission.get("inputMissionID")
@@ -4026,6 +4059,10 @@ class MainWindow(QMainWindow):
                         mid_int = int(mid_raw)
                     except Exception:
                         mid_int = None
+                    if _is_single_point_coordinate_only_mission(mission):
+                        skipped_single_point_ids.append(str(mid_raw))
+                        removed_ids.append(str(mid_raw))
+                        continue
                     if mission_whitelist and (mid_int is None or mid_int not in mission_whitelist):
                         removed_ids.append(str(mid_raw))
                         continue
@@ -4096,10 +4133,11 @@ class MainWindow(QMainWindow):
                         removed_summary = ", ".join(removed_ids) if removed_ids else "-"
                         converted_summary = ", ".join(converted_ids) if converted_ids else "-"
                         width_summary = ", ".join(width_adjusted_ids) if width_adjusted_ids else "-"
+                        skipped_single_point_summary = ", ".join(skipped_single_point_ids) if skipped_single_point_ids else "-"
                         self.log_sig.emit(
                             "[INFO] Filtered completed input missions "
                             f"(removed={removed_summary or '-'}, converted={converted_summary or '-'}, "
-                            f"widthAdjusted={width_summary or '-'})"
+                            f"widthAdjusted={width_summary or '-'}, skippedSinglePoint={skipped_single_point_summary or '-'})"
                         )
             else:
                 self.log_sig.emit("[WARN] 0201 payload missing valid inputMissionList; continuing without filtering")
@@ -4795,6 +4833,7 @@ class MainWindow(QMainWindow):
                         v_removed = filtered_result.get("removed_ids") or []
                         v_converted = filtered_result.get("converted_ids") or []
                         v_width = filtered_result.get("width_adjusted_ids") or []
+                        v_skipped_single_point = filtered_result.get("skipped_single_point_ids") or []
                         v_active = filtered_result.get("active_ids") or []
                         v_original_count = int(filtered_result.get("original_count") or 0)
 
@@ -4845,9 +4884,11 @@ class MainWindow(QMainWindow):
                                 removed_summary = ", ".join(v_removed) if v_removed else "-"
                                 converted_summary = ", ".join(v_converted) if v_converted else "-"
                                 width_summary = ", ".join(v_width) if v_width else "-"
+                                skipped_single_point_summary = ", ".join(v_skipped_single_point) if v_skipped_single_point else "-"
                                 self.log_sig.emit(
                                     f"[variant {variant_no}] 0201 필터 적용 "
-                                    f"(removed={removed_summary}, converted={converted_summary}, widthAdjusted={width_summary})"
+                                    f"(removed={removed_summary}, converted={converted_summary}, "
+                                    f"widthAdjusted={width_summary}, skippedSinglePoint={skipped_single_point_summary})"
                                 )
                             except Exception as exc:
                                 self.log_sig.emit(
