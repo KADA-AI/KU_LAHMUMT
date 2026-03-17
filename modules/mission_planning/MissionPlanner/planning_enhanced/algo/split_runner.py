@@ -87,6 +87,20 @@ def _piece_entry_point(piece: SplitPiece) -> Optional[Dict[str, float]]:
     return None
 
 
+def _is_single_point_coordinate_only_mission(mission: Dict[str, Any]) -> bool:
+    if not isinstance(mission, dict):
+        return False
+    detail = mission.get("missionDetail") if isinstance(mission.get("missionDetail"), dict) else {}
+    line_list = detail.get("lineList")
+    area_list = detail.get("areaList")
+    if isinstance(line_list, list) and line_list:
+        return False
+    if isinstance(area_list, list) and area_list:
+        return False
+    coord_list = detail.get("coordinateList")
+    return isinstance(coord_list, list) and len(coord_list) == 1
+
+
 def _assign_group_by_takeover_distance(
     pieces: List[SplitPiece],
     uav_ids: List[int],
@@ -136,6 +150,8 @@ def _assign_group_by_takeover_distance(
 
 def _mission_entry_point(mission: Dict[str, Any]) -> Optional[Dict[str, float]]:
     if not isinstance(mission, dict):
+        return None
+    if _is_single_point_coordinate_only_mission(mission):
         return None
     mtype = int(mission.get("inputMissionType", 0) or 0)
     detail = mission.get("missionDetail") if isinstance(mission.get("missionDetail"), dict) else {}
@@ -208,6 +224,8 @@ def run_split_pipeline(
 
     for i, mission in enumerate(missions):
         if not isinstance(mission, dict):
+            continue
+        if _is_single_point_coordinate_only_mission(mission):
             continue
 
         idx = i + 1

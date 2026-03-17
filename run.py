@@ -557,24 +557,18 @@ class DashboardOrchestrator(QObject):
     # --------- UI 위젯 해결 ---------
 
     def _apply_dashboard_button_styles(self) -> None:
-        """Set the module shutdown button to green."""
-        green_style = "\n".join((
-            "QPushButton {",
-            "  background: #16a34a;",
-            "  color: white;",
-            "  border: none;",
-            "  border-radius: 8px;",
-            "  padding: 6px 12px;",
-            "}",
-            "QPushButton:hover { background: #15803d; }",
-            "QPushButton:pressed { background: #166534; }",
-        ))
-        targets = (getattr(self.win, "btn_module_shutdown", None),)
+        """Clear per-button inline styles so the shared QSS owns dashboard actions."""
+        targets = (
+            getattr(self.win, "btn_module_shutdown", None),
+            getattr(self.win, "btn_simulation_run", None),
+            getattr(self.win, "btn_overwrite_020x", None),
+            getattr(self.win, "btn_decision_reset", None),
+        )
         for btn in targets:
             if btn is None:
                 continue
             try:
-                btn.setStyleSheet(green_style)
+                btn.setStyleSheet("")
             except Exception:
                 pass
 
@@ -1021,8 +1015,24 @@ class DashboardOrchestrator(QObject):
             f"[OPS] S110: initial mission planning requested (reason={normalized_reason})"
         )
 
+    def _ensure_launch_ready(self, *, show_message: bool, context: str) -> bool:
+        validator = getattr(self.win, "validate_launch_prerequisites", None)
+        if not callable(validator):
+            return True
+        try:
+            result = validator(show_message=show_message, context=context)
+        except Exception as exc:
+            self._safe_log(f"[RUN WARN] launch preflight failed: {exc}")
+            return True
+        ok = bool(result.get("ok"))
+        if not ok:
+            summary = str(result.get("summary") or "경로/IP 확인 필요")
+            self._safe_log(f"[RUN BLOCKED] {summary} ({context})")
+        return ok
 
     def _launch_all_guis(self):
+        if not self._ensure_launch_ready(show_message=True, context="run.py 초기 실행"):
+            return
         for sn in ("mission_planning_gui.py", "monitoring_gui.py", "decision_support_gui.py", "info_manage.py"):
             self._launch_gui(sn)
         QTimer.singleShot(1000, lambda: self._set_mode_text_all("초기화 모드"))
@@ -1047,6 +1057,9 @@ class DashboardOrchestrator(QObject):
     def _launch_gui(self, script_name: str):
         import sys, os, subprocess
         from pathlib import Path
+
+        if not self._ensure_launch_ready(show_message=True, context=f"{script_name} 실행"):
+            return
 
         root = Path(__file__).resolve().parent
         modules_dir = root / "modules"

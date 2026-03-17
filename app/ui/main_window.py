@@ -7,6 +7,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QTimer, QUrl
 from PyQt5.QtGui import QKeySequence, QDesktopServices
 from typing import Optional
+from datetime import datetime
 from .zones import GRID_ROWS, GRID_COLS, ZONES
 from ..widgets.cards import Card
 from ..widgets.module_with_log import ModuleWithLog
@@ -35,12 +36,16 @@ class MainWindow(QMainWindow):
         self._db_path_line: QLineEdit = None
         self._scenario_root_line: QLineEdit = None
         self._current_db_root: str = ""
+        self._path_card: Optional[QWidget] = None
+        self._path_validation_label: Optional[QLabel] = None
         self._scenario_status_dot: Optional[QLabel] = None
         self._scenario_status_label: Optional[QLabel] = None
         self._version_notes: Optional[QPlainTextEdit] = None
         self._version_notes_path: Path = db_paths.PROJECT_ROOT / "change_log.md"
 
         # Middleware widget references
+        self._middleware_card: Optional[QWidget] = None
+        self._middleware_status_label: Optional[QLabel] = None
         self._mw_name: QLineEdit = None
         self._mw_addr: QLineEdit = None
         self._mw_local: QLineEdit = None
@@ -63,6 +68,58 @@ class MainWindow(QMainWindow):
         self._build_ui()
 
     def _build_ui(self):
+        root = QWidget(self)
+        shell = QVBoxLayout(root)
+        shell.setContentsMargins(18, 16, 18, 16)
+        shell.setSpacing(12)
+
+        self._db_path_line = QLineEdit(self)
+        self._db_path_line.setObjectName("DbPathLine")
+        self._db_path_line.setPlaceholderText("Database directory")
+        self._db_path_line.setReadOnly(True)
+        self._db_path_line.setMinimumHeight(36)
+
+        self._scenario_root_line = QLineEdit(self)
+        self._scenario_root_line.setObjectName("ScenarioRootLine")
+        self._scenario_root_line.setPlaceholderText("Scenario base")
+        self._scenario_root_line.setReadOnly(True)
+        self._scenario_root_line.setMinimumHeight(36)
+
+        info = db_paths.get_info()
+        default_db_path = info.get("db_root") or db_paths.get_active_db_root_str()
+        self._current_db_root = str(default_db_path)
+        self._db_path_line.setText(self._current_db_root)
+        self.update_scenario_root(info.get("base_root"))
+
+        shell.addWidget(self._build_header_bar(), 0)
+
+        content_row = QHBoxLayout()
+        content_row.setSpacing(12)
+
+        left_col = QVBoxLayout()
+        left_col.setSpacing(14)
+        left_col.addWidget(self._build_scenario_card(), 0)
+        left_col.addWidget(self._make_middleware_row(), 0)
+        left_col.addStretch(1)
+        content_row.addLayout(left_col, 7)
+
+        action_panel = self._build_action_panel()
+        action_panel.setMinimumWidth(280)
+        action_panel.setMaximumWidth(320)
+        content_row.addWidget(action_panel, 3)
+
+        shell.addLayout(content_row, 0)
+        shell.addWidget(self._build_version_notes(), 1)
+
+        self.operation_panel = None
+        self.setCentralWidget(root)
+        self._install_flow_test_shortcuts()
+        self._bind_module_buttons()
+        self._init_msg_monitor()
+        self._apply_middleware()
+        self.validate_launch_prerequisites(show_message=False)
+        return
+
         root = QWidget(self)
         grid = QGridLayout(root)
         grid.setContentsMargins(20, 16, 20, 16)
@@ -123,6 +180,7 @@ class MainWindow(QMainWindow):
         self.update_scenario_root(info.get("base_root"))
 
         path_container = QWidget(self)
+        self._path_card = path_container
         path_container.setObjectName("Card")
         path_container.setAttribute(Qt.WA_StyledBackground, True)
         path_layout = QVBoxLayout(path_container)
@@ -143,6 +201,10 @@ class MainWindow(QMainWindow):
         indicator_row.addStretch(1)
         path_layout.addLayout(indicator_row)
         path_layout.addWidget(self._db_path_line)
+        self._path_validation_label = QLabel(self)
+        self._path_validation_label.setObjectName("PathValidationLabel")
+        self._path_validation_label.setWordWrap(True)
+        path_layout.addWidget(self._path_validation_label)
         self._add_zone(grid, path_container, "DB_PATH")
         self.update_scenario_status_indicator(False, "대기 모드에서 새로운 폴더가 생성되면 초록색으로 바뀝니다.")
 
@@ -176,60 +238,279 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             return f"[change log read failed] {path}: {exc}"
 
-    def _build_version_notes(self) -> QWidget:
-        card = Card("Change Log", self, dense=True)
+    def _build_header_bar(self) -> QWidget:
+        card = Card("", self, dense=True)
+        card.setObjectName("HeaderBar")
         body = getattr(card, "body_layout", None)
+        if body is None:
+            return card
+        body.setContentsMargins(20, 18, 20, 18)
+        body.setSpacing(12)
+
+        top = QHBoxLayout()
+        top.setContentsMargins(0, 0, 0, 0)
+        top.setSpacing(18)
+
+        title_col = QVBoxLayout()
+        title_col.setContentsMargins(0, 0, 0, 0)
+        title_col.setSpacing(6)
+
+        title = QLabel("KU Mission Decision Support", card)
+        title.setObjectName("HeroTitle")
+        title_col.addWidget(title, 0, Qt.AlignLeft)
+
+        meta_row = QHBoxLayout()
+        meta_row.setContentsMargins(0, 4, 0, 0)
+        meta_row.setSpacing(8)
+
+        version_badge = QLabel("v1.1.3", card)
+        version_badge.setObjectName("HeaderBadge")
+        meta_row.addWidget(version_badge, 0, Qt.AlignLeft)
+
+        try:
+            updated_at = datetime.fromtimestamp(self._version_notes_path.stat().st_mtime).strftime("%Y-%m-%d")
+        except Exception:
+            updated_at = datetime.now().strftime("%Y-%m-%d")
+        updated_badge = QLabel(f"Updated {updated_at}", card)
+        updated_badge.setObjectName("HeaderBadge")
+        meta_row.addWidget(updated_badge, 0, Qt.AlignLeft)
+        meta_row.addStretch(1)
+        title_col.addLayout(meta_row)
+
+        top.addLayout(title_col, 1)
+
+        actions = QVBoxLayout()
+        actions.setContentsMargins(0, 0, 0, 0)
+        actions.setSpacing(8)
+
+        self.btn_reference_pdf = QPushButton("참고 문서", card)
+        self.btn_reference_pdf.setObjectName("PlainBtn")
+        self.btn_reference_pdf.setFixedHeight(34)
+        self.btn_reference_pdf.clicked.connect(self._open_reference_pdf)
+        actions.addWidget(self.btn_reference_pdf)
+
+        top.addLayout(actions, 0)
+        body.addLayout(top)
+        return card
+
+    def _build_scenario_card(self) -> QWidget:
+        card = Card("", self, dense=True)
+        card.setObjectName("ScenarioCard")
+        body = getattr(card, "body_layout", None)
+        if body is None:
+            return card
+        body.setContentsMargins(18, 16, 18, 16)
+        body.setSpacing(12)
+
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(10)
+
+        title_col = QVBoxLayout()
+        title_col.setContentsMargins(0, 0, 0, 0)
+        title_col.setSpacing(0)
+
+        section = QLabel("Scenario & Paths", card)
+        section.setObjectName("SectionLabel")
+        title_col.addWidget(section, 0, Qt.AlignLeft)
+        header.addLayout(title_col, 1)
+
+        db_btn = QPushButton("DB 폴더 선택", card)
+        db_btn.setObjectName("SecondaryButton")
+        db_btn.setFixedHeight(34)
+        db_btn.setMinimumWidth(118)
+        db_btn.clicked.connect(self._browse_db)
+        header.addWidget(db_btn, 0, Qt.AlignVCenter)
+
+        status_wrap = QWidget(card)
+        status_wrap.setObjectName("StatusCluster")
+        status_wrap.setFixedHeight(34)
+        status_lay = QHBoxLayout(status_wrap)
+        status_lay.setContentsMargins(12, 0, 12, 0)
+        status_lay.setSpacing(6)
+        self._scenario_status_dot = QLabel("●", status_wrap)
+        self._scenario_status_dot.setObjectName("ScenarioDot")
+        status_lay.addWidget(self._scenario_status_dot, 0, Qt.AlignLeft | Qt.AlignVCenter)
+        self._scenario_status_label = QLabel("현재 경로 사용 중", status_wrap)
+        self._scenario_status_label.setObjectName("ScenarioStatusLabel")
+        status_lay.addWidget(self._scenario_status_label, 0, Qt.AlignLeft | Qt.AlignVCenter)
+        header.addWidget(status_wrap, 0, Qt.AlignVCenter)
+
+        body.addLayout(header)
+
+        def _field_block(title_text: str, widget: QWidget) -> QWidget:
+            wrap = QWidget(card)
+            wrap.setObjectName("FieldBlock")
+            wrap.setAttribute(Qt.WA_StyledBackground, True)
+            lay = QVBoxLayout(wrap)
+            lay.setContentsMargins(0, 0, 0, 0)
+            lay.setSpacing(6)
+            caption = QLabel(title_text, wrap)
+            caption.setObjectName("FieldCaption")
+            lay.addWidget(caption, 0, Qt.AlignLeft)
+            lay.addWidget(widget)
+            return wrap
+
+        self._scenario_root_line.setVisible(True)
+        body.addWidget(_field_block("Active DB", self._db_path_line))
+        body.addWidget(_field_block("Scenario Base", self._scenario_root_line))
+
+        self._path_validation_label = QLabel(card)
+        self._path_validation_label.setObjectName("PathValidationLabel")
+        self._path_validation_label.setWordWrap(True)
+        body.addWidget(self._path_validation_label)
+
+        self.update_scenario_status_indicator(False, "현재 선택된 경로를 사용 중입니다.")
+        return card
+
+    def _build_action_panel(self) -> QWidget:
+        card = Card("", self, dense=True)
+        card.setObjectName("ActionPanel")
+        card.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+        body = getattr(card, "body_layout", None)
+        if body is None:
+            return card
+        body.setContentsMargins(16, 16, 16, 16)
+        body.setSpacing(10)
+
+        title = QLabel("Quick Actions", card)
+        title.setObjectName("SectionLabel")
+        body.addWidget(title, 0, Qt.AlignLeft)
+
+        button_stack = QVBoxLayout()
+        button_stack.setContentsMargins(0, 2, 0, 0)
+        button_stack.setSpacing(10)
+
+        self.btn_simulation_run = QPushButton("Simulation 실행", card)
+        self.btn_simulation_run.setObjectName("BtnSimulationRun")
+        self.btn_simulation_run.setFixedHeight(40)
+        self.btn_simulation_run.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.btn_simulation_run.clicked.connect(self._launch_simulation)
+        button_stack.addWidget(self.btn_simulation_run)
+
+        self.btn_overwrite_020x = QPushButton("0201/0203 덮어쓰기", card)
+        self.btn_overwrite_020x.setObjectName("BtnOverwrite020x")
+        self.btn_overwrite_020x.setFixedHeight(40)
+        self.btn_overwrite_020x.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.btn_overwrite_020x.clicked.connect(self._handle_overwrite_020x)
+        button_stack.addWidget(self.btn_overwrite_020x)
+
+        self.btn_module_shutdown = QPushButton("모듈 종료", card)
+        self.btn_module_shutdown.setObjectName("BtnModuleShutdown")
+        self.btn_module_shutdown.setFixedHeight(40)
+        self.btn_module_shutdown.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.btn_module_shutdown.clicked.connect(self._handle_module_shutdown)
+        button_stack.addWidget(self.btn_module_shutdown)
+
+        self.btn_decision_reset = QPushButton("의사결정 SW 초기화", card)
+        self.btn_decision_reset.setObjectName("BtnDecisionReset")
+        self.btn_decision_reset.setFixedHeight(40)
+        self.btn_decision_reset.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        button_stack.addWidget(self.btn_decision_reset)
+
+        body.addLayout(button_stack)
+        body.addStretch(1)
+        return card
+
+    def _build_version_notes(self) -> QWidget:
+        card = Card("", self, dense=True)
+        card.setObjectName("VersionCard")
+        body = getattr(card, "body_layout", None)
+        if body is None:
+            return card
+        body.setContentsMargins(18, 16, 18, 16)
+        body.setSpacing(10)
+
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(8)
+
+        title = QLabel("Change Log", card)
+        title.setObjectName("SectionLabel")
+        header.addWidget(title, 0, Qt.AlignLeft)
+        header.addStretch(1)
+        body.addLayout(header)
+
         self._version_notes = QPlainTextEdit(self)
         self._version_notes.setObjectName("VersionNotes")
         self._version_notes.setReadOnly(True)
-        self._version_notes.setMinimumHeight(120)
+        self._version_notes.setMinimumHeight(150)
         self._version_notes.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self._version_notes.setPlainText(self._load_version_notes_text())
-        if body is not None:
-            body.addWidget(self._version_notes)
+        body.addWidget(self._version_notes)
         return card
 
     # ---------- Middleware helpers ----------
     def _make_middleware_row(self) -> QWidget:
-        """Build the inline middleware configuration row."""
-        w = QWidget(self)
-        w.setObjectName("Card")
-        w.setAttribute(Qt.WA_StyledBackground, True)
-        lay = QHBoxLayout(w)
-        lay.setContentsMargins(12, 10, 12, 10)
-        lay.setSpacing(10)
+        card = Card("", self, dense=True)
+        self._middleware_card = card
+        card.setObjectName("MiddlewareCard")
+        body = getattr(card, "body_layout", None)
+        if body is None:
+            return card
+        body.setContentsMargins(18, 16, 18, 16)
+        body.setSpacing(12)
 
-        lbl = QLabel("Middleware", self)
-        lbl.setStyleSheet("font-weight:600;")
-        lay.addWidget(lbl)
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(10)
 
-        def _mk_line(ph: str, width: int = 120, default: str = "") -> QLineEdit:
-            le = QLineEdit(self)
+        title_col = QVBoxLayout()
+        title_col.setContentsMargins(0, 0, 0, 0)
+        title_col.setSpacing(0)
+        title = QLabel("Middleware", card)
+        title.setObjectName("SectionLabel")
+        title_col.addWidget(title, 0, Qt.AlignLeft)
+        header.addLayout(title_col, 1)
+
+        btn_apply = QPushButton("Apply", card)
+        btn_apply.setObjectName("SecondaryButton")
+        btn_apply.setFixedHeight(34)
+        btn_apply.setMinimumWidth(88)
+        btn_apply.clicked.connect(self._apply_middleware)
+        header.addWidget(btn_apply, 0, Qt.AlignTop)
+        body.addLayout(header)
+
+        def _mk_line(ph: str, width: int, default: str) -> QLineEdit:
+            le = QLineEdit(card)
             le.setPlaceholderText(ph)
-            if default:
-                le.setText(default)
             le.setMinimumWidth(width)
+            le.setText(default)
+            le.setFixedHeight(36)
             return le
 
-        self._mw_name     = _mk_line("Name", 120, "AVS1")
-        self._mw_addr     = _mk_line("NetworkAddress (e.g. 203.)", 140, "192.")
-        self._mw_local    = _mk_line("LocalDomain", 100, "10")
-        self._mw_external = _mk_line("ExternalDomain", 110, "100")
+        self._mw_name = _mk_line("AVS1", 110, "AVS1")
+        self._mw_addr = _mk_line("203.", 110, "192.")
+        self._mw_local = _mk_line("10", 72, "10")
+        self._mw_external = _mk_line("100", 72, "100")
 
-        lay.addWidget(QLabel("Name:", self));           lay.addWidget(self._mw_name)
-        lay.addWidget(QLabel("Network:", self));        lay.addWidget(self._mw_addr)
-        lay.addWidget(QLabel("Local:", self));          lay.addWidget(self._mw_local)
-        lay.addWidget(QLabel("External:", self));       lay.addWidget(self._mw_external)
+        form = QGridLayout()
+        form.setContentsMargins(0, 0, 0, 0)
+        form.setHorizontalSpacing(10)
+        form.setVerticalSpacing(8)
 
-        btn_apply = QPushButton("Apply", self)
-        btn_apply.setObjectName("SecondaryButton")
-        btn_apply.setMinimumWidth(80)
-        btn_apply.clicked.connect(self._apply_middleware)
-        lay.addWidget(btn_apply, 0, Qt.AlignRight)
+        fields = [
+            ("Name", self._mw_name),
+            ("Network", self._mw_addr),
+            ("Local", self._mw_local),
+            ("External", self._mw_external),
+        ]
+        for col, (label_text, widget) in enumerate(fields):
+            caption = QLabel(label_text, card)
+            caption.setObjectName("FieldCaption")
+            form.addWidget(caption, 0, col)
+            form.addWidget(widget, 1, col)
+            form.setColumnStretch(col, 1)
+
+        body.addLayout(form)
+
+        self._middleware_status_label = QLabel(card)
+        self._middleware_status_label.setObjectName("MiddlewareStatusLabel")
+        self._middleware_status_label.setWordWrap(True)
+        body.addWidget(self._middleware_status_label)
 
         self._load_middleware_config()
-
-        return w
+        return card
 
 
     def _apply_middleware(self) -> None:
@@ -284,6 +565,7 @@ class MainWindow(QMainWindow):
                 pass
 
         self._last_middleware_prefix = ip_prefix
+        self.validate_launch_prerequisites(show_message=False)
 
     def _load_middleware_config(self) -> None:
         """Load existing middleware configuration if available."""
@@ -318,6 +600,244 @@ class MainWindow(QMainWindow):
             if (candidate / "run.py").exists():
                 return candidate
         return here
+
+    def _nearest_existing_parent(self, path: Path) -> Optional[Path]:
+        current = Path(path)
+        while True:
+            if current.exists():
+                return current
+            parent = current.parent
+            if parent == current:
+                return None
+            current = parent
+
+    def _can_prepare_directory(self, path: Path) -> tuple[bool, str]:
+        try:
+            target = Path(path)
+            if target.exists():
+                if not target.is_dir():
+                    return False, f"폴더가 아님: {target}"
+                if not os.access(target, os.W_OK):
+                    return False, f"쓰기 불가: {target}"
+                return True, "ok"
+            parent = self._nearest_existing_parent(target)
+            if parent is None:
+                return False, f"상위 경로 없음: {target}"
+            if not parent.is_dir():
+                return False, f"상위 경로가 폴더가 아님: {parent}"
+            if not os.access(parent, os.W_OK):
+                return False, f"상위 경로 쓰기 불가: {parent}"
+            return True, "ok"
+        except Exception as exc:
+            return False, str(exc)
+
+    def _is_subpath(self, child: Path | str, parent: Path | str) -> bool:
+        try:
+            Path(child).resolve().relative_to(Path(parent).resolve())
+            return True
+        except Exception:
+            return False
+
+    def _set_line_edit_state(self, widget: Optional[QLineEdit], *, ok: bool) -> None:
+        if widget is None:
+            return
+        if ok:
+            widget.setStyleSheet(
+                "QLineEdit { border: 1px solid #91d2ad; background: #f5fbf7; color: #14532d; }"
+            )
+        else:
+            widget.setStyleSheet(
+                "QLineEdit { border: 1px solid #f0b4ad; background: #fff5f4; color: #912018; }"
+            )
+
+    def _set_status_label(self, label: Optional[QLabel], *, ok: bool, text: str) -> None:
+        if label is None:
+            return
+        if ok:
+            label.setStyleSheet(
+                "QLabel { color: #166534; background: #eef9f1; border: 1px solid #b7dfc6; "
+                "border-radius: 12px; padding: 6px 10px; font-weight: 600; }"
+            )
+        else:
+            label.setStyleSheet(
+                "QLabel { color: #b42318; background: #fef3f2; border: 1px solid #f0b4ad; "
+                "border-radius: 12px; padding: 6px 10px; font-weight: 600; }"
+            )
+        label.setText(text)
+        label.setToolTip(text)
+
+    def _collect_local_ipv4_addresses(self) -> list[str]:
+        found: set[str] = {"127.0.0.1"}
+        try:
+            hostname = socket.gethostname()
+            _, _, addrs = socket.gethostbyname_ex(hostname)
+            for addr in addrs:
+                if addr:
+                    found.add(str(addr))
+        except Exception:
+            pass
+        sock = None
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.connect(("8.8.8.8", 80))
+            local_ip = sock.getsockname()[0]
+            if local_ip:
+                found.add(str(local_ip))
+        except Exception:
+            pass
+        finally:
+            if sock is not None:
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+        return sorted(found)
+
+    def _normalize_network_prefix(self, value: str) -> str:
+        text = str(value or "").strip()
+        while text.endswith("."):
+            text = text[:-1]
+        if not text:
+            return ""
+        parts = text.split(".")
+        if len(parts) > 4:
+            return ""
+        normalized: list[str] = []
+        for part in parts:
+            if not part.isdigit():
+                return ""
+            try:
+                number = int(part)
+            except Exception:
+                return ""
+            if number < 0 or number > 255:
+                return ""
+            normalized.append(str(number))
+        return ".".join(normalized) + "."
+
+    def _validate_path_settings(self) -> dict:
+        info = db_paths.get_info()
+        info_path = db_paths.INFO_PATH
+        problems: list[str] = []
+
+        db_root_text = str(info.get("db_root") or self._current_db_root or "").strip()
+        base_root_text = str(info.get("base_root") or "").strip()
+        scenario_dir_text = str(info.get("scenario_dir") or "").strip()
+        source = str(info.get("source") or "").strip()
+
+        if not info_path.exists():
+            problems.append(f"current_scenario.json 없음: {info_path}")
+
+        if not db_root_text:
+            problems.append("DB 경로가 비어 있습니다.")
+        else:
+            ok, detail = self._can_prepare_directory(Path(db_root_text))
+            if not ok:
+                problems.append(f"DB 경로 확인 필요: {detail}")
+
+        if not base_root_text:
+            problems.append("Scenario base 경로가 비어 있습니다.")
+        else:
+            ok, detail = self._can_prepare_directory(Path(base_root_text))
+            if not ok:
+                problems.append(f"Scenario base 확인 필요: {detail}")
+
+        if source == "scenario":
+            if not scenario_dir_text:
+                problems.append("current_scenario.json에 scenario_dir가 없습니다.")
+            elif base_root_text and not self._is_subpath(scenario_dir_text, base_root_text):
+                problems.append("scenario_dir가 base_root 밖에 있습니다.")
+            if scenario_dir_text and db_root_text and not self._is_subpath(db_root_text, scenario_dir_text):
+                problems.append("db_root가 scenario_dir 밖에 있습니다.")
+
+        ok = not problems
+        if ok:
+            detail = f"경로 확인 완료: {db_root_text}"
+        else:
+            detail = "경로 확인 필요: " + " / ".join(problems[:3])
+
+        self._set_line_edit_state(self._db_path_line, ok=ok)
+        self._set_status_label(self._path_validation_label, ok=ok, text=detail)
+        return {
+            "ok": ok,
+            "message": detail,
+            "details": problems,
+            "db_root": db_root_text,
+            "base_root": base_root_text,
+        }
+
+    def _validate_middleware_settings(self) -> dict:
+        problems: list[str] = []
+        name = (self._mw_name.text() if self._mw_name is not None else "") or ""
+        raw_prefix = (self._mw_addr.text() if self._mw_addr is not None else "") or ""
+        prefix = self._normalize_network_prefix(raw_prefix)
+        local_text = (self._mw_local.text() if self._mw_local is not None else "") or ""
+        external_text = (self._mw_external.text() if self._mw_external is not None else "") or ""
+
+        if not name.strip():
+            problems.append("Middleware Name이 비어 있습니다.")
+        if not prefix:
+            problems.append("NetworkAddress 형식이 올바르지 않습니다. 예: 192.168.100.")
+        try:
+            int(local_text.strip())
+        except Exception:
+            problems.append("LocalDomain이 숫자가 아닙니다.")
+        try:
+            int(external_text.strip())
+        except Exception:
+            problems.append("ExternalDomain이 숫자가 아닙니다.")
+
+        local_ips = self._collect_local_ipv4_addresses()
+        non_loopback = [ip for ip in local_ips if not ip.startswith("127.")]
+        candidate_ips = non_loopback or local_ips
+        if prefix and candidate_ips and not any(ip.startswith(prefix) for ip in candidate_ips):
+            shown = ", ".join(candidate_ips[:3])
+            problems.append(f"현재 PC IPv4({shown})와 NetworkAddress({prefix})가 맞지 않습니다.")
+
+        ok = not problems
+        if ok:
+            detail = f"IP 확인 완료: {prefix} / local {', '.join(candidate_ips[:2])}"
+        else:
+            detail = "IP 확인 필요: " + " / ".join(problems[:3])
+
+        for field in (self._mw_name, self._mw_addr, self._mw_local, self._mw_external):
+            self._set_line_edit_state(field, ok=ok)
+        self._set_status_label(self._middleware_status_label, ok=ok, text=detail)
+        return {
+            "ok": ok,
+            "message": detail,
+            "details": problems,
+            "prefix": prefix or raw_prefix,
+            "local_ips": candidate_ips,
+        }
+
+    def validate_launch_prerequisites(self, *, show_message: bool = False, context: str = "run.py 실행") -> dict:
+        path_state = self._validate_path_settings()
+        middleware_state = self._validate_middleware_settings()
+        ok = bool(path_state.get("ok")) and bool(middleware_state.get("ok"))
+
+        if ok:
+            summary = "경로/IP 확인 완료"
+        else:
+            summary = "경로/IP 확인 필요"
+
+        if show_message and not ok:
+            lines = [
+                f"{context} 전에 설정 확인이 필요합니다.",
+                "",
+                f"- 경로: {path_state.get('message')}",
+                f"- IP: {middleware_state.get('message')}",
+                "",
+                "색이 바뀐 항목을 확인한 뒤 다시 실행하세요.",
+            ]
+            QMessageBox.warning(self, "실행 전 확인 필요", "\n".join(lines))
+
+        return {
+            "ok": ok,
+            "summary": summary,
+            "path": path_state,
+            "middleware": middleware_state,
+        }
 
 
     # ---------- Existing behaviour ----------
@@ -433,6 +953,11 @@ class MainWindow(QMainWindow):
     def _launch_role(self, role: str, *, schedule_powerup: bool = True):
         import sys, subprocess
         from pathlib import Path
+
+        validation = self.validate_launch_prerequisites(show_message=True, context="모듈 실행")
+        if not validation.get("ok"):
+            self._log_to_modules("[RUN BLOCKED] 경로/IP 확인 필요")
+            return
 
         self._debug_log(f'_launch_role called role={role}')
         root = Path(__file__).resolve().parents[2]
@@ -634,37 +1159,38 @@ class MainWindow(QMainWindow):
 
         body = getattr(placeholder, 'body_layout', None)
         if body is not None:
-            body.setSpacing(16)
+            body.setSpacing(14)
             body.setContentsMargins(18, 16, 18, 16)
 
             self.btn_module_shutdown = QPushButton("모듈 종료", placeholder)
             self.btn_module_shutdown.setObjectName("BtnModuleShutdown")
-            self.btn_module_shutdown.setMinimumHeight(32)
+            self.btn_module_shutdown.setFixedHeight(40)
             self.btn_module_shutdown.clicked.connect(self._handle_module_shutdown)
             body.addWidget(self.btn_module_shutdown)
 
             self.btn_integration_module = QPushButton("통합모듈 실행", placeholder)
             self.btn_integration_module.setObjectName("BtnIntegrationModule")
-            self.btn_integration_module.setMinimumHeight(32)
+            self.btn_integration_module.setFixedHeight(40)
             self.btn_integration_module.clicked.connect(lambda: self._launch_role("integration"))
             body.addWidget(self.btn_integration_module)
+            self.btn_integration_module.hide()
 
             self.btn_simulation_run = QPushButton("Simulation \uc2e4\ud589", placeholder)
             self.btn_simulation_run.setObjectName("BtnSimulationRun")
-            self.btn_simulation_run.setMinimumHeight(32)
+            self.btn_simulation_run.setFixedHeight(40)
             self.btn_simulation_run.clicked.connect(self._launch_simulation)
             body.addWidget(self.btn_simulation_run)
 
             self.btn_overwrite_020x = QPushButton("0201/0203 덮어쓰기", placeholder)
             self.btn_overwrite_020x.setObjectName("BtnOverwrite020x")
-            self.btn_overwrite_020x.setMinimumHeight(32)
+            self.btn_overwrite_020x.setFixedHeight(40)
             self.btn_overwrite_020x.clicked.connect(self._handle_overwrite_020x)
             body.addWidget(self.btn_overwrite_020x)
 
 
             self.btn_decision_reset = QPushButton("의사결정 SW 초기화", placeholder)
             self.btn_decision_reset.setObjectName("BtnDecisionReset")
-            self.btn_decision_reset.setMinimumHeight(32)
+            self.btn_decision_reset.setFixedHeight(40)
             body.addWidget(self.btn_decision_reset)
 
             body.addStretch(1)
@@ -776,6 +1302,10 @@ class MainWindow(QMainWindow):
 
     def _handle_auto_boot(self) -> None:
         self._debug_log('auto boot triggered')
+        validation = self.validate_launch_prerequisites(show_message=True, context="전체 실행")
+        if not validation.get("ok"):
+            self._log_to_modules('[AUTO BLOCKED] 경로/IP 확인 필요')
+            return
         self._log_to_modules('[AUTO] boot sequence started')
 
         for role in ("mission", "monitor", "decision", "info"):
@@ -998,6 +1528,7 @@ class MainWindow(QMainWindow):
         self._current_db_root = str(path)
         if self._db_path_line is not None:
             self._db_path_line.setText(self._current_db_root)
+        self.validate_launch_prerequisites(show_message=False)
 
     def update_scenario_root(self, path: str | Path | None) -> None:
         text = str(path) if path else ""
@@ -1009,6 +1540,7 @@ class MainWindow(QMainWindow):
                 self._db_path_line.setToolTip(f"Scenario base: {text}")
             else:
                 self._db_path_line.setToolTip(self._current_db_root or "")
+        self.validate_launch_prerequisites(show_message=False)
 
     def _toggle_demo_flow(self):
         """Toggle demo animation with the D shortcut."""

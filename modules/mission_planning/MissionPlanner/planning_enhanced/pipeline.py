@@ -130,6 +130,56 @@ def _profile_code_from_option(option_code: Optional[int]) -> int:
     return PROFILE_DEFAULT
 
 
+def _is_single_point_coordinate_only_mission(mission: Any) -> bool:
+    if not isinstance(mission, dict):
+        return False
+    detail = mission.get("missionDetail")
+    if not isinstance(detail, dict):
+        return False
+    line_list = detail.get("lineList")
+    area_list = detail.get("areaList")
+    if isinstance(line_list, list) and line_list:
+        return False
+    if isinstance(area_list, list) and area_list:
+        return False
+    coord_list = detail.get("coordinateList")
+    return isinstance(coord_list, list) and len(coord_list) == 1
+
+
+def _filter_unplannable_coordinate_only_missions(
+    cmpk: Dict[str, Any],
+    log: Callable[[str], None],
+) -> None:
+    missions = cmpk.get("inputMissionList")
+    if not isinstance(missions, list):
+        return
+
+    filtered: List[Any] = []
+    skipped_ids: List[int] = []
+    for idx, mission in enumerate(missions, start=1):
+        if _is_single_point_coordinate_only_mission(mission):
+            mission_id = _to_int(
+                mission.get("inputMissionID") if isinstance(mission, dict) else None,
+                idx,
+            )
+            skipped_ids.append(int(mission_id))
+            continue
+        filtered.append(mission)
+
+    if not skipped_ids:
+        return
+
+    cmpk["inputMissionList"] = filtered
+    log(
+        "[ENHANCED] skipped single-point coordinate-only missions: "
+        f"{sorted(skipped_ids)}"
+    )
+    if not filtered:
+        raise RuntimeError(
+            "No plannable mission remains after skipping single-point coordinate-only missions."
+        )
+
+
 def run_enhanced_divide_and_pattern(
     cmpk_path: str,
     ref_path: str,
@@ -141,6 +191,7 @@ def run_enhanced_divide_and_pattern(
     cmpk = json.loads(Path(cmpk_path).read_text(encoding="utf-8"))
     mrpk = json.loads(Path(ref_path).read_text(encoding="utf-8"))
     _apply_vehicle_status_filter(cmpk, log, cmpk_path=cmpk_path)
+    _filter_unplannable_coordinate_only_missions(cmpk, log)
 
     uav_ids = resolve_uav_ids(cmpk)
     if not uav_ids:

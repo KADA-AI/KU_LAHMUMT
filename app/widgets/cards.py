@@ -10,13 +10,14 @@ class Card(QFrame):
         super().__init__(parent)
         self.setObjectName("Card")
         self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setFrameShape(QFrame.NoFrame)
 
         lay = QVBoxLayout(self)
         if dense:
-            lay.setContentsMargins(10, 8, 10, 8)
+            lay.setContentsMargins(12, 10, 12, 10)
         else:
-            lay.setContentsMargins(14, 12, 14, 12)
-        lay.setSpacing(8)
+            lay.setContentsMargins(16, 14, 16, 14)
+        lay.setSpacing(10)
 
         self.title_label = None
         if title:
@@ -36,9 +37,9 @@ class Card(QFrame):
 
         # 미세한 그림자
         shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(20)
-        shadow.setOffset(0, 6)
-        shadow.setColor(QColor(0, 0, 0, 50))
+        shadow.setBlurRadius(28)
+        shadow.setOffset(0, 10)
+        shadow.setColor(QColor(15, 23, 42, 18))
         self.setGraphicsEffect(shadow)
 
         self.body_layout = lay
