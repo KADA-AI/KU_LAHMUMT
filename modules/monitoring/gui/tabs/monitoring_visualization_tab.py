@@ -13,6 +13,7 @@ from PyQt5.QtWidgets import (
     QHBoxLayout,
     QGroupBox,
     QFormLayout,
+    QGridLayout,
     QLabel,
     QLineEdit,
     QProgressBar,
@@ -39,7 +40,7 @@ from typing import Callable
 
 
 _EPOCH2000_MS = 946684800000
-_SIGNAL_OK_GRACE_MS = 10000
+_SIGNAL_OK_GRACE_MS = 20000
 _OPERATION_OVERRIDE_SECONDS = 5.0
 
 
@@ -321,6 +322,311 @@ class DLRiskTrendWidget(QWidget):
             )
 
 
+class RealtimeRiskPredictionTab(QWidget):
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._ui_updates_enabled = True
+        self._dl_panel_status: str = "DISABLED"
+        self._dl_panel_enabled: bool = False
+        self._dl_panel_replan_enabled: bool = False
+        self._dl_panel_data_age_sec: float | None = None
+        self._dl_panel_infer_age_sec: float | None = None
+        self._dl_panel_last_update_ms: int | None = None
+        self._dl_panel_buffer_len: int = 0
+        self._dl_panel_buffer_min: int = 0
+        self._dl_panel_base_ready: bool = False
+        self._dl_panel_mean: list[float] = []
+        self._dl_panel_std: list[float] = []
+        self._dl_panel_risky_indices: set[int] = set()
+        self._dl_panel_aircraft_ids: list[int] = [1, 2, 3, 4, 5, 6]
+        self._dl_status_badge: QLabel | None = None
+        self._dl_summary_value: QLabel | None = None
+        self._dl_last_update_value: QLabel | None = None
+        self._dl_buffer_value: QLabel | None = None
+        self._dl_replan_value: QLabel | None = None
+        self._dl_window_value: QLabel | None = None
+        self._dl_risk_trend: DLRiskTrendWidget | None = None
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        root = QVBoxLayout(self)
+        root.setContentsMargins(12, 10, 12, 10)
+        root.setSpacing(10)
+
+        panel = QGroupBox("실시간 위험도 예측")
+        panel.setObjectName("DlRiskPanel")
+        panel.setStyleSheet(
+            """
+            QGroupBox#DlRiskPanel {
+                font-weight: 700;
+                border: 1px solid #d6e2ef;
+                border-radius: 12px;
+                margin-top: 12px;
+                background: #ffffff;
+            }
+            QGroupBox#DlRiskPanel::title {
+                subcontrol-origin: margin;
+                left: 12px;
+                padding: 0 4px;
+            }
+            QLabel#DlRiskBadge {
+                color: #ffffff;
+                font-weight: 700;
+                border-radius: 8px;
+                padding: 4px 12px;
+            }
+            QLabel#DlRiskPill {
+                border-radius: 10px;
+                padding: 8px 10px;
+                background: #f8fafc;
+                border: 1px solid #d9e3ef;
+            }
+            """
+        )
+
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(12, 14, 12, 12)
+        layout.setSpacing(10)
+
+        header_row = QHBoxLayout()
+        header_row.setSpacing(8)
+        summary_title = QLabel("DL 추론 상태와 최근 60초 위험도 추세를 기체별로 확인합니다.")
+        summary_title.setWordWrap(True)
+        summary_title.setStyleSheet("color: #475569;")
+        self._dl_status_badge = QLabel("DISABLED")
+        self._dl_status_badge.setObjectName("DlRiskBadge")
+        self._dl_status_badge.setAlignment(Qt.AlignCenter)
+        header_row.addWidget(summary_title, 1)
+        header_row.addWidget(self._dl_status_badge, 0)
+
+        info_grid = QGridLayout()
+        info_grid.setHorizontalSpacing(10)
+        info_grid.setVerticalSpacing(8)
+        self._dl_summary_value = QLabel("DL 추론 비활성")
+        self._dl_last_update_value = QLabel("최근 추론: -")
+        self._dl_buffer_value = QLabel("버퍼: -")
+        self._dl_replan_value = QLabel("재계획 트리거: OFF")
+        self._dl_window_value = QLabel("추세 창: 최근 60초 (좌측=과거, 우측=현재)")
+        self._dl_window_value.setWordWrap(True)
+        for label in (
+            self._dl_summary_value,
+            self._dl_last_update_value,
+            self._dl_buffer_value,
+            self._dl_replan_value,
+            self._dl_window_value,
+        ):
+            label.setObjectName("DlRiskPill")
+        info_grid.addWidget(self._dl_summary_value, 0, 0, 1, 2)
+        info_grid.addWidget(self._dl_last_update_value, 1, 0)
+        info_grid.addWidget(self._dl_buffer_value, 1, 1)
+        info_grid.addWidget(self._dl_replan_value, 2, 0)
+        info_grid.addWidget(self._dl_window_value, 2, 1)
+
+        trend = DLRiskTrendWidget()
+        trend.setMinimumHeight(380)
+        trend.setProperty("_base_min_height", 380)
+        self._dl_risk_trend = trend
+
+        layout.addLayout(header_row)
+        layout.addLayout(info_grid)
+        layout.addWidget(trend, 1)
+        root.addWidget(panel, 1)
+        self._refresh_dl_panel_view()
+
+    @staticmethod
+    def _dl_status_style(status: str) -> str:
+        status_text = str(status or "UNKNOWN").strip().upper()
+        color_map = {
+            "RUNNING": "#16a34a",
+            "WARMUP": "#d97706",
+            "NO_DATA": "#dc2626",
+            "STALE": "#475569",
+            "DISABLED": "#6b7280",
+            "UNAVAILABLE": "#7c2d12",
+            "ERROR": "#991b1b",
+            "INIT": "#0f766e",
+        }
+        color = color_map.get(status_text, "#6b7280")
+        return (
+            "QLabel {"
+            f" background: {color};"
+            " color: #ffffff;"
+            " font-weight: 700;"
+            " border-radius: 8px;"
+            " padding: 4px 12px;"
+            " }"
+        )
+
+    @staticmethod
+    def _dl_replan_style(enabled: bool) -> str:
+        border = "#fca5a5" if enabled else "#d9e3ef"
+        bg = "#fef2f2" if enabled else "#f8fafc"
+        color = "#b91c1c" if enabled else "#334155"
+        return (
+            "QLabel {"
+            f" background: {bg}; color: {color}; border: 1px solid {border};"
+            " border-radius: 10px; padding: 8px 10px; font-weight: 700;"
+            " }"
+        )
+
+    def _refresh_dl_panel_view(self) -> None:
+        if self._dl_status_badge is not None:
+            status_text = str(self._dl_panel_status or "UNKNOWN").upper()
+            self._dl_status_badge.setText(status_text)
+            self._dl_status_badge.setStyleSheet(self._dl_status_style(status_text))
+
+        summary = "DL 추론 비활성"
+        if self._dl_panel_enabled:
+            peak = 0.0
+            if self._dl_panel_mean:
+                try:
+                    peak = max(float(v) for v in self._dl_panel_mean)
+                except Exception:
+                    peak = 0.0
+            risky_count = len(self._dl_panel_risky_indices)
+            status_text = str(self._dl_panel_status or "").upper()
+            if self._dl_panel_mean:
+                summary = f"최대 위험도 {peak * 100.0:.1f}% | 고위험 {risky_count}대"
+            elif status_text == "WARMUP":
+                summary = "DL 워밍업 중 | 버퍼 데이터 수집 중"
+            elif status_text == "NO_DATA":
+                summary = "0401 데이터 대기 중"
+            elif status_text == "STALE":
+                summary = "최근 추론 정지 | 마지막 값을 유지 중"
+            elif status_text == "UNAVAILABLE":
+                summary = "DL 로더 사용 불가"
+            elif status_text == "ERROR":
+                summary = "DL 초기화 오류"
+            else:
+                summary = "DL 추론 준비 중"
+        if self._dl_summary_value is not None:
+            self._dl_summary_value.setText(summary)
+
+        if self._dl_last_update_value is not None:
+            last_update_text = "최근 추론: -"
+            if self._dl_panel_last_update_ms is not None:
+                last_update_text = f"최근 추론: {format_timestamp_ms(self._dl_panel_last_update_ms)}"
+                if self._dl_panel_infer_age_sec is not None:
+                    last_update_text += f" ({self._dl_panel_infer_age_sec:.1f}s 전)"
+            elif self._dl_panel_infer_age_sec is not None:
+                last_update_text = f"최근 추론: {self._dl_panel_infer_age_sec:.1f}s 전"
+            self._dl_last_update_value.setText(last_update_text)
+
+        if self._dl_buffer_value is not None:
+            data_age_text = "-"
+            if self._dl_panel_data_age_sec is not None:
+                data_age_text = f"{self._dl_panel_data_age_sec:.1f}s"
+            base_ready = "완료" if self._dl_panel_base_ready else "대기"
+            self._dl_buffer_value.setText(
+                f"버퍼: {int(self._dl_panel_buffer_len)}/{int(self._dl_panel_buffer_min)} | "
+                f"기준좌표: {base_ready} | 마지막 데이터: {data_age_text}"
+            )
+
+        if self._dl_replan_value is not None:
+            self._dl_replan_value.setText(
+                "재계획 트리거: ON" if self._dl_panel_replan_enabled else "재계획 트리거: OFF"
+            )
+            self._dl_replan_value.setStyleSheet(
+                self._dl_replan_style(self._dl_panel_replan_enabled)
+            )
+
+        if self._dl_window_value is not None:
+            threshold_text = "재계획 기준선 80%"
+            if not self._dl_panel_enabled:
+                threshold_text = "DL 비활성"
+            self._dl_window_value.setText(f"추세 창: 최근 60초 (좌측=과거, 우측=현재) | {threshold_text}")
+
+        self._refresh_dl_risk_table()
+
+    def _refresh_dl_risk_table(self) -> None:
+        trend = self._dl_risk_trend
+        if trend is None:
+            return
+        trend.set_display_order(self._dl_panel_aircraft_ids)
+        trend.set_panel_state(
+            enabled=self._dl_panel_enabled,
+            replan_enabled=self._dl_panel_replan_enabled,
+            trigger_threshold=0.8,
+        )
+
+    def update_dl_panel(
+        self,
+        *,
+        status: str | None = None,
+        enabled: bool | None = None,
+        replan_enabled: bool | None = None,
+        mean: list[float] | None = None,
+        std: list[float] | None = None,
+        risky_indices: list[int] | None = None,
+        aircraft_ids: list[int] | None = None,
+        timestamp_ms: int | None = None,
+        data_age_sec: float | None = None,
+        infer_age_sec: float | None = None,
+        buffer_len: int | None = None,
+        min_buffer: int | None = None,
+        base_ready: bool | None = None,
+    ) -> None:
+        appended = False
+        if status is not None:
+            self._dl_panel_status = str(status)
+        if enabled is not None:
+            self._dl_panel_enabled = bool(enabled)
+        if replan_enabled is not None:
+            self._dl_panel_replan_enabled = bool(replan_enabled)
+        if mean is not None:
+            self._dl_panel_mean = [float(v) for v in mean[:6]]
+            appended = True
+        if std is not None:
+            self._dl_panel_std = [float(v) for v in std[:6]]
+        if risky_indices is not None:
+            normalized: set[int] = set()
+            for raw_idx in risky_indices:
+                try:
+                    idx = int(raw_idx)
+                except Exception:
+                    continue
+                if 0 <= idx < 6:
+                    normalized.add(idx)
+            self._dl_panel_risky_indices = normalized
+        if aircraft_ids is not None:
+            normalized_ids: list[int] = []
+            for raw_id in aircraft_ids[:6]:
+                try:
+                    normalized_ids.append(int(raw_id))
+                except Exception:
+                    continue
+            if normalized_ids:
+                self._dl_panel_aircraft_ids = normalized_ids
+        if timestamp_ms is not None:
+            try:
+                self._dl_panel_last_update_ms = int(timestamp_ms)
+            except Exception:
+                pass
+        if data_age_sec is not None:
+            self._dl_panel_data_age_sec = float(data_age_sec)
+        if infer_age_sec is not None:
+            self._dl_panel_infer_age_sec = float(infer_age_sec)
+        if buffer_len is not None:
+            self._dl_panel_buffer_len = int(buffer_len)
+        if min_buffer is not None:
+            self._dl_panel_buffer_min = int(min_buffer)
+        if base_ready is not None:
+            self._dl_panel_base_ready = bool(base_ready)
+        if appended and self._dl_risk_trend is not None:
+            self._dl_risk_trend.append_sample(
+                self._dl_panel_last_update_ms,
+                self._dl_panel_mean,
+                self._dl_panel_aircraft_ids,
+            )
+        if self._ui_updates_enabled:
+            self._refresh_dl_panel_view()
+
+    def set_ui_updates_enabled(self, enabled: bool) -> None:
+        self._ui_updates_enabled = bool(enabled)
+        if self._ui_updates_enabled:
+            self._refresh_dl_panel_view()
+
+
 class MonitoringVisualizationTab(QWidget):
     """Monitoring visualization UI."""
 
@@ -351,6 +657,7 @@ class MonitoringVisualizationTab(QWidget):
         self._fuel_state_by_aircraft: dict[int, str] = {}
         self._availability_stage: str | None = None
         self._latest_state_map: dict[int, dict[str, object]] = {}
+        self._last_signal_received_ms_by_aircraft: dict[int, int] = {}
         self._forced_wait_aircraft: set[int] = set()
         self._operation_override_by_aircraft: dict[int, dict[str, object]] = {}
         self._input_mission_low_layout: QHBoxLayout | None = None
@@ -405,17 +712,25 @@ class MonitoringVisualizationTab(QWidget):
         QTimer.singleShot(0, self._apply_responsive_scale)
 
     def _build_ui(self) -> None:
-        frame = QHBoxLayout(self)
+        frame = QVBoxLayout(self)
         frame.setContentsMargins(12, 10, 12, 10)
-        frame.setSpacing(10)
+        frame.setSpacing(0)
 
-        left_container = QWidget()
-        root = QVBoxLayout(left_container)
+        content = QWidget()
+        root = QVBoxLayout(content)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(10)
         self._root_layout = root
 
         root.addWidget(self._build_update_group())
+        status_grid = QGridLayout()
+        status_grid.setHorizontalSpacing(10)
+        status_grid.setVerticalSpacing(10)
+        status_grid.addWidget(self._build_availability_group(), 0, 0)
+        status_grid.addWidget(self._build_signal_status_group(), 0, 1)
+        status_grid.addWidget(self._build_equipment_status_group(), 1, 0)
+        status_grid.addWidget(self._build_operation_status_group(), 1, 1)
+        root.addLayout(status_grid)
         root.addWidget(self._build_mission_plan_group())
         root.addWidget(self._build_individual_plan_group())
 
@@ -425,26 +740,12 @@ class MonitoringVisualizationTab(QWidget):
             tables_row.addWidget(self._build_mission_table_group(uav_id), 1)
         root.addLayout(tables_row, 1)
 
-        status_row_top = QHBoxLayout()
-        status_row_top.setSpacing(10)
-        status_row_top.addWidget(self._build_availability_group(), 1)
-        status_row_top.addWidget(self._build_signal_status_group(), 1)
-        root.addLayout(status_row_top)
-
-        status_row_bottom = QHBoxLayout()
-        status_row_bottom.setSpacing(10)
-        status_row_bottom.addWidget(self._build_equipment_status_group(), 1)
-        status_row_bottom.addWidget(self._build_operation_status_group(), 1)
-        root.addLayout(status_row_bottom)
-
-        left_scroll = QScrollArea()
-        left_scroll.setWidgetResizable(True)
-        left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        left_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        left_scroll.setWidget(left_container)
-
-        frame.addWidget(left_scroll, 2)
-        frame.addWidget(self._build_right_panel(), 1)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setWidget(content)
+        frame.addWidget(scroll, 1)
 
     def _build_right_panel(self) -> QWidget:
         panel = QGroupBox("DL Risk Monitor")
@@ -800,7 +1101,11 @@ class MonitoringVisualizationTab(QWidget):
         )
         table.verticalHeader().setVisible(False)
         header = table.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.Stretch)
+        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
         header.setStretchLastSection(False)
         header.setMinimumHeight(22)
         table.setAlternatingRowColors(True)
@@ -948,7 +1253,6 @@ class MonitoringVisualizationTab(QWidget):
                 self._last_status_timestamp_ms = int(timestamp_ms)
             except Exception:
                 pass
-        self._availability_stage = "0401"
         if fuel_state_map is not None:
             normalized_fuel: dict[int, str] = {}
             for key, value in dict(fuel_state_map).items():
@@ -964,6 +1268,9 @@ class MonitoringVisualizationTab(QWidget):
             if state.get("aircraft_id") is not None
         }
         self._latest_state_map = {int(aid): dict(data) for aid, data in state_map.items()}
+        received_ms = self._current_ms_since_2000()
+        for aid in state_map.keys():
+            self._last_signal_received_ms_by_aircraft[int(aid)] = int(received_ms)
         self._refresh_status_panels(reference_timestamp_ms=timestamp_ms)
 
         update_ui = bool(self._ui_updates_enabled)
@@ -981,27 +1288,10 @@ class MonitoringVisualizationTab(QWidget):
         state_map = self._latest_state_map if isinstance(self._latest_state_map, dict) else {}
         mission_flags = self._mission_runtime_flags_by_aircraft()
 
-        for aid, label in self._aircraft_labels.items():
-            role = "유인" if aid <= 3 else "무인"
-            health = state_map.get(aid, {}).get("health")
-            if health == 1:
-                status = "정상"
-                style = "good"
-            elif health == 0:
-                status = "미정"
-                style = "warn"
-            elif health is None:
-                status = "미확인"
-                style = "bad"
-            else:
-                status = "비정상"
-                style = "bad"
-            self._update_status_label(label, f"{role} {aid} ({status})", style)
-
         for aid, label in self._signal_labels.items():
             role = "유인" if aid <= 3 else "무인"
-            last_signal = state_map.get(aid, {}).get("last_signal_time")
-            ok = self._signal_ok(reference_timestamp_ms, last_signal)
+            last_received_ms = self._last_signal_received_ms_by_aircraft.get(int(aid))
+            ok = self._signal_ok(self._current_ms_since_2000(), last_received_ms)
             status = "신호 정상" if ok else "신호 이상"
             style = "good" if ok else "bad"
             self._update_status_label(label, f"{role} {aid} ({status})", style)
@@ -1051,12 +1341,11 @@ class MonitoringVisualizationTab(QWidget):
             except Exception:
                 continue
             missions = [mission for mission in entry.get("missions") or [] if isinstance(mission, dict)]
-            current_mission_id = self._next_pending_id(missions, "individual_mission_id")
-            if current_mission_id is None and missions:
-                try:
-                    current_mission_id = int(missions[-1].get("individual_mission_id"))
-                except Exception:
-                    current_mission_id = None
+            current_mission_id = self._resolve_current_mission_id(
+                missions,
+                aid,
+                snapshot,
+            )
             progress_entry = mission_progress.get(current_mission_id) if current_mission_id is not None else None
             result[int(aid)] = {
                 "awaiting_execute": bool((progress_entry or {}).get("awaiting_execute")),
@@ -1276,7 +1565,7 @@ class MonitoringVisualizationTab(QWidget):
         if target_input_id is None:
             if callable(self._notice_callback):
                 try:
-                    self._notice_callback("다음 협업기저임무가 없습니다")
+                    self._notice_callback("모니터링 모듈: 다음 협업기저임무가 없습니다.")
                 except Exception:
                     pass
             snapshot = self._progress_tracker.update(None, None)
@@ -1288,6 +1577,7 @@ class MonitoringVisualizationTab(QWidget):
             and self._is_input_done(input_missions, target_input_id)
         ):
             self._repeat_input_mission(view, int(target_input_id))
+        self._progress_tracker.activate_input(int(target_input_id))
         self._last_active_input_id = int(target_input_id)
         snapshot = self._progress_tracker.update(None, None)
         self._apply_progress_snapshot(snapshot)
@@ -1313,6 +1603,217 @@ class MonitoringVisualizationTab(QWidget):
 
         snapshot = self._progress_tracker.update(None, None)
         self._apply_progress_snapshot(snapshot)
+
+    def build_execute_next_replan_context(self) -> dict[str, object] | None:
+        view = self._mission_view
+        if not isinstance(view, dict):
+            return None
+
+        input_missions = view.get("input_missions") or []
+        current_input_id = self._pick_current_input_id(input_missions)
+        target_input_id = self._pick_next_input_id(input_missions, current_input_id)
+        if current_input_id is None or target_input_id is None:
+            return None
+
+        current_input_progress = self._input_progress_percent(input_missions, int(current_input_id))
+        current_input_done = self._is_input_done(input_missions, int(current_input_id))
+        recommendation_active = False
+        try:
+            recommendation_active = (
+                int(current_input_id) in self._sent_0503_inputs
+                or int(current_input_id) in self._sent_0503_pending_inputs
+                or int(current_input_id) in self._pending_execute_inputs
+            )
+        except Exception:
+            recommendation_active = False
+
+        target_aircraft_ids: list[int] = []
+        target_entry_aircraft_list: list[dict[str, object]] = []
+        representative_target_coords: list[dict[str, float]] = []
+        for entry in view.get("uav_entries") or []:
+            if not isinstance(entry, dict):
+                continue
+            aircraft_id = entry.get("aircraft_id")
+            try:
+                aircraft_id_int = int(aircraft_id) if aircraft_id is not None else None
+            except Exception:
+                aircraft_id_int = None
+            if aircraft_id_int is None or aircraft_id_int <= 0:
+                continue
+            has_target = False
+            target_entry_coord = None
+            for mission in entry.get("missions") or []:
+                if not isinstance(mission, dict):
+                    continue
+                mission_input_id = mission.get("input_id")
+                try:
+                    mission_input_id_int = int(mission_input_id) if mission_input_id is not None else None
+                except Exception:
+                    mission_input_id_int = None
+                if mission_input_id_int is None or mission_input_id_int != int(target_input_id):
+                    continue
+                has_target = True
+                target_entry_coord = self._mission_start_coordinate(mission)
+                break
+            if has_target and aircraft_id_int not in target_aircraft_ids:
+                target_aircraft_ids.append(int(aircraft_id_int))
+            if target_entry_coord is not None:
+                target_entry_aircraft_list.append(
+                    {
+                        "aircraftID": int(aircraft_id_int),
+                        "coordinate": dict(target_entry_coord),
+                    }
+                )
+                representative_target_coords.append(dict(target_entry_coord))
+
+        if not target_aircraft_ids:
+            return None
+
+        return {
+            "input_mission_package_id": view.get("input_mission_package_id"),
+            "current_input_mission_id": int(current_input_id),
+            "target_input_mission_id": int(target_input_id),
+            "target_aircraft_ids": list(target_aircraft_ids),
+            "current_input_progress_percent": int(current_input_progress),
+            "current_input_is_done": bool(current_input_done),
+            "current_input_recommendation_active": bool(recommendation_active),
+            "entry_strategy": (
+                "turn_projection"
+                if bool(current_input_done or recommendation_active or current_input_progress >= 100)
+                else "midpoint_to_next_start"
+            ),
+            "target_entry_aircraft_list": target_entry_aircraft_list,
+            "representative_target_entry_coordinate": self._centroid_coordinate(representative_target_coords),
+        }
+
+    @staticmethod
+    def _coord_from_waypoint_summary(payload: object | None) -> dict[str, float] | None:
+        if not isinstance(payload, dict):
+            return None
+        try:
+            lat = float(payload.get("latitude"))
+            lon = float(payload.get("longitude"))
+        except Exception:
+            return None
+        coord: dict[str, float] = {
+            "latitude": float(lat),
+            "longitude": float(lon),
+        }
+        try:
+            alt = float(payload.get("altitude"))
+        except Exception:
+            alt = None
+        if alt is not None:
+            coord["altitude"] = float(alt)
+        return coord
+
+    @classmethod
+    def _coord_from_points(cls, payload: object | None) -> dict[str, float] | None:
+        if not isinstance(payload, dict):
+            return None
+        try:
+            lat = float(payload.get("latitude"))
+            lon = float(payload.get("longitude"))
+        except Exception:
+            return None
+        coord: dict[str, float] = {
+            "latitude": float(lat),
+            "longitude": float(lon),
+        }
+        try:
+            alt = float(payload.get("altitude"))
+        except Exception:
+            alt = None
+        if alt is not None:
+            coord["altitude"] = float(alt)
+        return coord
+
+    @classmethod
+    def _centroid_coordinate(cls, coords: list[dict[str, float]]) -> dict[str, float] | None:
+        if not coords:
+            return None
+        lat_vals = [float(item["latitude"]) for item in coords if "latitude" in item]
+        lon_vals = [float(item["longitude"]) for item in coords if "longitude" in item]
+        if not lat_vals or not lon_vals:
+            return None
+        result: dict[str, float] = {
+            "latitude": sum(lat_vals) / float(len(lat_vals)),
+            "longitude": sum(lon_vals) / float(len(lon_vals)),
+        }
+        alt_vals = [float(item["altitude"]) for item in coords if "altitude" in item]
+        if alt_vals:
+            result["altitude"] = sum(alt_vals) / float(len(alt_vals))
+        return result
+
+    @classmethod
+    def _mission_start_coordinate(cls, mission: dict) -> dict[str, float] | None:
+        waypoints = mission.get("waypoints") if isinstance(mission.get("waypoints"), list) else []
+        preferred: dict[str, float] | None = None
+        for waypoint in waypoints:
+            coord = cls._coord_from_waypoint_summary(waypoint)
+            if coord is None:
+                continue
+            operation_mode = waypoint.get("operation_mode")
+            pass_type = waypoint.get("waypoint_pass_type")
+            try:
+                operation_mode_int = int(operation_mode) if operation_mode is not None else None
+            except Exception:
+                operation_mode_int = None
+            try:
+                pass_type_int = int(pass_type) if pass_type is not None else None
+            except Exception:
+                pass_type_int = None
+            if operation_mode_int == 4 or pass_type_int == 2:
+                if preferred is None:
+                    preferred = dict(coord)
+                continue
+            return dict(coord)
+        if preferred is not None:
+            return preferred
+
+        line_list = mission.get("line_list") if isinstance(mission.get("line_list"), list) else []
+        for line in line_list:
+            if not isinstance(line, dict):
+                continue
+            coords = line.get("coordinateList") if isinstance(line.get("coordinateList"), list) else []
+            for coord_payload in coords:
+                coord = cls._coord_from_points(coord_payload)
+                if coord is not None:
+                    return coord
+
+        area_list = mission.get("area_list") if isinstance(mission.get("area_list"), list) else []
+        area_centers: list[dict[str, float]] = []
+        for area in area_list:
+            if not isinstance(area, dict):
+                continue
+            coords = area.get("coordinateList") if isinstance(area.get("coordinateList"), list) else []
+            normalized: list[dict[str, float]] = []
+            for coord_payload in coords:
+                coord = cls._coord_from_points(coord_payload)
+                if coord is not None:
+                    normalized.append(coord)
+            if normalized:
+                center = cls._centroid_coordinate(normalized)
+                if center is not None:
+                    area_centers.append(center)
+        return cls._centroid_coordinate(area_centers)
+
+    @staticmethod
+    def _input_progress_percent(input_missions: list[dict], input_id: int) -> int:
+        for item in input_missions:
+            if not isinstance(item, dict):
+                continue
+            try:
+                value_int = int(item.get("input_mission_id"))
+            except Exception:
+                value_int = None
+            if value_int is None or int(value_int) != int(input_id):
+                continue
+            try:
+                return int(item.get("progress_percent") or 0)
+            except Exception:
+                return 0
+        return 0
 
     def _pick_current_input_id(self, input_missions: list[dict]) -> int | None:
         current_input_id = self._progress_tracker.get_active_input_id()
@@ -1732,8 +2233,6 @@ class MonitoringVisualizationTab(QWidget):
                     except Exception:
                         coverage_text = "-%"
                 table.setItem(row, 4, QTableWidgetItem(coverage_text))
-            table.resizeColumnsToContents()
-
         snapshot = self._progress_tracker.update(None, None)
         self._apply_progress_snapshot(snapshot)
 
@@ -2456,6 +2955,7 @@ class MonitoringVisualizationTab(QWidget):
         entries = view.get("uav_entries") or []
         for idx, entry in enumerate(entries):
             missions = entry.get("missions") or []
+            aircraft_id = entry.get("aircraft_id")
             for mission in missions:
                 if not isinstance(mission, dict):
                     continue
@@ -2473,12 +2973,13 @@ class MonitoringVisualizationTab(QWidget):
                     mission["planned_area_m2"] = prog.get("planned_area_m2", 0.0)
                     mission["coverage_enabled"] = bool(prog.get("coverage_enabled"))
 
-            current_mission_id = self._next_pending_id(missions, "individual_mission_id")
-            if current_mission_id is None and missions:
-                try:
-                    current_mission_id = int(missions[-1].get("individual_mission_id"))
-                except Exception:
-                    current_mission_id = None
+            current_mission_id = self._resolve_current_mission_id(
+                missions,
+                aircraft_id,
+                snapshot,
+            )
+            if current_mission_id is not None:
+                entry["current_individual_mission_id"] = int(current_mission_id)
             if update_ui and idx < len(self._individual_low_layouts):
                 self._populate_lowlevel_bars(
                     self._individual_low_layouts[idx],
@@ -2564,12 +3065,11 @@ class MonitoringVisualizationTab(QWidget):
             if aircraft_id is None:
                 continue
             missions = entry.get("missions") or []
-            current_mission_id = self._next_pending_id(missions, "individual_mission_id")
-            if current_mission_id is None and missions:
-                try:
-                    current_mission_id = int(missions[-1].get("individual_mission_id"))
-                except Exception:
-                    current_mission_id = None
+            current_mission_id = self._resolve_current_mission_id(
+                missions,
+                aircraft_id,
+                snapshot,
+            )
 
             progress = 0
             if current_mission_id is not None:
@@ -3016,7 +3516,49 @@ class MonitoringVisualizationTab(QWidget):
                     return None
         return None
 
+    @staticmethod
+    def _snapshot_current_mission_map(snapshot: dict | None) -> dict[int, int]:
+        raw = (snapshot or {}).get("aircraft_current_mission") if isinstance(snapshot, dict) else {}
+        if not isinstance(raw, dict):
+            return {}
+        result: dict[int, int] = {}
+        for raw_aircraft_id, raw_mission_id in raw.items():
+            try:
+                aircraft_id = int(raw_aircraft_id)
+                mission_id = int(raw_mission_id)
+            except Exception:
+                continue
+            result[aircraft_id] = mission_id
+        return result
+
+    def _resolve_current_mission_id(
+        self,
+        missions: list[dict],
+        aircraft_id: int | None,
+        snapshot: dict | None = None,
+    ) -> int | None:
+        current_map = self._snapshot_current_mission_map(snapshot)
+        try:
+            aircraft_id_int = int(aircraft_id) if aircraft_id is not None else None
+        except Exception:
+            aircraft_id_int = None
+        if aircraft_id_int is not None:
+            mission_id = current_map.get(aircraft_id_int)
+            if mission_id is not None:
+                return int(mission_id)
+        current_id = self._next_pending_id(missions, "individual_mission_id")
+        if current_id is not None:
+            return current_id
+        if missions:
+            try:
+                return int(missions[-1].get("individual_mission_id"))
+            except Exception:
+                return None
+        return None
+
     def _resolve_current_input_id(self, input_missions: list[dict]) -> int | None:
+        if self._last_progress_input_id is not None:
+            return self._last_progress_input_id
         current_id = self._next_pending_id(input_missions, "input_mission_id")
         if current_id is not None:
             return current_id

@@ -12,9 +12,9 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from ..models import SplitPiece, SplitRunResult
 try:
-    from ...runtime_settings import get_runtime_str, get_runtime_value, is_runtime_custom_preset, load_runtime_settings
+    from ...runtime_settings import get_runtime_str, get_runtime_value
 except Exception:
-    from modules.mission_planning.MissionPlanner.runtime_settings import get_runtime_str, get_runtime_value, is_runtime_custom_preset, load_runtime_settings  # type: ignore
+    from modules.mission_planning.MissionPlanner.runtime_settings import get_runtime_str, get_runtime_value  # type: ignore
 try:
     from ....runtime.json_io import dumps_json
 except Exception:
@@ -154,7 +154,7 @@ def _runtime_value(key: str, default: Any) -> Any:
 
 
 def _runtime_area_sweep_mode() -> str:
-    raw = str(get_runtime_str("area_sweep_mode", "parallel") or "parallel").strip().lower()
+    raw = str(get_runtime_str("area_sweep_mode", "vertical") or "vertical").strip().lower()
     if raw in {"vertical", "ver", "perpendicular", "orthogonal"}:
         return "vertical"
     if raw in {"nadir", "directdown", "bf_nadir"}:
@@ -226,6 +226,36 @@ def _piece_selected_speed_kmh(piece: SplitPiece) -> float:
     return 0.0
 
 
+def _piece_has_line_geometry(data: Dict[str, Any]) -> bool:
+    if _normalize_coord_list(data.get("Centerline")):
+        return True
+    if _normalize_coord_list(data.get("lineCoordinateList")):
+        return True
+    line_list = data.get("lineList")
+    if isinstance(line_list, list):
+        for row in line_list:
+            if not isinstance(row, dict):
+                continue
+            if _normalize_coord_list(row.get("coordinateList")):
+                return True
+    return False
+
+
+def _piece_is_area_like(piece: SplitPiece) -> bool:
+    data = piece.data if isinstance(piece.data, dict) else {}
+    if _piece_has_line_geometry(data):
+        return False
+    if int(piece.mission_type) in _MISSION_NEEDS_AREA:
+        return True
+    if isinstance(data.get("reviewArea"), dict):
+        return True
+    if _normalize_coord_list(data.get("rawCoordinateList")):
+        return True
+    if _normalize_coord_list(data.get("coordinateList")) and int(piece.mission_type) in _AREA_TYPES:
+        return True
+    return False
+
+
 def _aircraft_alt_offset_m(aircraft_id: int) -> float:
     try:
         idx = (int(aircraft_id) - 1) % len(_ALTITUDE_LAYERS_M)
@@ -258,12 +288,10 @@ def _piece_speed_fov_sep(piece: SplitPiece) -> Tuple[float, float, float]:
     data = piece.data if isinstance(piece.data, dict) else {}
     exp = data.get("expVel") if isinstance(data.get("expVel"), dict) else {}
     speed_kmh = _piece_selected_speed_kmh(piece)
-    runtime_payload = load_runtime_settings()
     auto_fov_from_db = bool(_runtime_value("enhanced_auto_fov_from_db", True))
     area_mode = _runtime_area_sweep_mode()
-    if is_runtime_custom_preset(runtime_payload):
-        auto_fov_from_db = False
-    if area_mode == "nadir" and int(piece.mission_type) in _AREA_TYPES:
+    is_area_piece = _piece_is_area_like(piece)
+    if area_mode == "nadir" and is_area_piece:
         alt_ref_m = _aircraft_alt_offset_m(int(piece.assigned_uav or 4))
         row = _pick_nadir_fov_row_by_altitude(_load_fov_db_rows(), alt_ref_m)
         if row is not None:
@@ -279,13 +307,20 @@ def _piece_speed_fov_sep(piece: SplitPiece) -> Tuple[float, float, float]:
             pattern_type = 0
         is_nadir_area_mode = (
             area_mode == "nadir"
-            and int(piece.mission_type) in _AREA_TYPES
+            and is_area_piece
         )
         try:
+            fov_key = "fov_deg"
+            if pattern_type == 3 or is_nadir_area_mode:
+                fov_key = "area_nadir_fov_deg"
+            elif is_area_piece:
+                fov_key = "area_custom_fov_deg"
+            else:
+                fov_key = "line_custom_fov_deg"
             manual_fov = float(
                 _runtime_value(
-                    "area_nadir_fov_deg" if (pattern_type == 3 or is_nadir_area_mode) else "fov_deg",
-                    0.0,
+                    fov_key,
+                    _runtime_value("fov_deg", 0.0),
                 )
             )
         except Exception:
@@ -302,23 +337,55 @@ def _piece_speed_fov_sep(piece: SplitPiece) -> Tuple[float, float, float]:
     if not rows:
         return float(speed_kmh), 0.0, 0.0
 
-    vel_candidates = _vel_candidates_from_exp(exp)
-    if vel_candidates:
-        keys = {_speed_key_kmh(v) for v in vel_candidates}
-        vel_rows = [r for r in rows if _speed_key_kmh(_to_float(r.get("vel"), 0.0)) in keys]
-        if vel_rows:
-            rows = vel_rows
+    # Balanced policy: pick the row nearest the midpoint between
+    # the feasible max-FOV row and the feasible max-velocity row.
+    if len(rows) == 1:
+        best = rows[0]
+    else:
+        fov_values = [_to_float(r.get("fov"), 0.0) for r in rows]
+        vel_values = [_to_float(r.get("vel"), 0.0) for r in rows]
+        fov_scale = max(max(fov_values) - min(fov_values), 1e-9)
+        vel_scale = max(max(vel_values) - min(vel_values), 1e-9)
+        max_fov_row = max(
+            rows,
+            key=lambda r: (
+                _to_float(r.get("fov"), 0.0),
+                _to_float(r.get("vel"), 0.0),
+                -max(_to_float(r.get("width"), 0.0) - width_ref_m, 0.0),
+                _to_float(r.get("sep"), 0.0),
+            ),
+        )
+        max_vel_row = max(
+            rows,
+            key=lambda r: (
+                _to_float(r.get("vel"), 0.0),
+                _to_float(r.get("fov"), 0.0),
+                -max(_to_float(r.get("width"), 0.0) - width_ref_m, 0.0),
+                _to_float(r.get("sep"), 0.0),
+            ),
+        )
+        target_fov = (
+            _to_float(max_fov_row.get("fov"), 0.0)
+            + _to_float(max_vel_row.get("fov"), 0.0)
+        ) / 2.0
+        target_vel = (
+            _to_float(max_fov_row.get("vel"), 0.0)
+            + _to_float(max_vel_row.get("vel"), 0.0)
+        ) / 2.0
 
-    # FOV policy: pick the largest FOV among feasible velocity candidates.
-    best = max(
-        rows,
-        key=lambda r: (
-            _to_float(r.get("fov"), 0.0),
-            _to_float(r.get("sep"), 0.0),
-            _to_float(r.get("width"), 0.0),
-            _to_float(r.get("vel"), 0.0),
-        ),
-    )
+        best = min(
+            rows,
+            key=lambda r: (
+                (
+                    ((_to_float(r.get("fov"), 0.0) - target_fov) / fov_scale) ** 2
+                    + ((_to_float(r.get("vel"), 0.0) - target_vel) / vel_scale) ** 2
+                ),
+                max(_to_float(r.get("width"), 0.0) - width_ref_m, 0.0),
+                -_to_float(r.get("sep"), 0.0),
+                -_to_float(r.get("fov"), 0.0),
+                -_to_float(r.get("vel"), 0.0),
+            ),
+        )
     fov_deg = _apply_db_fov_weight(_to_float(best.get("fov"), 0.0))
     sep_m = _to_float(best.get("sep"), 0.0)
     return float(speed_kmh), float(fov_deg), float(sep_m)

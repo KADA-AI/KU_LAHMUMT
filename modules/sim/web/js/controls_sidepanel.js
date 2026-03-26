@@ -12,7 +12,7 @@
     panel.setAttribute("aria-hidden", next ? "false" : "true");
     toggle.setAttribute("aria-expanded", next ? "true" : "false");
     toggle.classList.toggle("is-open", next);
-    toggle.textContent = next ? "▼" : "▲";
+    toggle.textContent = next ? "v" : "^";
     if (next && typeof window.openAgentPanel === "function") {
       window.openAgentPanel();
     }

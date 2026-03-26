@@ -50,6 +50,7 @@ class DemTileProvider:
         self._lock = threading.Lock()
         self._datasets = []
         self._vrts = []
+        self._bounds_mercator = None
         if rasterio is None:
             return
         for tif in sorted(self.dem_dir.glob("*.tif")):
@@ -60,18 +61,30 @@ class DemTileProvider:
             vrt = WarpedVRT(dataset, crs="EPSG:3857", resampling=Resampling.bilinear)
             self._datasets.append(dataset)
             self._vrts.append(vrt)
+        if self._vrts:
+            west = min(vrt.bounds.left for vrt in self._vrts)
+            south = min(vrt.bounds.bottom for vrt in self._vrts)
+            east = max(vrt.bounds.right for vrt in self._vrts)
+            north = max(vrt.bounds.top for vrt in self._vrts)
+            self._bounds_mercator = (west, south, east, north)
 
     @property
     def available(self) -> bool:
         return bool(self._vrts)
 
+    @property
+    def bounds_mercator(self) -> Optional[tuple[float, float, float, float]]:
+        return self._bounds_mercator
+
     def get_tile(self, z: int, x: int, y: int) -> Optional[bytes]:
-        if not self.available or z > self.max_zoom:
+        if not self.available:
             return None
+        if z > self.max_zoom:
+            return self._blank_tile()
         bounds = _tile_bounds_mercator(z, x, y)
         candidates = [vrt for vrt in self._vrts if _bounds_intersect(bounds, vrt.bounds)]
         if not candidates:
-            return None
+            return self._blank_tile(bounds=bounds)
         output = np.full((self.tile_size, self.tile_size), np.nan, dtype="float32")
         with self._lock:
             for vrt in candidates:
@@ -113,8 +126,30 @@ class DemTileProvider:
                 chunk = output[tile_slice]
                 output[tile_slice] = np.where(np.isnan(chunk) & valid, values, chunk)
         elevation = np.where(np.isfinite(output), output, 0.0)
+        if not np.isfinite(output).any():
+            return self._blank_tile(bounds=bounds)
         rgb = _encode_terrarium(elevation)
         transform = from_bounds(*bounds, self.tile_size, self.tile_size)
+        with MemoryFile() as memfile:
+            with memfile.open(
+                driver="PNG",
+                width=self.tile_size,
+                height=self.tile_size,
+                count=3,
+                dtype="uint8",
+                crs="EPSG:3857",
+                transform=transform,
+            ) as dataset:
+                dataset.write(rgb)
+            return memfile.read()
+
+    def _blank_tile(self, *, bounds: tuple[float, float, float, float] | None = None) -> bytes:
+        if rasterio is None:
+            return b""
+        tile_bounds = bounds or (-1.0, -1.0, 1.0, 1.0)
+        elevation = np.zeros((self.tile_size, self.tile_size), dtype="float32")
+        rgb = _encode_terrarium(elevation)
+        transform = from_bounds(*tile_bounds, self.tile_size, self.tile_size)
         with MemoryFile() as memfile:
             with memfile.open(
                 driver="PNG",

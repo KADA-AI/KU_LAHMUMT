@@ -38,9 +38,11 @@ class MissionScheduleTab(QWidget):
         self._log_callback: Callable[[str], None] | None = None
         self._path_trigger_toggle_callback: Callable[[bool], None] | None = None
         self._schedule_trigger_toggle_callback: Callable[[bool], None] | None = None
+        self._next_collab_trigger_toggle_callback: Callable[[bool], None] | None = None
         self._fuel_threshold_toggle_callback: Callable[[bool], None] | None = None
-        self._path_trigger_enabled = False
+        self._path_trigger_enabled = True
         self._schedule_trigger_enabled = False
+        self._next_collab_trigger_enabled = False
         self._fuel_threshold_enabled = False
         self._aircraft_buttons: dict[int, QPushButton] = {}
         self._path_summary_labels: dict[str, QLabel] = {}
@@ -50,6 +52,8 @@ class MissionScheduleTab(QWidget):
         self._path_trigger_toggle_button: QPushButton | None = None
         self._schedule_trigger_state_label: QLabel | None = None
         self._schedule_trigger_toggle_button: QPushButton | None = None
+        self._next_collab_trigger_state_label: QLabel | None = None
+        self._next_collab_trigger_toggle_button: QPushButton | None = None
         self._fuel_threshold_state_label: QLabel | None = None
         self._fuel_threshold_toggle_button: QPushButton | None = None
         self._path_table: QTableWidget | None = None
@@ -83,6 +87,18 @@ class MissionScheduleTab(QWidget):
             except Exception:
                 pass
 
+    def set_next_collab_trigger_toggle_callback(self, callback: Callable[[bool], None] | None) -> None:
+        self._next_collab_trigger_toggle_callback = callback
+
+    def set_next_collab_trigger_enabled(self, enabled: bool, *, emit: bool = False) -> None:
+        self._next_collab_trigger_enabled = bool(enabled)
+        self._refresh_trigger_controls()
+        if emit and self._next_collab_trigger_toggle_callback is not None:
+            try:
+                self._next_collab_trigger_toggle_callback(self._next_collab_trigger_enabled)
+            except Exception:
+                pass
+
     def set_fuel_threshold_toggle_callback(self, callback: Callable[[bool], None] | None) -> None:
         self._fuel_threshold_toggle_callback = callback
 
@@ -95,7 +111,6 @@ class MissionScheduleTab(QWidget):
             except Exception:
                 pass
 
-    # Backward-compatible aliases used by existing monitoring wiring.
     def set_imaging_trigger_toggle_callback(self, callback: Callable[[bool], None] | None) -> None:
         self.set_schedule_trigger_toggle_callback(callback)
 
@@ -139,39 +154,17 @@ class MissionScheduleTab(QWidget):
 
         title = QLabel("ETA / WP / 촬영 스케줄 모니터")
         title.setStyleSheet("font-size: 16px; font-weight: 700;")
-        subtitle = QLabel(
-            "경로 ETA와 촬영 ETA를 분리해서 보고, 각 waypoint의 계획 대비 실제 도착 시간차를 확인합니다."
-        )
+        subtitle = QLabel("경로 ETA와 촬영 ETA를 분리해서 보고, 각 waypoint의 계획 대비 실제 도착 시간차를 확인합니다.")
         subtitle.setWordWrap(True)
         subtitle.setStyleSheet("color: #475569;")
+        hint = QLabel("재계획 ON/OFF와 기준값 조정은 `임무 재계획 관리` 탭에서 통합 관리합니다.")
+        hint.setWordWrap(True)
+        hint.setStyleSheet(
+            "padding: 8px 10px; border: 1px solid #dbe5f0; border-radius: 8px; background: #f8fbff; color: #334155;"
+        )
         root.addWidget(title)
         root.addWidget(subtitle)
-
-        root.addLayout(
-            self._build_trigger_row(
-                "경로 미추종 재계획",
-                self._toggle_path_trigger,
-                state_attr="_path_trigger_state_label",
-                button_attr="_path_trigger_toggle_button",
-            )
-        )
-        root.addLayout(
-            self._build_trigger_row(
-                "촬영/경로 스케줄 재계획",
-                self._toggle_schedule_trigger,
-                state_attr="_schedule_trigger_state_label",
-                button_attr="_schedule_trigger_toggle_button",
-            )
-        )
-
-        root.addLayout(
-            self._build_trigger_row(
-                "Fuel 10/20% auto-judge",
-                self._toggle_fuel_threshold,
-                state_attr="_fuel_threshold_state_label",
-                button_attr="_fuel_threshold_toggle_button",
-            )
-        )
+        root.addWidget(hint)
 
         selector_row = QHBoxLayout()
         selector_row.setSpacing(8)
@@ -199,32 +192,7 @@ class MissionScheduleTab(QWidget):
 
         root.addWidget(self._build_table_group("WP 경로 스케줄", "path"))
         root.addWidget(self._build_table_group("촬영 스케줄", "imaging"))
-
-        self._refresh_trigger_controls()
         self._select_aircraft(self._selected_aircraft_id)
-
-    def _build_trigger_row(
-        self,
-        caption: str,
-        slot: Callable[[], None],
-        *,
-        state_attr: str,
-        button_attr: str,
-    ) -> QHBoxLayout:
-        row = QHBoxLayout()
-        row.setSpacing(8)
-        label = QLabel(caption)
-        label.setStyleSheet("font-weight: 700;")
-        state_label = QLabel("")
-        toggle_button = QPushButton("")
-        toggle_button.clicked.connect(slot)
-        setattr(self, state_attr, state_label)
-        setattr(self, button_attr, toggle_button)
-        row.addWidget(label)
-        row.addWidget(state_label)
-        row.addStretch(1)
-        row.addWidget(toggle_button)
-        return row
 
     def _build_summary_group(self, title: str, target: dict[str, QLabel]) -> QGroupBox:
         group = QGroupBox(title)
@@ -250,9 +218,10 @@ class MissionScheduleTab(QWidget):
 
     def _build_table_group(self, title: str, kind: str) -> QGroupBox:
         group = QGroupBox(title)
-        layout = QVBoxLayout()
+        layout = QVBoxLayout(group)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
+
         table = QTableWidget(0, 9)
         table.setHorizontalHeaderLabels(
             ["Mission", "Path", "WP", "Type", "Planned ETA", "Actual", "Delta", "Result", "Arrival"]
@@ -261,21 +230,29 @@ class MissionScheduleTab(QWidget):
         table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         table.setSelectionMode(QAbstractItemView.NoSelection)
         table.setAlternatingRowColors(True)
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
-        table.horizontalHeader().setStretchLastSection(True)
+        table.setWordWrap(False)
+        table.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
+        header = table.horizontalHeader()
+        for col in range(7):
+            header.setSectionResizeMode(col, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(7, QHeaderView.Stretch)
+        header.setSectionResizeMode(8, QHeaderView.Stretch)
+        header.setStretchLastSection(False)
+        header.setMinimumSectionSize(68)
+
         if kind == "path":
             self._path_table = table
         else:
             self._imaging_table = table
         layout.addWidget(table)
-        group.setLayout(layout)
         return group
 
     def _select_aircraft(self, aircraft_id: int) -> None:
         self._selected_aircraft_id = int(aircraft_id)
         for aid, button in self._aircraft_buttons.items():
-            button.setChecked(int(aid) == int(self._selected_aircraft_id))
-            if int(aid) == int(self._selected_aircraft_id):
+            selected = int(aid) == int(self._selected_aircraft_id)
+            button.setChecked(selected)
+            if selected:
                 button.setStyleSheet(
                     "QPushButton { background: #1d4ed8; color: white; font-weight: 700; padding: 6px 14px; border-radius: 8px; }"
                 )
@@ -324,62 +301,8 @@ class MissionScheduleTab(QWidget):
         if self._plan_summary_label is not None:
             self._plan_summary_label.setText(str(text))
 
-    def _toggle_path_trigger(self) -> None:
-        self.set_path_trigger_enabled(not self._path_trigger_enabled, emit=True)
-
-    def _toggle_schedule_trigger(self) -> None:
-        self.set_schedule_trigger_enabled(not self._schedule_trigger_enabled, emit=True)
-
-    def _toggle_imaging_trigger(self) -> None:
-        self._toggle_schedule_trigger()
-
-    def _toggle_fuel_threshold(self) -> None:
-        self.set_fuel_threshold_enabled(not self._fuel_threshold_enabled, emit=True)
-
     def _refresh_trigger_controls(self) -> None:
-        self._apply_trigger_visual_state(
-            self._path_trigger_state_label,
-            self._path_trigger_toggle_button,
-            enabled=self._path_trigger_enabled,
-        )
-        self._apply_trigger_visual_state(
-            self._schedule_trigger_state_label,
-            self._schedule_trigger_toggle_button,
-            enabled=self._schedule_trigger_enabled,
-        )
-        self._apply_trigger_visual_state(
-            self._fuel_threshold_state_label,
-            self._fuel_threshold_toggle_button,
-            enabled=self._fuel_threshold_enabled,
-        )
-
-    def _apply_trigger_visual_state(
-        self,
-        state_label: QLabel | None,
-        toggle_button: QPushButton | None,
-        *,
-        enabled: bool,
-    ) -> None:
-        if state_label is None or toggle_button is None:
-            return
-        if enabled:
-            state_label.setText("ON")
-            state_label.setStyleSheet(
-                "padding: 4px 10px; border-radius: 999px; background: #dcfce7; color: #166534; font-weight: 700;"
-            )
-            toggle_button.setText("트리거 끄기")
-            toggle_button.setStyleSheet(
-                "QPushButton { background: #dc2626; color: white; font-weight: 700; padding: 6px 14px; border-radius: 8px; }"
-            )
-        else:
-            state_label.setText("OFF")
-            state_label.setStyleSheet(
-                "padding: 4px 10px; border-radius: 999px; background: #e2e8f0; color: #334155; font-weight: 700;"
-            )
-            toggle_button.setText("트리거 켜기")
-            toggle_button.setStyleSheet(
-                "QPushButton { background: #1d4ed8; color: white; font-weight: 700; padding: 6px 14px; border-radius: 8px; }"
-            )
+        pass
 
     def _fill_summary(self, labels: dict[str, QLabel], data: dict[str, Any], *, imaging: bool = False) -> None:
         if not labels:
@@ -388,10 +311,7 @@ class MissionScheduleTab(QWidget):
         waypoint_value = data.get("current_waypoint_id") if not imaging else data.get("reached_imaging_waypoint_count")
         if imaging:
             total = data.get("imaging_waypoint_count")
-            if waypoint_value is None or total is None:
-                labels["waypoint_id"].setText("-")
-            else:
-                labels["waypoint_id"].setText(f"{waypoint_value}/{total}")
+            labels["waypoint_id"].setText("-" if waypoint_value is None or total is None else f"{waypoint_value}/{total}")
         else:
             labels["waypoint_id"].setText(str(waypoint_value or "-"))
         planned = data.get("planned_latest_seconds") if imaging else data.get("planned_total_seconds")
@@ -425,7 +345,6 @@ class MissionScheduleTab(QWidget):
                 item = QTableWidgetItem("-" if value is None else str(value))
                 self._style_table_item(item, row_data)
                 table.setItem(row, col, item)
-        table.resizeColumnsToContents()
 
     def _style_table_item(self, item: QTableWidgetItem, row_data: dict[str, Any]) -> None:
         state = str(row_data.get("schedule_state") or "")
@@ -447,4 +366,3 @@ class MissionScheduleTab(QWidget):
             return
         if state == "Pending":
             item.setForeground(QColor("#64748b"))
-            return

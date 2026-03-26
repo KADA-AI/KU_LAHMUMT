@@ -130,6 +130,7 @@ class MissionProgressTracker:
         self._waypoint_completion_ts_ms: dict[int, dict[int, int | None]] = {}
         self._mission_coverage_defs: dict[int, MissionCoverageDefinition] = {}
         self._mission_coverage_state: dict[int, MissionCoverageState] = {}
+        self._forced_active_input_id: int | None = None
 
         if not view:
             return
@@ -371,7 +372,9 @@ class MissionProgressTracker:
                 # During auto takeoff/landing/handover-point transit,
                 # ignore transient onMission=2 so mission progress is not forced to 100%.
                 on_mission = None
-            mission_id = self._resolve_mission_for_waypoint(aircraft_id, current_wp)
+            mission_id = self._resolve_forced_input_mission(aircraft_id, current_wp)
+            if mission_id is None:
+                mission_id = self._resolve_mission_for_waypoint(aircraft_id, current_wp)
             if mission_id is None:
                 mission_id = self._aircraft_current_mission.get(aircraft_id)
             if mission_id is None:
@@ -499,10 +502,10 @@ class MissionProgressTracker:
         if prev_state is not None and not prev_state.done:
             if prev_state.current_waypoint_id is None and float(prev_state.completed_seconds or 0.0) <= 0.0:
                 return
-        if prev_meta.input_id is not None and cur_meta.input_id is not None:
-            if int(prev_meta.input_id) != int(cur_meta.input_id):
-                return
-        # If waypoint jumped forward to a later individual mission, treat previous mission blocks as passed.
+        # If waypoint jumped forward to a later individual mission in the same aircraft sequence,
+        # treat the skipped mission blocks as passed even when the inputMissionID changed.
+        # This is required for next-collab / inserted-prior flows where the vehicle can advance
+        # to a later input mission without explicitly visiting the intermediate mission waypoints.
         if cur_idx <= prev_idx:
             return
         for mission_id in missions[prev_idx:cur_idx]:
@@ -555,6 +558,14 @@ class MissionProgressTracker:
         )
 
     def get_active_input_id(self) -> int | None:
+        forced_input_id = self._forced_active_input_id
+        if forced_input_id is not None:
+            try:
+                forced_int = int(forced_input_id)
+            except Exception:
+                forced_int = None
+            if forced_int is not None and forced_int in self._input_mission_ids:
+                return forced_int
         active_counts: dict[int, int] = {}
         done_counts: dict[int, int] = {}
         for mission_id in self._aircraft_current_mission.values():
@@ -589,6 +600,97 @@ class MissionProgressTracker:
         completed = self.force_complete_missions(mission_ids)
         self._completed_input_ids.add(int(input_id))
         return completed
+
+    def activate_input(self, input_id: int | None) -> dict[int, int]:
+        if input_id is None:
+            return {}
+        target_input_id = int(input_id)
+        self._forced_active_input_id = int(target_input_id)
+        activated: dict[int, int] = {}
+        for aircraft_id, mission_ids in self._aircraft_missions.items():
+            for mission_id in mission_ids:
+                meta = self._mission_meta.get(int(mission_id))
+                if meta is None or meta.input_id is None or int(meta.input_id) != target_input_id:
+                    continue
+                state = self._progress_state.setdefault(int(mission_id), MissionProgressState())
+                if state.done:
+                    continue
+                self._aircraft_current_mission[int(aircraft_id)] = int(mission_id)
+                activated[int(aircraft_id)] = int(mission_id)
+                break
+        return activated
+
+    def _resolve_mission_for_waypoint_in_input(
+        self,
+        aircraft_id: int,
+        waypoint_id: int | None,
+        input_id: int | None,
+    ) -> int | None:
+        if waypoint_id is None or input_id is None:
+            return None
+        missions = self._aircraft_missions.get(int(aircraft_id)) or []
+        if not missions:
+            return None
+        input_int = int(input_id)
+        mapping = self._waypoint_to_mission.get(int(aircraft_id), {})
+        mission_id = mapping.get(int(waypoint_id))
+        if mission_id is not None:
+            meta = self._mission_meta.get(int(mission_id))
+            if meta is not None and meta.input_id is not None and int(meta.input_id) == input_int:
+                return int(mission_id)
+        for mission_id in missions:
+            meta = self._mission_meta.get(int(mission_id))
+            if meta is None or meta.input_id is None or int(meta.input_id) != input_int or not meta.waypoint_ids:
+                continue
+            try:
+                min_wp = min(meta.waypoint_ids)
+                max_wp = max(meta.waypoint_ids)
+            except ValueError:
+                continue
+            if min_wp <= int(waypoint_id) <= max_wp:
+                return int(mission_id)
+        return None
+
+    def _resolve_forced_input_mission(
+        self,
+        aircraft_id: int,
+        waypoint_id: int | None,
+    ) -> int | None:
+        forced_input_id = self._forced_active_input_id
+        if forced_input_id is None:
+            return None
+        missions = self._aircraft_missions.get(int(aircraft_id)) or []
+        if not missions:
+            return None
+        resolved = self._resolve_mission_for_waypoint_in_input(
+            int(aircraft_id),
+            waypoint_id,
+            int(forced_input_id),
+        )
+        if resolved is not None:
+            return int(resolved)
+        current_id = self._aircraft_current_mission.get(int(aircraft_id))
+        if current_id is not None:
+            meta = self._mission_meta.get(int(current_id))
+            state = self._progress_state.get(int(current_id))
+            current_not_done = True if state is None else (not bool(state.done))
+            if (
+                meta is not None
+                and meta.input_id is not None
+                and int(meta.input_id) == int(forced_input_id)
+                and current_not_done
+            ):
+                return int(current_id)
+        last_same_input: int | None = None
+        for mission_id in missions:
+            meta = self._mission_meta.get(int(mission_id))
+            if meta is None or meta.input_id is None or int(meta.input_id) != int(forced_input_id):
+                continue
+            last_same_input = int(mission_id)
+            state = self._progress_state.setdefault(int(mission_id), MissionProgressState())
+            if not state.done:
+                return int(mission_id)
+        return last_same_input
 
     def force_complete_missions(self, mission_ids: list[int]) -> list[dict[str, int | None]]:
         completed: list[dict[str, int | None]] = []
@@ -1121,6 +1223,12 @@ class MissionProgressTracker:
         return {
             "timestamp_ms": timestamp_ms,
             "mission_progress": mission_progress,
+            "aircraft_current_mission": {
+                int(aircraft_id): int(mission_id)
+                for aircraft_id, mission_id in self._aircraft_current_mission.items()
+                if mission_id is not None
+            },
+            "active_input_id": self.get_active_input_id(),
             "package_progress": package_progress,
             "input_progress": input_progress,
             "plan_progress": plan_progress,

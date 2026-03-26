@@ -10,6 +10,8 @@ import glob
 from collections import deque
 from pathlib import Path
 
+from modules.monitoring.logic.replan_runtime_settings import get_dl_risk_settings
+
 # Adjust imports to use local dummy modules if src is missing
 try:
     from src.models.models import BNNMainModel, LSTMAutoencoder
@@ -169,11 +171,12 @@ def evaluate_risk_thresholds(mean_risk: list[float], std_risk: list[float]) -> l
         return []
 
     risky_agents = []
+    threshold = float(get_dl_risk_settings().get("mean_risk_threshold", 0.8))
     
     # Check each agent (0 to 5)
     for i in range(len(mean_risk)):
         # Example Threshold: Risk score > 0.5
-        if mean_risk[i] > 0.8:
+        if mean_risk[i] > threshold:
             risky_agents.append(i)
             
         # You can add uncertainty (std) checks here too

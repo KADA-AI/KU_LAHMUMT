@@ -1,0 +1,86 @@
+{
+  "timestamp": 827819404167,
+  "reason": "선행임무 : 좌표지정",
+  "priorMissionID": 2,
+  "missionType": 1,
+  "targetCoordinate": {
+    "latitude": 38.08159255981445,
+    "longitude": 127.28128814697266,
+    "altitude": 1000
+  },
+  "selectedAircraftID": 6,
+  "sourceMissionPlanID": 700000007,
+  "sourceIndividualMissionPackageID": 800000039,
+  "sourcePathID": 600000034,
+  "currentWaypointID": 1112,
+  "removedWaypointID": 1111,
+  "insertedWaypoint": {
+    "waypointID": 1151,
+    "coordinate": {
+      "latitude": 38.08159255981445,
+      "longitude": 127.28128814697266,
+      "altitude": 784
+    },
+    "speed": 30.0,
+    "eta": 77,
+    "ecf": 0.0,
+    "nextWaypointID": 0,
+    "waypointPassType": 2,
+    "filmingProperty": {
+      "fieldOfView": 10.2,
+      "sensorType": 1,
+      "operationMode": 1,
+      "coordinateOrientation": {
+        "coordinate": {
+          "latitude": 38.08159255981445,
+          "longitude": 127.28128814697266,
+          "altitude": 163
+        }
+      }
+    },
+    "loiterProperty": {
+      "radius": 500.0,
+      "direction": 1,
+      "time": 50,
+      "speed": 30
+    },
+    "isDone": false
+  },
+  "telemetrySnapshot": null,
+  "generatedMissionPlanID": 700000008,
+  "generatedIndividualMissionPackageID": 800000040,
+  "generatedPriorIndividualMissionID": 900000182,
+  "generatedResumeIndividualMissionID": 900000183,
+  "generatedDonePathID": 600000039,
+  "generatedPriorPathID": 600000040,
+  "generatedResumePathID": 600000041,
+  "priorApproachWaypointID": 1150,
+  "priorTargetWaypointID": 1151,
+  "logMessages": [
+    "[PRIOR] detail keys: ['missionType', 'priorMissionID', 'rawEntry', 'sourceMissionPlanID', 'targetCoordinate', 'targetID', 'targetOrientation', 'timestamp']",
+    "[PRIOR][STEP1] Loaded 0401 snapshot with 3 unmanned entries (saved_at=2026-03-26T05:50:03.835411+00:00).",
+    "[PRIOR][STEP1] UAV 4: currentWP=1030, coord=(38.075779, 127.269226, alt=770.0)",
+    "[PRIOR][STEP1] UAV 5: currentWP=1071, coord=(38.075417, 127.273117, alt=761.0)",
+    "[PRIOR][STEP1] UAV 6: currentWP=1112, coord=(38.074913, 127.277245, alt=784.0)",
+    "[PRIOR][STEP2] Target coordinate (0202) → (38.081593, 127.281288, alt=1000.0)",
+    "[PRIOR][STEP3] Nearest UAV 6 selected based on 0401 snapshot (currentWP=1112, distance≈822.7 m).",
+    "[PRIOR][STEP4] Reserved new waypoint ID 1151 for UAV 6 (currentWP=1112, distance≈822.7 m).",
+    "[PRIOR] Allocated IDs -> plan:700000008 imp:800000040 path(done/prior/resume):600000039/600000040/600000041 indiv(prior/resume):900000182/900000183 wp(approach/target):1150/1151",
+    "[PRIOR][UAV] Resume trimmed by currentWP (lastRemovedWP=1111).",
+    "[PRIOR][UAV] Added replan anchor waypoint to done path (anchorWP=1152).",
+    "[PRIOR][UAV] Resume sweep trim applied (cutPoints=10, rawCutPoints=121, doneSweepPoints=111, pathID=600000034).",
+    "[PRIOR][UAV] Resume searchSpeed scaled (factor=1.30, waypoints=8).",
+    "[PRIOR][STEP3] Approach waypoint adjusted: 822.7m -> 450m ahead.",
+    "[PRIOR][UAV] Resume trimmed by currentWP (lastRemovedWP=1029).",
+    "[PRIOR][UAV] Added replan anchor waypoint to done path (anchorWP=1166).",
+    "[PRIOR][UAV] Resume sweep trim applied (cutPoints=15, rawCutPoints=126, doneSweepPoints=111, pathID=400000033).",
+    "[PRIOR][UAV] Resume searchSpeed scaled (factor=1.30, waypoints=8).",
+    "[PRIOR][UAV] Generated done/resume mission -> aircraft=4 IMP:800000041.json PATHS:400000038.json/400000039.json",
+    "[PRIOR][UAV] Resume trimmed by currentWP (lastRemovedWP=1070).",
+    "[PRIOR][UAV] Added replan anchor waypoint to done path (anchorWP=1180).",
+    "[PRIOR][UAV] Resume sweep trim applied (cutPoints=13, rawCutPoints=124, doneSweepPoints=111, pathID=500000033).",
+    "[PRIOR][UAV] Resume searchSpeed scaled (factor=1.30, waypoints=8).",
+    "[PRIOR][UAV] Generated done/resume mission -> aircraft=5 IMP:800000042.json PATHS:500000038.json/500000039.json",
+    "[PRIOR] Stored new artifacts -> plan:700000008.json, imp:800000040.json, fp:600000039.json/600000040.json/600000041.json"
+  ]
+}

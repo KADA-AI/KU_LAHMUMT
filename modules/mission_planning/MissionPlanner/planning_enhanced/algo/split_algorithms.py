@@ -37,11 +37,11 @@ DEM_IMG = cv2.imread(str(_DEM_PATH), cv2.IMREAD_GRAYSCALE) if (cv2 is not None a
 
 def _runtime_area_sweep_mode() -> str:
     if get_runtime_str is None:
-        return "parallel"
+        return "vertical"
     try:
-        raw = str(get_runtime_str("area_sweep_mode", "parallel") or "parallel").strip().lower()
+        raw = str(get_runtime_str("area_sweep_mode", "vertical") or "vertical").strip().lower()
     except Exception:
-        return "parallel"
+        return "vertical"
     if raw in {"vertical", "ver", "perpendicular", "orthogonal"}:
         return "vertical"
     if raw in {"nadir", "directdown", "bf_nadir"}:
@@ -51,11 +51,11 @@ def _runtime_area_sweep_mode() -> str:
 
 def _runtime_area_split_mode() -> str:
     if get_runtime_str is None:
-        return "two_stage"
+        return "single_stage"
     try:
-        raw = str(get_runtime_str("area_split_mode", "two_stage") or "two_stage").strip().lower()
+        raw = str(get_runtime_str("area_split_mode", "single_stage") or "single_stage").strip().lower()
     except Exception:
-        return "two_stage"
+        return "single_stage"
     if raw in {"single", "single_stage", "one_stage", "1stage", "single_only"}:
         return "single_stage"
     return "two_stage"

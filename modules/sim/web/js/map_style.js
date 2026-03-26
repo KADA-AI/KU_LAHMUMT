@@ -1,10 +1,10 @@
 export const BUILDING_3D_LAYER_ID = "building-3d";
 export const BUILDING_2D_LAYER_ID = "building";
 export const BUILDING_3D_MIN_ZOOM = 11;
-export const BUILDING_3D_OPACITY = 0.65;
+export const BUILDING_3D_OPACITY = 0.72;
 export const BUILDING_3D_HEIGHT_SCALE = 0.8;
 export const BUILDING_3D_MAX_HEIGHT = 160;
-export const BUILDING_3D_COLOR = "#8e9674";
+export const BUILDING_3D_COLOR = "#747d60";
 export const HILLSHADE_LAYER_ID = "dem-hillshade";
 
 export const buildStyle = (config, palette) => {
@@ -17,13 +17,23 @@ export const buildStyle = (config, palette) => {
     },
   };
   if (config.dem.available) {
-    sources.dem = {
+    const demSource = {
       type: "raster-dem",
       tiles: [config.dem.tileUrl],
       tileSize: config.dem.tileSize,
       maxzoom: config.dem.maxZoom,
       encoding: config.dem.encoding,
     };
+    if (config.dem.bounds) {
+      demSource.bounds = [
+        config.dem.bounds[0][0],
+        config.dem.bounds[0][1],
+        config.dem.bounds[1][0],
+        config.dem.bounds[1][1],
+      ];
+    }
+    sources["dem-terrain"] = demSource;
+    sources["dem-hillshade"] = { ...demSource };
   }
 
   const layers = [
@@ -99,7 +109,7 @@ export const buildStyle = (config, palette) => {
     layers.splice(1, 0, {
       id: HILLSHADE_LAYER_ID,
       type: "hillshade",
-      source: "dem",
+      source: "dem-hillshade",
       paint: {
         "hillshade-exaggeration": 0.18,
         "hillshade-illumination-direction": 315,

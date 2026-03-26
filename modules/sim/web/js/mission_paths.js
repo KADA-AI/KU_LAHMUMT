@@ -5,9 +5,9 @@ const HIT_LAYER_ID = "mission-paths-hit";
 const AREA_SOURCE_ID = "mission-areas";
 const AREA_FILL_LAYER_ID = "mission-areas-fill";
 const AREA_LINE_LAYER_ID = "mission-areas-line";
-const LINE_AREA_SOURCE_ID = "mission-line-areas";
-const LINE_AREA_FILL_LAYER_ID = "mission-line-areas-fill";
-const LINE_AREA_LAYER_ID = "mission-line-areas-line";
+const SWEEP_SOURCE_ID = "mission-sweep";
+const SWEEP_LINE_LAYER_ID = "mission-sweep-line";
+const SWEEP_POINT_LAYER_ID = "mission-sweep-point";
 
 const AGENTS = ["LAH1", "LAH2", "LAH3", "UAV1", "UAV2", "UAV3"];
 
@@ -25,14 +25,14 @@ const AREA_LINE_ALPHA = 0.42;
 const AREA_LINE_DONE_ALPHA = 0.22;
 const AREA_LINE_DIM_ALPHA = 0.14;
 const AREA_LINE_DONE_DIM_ALPHA = 0.08;
-const LINE_AREA_FILL_ALPHA = 0.12;
-const LINE_AREA_FILL_DONE_ALPHA = 0.07;
-const LINE_AREA_FILL_DIM_ALPHA = 0.035;
-const LINE_AREA_FILL_DONE_DIM_ALPHA = 0.02;
-const LINE_AREA_ALPHA = 0.28;
-const LINE_AREA_DONE_ALPHA = 0.16;
-const LINE_AREA_DIM_ALPHA = 0.08;
-const LINE_AREA_DONE_DIM_ALPHA = 0.05;
+const SWEEP_LINE_ALPHA = 0.72;
+const SWEEP_LINE_DONE_ALPHA = 0.3;
+const SWEEP_LINE_DIM_ALPHA = 0.11;
+const SWEEP_LINE_DONE_DIM_ALPHA = 0.06;
+const SWEEP_POINT_ALPHA = 0.96;
+const SWEEP_POINT_DONE_ALPHA = 0.52;
+const SWEEP_POINT_DIM_ALPHA = 0.26;
+const SWEEP_POINT_DONE_DIM_ALPHA = 0.14;
 
 const PATH_WIDTH_PX = 2.5;
 const WAYPOINT_SIZE_PX = 10;
@@ -41,6 +41,10 @@ const WAYPOINT_DIM_ALPHA = 0.25;
 const WAYPOINT_DONE_ALPHA = 0.3;
 const WAYPOINT_DONE_SELECT_ALPHA = 0.35;
 const WAYPOINT_DONE_DIM_ALPHA = 0.1;
+const WAYPOINT_CURRENT_ALPHA = 1.0;
+const WAYPOINT_CURRENT_DIM_ALPHA = 0.58;
+const WAYPOINT_CURRENT_DONE_ALPHA = 0.96;
+const WAYPOINT_CURRENT_DONE_DIM_ALPHA = 0.68;
 const WAYPOINT_Z_OFFSET_M = 4.0;
 const WAYPOINT_LABEL_Z_OFFSET_M = 14.0;
 const WAYPOINT_LABEL_FONT_SIZE = 12;
@@ -48,6 +52,11 @@ const ALT_OFFSET_M = 5;
 const DASH_ON_PX = 6;
 const DASH_OFF_PX = 6;
 const EARTH_RADIUS_M = 6371008.8;
+const PASS_TYPE_LABELS = {
+  1: "Fly-by",
+  2: "Loiter",
+  3: "Fly-over",
+};
 
 const getAgentColors = () => {
   const style = getComputedStyle(document.documentElement);
@@ -173,78 +182,6 @@ const metersPerPixelAt = (lat, zoom) => {
   return Number.isFinite(meters) && meters > 0 ? meters : 1;
 };
 
-const normalize2 = (vec) => {
-  const x = Number(vec?.x);
-  const y = Number(vec?.y);
-  const mag = Math.hypot(x, y);
-  if (!Number.isFinite(mag) || mag <= 1e-6) {
-    return null;
-  }
-  return { x: x / mag, y: y / mag };
-};
-
-const buildLineCorridorRing = (coords, widthMeters) => {
-  if (!Array.isArray(coords) || coords.length < 2) {
-    return null;
-  }
-  const half = Number(widthMeters) * 0.5;
-  if (!Number.isFinite(half) || half <= 0) {
-    return null;
-  }
-  const avgLat = coords.reduce((sum, coord) => sum + Number(coord[1] || 0), 0) / Math.max(1, coords.length);
-  const metersPerDegLat = 111320.0;
-  const cosLat = Math.cos(toRad(avgLat)) || 1e-6;
-  const metersPerDegLon = metersPerDegLat * cosLat;
-  const originLon = Number(coords[0][0]);
-  const originLat = Number(coords[0][1]);
-  const points = coords.map(([lon, lat]) => ({
-    x: (Number(lon) - originLon) * metersPerDegLon,
-    y: (Number(lat) - originLat) * metersPerDegLat,
-  }));
-  const left = [];
-  const right = [];
-  for (let i = 0; i < points.length; i += 1) {
-    const p = points[i];
-    const prev = i > 0 ? points[i - 1] : null;
-    const next = i < points.length - 1 ? points[i + 1] : null;
-    let tangent = null;
-    if (prev && next) {
-      const inDir = normalize2({ x: p.x - prev.x, y: p.y - prev.y });
-      const outDir = normalize2({ x: next.x - p.x, y: next.y - p.y });
-      if (inDir && outDir) {
-        tangent = normalize2({ x: inDir.x + outDir.x, y: inDir.y + outDir.y });
-        if (!tangent) {
-          tangent = outDir;
-        }
-      } else {
-        tangent = outDir || inDir;
-      }
-    } else if (next) {
-      tangent = normalize2({ x: next.x - p.x, y: next.y - p.y });
-    } else if (prev) {
-      tangent = normalize2({ x: p.x - prev.x, y: p.y - prev.y });
-    }
-    if (!tangent) {
-      continue;
-    }
-    const normal = { x: -tangent.y, y: tangent.x };
-    left.push({ x: p.x + normal.x * half, y: p.y + normal.y * half });
-    right.push({ x: p.x - normal.x * half, y: p.y - normal.y * half });
-  }
-  if (left.length < 2 || right.length < 2) {
-    return null;
-  }
-  const ring = [...left, ...right.reverse()].map((pt) => ([
-    originLon + pt.x / metersPerDegLon,
-    originLat + pt.y / metersPerDegLat,
-  ]));
-  if (ring.length < 4) {
-    return null;
-  }
-  ring.push([...ring[0]]);
-  return ring;
-};
-
 const formatAltRange = (minAlt, maxAlt) => {
   const minVal = Number.isFinite(minAlt) ? Math.round(minAlt) : null;
   const maxVal = Number.isFinite(maxAlt) ? Math.round(maxAlt) : null;
@@ -261,8 +198,68 @@ const formatAltRange = (minAlt, maxAlt) => {
   return `ALT ${single} m`;
 };
 
-const buildGeoFeature = (feature, colors) => {
+const coerceInt = (value, fallback = null) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.trunc(parsed) : fallback;
+};
+
+const getWaypointPassInfo = (wp) => {
+  const rawPassType = wp?.waypointPassType ?? wp?.WaypointPassType ?? wp?.passType;
+  const passType = coerceInt(rawPassType, null);
+  const passLabel = PASS_TYPE_LABELS[passType] || null;
+  const loiter = wp?.loiterProperty || wp?.loiter || wp?.LoiterProperty || wp?.Loiter || null;
+  const loiterRadius = Number(loiter?.radius);
+  const loiterTime = Number(loiter?.time);
+  const loiterSpeed = Number(loiter?.speed);
+  const loiterDirection = coerceInt(loiter?.direction, null);
+  const loiterBits = [];
+  if (Number.isFinite(loiterRadius)) {
+    loiterBits.push(`R${Math.round(loiterRadius)}m`);
+  }
+  if (Number.isFinite(loiterTime)) {
+    loiterBits.push(`T${Math.round(loiterTime)}s`);
+  }
+  if (Number.isFinite(loiterSpeed)) {
+    loiterBits.push(`V${Math.round(loiterSpeed)}m/s`);
+  }
+  if (Number.isFinite(loiterDirection)) {
+    loiterBits.push(loiterDirection === 1 ? "CW" : loiterDirection === 2 ? "CCW" : "DIR");
+  }
+  return {
+    passType,
+    passLabel,
+    isLoiter: passType === 2,
+    isFlyBy: passType === 1,
+    isFlyOver: passType === 3,
+    loiter,
+    loiterSummary: loiterBits.length ? loiterBits.join(" · ") : null,
+  };
+};
+
+const normalizeCurrentWaypointId = (entry) => {
+  if (entry === null || entry === undefined) {
+    return null;
+  }
+  if (typeof entry === "object") {
+    const nested = entry.waypointID ?? entry.WaypointID ?? entry.id ?? entry.ID;
+    return normalizeCurrentWaypointId(nested);
+  }
+  const value = Number(entry);
+  return Number.isFinite(value) ? Math.trunc(value) : null;
+};
+
+const buildPathMetaKey = (feature) => {
+  const agent = String(feature?.agent || "");
+  const pathId = feature?.pathId ?? feature?.pathID ?? feature?.pathid ?? null;
+  return `${agent}:${String(pathId ?? "")}`;
+};
+
+const buildGeoFeature = (feature, colors, pathMetaMap = null) => {
   const coords = Array.isArray(feature?.coords) ? feature.coords : [];
+  const pathMeta =
+    pathMetaMap && typeof pathMetaMap.get === "function"
+      ? pathMetaMap.get(buildPathMetaKey(feature)) || null
+      : null;
   const geometry =
     coords.length === 1
       ? {
@@ -286,6 +283,7 @@ const buildGeoFeature = (feature, colors) => {
       altMin: feature.altMin,
       altMax: feature.altMax,
       color: colors[feature.agent] || "#e7eddc",
+      passSummary: pathMeta?.passSummary || feature.passSummary || null,
     },
   };
 };
@@ -369,14 +367,13 @@ const buildAreaFeatures = (payload, colors, selectedAgent) => {
   return features;
 };
 
-const buildLineAreaFeatures = (payload, colors, selectedAgent, map) => {
-  const plans = Array.isArray(payload?.individualMissionPlans) ? payload.individualMissionPlans : [];
+const buildSweepFeatures = (payload, colors, selectedAgent) => {
+  const flightPaths = Array.isArray(payload?.flightPaths) ? payload.flightPaths : [];
   const hasSelection = Boolean(selectedAgent);
   const features = [];
   let featureId = 1;
-  const zoom = typeof map?.getZoom === "function" ? map.getZoom() : 10;
-  plans.forEach((plan) => {
-    const aircraftId = Number(plan?.aircraftID);
+  flightPaths.forEach((path) => {
+    const aircraftId = Number(path?.aircraftID);
     if (!Number.isFinite(aircraftId)) {
       return;
     }
@@ -386,64 +383,108 @@ const buildLineAreaFeatures = (payload, colors, selectedAgent, map) => {
         ? `UAV${aircraftId - 3}`
         : `AC${aircraftId}`;
     const baseColor = colors[agent] || "#e7eddc";
-    const missions = Array.isArray(plan?.individualMissionList) ? plan.individualMissionList : [];
-    missions.forEach((mission) => {
-      const missionId = Number(mission?.individualMissionID);
-      const pathId = Number(mission?.pathID);
-      const isDone = Boolean(mission?.isDone);
-      const info = mission?.individualMissionInfo || {};
-      const lineList = Array.isArray(info?.lineList) ? info.lineList : [];
-      lineList.forEach((line, lineIdx) => {
-        const coordinateList = Array.isArray(line?.coordinateList) ? line.coordinateList : [];
-        const coords = coordinateList
-          .map((coord) => {
-            const lat = Number(coord?.latitude);
-            const lon = Number(coord?.longitude);
-            if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-              return null;
-            }
-            return [lon, lat];
-          })
-          .filter(Boolean);
-        if (coords.length < 2) {
-          return;
-        }
-        const widthMeters = Number(line?.width);
-        if (!Number.isFinite(widthMeters) || widthMeters <= 0) {
-          return;
-        }
-        const ring = buildLineCorridorRing(coords, widthMeters);
-        if (!ring) {
-          return;
-        }
-        const fillOpacity = hasSelection
-          ? agent === selectedAgent
-            ? isDone ? LINE_AREA_FILL_DONE_ALPHA : LINE_AREA_FILL_ALPHA
-            : isDone ? LINE_AREA_FILL_DONE_DIM_ALPHA : LINE_AREA_FILL_DIM_ALPHA
-          : isDone ? LINE_AREA_FILL_DONE_ALPHA : LINE_AREA_FILL_ALPHA;
-        const lineOpacity = hasSelection
-          ? agent === selectedAgent
-            ? isDone ? LINE_AREA_DONE_ALPHA : LINE_AREA_ALPHA
-            : isDone ? LINE_AREA_DONE_DIM_ALPHA : LINE_AREA_DIM_ALPHA
-          : isDone ? LINE_AREA_DONE_ALPHA : LINE_AREA_ALPHA;
+    const pathId = Number(path?.pathID);
+    const waypointList = Array.isArray(path?.waypointList) ? path.waypointList : [];
+    const passCounts = { 1: 0, 2: 0, 3: 0 };
+    waypointList.forEach((wp) => {
+      const waypointId = Number(wp?.waypointID);
+      const isDone = Boolean(wp?.isDone);
+      const passInfo = getWaypointPassInfo(wp);
+      if (Number.isFinite(passInfo.passType) && passCounts[passInfo.passType] !== undefined) {
+        passCounts[passInfo.passType] += 1;
+      }
+      const filming = wp?.filmingProperty || {};
+      const lineSearch = filming?.lineSearch || {};
+      const coordinateList = Array.isArray(lineSearch?.coordinateList) ? lineSearch.coordinateList : [];
+      const coords = coordinateList
+        .map((coord) => {
+          const lat = Number(coord?.latitude);
+          const lon = Number(coord?.longitude);
+          if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+            return null;
+          }
+          return [lon, lat];
+        })
+        .filter(Boolean);
+      if (coords.length < 1) {
+        return;
+      }
+      const altitudes = coordinateList.map((coord) => Number(coord?.altitude)).filter(Number.isFinite);
+      const minAlt = altitudes.length ? Math.min(...altitudes) : null;
+      const maxAlt = altitudes.length ? Math.max(...altitudes) : null;
+      const lineOpacity = hasSelection
+        ? agent === selectedAgent
+          ? isDone ? SWEEP_LINE_DONE_ALPHA : SWEEP_LINE_ALPHA
+          : isDone ? SWEEP_LINE_DONE_DIM_ALPHA : SWEEP_LINE_DIM_ALPHA
+        : isDone ? SWEEP_LINE_DONE_ALPHA : SWEEP_LINE_ALPHA;
+      const pointOpacity = hasSelection
+        ? agent === selectedAgent
+          ? isDone ? SWEEP_POINT_DONE_ALPHA : SWEEP_POINT_ALPHA
+          : isDone ? SWEEP_POINT_DONE_DIM_ALPHA : SWEEP_POINT_DIM_ALPHA
+        : isDone ? SWEEP_POINT_DONE_ALPHA : SWEEP_POINT_ALPHA;
+      const pointStrokeOpacity = Math.min(1, pointOpacity + 0.12);
+      const commonProps = {
+        agent,
+        aircraftId,
+        pathId: Number.isFinite(pathId) ? pathId : null,
+        waypointId: Number.isFinite(waypointId) ? waypointId : null,
+        pointCount: coords.length,
+        isDone: isDone ? 1 : 0,
+        color: baseColor,
+        altMin: minAlt,
+        altMax: maxAlt,
+        passType: Number.isFinite(passInfo.passType) ? passInfo.passType : null,
+        passLabel: passInfo.passLabel,
+        loiterSummary: passInfo.loiterSummary,
+        isLoiter: passInfo.isLoiter ? 1 : 0,
+        isFlyBy: passInfo.isFlyBy ? 1 : 0,
+        isFlyOver: passInfo.isFlyOver ? 1 : 0,
+      };
+      if (coords.length >= 2) {
         features.push({
           type: "Feature",
           id: featureId++,
           geometry: {
-            type: "Polygon",
-            coordinates: [ring],
+            type: "LineString",
+            coordinates: coords,
           },
           properties: {
-            agent,
-            aircraftId,
-            missionId: Number.isFinite(missionId) ? missionId : null,
-            pathId: Number.isFinite(pathId) ? pathId : null,
-            lineIndex: lineIdx + 1,
-            isDone: isDone ? 1 : 0,
-            color: baseColor,
-            fillOpacity,
+            ...commonProps,
+            featureKind: "line",
             lineOpacity,
-            widthMeters,
+            passSummary: [
+              passCounts[1] ? `Fly-by ${passCounts[1]}` : null,
+              passCounts[2] ? `Loiter ${passCounts[2]}` : null,
+              passCounts[3] ? `Fly-over ${passCounts[3]}` : null,
+            ]
+              .filter(Boolean)
+              .join(" · "),
+          },
+        });
+      }
+      coordinateList.forEach((coord, pointIdx) => {
+        const lon = Number(coord?.longitude);
+        const lat = Number(coord?.latitude);
+        if (!Number.isFinite(lon) || !Number.isFinite(lat)) {
+          return;
+        }
+        const isEndpoint = pointIdx === 0 || pointIdx === coords.length - 1;
+        features.push({
+          type: "Feature",
+          id: featureId++,
+          geometry: {
+            type: "Point",
+            coordinates: [lon, lat],
+          },
+          properties: {
+            ...commonProps,
+            featureKind: "point",
+            pointIndex: pointIdx + 1,
+            altitude: Number(coord?.altitude),
+            pointOpacity,
+            pointStrokeOpacity,
+            pointRadius: isEndpoint ? 4.5 : 3.2,
+            isEndpoint: isEndpoint ? 1 : 0,
           },
         });
       });
@@ -823,14 +864,21 @@ const createPointLayer3d = (id, color, pointSize) => {
 export const initMissionPaths = (map) => {
   let pendingData = null;
   let selectedAgent = null;
+  let sweepLinesVisible = true;
+  let currentWaypointsByAgent = new Map();
   let features = [];
   let areaFeatures = [];
-  let lineAreaFeatures = [];
+  let sweepFeatures = [];
   let agentCounts = {};
+  let pathMetaByKey = new Map();
   let mapReady = typeof map.isStyleLoaded === "function" ? map.isStyleLoaded() : map.loaded();
   let popup = null;
-  let rebuildScheduled = false;
+  let visualRebuildScheduled = false;
+  let visualRebuildRevision = 0;
+  let renderedVisualRevision = -1;
+  let renderedZoomBucket = null;
   let didFitBounds = false;
+  let interactionsAttached = false;
 
   const legend = document.getElementById("mission-legend");
   const legendItems = Array.from(document.querySelectorAll(".mission-legend-item"));
@@ -839,6 +887,7 @@ export const initMissionPaths = (map) => {
   const doneAgentLayers = new Map();
   const waypointLayers = new Map();
   const doneWaypointLayers = new Map();
+  const currentWaypointLayers = new Map();
   let labelContainer = null;
   const labelElements = new Map();
   let waypointLabelEntries = [];
@@ -863,6 +912,123 @@ export const initMissionPaths = (map) => {
       item.classList.toggle("is-active", selectedAgent === agent);
       item.setAttribute("aria-disabled", available ? "false" : "true");
     });
+  };
+
+  const applySweepLineVisibility = () => {
+    const visibility = sweepLinesVisible ? "visible" : "none";
+    [SWEEP_LINE_LAYER_ID, SWEEP_POINT_LAYER_ID].forEach((layerId) => {
+      if (!map.getLayer(layerId)) {
+        return;
+      }
+      map.setLayoutProperty(layerId, "visibility", visibility);
+    });
+  };
+
+  const buildPathMetaMap = (payload) => {
+    const meta = new Map();
+    const flightPaths = Array.isArray(payload?.flightPaths) ? payload.flightPaths : [];
+    flightPaths.forEach((path) => {
+      const aircraftId = Number(path?.aircraftID);
+      const agent =
+        aircraftId >= 1 && aircraftId <= 3
+          ? `LAH${aircraftId}`
+          : aircraftId >= 4 && aircraftId <= 6
+            ? `UAV${aircraftId - 3}`
+            : null;
+      if (!agent) {
+        return;
+      }
+      const pathId = Number(path?.pathID);
+      const waypointList = Array.isArray(path?.waypointList) ? path.waypointList : [];
+      const passCounts = { 1: 0, 2: 0, 3: 0 };
+      const waypointModes = new Map();
+      waypointList.forEach((wp) => {
+        const waypointId = normalizeCurrentWaypointId(wp?.waypointID ?? wp?.WaypointID);
+        if (!Number.isFinite(waypointId)) {
+          return;
+        }
+        const passInfo = getWaypointPassInfo(wp);
+        if (Number.isFinite(passInfo.passType) && passCounts[passInfo.passType] !== undefined) {
+          passCounts[passInfo.passType] += 1;
+        }
+        waypointModes.set(waypointId, {
+          passType: passInfo.passType,
+          passLabel: passInfo.passLabel,
+          loiterSummary: passInfo.loiterSummary,
+          isLoiter: passInfo.isLoiter,
+          isFlyBy: passInfo.isFlyBy,
+          isFlyOver: passInfo.isFlyOver,
+        });
+      });
+      meta.set(buildPathMetaKey({ agent, pathId }), {
+        agent,
+        pathId: Number.isFinite(pathId) ? pathId : null,
+        waypointCount: waypointList.length,
+        passSummary: [
+          passCounts[1] ? `Fly-by ${passCounts[1]}` : null,
+          passCounts[2] ? `Loiter ${passCounts[2]}` : null,
+          passCounts[3] ? `Fly-over ${passCounts[3]}` : null,
+        ]
+          .filter(Boolean)
+          .join(" · "),
+        waypointModes,
+      });
+    });
+    return meta;
+  };
+
+  const getCurrentWaypointId = (agent) => currentWaypointsByAgent.get(agent) ?? null;
+
+  const buildWaypointPopupHtml = (entry) => {
+    const mode = entry.passLabel || "N/A";
+    const currentBadge = entry.isCurrent ? "Current" : "Waypoint";
+    const details = [
+      entry.pathId !== null && entry.pathId !== undefined ? `Path ${entry.pathId}` : null,
+      entry.waypointId !== null && entry.waypointId !== undefined ? `WP ${entry.waypointId}` : null,
+      `Mode ${mode}`,
+      entry.loiterSummary ? `Loiter ${entry.loiterSummary}` : null,
+      entry.passSummary ? `Path summary ${entry.passSummary}` : null,
+      entry.isDone ? "Status Done" : "Status Active",
+    ]
+      .filter(Boolean)
+      .map((line) => `<div style="font-size:11px;color:#333;">${line}</div>`)
+      .join("");
+    return `
+      <div style="font-size:12px;font-weight:700;margin-bottom:4px;">${currentBadge} · ${entry.agent || "WP"}</div>
+      ${details}
+    `;
+  };
+
+  const applyWaypointLabelStyle = (el, entry, color) => {
+    const isCurrent = Boolean(entry.isCurrent);
+    const isDone = Boolean(entry.isDone);
+    const bg = isCurrent
+      ? "rgba(255, 255, 255, 0.96)"
+      : "rgba(0, 0, 0, 0.45)";
+    const border = isCurrent ? `1px solid ${color || "#e7eddc"}` : "1px solid rgba(255,255,255,0.08)";
+    const shadow = isCurrent
+      ? `0 0 0 2px rgba(255,255,255,0.35), 0 10px 18px rgba(0,0,0,0.24), 0 0 24px ${color || "#ffffff"}55`
+      : "0 4px 10px rgba(0,0,0,0.18)";
+    const primaryColor = isCurrent ? "#0d1117" : color || "#e7eddc";
+    const secondaryColor = isCurrent ? "#345" : "rgba(232, 240, 223, 0.72)";
+    const summary = entry.passLabel || entry.loiterSummary || "Pass N/A";
+    el.innerHTML = `
+      <div style="font-size:${isCurrent ? 12 : 11}px;line-height:1.05;letter-spacing:0.04em;">${entry.label || `WP${entry.idx}`}</div>
+      <div style="margin-top:2px;font-size:9px;line-height:1.05;letter-spacing:0.08em;color:${secondaryColor};">${summary}</div>
+      ${isCurrent ? "<div style=\"margin-top:2px;font-size:8px;line-height:1;letter-spacing:0.14em;color:#0a6cff;\">CURRENT</div>" : ""}
+    `;
+    el.style.color = primaryColor;
+    el.style.background = bg;
+    el.style.border = border;
+    el.style.boxShadow = shadow;
+    el.style.opacity = "1";
+    el.style.transform = isCurrent
+      ? "translate(-50%, -120%) scale(1.08)"
+      : "translate(-50%, -120%) scale(1)";
+    el.style.zIndex = isCurrent ? "4" : isDone ? "2" : "1";
+    el.style.pointerEvents = "auto";
+    el.style.cursor = "pointer";
+    el.title = `${entry.agent || "WP"} ${entry.label || `WP${entry.idx}`} | ${summary}`;
   };
 
   const ensureLabelContainer = () => {
@@ -898,14 +1064,29 @@ export const initMissionPaths = (map) => {
       el.style.borderRadius = "8px";
       el.style.background = "rgba(0, 0, 0, 0.45)";
       el.style.whiteSpace = "nowrap";
-      el.style.pointerEvents = "none";
+      el.style.pointerEvents = "auto";
       el.style.textShadow = "0 1px 2px rgba(0,0,0,0.45)";
       labelContainer.appendChild(el);
       labelElements.set(key, el);
+      el.addEventListener("click", (event) => {
+        event.stopPropagation();
+        const popupEntry = waypointLabelEntries.find((item) => item.key === key);
+        if (!popupEntry) {
+          return;
+        }
+        if (!popup) {
+          popup = new maplibregl.Popup({ closeButton: true, closeOnClick: true });
+        }
+        popup
+          .setLngLat(popupEntry.lngLat || [popupEntry.coord.x, popupEntry.coord.y])
+          .setHTML(buildWaypointPopupHtml(popupEntry))
+          .addTo(map);
+        setSelectedAgent(popupEntry.agent);
+      });
     }
     el.dataset.done = entry.isDone ? "1" : "0";
-    el.textContent = entry.label || `WP${idx}`;
-    el.style.color = color || "#e7eddc";
+    el.dataset.current = entry.isCurrent ? "1" : "0";
+    applyWaypointLabelStyle(el, entry, color || "#e7eddc");
     return el;
   };
 
@@ -937,6 +1118,7 @@ export const initMissionPaths = (map) => {
     labelElements.forEach((el) => {
       const agent = el.dataset.agent || "";
       const isDone = el.dataset.done === "1";
+      const isCurrent = el.dataset.current === "1";
       const activeAlpha = hasSelection
         ? agent === selectedAgent
           ? WAYPOINT_ALPHA
@@ -947,7 +1129,17 @@ export const initMissionPaths = (map) => {
           ? WAYPOINT_DONE_SELECT_ALPHA
           : WAYPOINT_DONE_DIM_ALPHA
         : WAYPOINT_DONE_ALPHA;
-      const alpha = isDone ? doneAlpha : activeAlpha;
+      const currentAlpha = hasSelection
+        ? agent === selectedAgent
+          ? WAYPOINT_CURRENT_ALPHA
+          : WAYPOINT_CURRENT_DIM_ALPHA
+        : WAYPOINT_CURRENT_ALPHA;
+      const currentDoneAlpha = hasSelection
+        ? agent === selectedAgent
+          ? WAYPOINT_CURRENT_DONE_ALPHA
+          : WAYPOINT_CURRENT_DONE_DIM_ALPHA
+        : WAYPOINT_CURRENT_DONE_ALPHA;
+      const alpha = isCurrent ? (isDone ? currentDoneAlpha : currentAlpha) : isDone ? doneAlpha : activeAlpha;
       el.style.opacity = String(alpha);
     });
   };
@@ -1195,6 +1387,16 @@ export const initMissionPaths = (map) => {
           labelHookLayer = activeLayer;
         }
       }
+      const currentLayerId = `mission-waypoints-3d-${agent.toLowerCase()}-current`;
+      if (!map.getLayer(currentLayerId)) {
+        const currentLayer = createPointLayer3d(
+          currentLayerId,
+          colors[agent] || "#ffffff",
+          waypointSize * 1.55,
+        );
+        map.addLayer(currentLayer);
+        currentWaypointLayers.set(agent, currentLayer);
+      }
     });
   };
 
@@ -1234,40 +1436,48 @@ export const initMissionPaths = (map) => {
     }
   };
 
-  const ensureLineAreaLayers = () => {
-    if (!map.getSource(LINE_AREA_SOURCE_ID)) {
-      map.addSource(LINE_AREA_SOURCE_ID, {
+  const ensureSweepLayers = () => {
+    if (!map.getSource(SWEEP_SOURCE_ID)) {
+      map.addSource(SWEEP_SOURCE_ID, {
         type: "geojson",
         data: { type: "FeatureCollection", features: [] },
       });
     }
-    if (!map.getLayer(LINE_AREA_FILL_LAYER_ID)) {
+    if (!map.getLayer(SWEEP_LINE_LAYER_ID)) {
       map.addLayer({
-        id: LINE_AREA_FILL_LAYER_ID,
-        type: "fill",
-        source: LINE_AREA_SOURCE_ID,
-        paint: {
-          "fill-color": ["get", "color"],
-          "fill-opacity": ["get", "fillOpacity"],
-        },
-      }, AREA_FILL_LAYER_ID);
-    }
-    if (!map.getLayer(LINE_AREA_LAYER_ID)) {
-      map.addLayer({
-        id: LINE_AREA_LAYER_ID,
+        id: SWEEP_LINE_LAYER_ID,
         type: "line",
-        source: LINE_AREA_SOURCE_ID,
+        source: SWEEP_SOURCE_ID,
+        filter: ["==", ["geometry-type"], "LineString"],
         layout: {
           "line-join": "round",
-          "line-cap": "round",
+          "line-cap": "butt",
         },
         paint: {
           "line-color": ["get", "color"],
-          "line-width": 1.4,
+          "line-width": ["interpolate", ["linear"], ["zoom"], 8, 1.0, 12, 1.5, 16, 2.2],
+          "line-dasharray": [1.5, 2.4],
           "line-opacity": ["get", "lineOpacity"],
         },
-      }, AREA_FILL_LAYER_ID);
+      }, HIT_LAYER_ID);
     }
+    if (!map.getLayer(SWEEP_POINT_LAYER_ID)) {
+      map.addLayer({
+        id: SWEEP_POINT_LAYER_ID,
+        type: "circle",
+        source: SWEEP_SOURCE_ID,
+        filter: ["==", ["geometry-type"], "Point"],
+        paint: {
+          "circle-color": ["get", "color"],
+          "circle-radius": ["get", "pointRadius"],
+          "circle-opacity": ["get", "pointOpacity"],
+          "circle-stroke-color": "#08110c",
+          "circle-stroke-width": ["case", ["==", ["get", "isEndpoint"], 1], 1.8, 1.1],
+          "circle-stroke-opacity": ["get", "pointStrokeOpacity"],
+        },
+      }, HIT_LAYER_ID);
+    }
+    applySweepLineVisibility();
   };
 
   const updateHitSource = () => {
@@ -1277,7 +1487,7 @@ export const initMissionPaths = (map) => {
     }
     const geojson = {
       type: "FeatureCollection",
-      features: features.map((feature) => buildGeoFeature(feature, colors)),
+      features: features.map((feature) => buildGeoFeature(feature, colors, pathMetaByKey)),
     };
     source.setData(geojson);
   };
@@ -1294,25 +1504,29 @@ export const initMissionPaths = (map) => {
     });
   };
 
-  const updateLineAreaSource = (payloadForAreas = pendingData) => {
-    const source = map.getSource(LINE_AREA_SOURCE_ID);
+  const updateSweepSource = (payloadForAreas = pendingData) => {
+    const source = map.getSource(SWEEP_SOURCE_ID);
     if (!source) {
       return;
     }
-    lineAreaFeatures = buildLineAreaFeatures(payloadForAreas, colors, selectedAgent, map);
+    sweepFeatures = buildSweepFeatures(payloadForAreas, colors, selectedAgent);
     source.setData({
       type: "FeatureCollection",
-      features: lineAreaFeatures,
+      features: sweepFeatures,
     });
   };
 
   const update3dPositions = () => {
+    const zoomBucket = Math.round((typeof map.getZoom === "function" ? map.getZoom() : 0) * 10) / 10;
     if (!features.length) {
       agentLayers.forEach((layer) => layer.updatePositions([]));
       doneAgentLayers.forEach((layer) => layer.updatePositions([]));
       waypointLayers.forEach((layer) => layer.updatePositions([]));
       doneWaypointLayers.forEach((layer) => layer.updatePositions([]));
+      currentWaypointLayers.forEach((layer) => layer.updatePositions([]));
       clearWaypointLabels();
+      renderedVisualRevision = visualRebuildRevision;
+      renderedZoomBucket = zoomBucket;
       logStatus("", { key: "mission-debug" });
       return;
     }
@@ -1320,11 +1534,13 @@ export const initMissionPaths = (map) => {
     const donePositionsByAgent = new Map();
     const waypointPositionsByAgent = new Map();
     const doneWaypointPositionsByAgent = new Map();
+    const currentWaypointPositionsByAgent = new Map();
     const labelEntries = [];
     AGENTS.forEach((agent) => positionsByAgent.set(agent, []));
     AGENTS.forEach((agent) => donePositionsByAgent.set(agent, []));
     AGENTS.forEach((agent) => waypointPositionsByAgent.set(agent, []));
     AGENTS.forEach((agent) => doneWaypointPositionsByAgent.set(agent, []));
+    AGENTS.forEach((agent) => currentWaypointPositionsByAgent.set(agent, []));
     const getTerrainElevation = (lon, lat) => {
       if (typeof map.queryTerrainElevation !== "function") {
         return 0;
@@ -1358,9 +1574,9 @@ export const initMissionPaths = (map) => {
     };
     features.forEach((feature) => {
       const isDone = Boolean(feature && feature.isDone);
-      const target = isDone
-        ? donePositionsByAgent.get(feature.agent)
-        : positionsByAgent.get(feature.agent);
+      const agent = feature.agent;
+      const currentWaypointId = getCurrentWaypointId(agent);
+      const target = isDone ? donePositionsByAgent.get(agent) : positionsByAgent.get(agent);
       if (!target) {
         return;
       }
@@ -1369,11 +1585,14 @@ export const initMissionPaths = (map) => {
         target.push(...segmentPositions);
       }
       const waypointTarget = isDone
-        ? doneWaypointPositionsByAgent.get(feature.agent)
-        : waypointPositionsByAgent.get(feature.agent);
-      if (waypointTarget) {
+        ? doneWaypointPositionsByAgent.get(agent)
+        : waypointPositionsByAgent.get(agent);
+      const currentWaypointTarget = currentWaypointPositionsByAgent.get(agent);
+      const pathKey = buildPathMetaKey(feature);
+      const pathMeta = pathMetaByKey.get(pathKey) || null;
+      if (waypointTarget || currentWaypointTarget) {
         const waypointPositions = buildWaypointPositions(feature.coords, feature.alts);
-        if (waypointPositions.length) {
+        if (waypointPositions.length && waypointTarget) {
           waypointTarget.push(...waypointPositions);
         }
       }
@@ -1394,16 +1613,26 @@ export const initMissionPaths = (map) => {
             ? alt + ALT_OFFSET_M + WAYPOINT_LABEL_Z_OFFSET_M
             : terrain + ALT_OFFSET_M + WAYPOINT_LABEL_Z_OFFSET_M;
           const merc = maplibregl.MercatorCoordinate.fromLngLat([lon, lat], altitude);
-          const pathKey =
-            feature.pathId ?? feature.id ?? feature.aircraftId ?? feature.agent ?? "path";
           const wpId = Number(wpIds[idx]);
           const labelId = Number.isFinite(wpId) ? wpId : idx + 1;
+          const passMeta = pathMeta?.waypointModes?.get(labelId) || null;
+          const isCurrent = Number.isFinite(currentWaypointId) && labelId === currentWaypointId;
+          if (isCurrent && currentWaypointTarget) {
+            currentWaypointTarget.push(merc.x, merc.y, merc.z);
+          }
           labelEntries.push({
-            key: `${feature.agent}-${pathKey}-${idx + 1}`,
-            agent: feature.agent,
+            key: `${agent}-${pathKey}-${idx + 1}`,
+            agent,
             idx: labelId,
             label: `WP${labelId}`,
             isDone,
+            isCurrent,
+            waypointId: labelId,
+            pathId: feature.pathId ?? null,
+            passLabel: passMeta?.passLabel || null,
+            loiterSummary: passMeta?.loiterSummary || null,
+            passSummary: pathMeta?.passSummary || null,
+            lngLat: [lon, lat],
             coord: merc,
           });
         });
@@ -1460,7 +1689,22 @@ export const initMissionPaths = (map) => {
       layer.setSize(waypointSize);
       layer.updatePositions(positions);
     });
+    const currentWaypointSize = waypointSize * 1.55;
+    currentWaypointPositionsByAgent.forEach((positions, agent) => {
+      const layer = currentWaypointLayers.get(agent);
+      if (!layer) {
+        return;
+      }
+      if (typeof layer.setColor === "function") {
+        layer.setColor(colors[agent] || "#ffffff");
+      }
+      layer.setVisible(Boolean(positions.length));
+      layer.setSize(currentWaypointSize);
+      layer.updatePositions(positions);
+    });
     rebuildWaypointLabels(labelEntries);
+    renderedVisualRevision = visualRebuildRevision;
+    renderedZoomBucket = zoomBucket;
     const msg =
       totalPositions === 0
         ? "3D path positions empty."
@@ -1469,13 +1713,21 @@ export const initMissionPaths = (map) => {
     map.triggerRepaint();
   };
 
-  const scheduleRebuild = () => {
-    if (rebuildScheduled) {
+  const scheduleRebuild = (force = false) => {
+    if (visualRebuildScheduled) {
       return;
     }
-    rebuildScheduled = true;
+    const zoomBucket = Math.round((typeof map.getZoom === "function" ? map.getZoom() : 0) * 10) / 10;
+    if (
+      !force &&
+      renderedVisualRevision === visualRebuildRevision &&
+      renderedZoomBucket === zoomBucket
+    ) {
+      return;
+    }
+    visualRebuildScheduled = true;
     requestAnimationFrame(() => {
-      rebuildScheduled = false;
+      visualRebuildScheduled = false;
       update3dPositions();
     });
   };
@@ -1514,8 +1766,16 @@ export const initMissionPaths = (map) => {
         : WAYPOINT_DONE_ALPHA;
       layer.setAlpha(alpha);
     });
+    currentWaypointLayers.forEach((layer, agent) => {
+      const alpha = hasSelection
+        ? agent === selectedAgent
+          ? 1.0
+          : 0.55
+        : 1.0;
+      layer.setAlpha(alpha);
+    });
     updateAreaSource();
-    updateLineAreaSource();
+    updateSweepSource();
     updateWaypointLabelVisibility();
     map.triggerRepaint();
   };
@@ -1526,10 +1786,80 @@ export const initMissionPaths = (map) => {
     updateLayerAlpha();
   };
 
-  const attachInteractions = () => {
-    if (!map.getLayer(HIT_LAYER_ID)) {
+  const setCurrentWaypoints = (agentToWpId) => {
+    const next = new Map();
+    if (agentToWpId instanceof Map) {
+      agentToWpId.forEach((value, key) => {
+        const agent = String(key || "").toUpperCase();
+        const wpId = normalizeCurrentWaypointId(value);
+        if (agent && Number.isFinite(wpId)) {
+          next.set(agent, wpId);
+        }
+      });
+    } else if (agentToWpId && typeof agentToWpId === "object") {
+      Object.entries(agentToWpId).forEach(([key, value]) => {
+        const agent = String(key || "").toUpperCase();
+        const wpId = normalizeCurrentWaypointId(value);
+        if (agent && Number.isFinite(wpId)) {
+          next.set(agent, wpId);
+        }
+      });
+    }
+    let changed = next.size !== currentWaypointsByAgent.size;
+    if (!changed) {
+      next.forEach((value, key) => {
+        if (currentWaypointsByAgent.get(key) !== value) {
+          changed = true;
+        }
+      });
+    }
+    if (!changed) {
       return;
     }
+    currentWaypointsByAgent = next;
+    visualRebuildRevision += 1;
+    updateLayerAlpha();
+    scheduleRebuild(true);
+  };
+
+  const setSweepLinesVisible = (visible) => {
+    sweepLinesVisible = Boolean(visible);
+    applySweepLineVisibility();
+  };
+
+  const syncCurrentWaypointsFromState = (state) => {
+    const next = {};
+    const vehicles = state?.vehicles || {};
+    Object.entries(vehicles).forEach(([agent, entry]) => {
+      const normalizedAgent = String(agent || "").toUpperCase();
+      if (!normalizedAgent) {
+        return;
+      }
+      const current =
+        entry?.currentWaypointID ??
+        entry?.CurrentWaypointID ??
+        entry?.unmannedInfo?.currentWaypointID ??
+        entry?.unmannedInfo?.CurrentWaypointID ??
+        null;
+      const wpId = normalizeCurrentWaypointId(current);
+      if (Number.isFinite(wpId)) {
+        next[normalizedAgent] = wpId;
+      }
+    });
+    setCurrentWaypoints(next);
+  };
+
+  if (window.simClient && typeof window.simClient.subscribe === "function") {
+    window.simClient.subscribe((state) => {
+      syncCurrentWaypointsFromState(state);
+    });
+  }
+
+  const attachInteractions = () => {
+    if (interactionsAttached || !map.getLayer(HIT_LAYER_ID)) {
+      return;
+    }
+    interactionsAttached = true;
     map.on("mouseenter", HIT_LAYER_ID, () => {
       map.getCanvas().style.cursor = "pointer";
     });
@@ -1543,6 +1873,11 @@ export const initMissionPaths = (map) => {
       }
       const props = feature.properties || {};
       const agent = props.agent || "";
+      const pathMeta = pathMetaByKey.get(buildPathMetaKey(props)) || pathMetaByKey.get(buildPathMetaKey(feature)) || null;
+      const currentWaypointId = getCurrentWaypointId(agent);
+      const currentWaypointMeta = Number.isFinite(currentWaypointId) && pathMeta?.waypointModes
+        ? pathMeta.waypointModes.get(currentWaypointId) || null
+        : null;
       setSelectedAgent(agent);
       const html = `
         <div style="font-size:12px;font-weight:700;margin-bottom:4px;">${agent || "PATH"}</div>
@@ -1550,6 +1885,9 @@ export const initMissionPaths = (map) => {
         <div style="font-size:11px;color:#333;">Status ${Number(props.isDone) === 1 ? "Done" : "Active"}</div>
         <div style="font-size:11px;color:#333;">Points ${props.points ?? "-"}</div>
         <div style="font-size:11px;color:#333;">${formatAltRange(props.altMin, props.altMax)}</div>
+        <div style="font-size:11px;color:#333;">Current WP ${Number.isFinite(currentWaypointId) ? currentWaypointId : "-"}</div>
+        <div style="font-size:11px;color:#333;">Current mode ${currentWaypointMeta?.passLabel || currentWaypointMeta?.loiterSummary || "N/A"}</div>
+        <div style="font-size:11px;color:#333;">Pass ${pathMeta?.passSummary || "N/A"}</div>
       `;
       if (!popup) {
         popup = new maplibregl.Popup({ closeButton: true, closeOnClick: true });
@@ -1582,13 +1920,13 @@ export const initMissionPaths = (map) => {
       }
       popup.setLngLat(event.lngLat).setHTML(html).addTo(map);
     });
-    map.on("mouseenter", LINE_AREA_FILL_LAYER_ID, () => {
+    map.on("mouseenter", SWEEP_LINE_LAYER_ID, () => {
       map.getCanvas().style.cursor = "pointer";
     });
-    map.on("mouseleave", LINE_AREA_FILL_LAYER_ID, () => {
+    map.on("mouseleave", SWEEP_LINE_LAYER_ID, () => {
       map.getCanvas().style.cursor = "";
     });
-    map.on("click", LINE_AREA_FILL_LAYER_ID, (event) => {
+    map.on("click", SWEEP_LINE_LAYER_ID, (event) => {
       const feature = event.features && event.features[0];
       if (!feature) {
         return;
@@ -1597,11 +1935,42 @@ export const initMissionPaths = (map) => {
       const agent = props.agent || "";
       setSelectedAgent(agent);
       const html = `
-        <div style="font-size:12px;font-weight:700;margin-bottom:4px;">${agent || "LINE"}</div>
-        <div style="font-size:11px;color:#333;">Mission ${props.missionId ?? "-"}</div>
+        <div style="font-size:12px;font-weight:700;margin-bottom:4px;">${agent || "SWEEP"}</div>
         <div style="font-size:11px;color:#333;">Path ${props.pathId ?? "-"}</div>
-        <div style="font-size:11px;color:#333;">Line ${props.lineIndex ?? "-"}</div>
-        <div style="font-size:11px;color:#333;">Width ${Math.round(Number(props.widthMeters) || 0)} m</div>
+        <div style="font-size:11px;color:#333;">Waypoint ${props.waypointId ?? "-"}</div>
+        <div style="font-size:11px;color:#333;">Mode ${props.passLabel || "N/A"}</div>
+        <div style="font-size:11px;color:#333;">${props.loiterSummary ? `Loiter ${props.loiterSummary}` : "Loiter -"}</div>
+        <div style="font-size:11px;color:#333;">Points ${props.pointCount ?? "-"}</div>
+        <div style="font-size:11px;color:#333;">${formatAltRange(Number(props.altMin), Number(props.altMax))}</div>
+        <div style="font-size:11px;color:#333;">Status ${Number(props.isDone) === 1 ? "Done" : "Active"}</div>
+      `;
+      if (!popup) {
+        popup = new maplibregl.Popup({ closeButton: true, closeOnClick: true });
+      }
+      popup.setLngLat(event.lngLat).setHTML(html).addTo(map);
+    });
+    map.on("mouseenter", SWEEP_POINT_LAYER_ID, () => {
+      map.getCanvas().style.cursor = "pointer";
+    });
+    map.on("mouseleave", SWEEP_POINT_LAYER_ID, () => {
+      map.getCanvas().style.cursor = "";
+    });
+    map.on("click", SWEEP_POINT_LAYER_ID, (event) => {
+      const feature = event.features && event.features[0];
+      if (!feature) {
+        return;
+      }
+      const props = feature.properties || {};
+      const agent = props.agent || "";
+      setSelectedAgent(agent);
+      const html = `
+        <div style="font-size:12px;font-weight:700;margin-bottom:4px;">${agent || "SWEEP POINT"}</div>
+        <div style="font-size:11px;color:#333;">Path ${props.pathId ?? "-"}</div>
+        <div style="font-size:11px;color:#333;">Waypoint ${props.waypointId ?? "-"}</div>
+        <div style="font-size:11px;color:#333;">Mode ${props.passLabel || "N/A"}</div>
+        <div style="font-size:11px;color:#333;">${props.loiterSummary ? `Loiter ${props.loiterSummary}` : "Loiter -"}</div>
+        <div style="font-size:11px;color:#333;">Point ${props.pointIndex ?? "-"} / ${props.pointCount ?? "-"}</div>
+        <div style="font-size:11px;color:#333;">Alt ${Math.round(Number(props.altitude) || 0)} m</div>
         <div style="font-size:11px;color:#333;">Status ${Number(props.isDone) === 1 ? "Done" : "Active"}</div>
       `;
       if (!popup) {
@@ -1615,13 +1984,15 @@ export const initMissionPaths = (map) => {
     const ok = payload && payload.ok;
     features = ok && Array.isArray(payload.features) ? payload.features : [];
     agentCounts = ok && payload.agents ? payload.agents : {};
+    pathMetaByKey = ok ? buildPathMetaMap(payload) : new Map();
+    visualRebuildRevision += 1;
     ensureHitLayer();
     ensureAreaLayers();
-    ensureLineAreaLayers();
+    ensureSweepLayers();
     ensure3dLayers();
     updateHitSource();
     updateAreaSource(payload);
-    updateLineAreaSource(payload);
+    updateSweepSource(payload);
     update3dPositions();
     updateLayerAlpha();
     setLegendVisibility(features.length > 0);
@@ -1700,9 +2071,10 @@ export const initMissionPaths = (map) => {
     mapReady = true;
     ensureHitLayer();
     ensureAreaLayers();
-    ensureLineAreaLayers();
+    ensureSweepLayers();
     ensure3dLayers();
     attachInteractions();
+    applySweepLineVisibility();
     if (pendingData) {
       applyData(pendingData);
     }
@@ -1722,7 +2094,7 @@ export const initMissionPaths = (map) => {
 
   map.on("idle", () => {
     if (features.length) {
-      update3dPositions();
+      scheduleRebuild();
     }
   });
 
@@ -1730,5 +2102,7 @@ export const initMissionPaths = (map) => {
     loadFromResponse,
     loadFromServer,
     setSelectedAgent,
+    setCurrentWaypoints,
+    setSweepLinesVisible,
   };
 };

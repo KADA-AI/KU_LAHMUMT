@@ -1,0 +1,129 @@
+{
+  "version": 2,
+  "toggles": {
+    "input_refresh": true,
+    "prior_mission": true,
+    "dl_risk": false,
+    "target_detection": true,
+    "forced_command": true,
+    "rtb": true,
+    "path_deviation": true,
+    "quality_monitor": true,
+    "quality_speed": false,
+    "imaging_schedule": false,
+    "next_collab": false,
+    "fuel_threshold": false
+  },
+  "input_refresh": {
+    "duplicate_window_ms": 400,
+    "block_when_reexecute_active": true
+  },
+  "prior_mission": {
+    "dl_risk_threshold": 0.5
+  },
+  "dl_risk": {
+    "mean_risk_threshold": 0.8,
+    "cooldown_sec": 10.0
+  },
+  "path_deviation": {
+    "turn_rate_threshold_dps": 1.0,
+    "turn_window_s": 8.0,
+    "stale_timeout_s": 5.0,
+    "heading_move_min_m": 2.0,
+    "turn_gap_reset_s": 2.5,
+    "spiral_window_s": 75.0,
+    "spiral_min_points": 5,
+    "center_ignore_radius_m": 40.0,
+    "near_threshold_min_m": 200.0,
+    "near_threshold_radius_factor": 2.0,
+    "radius_error_min_m": 140.0,
+    "radius_error_factor": 0.55,
+    "latest_radius_min_m": 60.0,
+    "latest_radius_factor": 0.16,
+    "accumulation_step_max_deg": 120.0,
+    "watch_angle_deg": 90.0,
+    "warning_angle_deg": 150.0,
+    "hold_s": 2.0,
+    "release_min_distance_m": 240.0,
+    "release_factor": 2.3,
+    "alt_waypoint_trigger_s": 2.0,
+    "alt_waypoint_lead_time_s": 8.0,
+    "next_mission_entry_lead_time_s": 5.0,
+    "turn_radius_30_m": 340.0,
+    "turn_radius_40_m": 450.0,
+    "turn_radius_50_m": 560.0,
+    "coord_heading_fallback_min_delta_deg": 25.0,
+    "coord_heading_fallback_max_delta_deg": 120.0,
+    "coord_heading_fallback_max_turn_dps": 15.0
+  },
+  "quality_speed": {
+    "lower_band_ratio": 0.9,
+    "search_speed_up_scale": 1.1,
+    "search_speed_down_scale": 0.9,
+    "min_sample_count": 5,
+    "max_sample_count": 30,
+    "startup_grace_sec": 10.0,
+    "disabled_flight_mode": 8
+  },
+  "forced_command": {
+    "hold_delay_seconds": 30.0,
+    "signature_dedup_seconds": 0.6
+  },
+  "imaging_schedule": {
+    "trigger_probability": 0.2,
+    "imaging_operation_modes": [
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "imaging_pattern_types": [
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9
+    ]
+  },
+  "next_collab": {
+    "entry_lead_time_s": 5.0,
+    "default_entry_strategy": "midpoint_to_next_start"
+  },
+  "rtb": {
+    "unexpected_rtb_flight_mode": 5,
+    "abnormal_health_value": 2,
+    "fuel_warning_replan_level": 2,
+    "signal_loss_grace_ms": 10000,
+    "replan_hold_ms": 5000
+  },
+  "target_detection": {
+    "cooldown_ms": 10000,
+    "watcher_uav_ids": [
+      4,
+      5,
+      6
+    ],
+    "attack_manned_ids": [
+      2,
+      3
+    ],
+    "option_presets": [
+      {
+        "option_id": 2,
+        "option_name": "공격 특화"
+      },
+      {
+        "option_id": 3,
+        "option_name": "공격 배제"
+      }
+    ]
+  },
+  "fuel_threshold": {
+    "capacity_liters": 15.0,
+    "yellow_ratio": 0.2,
+    "red_ratio": 0.1
+  }
+}

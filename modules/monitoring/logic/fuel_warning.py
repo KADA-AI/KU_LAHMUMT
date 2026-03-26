@@ -5,6 +5,8 @@ import os
 import time
 from typing import Any, Callable
 
+from modules.monitoring.logic.replan_runtime_settings import get_fuel_threshold_settings
+
 
 def _coerce_int(value: object) -> int | None:
     try:
@@ -22,14 +24,15 @@ def _coerce_float(value: object) -> float | None:
 
 def resolve_fuel_capacity_liters() -> float:
     """Resolve the fuel capacity from environment with a safe default."""
-    raw = os.getenv("KU_MON_FUEL_CAPACITY_L", "15")
+    config = get_fuel_threshold_settings()
+    raw = os.getenv("KU_MON_FUEL_CAPACITY_L")
     try:
-        value = float(raw) if raw is not None else 15.0
+        value = float(raw) if raw is not None else float(config.get("capacity_liters", 15.0))
         if value > 0:
             return float(value)
     except (TypeError, ValueError):
         pass
-    return 15.0
+    return float(config.get("capacity_liters", 15.0))
 
 
 _EPOCH2000_MS = 946684800000
@@ -49,8 +52,9 @@ def fuel_state_from_liters(
         return "unknown", 0
     liters = max(0.0, float(fuel_liters))
     capacity = float(capacity_liters) if capacity_liters > 0 else 15.0
-    red_threshold = capacity * 0.1
-    yellow_threshold = capacity * 0.2
+    config = get_fuel_threshold_settings()
+    red_threshold = capacity * float(config.get("red_ratio", 0.10))
+    yellow_threshold = capacity * float(config.get("yellow_ratio", 0.20))
     if liters <= red_threshold:
         return "red", 2
     if liters <= yellow_threshold:

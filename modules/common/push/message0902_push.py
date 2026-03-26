@@ -9,6 +9,7 @@ from nFusion.Model.msg_0902 import *    # C# 모델(우선)
 from nFusion.Model.CommonType import *     # 공통 타입(항상)
 from System import Int32, Single, String, UInt32, UInt64
 from generator.message0902_generator import make_msg0902_body
+from modules.common import replan_request_transport_store
 _EPOCH_2000 = datetime(2000, 1, 1, tzinfo=timezone.utc)
 _now_ms = lambda: int((datetime.utcnow().replace(tzinfo=timezone.utc) - _EPOCH_2000).total_seconds() * 1000)
 from modules.common.source_utils import get_default_source_code, override_source_fields
@@ -224,6 +225,11 @@ def _dict_to_obj(body_dict: dict):
     return _dict_to_ReplanRequest(body_dict)
 
 def make_and_push(body_dict: dict, node_messenger) -> bytes:
+    if isinstance(body_dict, dict) and body_dict:
+        try:
+            replan_request_transport_store.save_payload(body_dict)
+        except Exception:
+            pass
     # TX 화이트리스트가 있으면 최종 전송 전 선별(제너레이터가 풍부하게 만들어도 최소필드만 보냄)
     wl = TX_FIELD_WHITELIST.get(MSG_ID)
     if wl and isinstance(body_dict, dict):

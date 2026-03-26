@@ -1,0 +1,64 @@
+2026-03-26T04:23:11.879474Z [LOG] Mission planning log started: C:\Users\LAHMUMT_2\Desktop\DSS_KU\Logs\Scenario_2026-03-26T131952\SBC3\DSS_Internal\mission_planning_gui_20260326T042311_586925Z.log
+2026-03-26T04:23:11.881474Z [0101] 모드 수신 리스너 등록 완료
+2026-03-26T04:23:12.380224Z [0102] NodeMessenger 초기화 대기 중 ? 자동 송신 보류
+2026-03-26T04:23:12.589650Z [BUS] NodeMessenger 초기화 완료
+2026-03-26T04:23:13.692183Z [WARM] Mission planner runtime ready (algo_settings)
+2026-03-26T04:23:27.897510Z [MODE] 슬라이더 변경 → 대기모드
+2026-03-26T04:23:27.898509Z [0101/POLL] 모드 동기화 code=1
+2026-03-26T04:23:30.892674Z [MODE] 슬라이더 변경 → 초기 임무 계획
+2026-03-26T04:23:30.892674Z [0101/POLL] 모드 동기화 code=2
+2026-03-26T04:23:30.894674Z [AUTO] 0902 received (planIds=700000001)
+2026-03-26T04:23:30.895674Z [AUTO] replan pipeline scheduled after 0.1s delay
+2026-03-26T04:23:31.023022Z [0305] status=1, reason=초기임무재계획 전송
+2026-03-26T04:23:31.026023Z [STEP 0] Replan pipeline start (reason=초기임무재계획)
+2026-03-26T04:23:31.027022Z [INFO] UAV params loaded (cruise=40.00, turn_step=15.0)
+2026-03-26T04:23:31.028526Z [INFO] Latest input snapshot → 0201:ID=-,ts=-,src=-, 0203:ID=-,ts=-,src=-
+2026-03-26T04:23:31.028526Z [INFO] Fallback 0201 file selected: 100.json
+2026-03-26T04:23:31.029530Z [INFO] Fallback 0203 file selected: 0.json
+2026-03-26T04:23:31.029530Z [CHECK] 0201/0203 필수 데이터 확인 시작
+2026-03-26T04:23:31.029530Z [OK] 0201 inputMissionList 확인됨 (count=4) → 진행
+2026-03-26T04:23:31.030530Z [OK] 0201 availableAircraftList 확인됨 (count=6) → 진행
+2026-03-26T04:23:31.030530Z [OK] 0201 inputMissionPackageType=1 확인
+2026-03-26T04:23:31.031531Z [OK] 0201 mainSensor=1 확인
+2026-03-26T04:23:31.031531Z [CHECK] 0201 기체 수=6 (UAV=3, LAH=3)
+2026-03-26T04:23:31.032530Z [CHECK] 0201 임무: total=4 missingID=0 missingDetail=0 missingShape=0 unknownType=0 typeZeroAuto=0 typeZeroInvalid=0 lineOnlyViolation=0
+2026-03-26T04:23:31.032530Z [OK] 0203 takeOverInfoList 확인됨 (count=3) → 진행
+2026-03-26T04:23:31.032530Z [OK] 0203 handOverInfoList 확인됨 (count=3) → 진행
+2026-03-26T04:23:31.033530Z [OK] 0203 flightAreaList 확인됨 (count=1) → 진행
+2026-03-26T04:23:31.033530Z [CHECK] 0203 flightAreaList count=1
+2026-03-26T04:23:31.033530Z [variant 1] 일반 재계획 모드 적용
+2026-03-26T04:23:31.034530Z [STEP 1.1] Divide & Pattern start
+2026-03-26T04:23:31.036530Z [variant 1] [ENHANCED][1] split start: uavs=[4, 5, 6]
+2026-03-26T04:23:31.042530Z [variant 1] [ENHANCED][1] split done: pieces=12
+2026-03-26T04:23:31.044530Z [variant 1] [ENHANCED][2] type-decider done: profile=6 changed=12/12
+2026-03-26T04:23:31.045533Z [variant 1] [ENHANCED][3] expected-path done: count=12
+2026-03-26T04:23:31.052532Z [variant 1] [ENHANCED][4] area-review done: overflow=3 targets=3 pieces=12->21
+2026-03-26T04:23:31.055533Z [variant 1] [ENHANCED][5] expected-velocity done: pieces=21 dbRows=391
+2026-03-26T04:23:31.069039Z [variant 1] [ENHANCED][6] 0302 export done: files=6
+2026-03-26T04:23:31.070039Z [variant 1] [ENHANCED] total=37.9 ms
+2026-03-26T04:23:31.071040Z [TIME] divide_and_pattern (variant=1): 38.0 ms
+2026-03-26T04:23:31.071040Z [OK] IMP generated: 6 file(s) (variant=1)
+2026-03-26T04:23:31.080043Z [TIME] build_0301+load (variant=1): 10.6 ms
+2026-03-26T04:23:31.081043Z [OK] MissionPlan built: MissionPlan_1774499011069.json (variant=1)
+2026-03-26T04:23:31.082043Z [TIME] collect_missions (variant=1): 2.4 ms, count=27
+2026-03-26T04:23:31.122184Z [TIME] pathID_mapping (variant=1): 39.5 ms
+2026-03-26T04:23:31.122184Z [INFO] pathID mapping done for 0302/0303/0304 (variant=1)
+2026-03-26T04:23:31.123299Z [INFO] FlightPath build mode: parallel (variant=1)
+2026-03-26T04:23:31.643439Z [INFO] FlightPath build time (parallel): 0303=516.8 ms, 0304=316.3 ms, wall=517.8 ms
+2026-03-26T04:23:31.643439Z [INFO] Applied LAH-UAV ETA follow speed plan (variant=1)
+2026-03-26T04:23:31.644440Z [OK] FlightPath counts (variant=1): 0303=15 / 0304=12
+2026-03-26T04:23:31.653439Z [TIME] build_0302 (variant=1): 8.2 ms, packages=6
+2026-03-26T04:23:31.661466Z [TIME] write_0302 (variant=1): 8.1 ms, files=6
+2026-03-26T04:23:31.702012Z [TIME] write_FlightPath (variant=1): 39.8 ms, files=27
+2026-03-26T04:23:31.702012Z [TIME] write_0301 (variant=1): 0.8 ms
+2026-03-26T04:23:31.703013Z [OK] Stored variant 1: MissionPlanID=700000001, IMP=6, FlightPath=27
+2026-03-26T04:23:31.703013Z [TIME] variant_total (variant=1): 671.2 ms
+2026-03-26T04:23:31.704013Z [INFO] Option mapping #1: planID=700000001, optionCode=1(시스템 추천)
+2026-03-26T04:23:31.705011Z [OK] Stored mission data: MissionPlan=1, IndividualMission=6, FlightPath=27
+2026-03-26T04:23:31.865096Z [STEP 4] 0301 push queued (planIds=700000001)
+2026-03-26T04:23:31.873327Z [0301] missionPlanID=700000001 전송
+2026-03-26T04:23:31.874327Z [PUSH] 0301 direct batch send
+2026-03-26T04:23:31.874327Z [INFO] Post-0301 apply queued (grace=1800ms, timeout=3000ms, plans=1)
+2026-03-26T04:23:31.923411Z [0305] status=2, reason=초기임무재계획, elapsed=0.90s 전송
+2026-03-26T04:23:34.862897Z [INFO] Post-0301 ready (timeout) -> sending 0903
+2026-03-26T04:23:34.867898Z [0903] request sent (missionPlanID=700000001)

@@ -2439,3 +2439,1365 @@ body {
 .mission-recommend-footer .mission-option-keep.is-hidden {
   display: none;
 }
+
+/* Sim UI refresh */
+:root {
+  color-scheme: light;
+  --bg: #edf1f6;
+  --panel: rgba(250, 252, 255, 0.82);
+  --panel-strong: rgba(255, 255, 255, 0.92);
+  --panel-border: rgba(121, 137, 158, 0.18);
+  --panel-shadow: 0 18px 44px rgba(44, 58, 78, 0.14);
+  --text: #122033;
+  --text-muted: #5f6f83;
+  --accent: #1d6ef2;
+  --accent-soft: rgba(29, 110, 242, 0.12);
+  --accent-strong: #0c5ddb;
+  --success: #1d9961;
+  --warning: #d97d0d;
+  --danger: #cf4e57;
+  --lah1: #f08b5c;
+  --lah2: #d8a944;
+  --lah3: #7fa06c;
+  --uav1: #3f7ff5;
+  --uav2: #34a6b8;
+  --uav3: #767ce7;
+}
+
+html,
+body {
+  background:
+    radial-gradient(circle at top left, rgba(186, 205, 232, 0.28), transparent 24%),
+    radial-gradient(circle at top right, rgba(194, 224, 218, 0.28), transparent 26%),
+    linear-gradient(180deg, #f6f8fc 0%, #e9eef5 100%);
+  color: var(--text);
+  font-family: "SF Pro Display", "SF Pro Text", "Pretendard Variable", "Pretendard",
+    "Segoe UI Variable", "Segoe UI", sans-serif;
+}
+
+#map {
+  filter: saturate(1.02) contrast(0.98) brightness(1.02);
+}
+
+.toolbar,
+.mission-legend,
+.monitoring-card,
+.ui-btn,
+.ui-btn-text,
+.toggle,
+.mission-btn,
+.scenario-btn,
+.playback-btn,
+.playback-speed-option,
+.agent-panel,
+.mission-panel,
+.scenario-panel,
+.side-panel-left,
+.side-panel-right,
+.io-modal-card,
+.status-item {
+  backdrop-filter: blur(20px) saturate(1.22);
+  -webkit-backdrop-filter: blur(20px) saturate(1.22);
+}
+
+.toolbar {
+  top: 18px;
+  gap: 10px;
+  padding: 12px 16px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(244, 248, 253, 0.78));
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: 18px;
+  box-shadow: var(--panel-shadow);
+}
+
+.toolbar-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  color: #6d7d90;
+}
+
+.toolbar-time {
+  min-width: 108px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(236, 242, 249, 0.9);
+  color: #10233d;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-align: center;
+}
+
+.toggle,
+.ui-btn,
+.ui-btn-text,
+.mission-btn,
+.scenario-btn,
+.playback-btn,
+.playback-speed-option,
+.side-panel-toggle,
+.side-panel-left-toggle,
+.side-panel-right-toggle,
+.io-action,
+.agent-panel-close,
+.stepper-btn {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(236, 242, 249, 0.96));
+  color: #18304e;
+  border-color: rgba(138, 154, 176, 0.24);
+  box-shadow: 0 10px 24px rgba(57, 72, 94, 0.1);
+}
+
+.toggle:hover,
+.ui-btn:hover,
+.ui-btn-text:hover,
+.mission-btn:hover,
+.scenario-btn:hover,
+.playback-btn:hover,
+.playback-speed-option:hover,
+.side-panel-toggle:hover,
+.side-panel-left-toggle:hover,
+.side-panel-right-toggle:hover,
+.io-action:hover,
+.agent-panel-close:hover,
+.stepper-btn:hover {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 1), rgba(242, 247, 252, 1));
+  border-color: rgba(100, 131, 184, 0.26);
+  transform: translateY(-1px);
+}
+
+.toggle.is-active,
+.ui-btn.is-active,
+.ui-btn-text.is-active,
+.mission-btn.is-active,
+.scenario-btn.is-active,
+.playback-speed-option.is-active {
+  background: linear-gradient(180deg, rgba(230, 241, 255, 0.98), rgba(219, 235, 255, 0.96));
+  color: #0d5cda;
+  border-color: rgba(71, 127, 218, 0.38);
+  box-shadow: 0 0 0 4px rgba(29, 110, 242, 0.12);
+}
+
+.ui-btn-dot {
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.74);
+}
+
+.mission-legend {
+  top: 78px;
+  gap: 8px;
+  padding: 10px 14px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(241, 246, 252, 0.76));
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: 18px;
+  box-shadow: var(--panel-shadow);
+}
+
+.mission-legend-title {
+  color: #6c7a8d;
+}
+
+.mission-legend-item {
+  color: #21344c;
+}
+
+.monitoring-card {
+  position: absolute;
+  top: 18px;
+  left: 18px;
+  z-index: 4;
+  width: 218px;
+  padding: 14px 14px 14px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-radius: 22px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(244, 248, 253, 0.82));
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  box-shadow: var(--panel-shadow);
+}
+
+.monitoring-copy {
+  min-width: 0;
+}
+
+.monitoring-eyebrow {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #8593a5;
+}
+
+.monitoring-title {
+  margin-top: 4px;
+  font-size: 18px;
+  font-weight: 700;
+  color: #142740;
+}
+
+.monitoring-meta {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: #5f7189;
+}
+
+.monitoring-switch {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.monitoring-switch input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.monitoring-switch-track {
+  position: relative;
+  width: 52px;
+  height: 32px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(205, 214, 228, 0.96), rgba(178, 191, 209, 0.96));
+  box-shadow: inset 0 1px 2px rgba(32, 43, 60, 0.14);
+  transition: background 0.22s ease, box-shadow 0.22s ease;
+}
+
+.monitoring-switch-thumb {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: linear-gradient(180deg, #ffffff, #f2f6fb);
+  box-shadow: 0 4px 10px rgba(35, 48, 68, 0.18);
+  transition: transform 0.22s ease;
+}
+
+.monitoring-switch input:checked + .monitoring-switch-track {
+  background: linear-gradient(180deg, rgba(73, 145, 255, 0.96), rgba(29, 110, 242, 0.96));
+  box-shadow: inset 0 1px 2px rgba(6, 42, 99, 0.18);
+}
+
+.monitoring-switch input:checked + .monitoring-switch-track .monitoring-switch-thumb {
+  transform: translateX(20px);
+}
+
+body.is-monitoring .monitoring-card {
+  background: linear-gradient(180deg, rgba(236, 244, 255, 0.94), rgba(220, 235, 255, 0.86));
+  box-shadow: 0 20px 42px rgba(44, 83, 154, 0.18);
+}
+
+body.is-monitoring .toolbar-time {
+  background: rgba(224, 237, 255, 0.96);
+  color: #0b59d9;
+}
+
+#left-controls.panel-left {
+  top: 106px;
+  left: 18px;
+  gap: 10px;
+}
+
+.top-right-controls {
+  top: 18px;
+  right: 18px;
+  gap: 10px;
+}
+
+.agent-panel,
+.mission-panel,
+.scenario-panel,
+.side-panel-left,
+.side-panel-right,
+.io-modal-card {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(245, 248, 253, 0.82));
+  color: #14263f;
+  border: 1px solid rgba(255, 255, 255, 0.74);
+  box-shadow: 0 24px 58px rgba(44, 58, 78, 0.18);
+}
+
+.agent-panel::before {
+  background: rgba(248, 251, 255, 0.96);
+  border-left-color: rgba(255, 255, 255, 0.74);
+  border-top-color: rgba(255, 255, 255, 0.74);
+}
+
+.agent-panel-header,
+.mission-panel-header,
+.scenario-panel-header,
+.side-panel-left-header,
+.side-panel-right-header {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(244, 248, 253, 0.82));
+  border-bottom: 1px solid rgba(142, 160, 184, 0.14);
+}
+
+.agent-panel-title,
+.mission-panel-title,
+.scenario-panel-title,
+.side-panel-left-title,
+.side-panel-right-title {
+  color: #16304f;
+  letter-spacing: 0.12em;
+}
+
+.mission-panel {
+  top: 18px;
+  right: 72px;
+  width: 288px;
+  border-radius: 24px;
+}
+
+.scenario-panel {
+  top: 72px;
+  right: 72px;
+  width: 386px;
+  max-height: calc(100vh - 136px);
+  border-radius: 26px;
+}
+
+.scenario-panel-body {
+  padding: 16px;
+  gap: 14px;
+}
+
+.scenario-hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 16px 14px;
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at top left, rgba(125, 173, 255, 0.18), transparent 40%),
+    linear-gradient(180deg, rgba(250, 252, 255, 0.92), rgba(238, 244, 252, 0.94));
+  border: 1px solid rgba(255, 255, 255, 0.76);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+
+.scenario-hero-eyebrow {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #7a8aa1;
+}
+
+.scenario-hero-title {
+  margin-top: 6px;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: #12253f;
+}
+
+.scenario-hero-status {
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(29, 110, 242, 0.1);
+  color: #0c60de;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.scenario-tabs {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.scenario-tabs .scenario-btn {
+  height: 40px;
+  border-radius: 14px;
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.scenario-card {
+  border-radius: 20px;
+  padding: 14px;
+  gap: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.84), rgba(243, 247, 252, 0.76));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+
+.scenario-card.is-active {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.82),
+    0 10px 26px rgba(60, 76, 99, 0.08);
+}
+
+.scenario-card.is-hidden {
+  display: none;
+}
+
+.scenario-card-title {
+  font-size: 13px;
+  letter-spacing: -0.01em;
+  color: #1b3150;
+}
+
+.scenario-row {
+  align-items: stretch;
+  gap: 10px;
+}
+
+.scenario-label {
+  min-width: 96px;
+  padding-top: 7px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #67788e;
+}
+
+.scenario-input,
+.scenario-select,
+.mission-input,
+.mission-select,
+.agent-input,
+.agent-select {
+  min-height: 36px;
+  border-radius: 12px;
+  border: 1px solid rgba(139, 155, 177, 0.22);
+  background: rgba(255, 255, 255, 0.92);
+  color: #112641;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.68);
+}
+
+.scenario-input:focus,
+.scenario-select:focus,
+.mission-input:focus,
+.mission-select:focus,
+.agent-input:focus,
+.agent-select:focus {
+  outline: none;
+  border-color: rgba(58, 119, 219, 0.38);
+  box-shadow: 0 0 0 4px rgba(29, 110, 242, 0.12);
+}
+
+.scenario-coord {
+  gap: 8px;
+}
+
+.scenario-hint {
+  font-size: 11px;
+  line-height: 1.45;
+  color: #60748d;
+}
+
+.scenario-btn-primary {
+  background: linear-gradient(180deg, #3386ff, #1d6ef2);
+  border-color: rgba(15, 89, 205, 0.52);
+  color: #ffffff;
+}
+
+.scenario-btn-primary:hover {
+  background: linear-gradient(180deg, #4a96ff, #2277f7);
+}
+
+.scenario-overlay {
+  background: radial-gradient(
+    circle 160px at var(--spot-x, 50%) var(--spot-y, 50%),
+    rgba(255, 255, 255, 0.02) 0,
+    rgba(15, 22, 34, 0.12) 160px,
+    rgba(15, 22, 34, 0.42) 260px
+  );
+}
+
+.scenario-overlay-dot,
+.enemy-picker-center {
+  width: 12px;
+  height: 12px;
+  background: #ffffff;
+  border: 3px solid #1d6ef2;
+  box-shadow: 0 0 0 8px rgba(29, 110, 242, 0.12);
+}
+
+.scenario-overlay-tooltip {
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.78);
+  box-shadow: 0 18px 38px rgba(35, 49, 68, 0.16);
+  color: #14263f;
+}
+
+.scenario-overlay-title {
+  font-size: 12px;
+}
+
+.scenario-overlay-hint {
+  color: #5f718a;
+}
+
+.enemy-picker-item {
+  min-width: 68px;
+  height: 34px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.74);
+  background: rgba(250, 252, 255, 0.96);
+  color: #17304e;
+  box-shadow: 0 10px 24px rgba(44, 58, 78, 0.16);
+}
+
+.enemy-picker-item:hover {
+  background: rgba(240, 246, 255, 0.98);
+}
+
+.playback-panel,
+.playback-speed-menu {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(242, 247, 252, 0.88));
+  border-color: rgba(255, 255, 255, 0.78);
+  box-shadow: 0 18px 42px rgba(44, 58, 78, 0.16);
+}
+
+.status-item {
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.78);
+  color: #405268;
+  box-shadow: 0 14px 30px rgba(44, 58, 78, 0.14);
+}
+
+.status-item--warn {
+  color: var(--warning);
+}
+
+.status-item--error {
+  color: var(--danger);
+}
+
+.status-item--success {
+  color: var(--success);
+}
+
+.maplibregl-popup-content {
+  border-radius: 14px;
+  box-shadow: 0 16px 38px rgba(44, 58, 78, 0.16);
+}
+
+.maplibregl-ctrl-group {
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.78);
+  box-shadow: 0 12px 28px rgba(44, 58, 78, 0.12);
+}
+
+.maplibregl-ctrl-group button {
+  filter: none;
+}
+
+body.is-monitoring .mission-legend {
+  background: linear-gradient(180deg, rgba(240, 247, 255, 0.92), rgba(228, 239, 253, 0.84));
+}
+
+@media (max-width: 1280px) {
+  .toolbar {
+    max-width: calc(100vw - 180px);
+  }
+
+  .scenario-panel {
+    width: 350px;
+  }
+}
+
+@media (max-width: 980px) {
+  .toolbar {
+    left: 18px;
+    transform: none;
+    max-width: calc(100vw - 140px);
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .mission-legend {
+    left: 18px;
+    top: 92px;
+    transform: none;
+    max-width: calc(100vw - 36px);
+  }
+
+  .monitoring-card {
+    width: 200px;
+  }
+
+  .scenario-panel,
+  .mission-panel {
+    right: 18px;
+  }
+}
+
+/* Restore darker sim tone */
+:root {
+  color-scheme: dark;
+  --bg: #1f2618;
+  --panel: rgba(32, 40, 24, 0.86);
+  --panel-strong: rgba(20, 27, 16, 0.96);
+  --panel-border: rgba(150, 170, 130, 0.28);
+  --panel-shadow: 0 18px 40px rgba(7, 10, 6, 0.36);
+  --text: #e0e5d4;
+  --text-muted: #9aa8bc;
+  --accent: #b7ce7c;
+  --accent-soft: rgba(183, 206, 124, 0.18);
+  --accent-strong: #7fd48a;
+  --warning: #ffd07a;
+  --danger: #ff8a8a;
+  --success: #a9f1b0;
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+}
+
+#map {
+  filter: none;
+}
+
+.toolbar,
+.mission-legend,
+.monitoring-card,
+.status-item {
+  background: var(--panel);
+  border-color: var(--panel-border);
+  box-shadow: var(--panel-shadow);
+}
+
+.toolbar-title,
+.mission-legend-title,
+.monitoring-eyebrow {
+  color: #c8d4b8;
+}
+
+.toolbar-time,
+.monitoring-title {
+  color: #e3ecd6;
+}
+
+.toggle,
+.ui-btn,
+.ui-btn-text,
+.mission-btn,
+.scenario-btn,
+.playback-btn,
+.playback-speed-option,
+.side-panel-toggle,
+.side-panel-left-toggle,
+.side-panel-right-toggle,
+.io-action,
+.agent-panel-close,
+.stepper-btn {
+  background: #151a20;
+  color: #e9eef6;
+  border-color: rgba(120, 140, 170, 0.32);
+  box-shadow: 0 6px 14px rgba(5, 8, 12, 0.4);
+}
+
+.toggle:hover,
+.ui-btn:hover,
+.ui-btn-text:hover,
+.mission-btn:hover,
+.scenario-btn:hover,
+.playback-btn:hover,
+.playback-speed-option:hover,
+.side-panel-toggle:hover,
+.side-panel-left-toggle:hover,
+.side-panel-right-toggle:hover,
+.io-action:hover,
+.agent-panel-close:hover,
+.stepper-btn:hover {
+  background: #1b212a;
+}
+
+.toggle.is-active,
+.ui-btn.is-active,
+.ui-btn-text.is-active,
+.mission-btn.is-active,
+.scenario-btn.is-active,
+.playback-speed-option.is-active {
+  background: #1f2835;
+  color: #e9eef6;
+  border-color: rgba(140, 175, 220, 0.6);
+  box-shadow: 0 0 0 2px rgba(90, 130, 190, 0.25);
+}
+
+.agent-panel,
+.mission-panel,
+.scenario-panel,
+.side-panel-left,
+.side-panel-right,
+.io-modal-card,
+.playback-panel,
+.playback-speed-menu {
+  background: var(--panel-strong);
+  color: #e9eef6;
+  border-color: rgba(120, 140, 170, 0.25);
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.5);
+}
+
+.agent-panel::before {
+  background: var(--panel-strong);
+  border-left-color: rgba(120, 140, 170, 0.25);
+  border-top-color: rgba(120, 140, 170, 0.25);
+}
+
+.agent-panel-header,
+.mission-panel-header,
+.scenario-panel-header,
+.side-panel-left-header,
+.side-panel-right-header {
+  background: linear-gradient(120deg, rgba(20, 26, 34, 0.96), rgba(10, 12, 16, 0.96));
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+
+.agent-panel-title,
+.mission-panel-title,
+.scenario-panel-title,
+.side-panel-left-title,
+.side-panel-right-title,
+.scenario-card-title {
+  color: #d6deea;
+}
+
+.monitoring-card {
+  top: 16px;
+  left: 16px;
+  width: 196px;
+  padding: 12px 14px;
+  gap: 10px;
+  border-radius: 18px;
+}
+
+.monitoring-title {
+  margin-top: 2px;
+  font-size: 16px;
+}
+
+.monitoring-meta {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: rgba(220, 230, 245, 0.72);
+}
+
+.monitoring-switch-track {
+  background: linear-gradient(180deg, rgba(132, 148, 174, 0.92), rgba(96, 112, 140, 0.92));
+}
+
+.monitoring-switch-thumb {
+  background: linear-gradient(180deg, #ffffff, #e9eff7);
+}
+
+.monitoring-switch input:checked + .monitoring-switch-track {
+  background: linear-gradient(180deg, rgba(127, 212, 138, 0.96), rgba(69, 176, 95, 0.96));
+}
+
+body.is-monitoring .monitoring-card {
+  background: linear-gradient(180deg, rgba(28, 38, 26, 0.96), rgba(19, 28, 18, 0.94));
+  border-color: rgba(127, 212, 138, 0.26);
+  box-shadow: 0 18px 40px rgba(8, 18, 10, 0.42);
+}
+
+#left-controls.panel-left {
+  top: 132px;
+  left: 16px;
+}
+
+.scenario-hero {
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(30, 38, 26, 0.96), rgba(14, 18, 22, 0.96));
+  border: 1px solid rgba(120, 140, 170, 0.25);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.scenario-hero-eyebrow {
+  color: #9aa8bc;
+}
+
+.scenario-hero-title {
+  color: #e9eef6;
+}
+
+.scenario-hero-status {
+  background: rgba(127, 212, 138, 0.14);
+  color: #bfeac6;
+}
+
+.scenario-tabs .scenario-btn {
+  background: #151a20;
+}
+
+.scenario-card {
+  background: rgba(18, 22, 28, 0.92);
+  border-color: rgba(120, 140, 170, 0.25);
+  box-shadow: none;
+}
+
+.scenario-card.is-active {
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.2);
+}
+
+.scenario-card.is-hidden {
+  display: none;
+}
+
+.scenario-label,
+.scenario-hint {
+  color: #9aa8bc;
+}
+
+.scenario-input,
+.scenario-select,
+.mission-input,
+.mission-select,
+.agent-input,
+.agent-select {
+  background: #12161c;
+  color: #e9eef6;
+  border-color: rgba(120, 140, 170, 0.28);
+  box-shadow: none;
+}
+
+.scenario-input:focus,
+.scenario-select:focus,
+.mission-input:focus,
+.mission-select:focus,
+.agent-input:focus,
+.agent-select:focus {
+  border-color: rgba(140, 175, 220, 0.6);
+  box-shadow: 0 0 0 2px rgba(90, 130, 190, 0.25);
+}
+
+.scenario-btn-primary {
+  background: #1f4d3d;
+  border-color: #1a3f32;
+  color: #ffffff;
+}
+
+.scenario-btn-primary:hover {
+  background: #285947;
+}
+
+.scenario-overlay-tooltip,
+.enemy-picker-item,
+.maplibregl-popup-content {
+  background: rgba(20, 24, 30, 0.96);
+  color: #e9eef6;
+  border-color: rgba(120, 140, 170, 0.28);
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.35);
+}
+
+.scenario-overlay-hint {
+  color: #9aa8bc;
+}
+
+.scenario-overlay-dot,
+.enemy-picker-center {
+  background: #dbecc2;
+  border-color: #2c3f1e;
+  box-shadow: 0 0 0 6px rgba(183, 206, 124, 0.12);
+}
+
+@media (max-width: 980px) {
+  .monitoring-card {
+    width: 188px;
+  }
+
+  #left-controls.panel-left {
+    top: 128px;
+  }
+}
+
+/* Final dark cleanup */
+.toolbar {
+  background: rgba(32, 40, 24, 0.9);
+  border-color: var(--panel-border);
+  box-shadow: 0 10px 24px rgba(7, 10, 6, 0.28);
+}
+
+.toolbar-time {
+  min-width: 0;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+body.is-monitoring .toolbar-time {
+  background: transparent;
+  color: #e3ecd6;
+}
+
+.side-panel-toggle,
+.side-panel-left-toggle,
+.side-panel-right-toggle {
+  background: rgba(32, 40, 24, 0.96);
+  color: #e0e5d4;
+  border-color: var(--panel-border);
+  box-shadow: 0 8px 18px rgba(7, 10, 6, 0.32);
+}
+
+.side-panel-toggle:hover {
+  background: rgba(40, 48, 30, 0.98);
+  transform: translateX(-50%);
+}
+
+.side-panel-left-toggle:hover,
+.side-panel-right-toggle:hover {
+  background: rgba(40, 48, 30, 0.98);
+  transform: translateY(-50%);
+}
+
+.side-panel-toggle:active {
+  transform: translateX(-50%);
+}
+
+.side-panel-left-toggle:active,
+.side-panel-right-toggle:active {
+  transform: translateY(-50%);
+}
+
+.side-panel,
+.side-panel-left,
+.side-panel-right {
+  background: linear-gradient(160deg, #0f1114 0%, #15181d 100%);
+  color: #e9edf2;
+  border-color: rgba(110, 130, 160, 0.2);
+  box-shadow: 0 18px 36px rgba(0, 0, 0, 0.45);
+}
+
+.side-panel-left-title,
+.side-panel-right-title,
+.io-card-title,
+.io-modal-title {
+  color: #d6deea;
+}
+
+.io-connection {
+  color: #b4c0d2;
+  border-color: rgba(120, 140, 170, 0.24);
+  background: rgba(18, 22, 28, 0.9);
+}
+
+.io-connection-off {
+  color: #9aa8bc;
+  background: rgba(18, 22, 28, 0.9);
+}
+
+.io-card {
+  background: rgba(18, 22, 28, 0.92);
+  border-color: rgba(120, 140, 170, 0.18);
+}
+
+.io-card-header,
+.io-log,
+.io-modal-header {
+  background: rgba(14, 18, 24, 0.9);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.io-card-meta,
+.io-table th,
+.data-empty-sub {
+  color: #9aa8bc;
+}
+
+.io-table td,
+.data-empty-title {
+  color: #dfe6f1;
+}
+
+.io-table td {
+  border-bottom-color: rgba(255, 255, 255, 0.05);
+}
+
+.io-modal-body {
+  background: rgba(14, 18, 24, 0.96);
+  color: #dfe6f1;
+}
+
+.io-modal-close {
+  background: #151a20;
+  color: #e9eef6;
+  border-color: rgba(120, 140, 170, 0.32);
+}
+
+.monitoring-card {
+  min-height: 104px;
+  align-items: center;
+}
+
+.monitoring-copy {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.monitoring-meta {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Toolbar and legend polish */
+:root {
+  --lah1: #d97845;
+  --lah2: #e0b24a;
+  --lah3: #98a96a;
+  --uav1: #3d7ca6;
+  --uav2: #4aa39c;
+  --uav3: #6b7fa1;
+}
+
+.toolbar {
+  gap: 12px;
+}
+
+.toolbar-time {
+  min-width: 96px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #dde8cf;
+  box-shadow: inset 0 0 0 1px rgba(183, 206, 124, 0.12);
+  text-align: center;
+}
+
+body.is-monitoring .toolbar-time {
+  background: rgba(127, 212, 138, 0.12);
+  color: #c9efcf;
+}
+
+.mission-legend {
+  top: 72px;
+  padding: 10px 14px;
+  background: rgba(24, 30, 19, 0.94);
+  border: 1px solid rgba(150, 170, 130, 0.24);
+  border-radius: 18px;
+  box-shadow: 0 14px 30px rgba(7, 10, 6, 0.32);
+}
+
+.mission-legend-title {
+  color: #c8d4b8;
+}
+
+.mission-legend-item {
+  font-weight: 700;
+  opacity: 0.92;
+}
+
+.mission-legend-item.is-active {
+  opacity: 1;
+}
+
+.mission-legend-dot {
+  box-shadow: 0 0 0 2px rgba(8, 12, 8, 0.42);
+}
+
+body.is-monitoring .mission-legend {
+  background: rgba(24, 30, 19, 0.94);
+  border-color: rgba(150, 170, 130, 0.24);
+  box-shadow: 0 14px 30px rgba(7, 10, 6, 0.32);
+}
+
+body.is-monitoring .mission-legend-title {
+  color: #c8d4b8;
+}
+
+/* Bottom-right map controls */
+.maplibregl-ctrl-bottom-right .maplibregl-ctrl-group,
+.zoom-reset-control {
+  background: rgba(24, 30, 19, 0.96);
+  border: 1px solid rgba(150, 170, 130, 0.24);
+  box-shadow: 0 10px 24px rgba(7, 10, 6, 0.32);
+}
+
+.maplibregl-ctrl-bottom-right .maplibregl-ctrl-group button,
+.zoom-reset-control .zoom-reset-btn {
+  background: transparent;
+  color: #dfe8d2;
+  filter: none;
+}
+
+.maplibregl-ctrl-bottom-right .maplibregl-ctrl-group button + button {
+  border-top: 1px solid rgba(150, 170, 130, 0.16);
+}
+
+.maplibregl-ctrl-bottom-right .maplibregl-ctrl-group button:hover,
+.zoom-reset-control .zoom-reset-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* Keep agent panel below monitoring card */
+.agent-panel {
+  top: 132px;
+  max-height: calc(100vh - 148px);
+}
+
+/* Enemy picker spacing */
+.scenario-overlay.is-enemy-mode .scenario-overlay-tooltip {
+  transform: translate(18px, calc(-100% - 18px));
+}
+
+.enemy-picker-item {
+  min-width: 82px;
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 18px;
+  font-size: 11px;
+}
+
+.enemy-picker-item[data-enemy-type="5"] {
+  min-width: 98px;
+}
+
+/* Left sensor panel */
+:root {
+  --side-panel-left-width: 312px;
+  --side-panel-left-height: 76vh;
+  --left-sensor-panel-top: 320px;
+  --left-sensor-toggle-top: 352px;
+}
+
+.side-panel-left {
+  width: min(var(--side-panel-left-width), calc(100vw - 36px));
+  height: min(var(--side-panel-left-height), calc(100vh - 112px));
+}
+
+.side-panel-left.is-docked {
+  top: var(--left-sensor-panel-top);
+  height: calc(100vh - var(--left-sensor-panel-top) - 16px);
+  transform: translate(calc(-100% - 12px), 0);
+}
+
+.side-panel-left.is-docked.is-open {
+  transform: translate(0, 0);
+}
+
+.side-panel-left-toggle.is-docked {
+  top: var(--left-sensor-toggle-top);
+  transform: none;
+}
+
+.side-panel-left-toggle.is-docked:hover,
+.side-panel-left-toggle.is-docked:active {
+  transform: none;
+}
+
+.side-panel-left-toggle.is-open {
+  left: calc(16px + min(var(--side-panel-left-width), calc(100vw - 36px)) + 12px);
+}
+
+.side-panel-left-header {
+  padding: 14px 16px 10px;
+}
+
+.side-panel-left-body {
+  padding: 0 12px 12px;
+}
+
+.sensor-panel-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 100%;
+}
+
+.sensor-panel-copy {
+  padding: 2px 4px 0;
+}
+
+.sensor-panel-eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #97a9c0;
+}
+
+.sensor-panel-title {
+  margin-top: 4px;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: #e8eff7;
+}
+
+.sensor-panel-sub {
+  margin-top: 2px;
+  font-size: 12px;
+  color: #a5b4c8;
+}
+
+.sensor-panel-cards {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+
+.sensor-card {
+  position: relative;
+  padding: 12px;
+  border-radius: 18px;
+  border: 1px solid rgba(125, 143, 168, 0.18);
+  background:
+    linear-gradient(180deg, rgba(18, 23, 30, 0.96) 0%, rgba(15, 18, 24, 0.98) 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03), 0 12px 28px rgba(0, 0, 0, 0.24);
+}
+
+.sensor-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 1px var(--sensor-accent);
+  opacity: 0.18;
+}
+
+.sensor-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.sensor-card-agent {
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: #eff5fb;
+}
+
+.sensor-card-status {
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--sensor-accent);
+}
+
+.sensor-card-heading {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #c2cfde;
+}
+
+.sensor-preview {
+  border-radius: 16px;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.04) 0%, rgba(255, 255, 255, 0.01) 55%, rgba(0, 0, 0, 0.16) 100%),
+    rgba(7, 12, 18, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.sensor-preview-canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+}
+
+.sensor-feed-source-host {
+  position: fixed;
+  left: -10000px;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0;
+  z-index: -1;
+}
+
+.sensor-feed-source {
+  width: 480px;
+  height: 270px;
+}
+
+.sensor-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.sensor-meta-item {
+  min-width: 0;
+  padding: 8px 8px 9px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.sensor-meta-item span,
+.sensor-footprint-meta span {
+  display: block;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #8ea0b8;
+}
+
+.sensor-meta-item strong,
+.sensor-footprint-meta strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #ecf2f8;
+}
+
+.sensor-footprint-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 9px 10px 10px;
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.02));
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.sensor-footprint-meta strong {
+  margin-top: 0;
+  text-align: right;
+}
+
+.sensor-card-idle .sensor-card-status,
+.sensor-card-offline .sensor-card-status {
+  color: #99a8ba;
+}
+
+.sensor-card-idle::after,
+.sensor-card-offline::after {
+  box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.14);
+}
+
+@media (max-width: 980px) {
+  :root {
+    --side-panel-left-width: 286px;
+  }
+
+  .sensor-panel-title {
+    font-size: 19px;
+  }
+
+  .sensor-meta-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

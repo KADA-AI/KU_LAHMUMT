@@ -9,6 +9,10 @@ from pathlib import Path
 from typing import Any
 
 from modules.common import db_paths
+from modules.monitoring.logic.replan_runtime_settings import (
+    get_next_collab_settings,
+    get_path_deviation_settings,
+)
 
 
 TRACKED_AIRCRAFT_IDS = (4, 5, 6)
@@ -17,43 +21,50 @@ MIN_SPEED_MPS = 30.0
 MAX_SPEED_MPS = 50.0
 PATH_SAMPLE_STEP_M = 4.0
 MIN_HEADING_MOVE_M = 2.0
-SPIRAL_WINDOW_S = 90.0
-SPIRAL_MIN_POINTS = 6
-SPIRAL_WATCH_ANGLE_DEG = 120.0
-SPIRAL_WARNING_ANGLE_DEG = 180.0
-HISTORY_RETENTION_S = SPIRAL_WINDOW_S + 15.0
+COORD_HEADING_FALLBACK_MIN_DELTA_DEG = 25.0
+COORD_HEADING_FALLBACK_MAX_DELTA_DEG = 120.0
+COORD_HEADING_FALLBACK_MAX_TURN_DPS = 15.0
+HISTORY_RETENTION_EXTRA_S = 15.0
 MAX_HISTORY_HARD_CAP = 4096
 MAX_PATH_POINTS = 2400
-TURN_RATE_THRESHOLD_DPS = 1.2
 TURN_GAP_RESET_S = 2.5
-STALE_TIMEOUT_S = 5.0
-TURN_WINDOW_S = 8.0
 WAYPOINT_SCAN_INTERVAL_S = 0.5
-SPIRAL_HOLD_S = 3.0
-SPIRAL_RELEASE_FACTOR = 2.6
-ALT_WAYPOINT_TRIGGER_S = 3.0
-ALT_WAYPOINT_LEAD_TIME_S = 8.0
+NEXT_MISSION_ENTRY_LEAD_TIME_S = 5.0
 ALT_WAYPOINT_ID_BASE = 900000
-SPEED_RADIUS_TABLE = (
-    (30.0, 340.0),
-    (40.0, 450.0),
-    (50.0, 560.0),
-)
+
+
+def _path_deviation_config() -> dict[str, Any]:
+    return get_path_deviation_settings()
+
+
+def _history_retention_s(cfg: dict[str, Any] | None = None) -> float:
+    data = cfg if isinstance(cfg, dict) else _path_deviation_config()
+    return float(data.get("spiral_window_s", 75.0)) + float(HISTORY_RETENTION_EXTRA_S)
+
+
+def _speed_radius_table(cfg: dict[str, Any] | None = None) -> tuple[tuple[float, float], ...]:
+    data = cfg if isinstance(cfg, dict) else _path_deviation_config()
+    return (
+        (30.0, float(data.get("turn_radius_30_m", 340.0))),
+        (40.0, float(data.get("turn_radius_40_m", 450.0))),
+        (50.0, float(data.get("turn_radius_50_m", 560.0))),
+    )
 
 
 def interpolate_turn_radius(speed_mps: float) -> float:
+    speed_radius_table = _speed_radius_table()
     speed = max(MIN_SPEED_MPS, min(MAX_SPEED_MPS, float(speed_mps)))
-    if speed <= SPEED_RADIUS_TABLE[0][0]:
-        return float(SPEED_RADIUS_TABLE[0][1])
-    if speed >= SPEED_RADIUS_TABLE[-1][0]:
-        return float(SPEED_RADIUS_TABLE[-1][1])
-    for left, right in zip(SPEED_RADIUS_TABLE[:-1], SPEED_RADIUS_TABLE[1:]):
+    if speed <= speed_radius_table[0][0]:
+        return float(speed_radius_table[0][1])
+    if speed >= speed_radius_table[-1][0]:
+        return float(speed_radius_table[-1][1])
+    for left, right in zip(speed_radius_table[:-1], speed_radius_table[1:]):
         s0, r0 = left
         s1, r1 = right
         if s0 <= speed <= s1:
             alpha = (speed - s0) / max(1e-6, s1 - s0)
             return r0 + ((r1 - r0) * alpha)
-    return float(SPEED_RADIUS_TABLE[1][1])
+    return float(speed_radius_table[1][1])
 
 
 def _coerce_float(value: object | None) -> float | None:
@@ -119,6 +130,10 @@ def _heading_deg_to_math_rad(heading_deg: float) -> float:
     return math.radians(-float(heading_deg))
 
 
+def _angle_delta_deg(left_rad: float, right_rad: float) -> float:
+    return abs(math.degrees(_wrap_pi(float(left_rad) - float(right_rad))))
+
+
 def _latlon_to_local_m(
     lat_deg: float,
     lon_deg: float,
@@ -175,6 +190,24 @@ def _extract_current_waypoint_id(state: dict[str, Any]) -> int | None:
     return None
 
 
+def _extract_on_mission(state: dict[str, Any]) -> int | None:
+    containers = [
+        state.get("unmannedInfo"),
+        state.get("UnmannedInfo"),
+        state.get("flightMode"),
+        state.get("FlightMode"),
+        state,
+    ]
+    for container in containers:
+        if not isinstance(container, dict):
+            continue
+        value = _first_present(container, "onMission", "OnMission")
+        parsed = _coerce_int(value)
+        if parsed is not None:
+            return parsed
+    return None
+
+
 @dataclass(frozen=True)
 class TrackPoint:
     timestamp_s: float
@@ -205,6 +238,7 @@ class AircraftTurnView:
     actual_points: list[tuple[float, float]]
     ideal_points: list[tuple[float, float]]
     position_m: tuple[float, float] | None
+    position_coordinate: dict[str, float] | None
     heading_rad: float | None
     raw_heading_deg: float | None
     speed_mps: float | None
@@ -215,11 +249,15 @@ class AircraftTurnView:
     turn_circle_center_m: tuple[float, float] | None
     turn_circle_radius_m: float | None
     current_waypoint_id: int | None
+    current_waypoint_pass_type: int | None
+    on_mission: int | None
     current_waypoint_position_m: tuple[float, float] | None
     alternate_waypoint_id: int | None
     alternate_waypoint_position_m: tuple[float, float] | None
     alternate_waypoint_coordinate: dict[str, float] | None
     alternate_waypoint_eta_s: float | None
+    predicted_entry_coordinate: dict[str, float] | None
+    predicted_entry_eta_s: float | None
     current_waypoint_is_loiter: bool
     spiral_state: str
     spiral_score: float | None
@@ -331,6 +369,8 @@ class AircraftTurnMonitor:
         self._active_turn: IdealTurnState | None = None
         self._last_wall_time_s: float | None = None
         self._current_waypoint_id: int | None = None
+        self._on_mission: int | None = None
+        self._current_waypoint_info: WaypointInfo | None = None
         self._current_waypoint_position_m: tuple[float, float] | None = None
         self._current_waypoint_is_loiter = False
         self._spiral_hold_state = "none"
@@ -358,6 +398,7 @@ class AircraftTurnMonitor:
         speed_mps: float | None,
         raw_heading_deg: float | None,
         current_waypoint_id: int | None = None,
+        on_mission: int | None = None,
         current_waypoint_info: WaypointInfo | None = None,
     ) -> None:
         if self._ref_lat_deg is None or self._ref_lon_deg is None:
@@ -389,13 +430,15 @@ class AircraftTurnMonitor:
         self._history.append(point)
         self._trim_history(timestamp_s)
         self._last_wall_time_s = wall_time_s
+        self._on_mission = int(on_mission) if on_mission is not None else None
         self._append_if_far_enough(self._actual_points, (x_m, y_m))
         self._update_current_waypoint(current_waypoint_id, current_waypoint_info)
         self._update_ideal_track(point)
         self._update_spiral_accumulator(point)
 
     def _trim_history(self, latest_timestamp_s: float) -> None:
-        min_timestamp_s = float(latest_timestamp_s) - float(HISTORY_RETENTION_S)
+        cfg = _path_deviation_config()
+        min_timestamp_s = float(latest_timestamp_s) - _history_retention_s(cfg)
         while len(self._history) > 1 and self._history[0].timestamp_s < min_timestamp_s:
             self._history.popleft()
         while len(self._history) > MAX_HISTORY_HARD_CAP:
@@ -431,6 +474,7 @@ class AircraftTurnMonitor:
         current_waypoint_info: WaypointInfo | None,
     ) -> None:
         self._current_waypoint_id = int(current_waypoint_id) if current_waypoint_id else None
+        self._current_waypoint_info = current_waypoint_info if isinstance(current_waypoint_info, WaypointInfo) else None
         self._current_waypoint_is_loiter = bool(
             current_waypoint_info is not None
             and (
@@ -461,6 +505,7 @@ class AircraftTurnMonitor:
         )
 
     def _update_spiral_accumulator(self, point: TrackPoint) -> None:
+        cfg = _path_deviation_config()
         current_waypoint_id = self._current_waypoint_id
         current_waypoint_position_m = self._current_waypoint_position_m
         if (
@@ -475,7 +520,7 @@ class AircraftTurnMonitor:
         dx_m = point.x_m - wp_x_m
         dy_m = point.y_m - wp_y_m
         distance_m = math.hypot(dx_m, dy_m)
-        if distance_m < 40.0:
+        if distance_m < float(cfg.get("center_ignore_radius_m", 40.0)):
             return
 
         turn_rate_dps, actual_radius_m, turn_sign, ideal_radius_m = self._estimate_turn_metrics()
@@ -486,7 +531,10 @@ class AircraftTurnMonitor:
             self._spiral_last_bearing_timestamp_s = point.timestamp_s
             return
 
-        near_threshold_m = max(220.0, float(ref_radius_m) * 2.2)
+        near_threshold_m = max(
+            float(cfg.get("near_threshold_min_m", 200.0)),
+            float(ref_radius_m) * float(cfg.get("near_threshold_radius_factor", 2.0)),
+        )
         if distance_m > near_threshold_m:
             self._reset_spiral_accumulator()
             return
@@ -502,7 +550,7 @@ class AircraftTurnMonitor:
         if self._spiral_last_bearing_rad is not None:
             delta_rad = _wrap_pi(bearing_rad - self._spiral_last_bearing_rad)
             delta_deg = abs(math.degrees(delta_rad))
-            if delta_deg <= 120.0:
+            if delta_deg <= float(cfg.get("accumulation_step_max_deg", 120.0)):
                 self._spiral_accum_deg += delta_deg
 
         self._spiral_last_bearing_rad = bearing_rad
@@ -515,6 +563,7 @@ class AircraftTurnMonitor:
         ideal_radius_m: float | None,
         actual_radius_m: float | None,
     ) -> tuple[str, float | None, float | None, float | None, float | None]:
+        cfg = _path_deviation_config()
         current_waypoint_id = self._current_waypoint_id
         current_waypoint_position_m = self._current_waypoint_position_m
         if (
@@ -529,11 +578,12 @@ class AircraftTurnMonitor:
         for point in reversed(self._history):
             if point.current_waypoint_id != current_waypoint_id:
                 break
-            if (latest_time - point.timestamp_s) > SPIRAL_WINDOW_S:
+            if (latest_time - point.timestamp_s) > float(cfg.get("spiral_window_s", 75.0)):
                 break
             recent.append(point)
         recent.reverse()
-        if len(recent) < SPIRAL_MIN_POINTS:
+        min_points = max(3, int(cfg.get("spiral_min_points", 5)))
+        if len(recent) < min_points:
             return "none", None, None, None, None
 
         ref_radius_m = actual_radius_m or ideal_radius_m
@@ -546,13 +596,16 @@ class AircraftTurnMonitor:
             dx_m = point.x_m - wp_x_m
             dy_m = point.y_m - wp_y_m
             distance_m = math.hypot(dx_m, dy_m)
-            if distance_m < 40.0:
+            if distance_m < float(cfg.get("center_ignore_radius_m", 40.0)):
                 continue
             samples.append((point, distance_m, math.atan2(dy_m, dx_m)))
-        if len(samples) < SPIRAL_MIN_POINTS:
+        if len(samples) < min_points:
             return "none", None, None, None, None
 
-        radius_error_limit_m = max(160.0, ref_radius_m * 0.60)
+        radius_error_limit_m = max(
+            float(cfg.get("radius_error_min_m", 140.0)),
+            ref_radius_m * float(cfg.get("radius_error_factor", 0.55)),
+        )
         stable_suffix: list[tuple[TrackPoint, float, float]] = []
         for sample in reversed(samples):
             if abs(sample[1] - ref_radius_m) <= radius_error_limit_m:
@@ -560,13 +613,13 @@ class AircraftTurnMonitor:
                 continue
             if stable_suffix:
                 break
-        if len(stable_suffix) >= SPIRAL_MIN_POINTS:
+        if len(stable_suffix) >= min_points:
             stable_suffix.reverse()
             samples = stable_suffix
 
         angles_rad = [sample[2] for sample in samples]
         distances_m = [sample[1] for sample in samples]
-        if len(angles_rad) < SPIRAL_MIN_POINTS:
+        if len(angles_rad) < min_points:
             return "none", None, None, None, None
 
         unwrapped = _unwrap_angles(angles_rad)
@@ -579,20 +632,28 @@ class AircraftTurnMonitor:
         radial_span_m = max(distances_m) - min(distances_m)
         latest_distance_m = distances_m[-1]
 
-        near_threshold_m = max(220.0, ref_radius_m * 2.2)
+        near_threshold_m = max(
+            float(cfg.get("near_threshold_min_m", 200.0)),
+            ref_radius_m * float(cfg.get("near_threshold_radius_factor", 2.0)),
+        )
         if mean_radius_m > near_threshold_m:
             return "none", None, angle_deg, mean_radius_m, radial_span_m
 
         radius_matched = abs(mean_radius_m - ref_radius_m) <= radius_error_limit_m
-        latest_radius_limit_m = max(70.0, ref_radius_m * 0.18)
+        latest_radius_limit_m = max(
+            float(cfg.get("latest_radius_min_m", 60.0)),
+            ref_radius_m * float(cfg.get("latest_radius_factor", 0.16)),
+        )
         latest_radius_matched = abs(latest_distance_m - ref_radius_m) <= latest_radius_limit_m
         if not (radius_matched and latest_radius_matched):
             return "none", None, angle_deg, mean_radius_m, radial_span_m
 
-        score = min(1.0, angle_deg / SPIRAL_WARNING_ANGLE_DEG)
-        if angle_deg >= SPIRAL_WARNING_ANGLE_DEG:
+        warning_angle_deg = float(cfg.get("warning_angle_deg", 150.0))
+        watch_angle_deg = float(cfg.get("watch_angle_deg", 90.0))
+        score = min(1.0, angle_deg / max(1e-6, warning_angle_deg))
+        if angle_deg >= warning_angle_deg:
             return "warning", score, angle_deg, mean_radius_m, radial_span_m
-        if angle_deg >= SPIRAL_WATCH_ANGLE_DEG:
+        if angle_deg >= watch_angle_deg:
             return "watch", score, angle_deg, mean_radius_m, radial_span_m
         return "none", score, angle_deg, mean_radius_m, radial_span_m
 
@@ -613,9 +674,31 @@ class AircraftTurnMonitor:
         dt_s = max(1e-3, timestamp_s - prev.timestamp_s)
         dx_m = x_m - prev.x_m
         dy_m = y_m - prev.y_m
-        if math.hypot(dx_m, dy_m) >= MIN_HEADING_MOVE_M and dt_s > 0.0:
-            return math.atan2(dy_m, dx_m)
-        return reported_heading if reported_heading is not None else prev.heading_rad
+        motion_heading = None
+        cfg = _path_deviation_config()
+        heading_move_min_m = max(0.0, float(cfg.get("heading_move_min_m", MIN_HEADING_MOVE_M)))
+        if math.hypot(dx_m, dy_m) >= heading_move_min_m and dt_s > 0.0:
+            motion_heading = math.atan2(dy_m, dx_m)
+
+        # 0401 reported heading is the primary source. Coordinate-derived heading
+        # is kept only as a guarded fallback when the feed omits heading.
+        if reported_heading is not None:
+            return reported_heading
+        if motion_heading is None:
+            return prev.heading_rad
+        if prev.heading_rad is None:
+            return motion_heading
+
+        max_delta_deg = min(
+            float(cfg.get("coord_heading_fallback_max_delta_deg", COORD_HEADING_FALLBACK_MAX_DELTA_DEG)),
+            max(
+                float(cfg.get("coord_heading_fallback_min_delta_deg", COORD_HEADING_FALLBACK_MIN_DELTA_DEG)),
+                float(cfg.get("coord_heading_fallback_max_turn_dps", COORD_HEADING_FALLBACK_MAX_TURN_DPS)) * dt_s,
+            ),
+        )
+        if _angle_delta_deg(motion_heading, prev.heading_rad) > max_delta_deg:
+            return prev.heading_rad
+        return motion_heading
 
     def _append_if_far_enough(
         self,
@@ -626,10 +709,15 @@ class AircraftTurnMonitor:
             points.append(item)
 
     def _estimate_turn_metrics(self) -> tuple[float | None, float | None, int, float | None]:
+        cfg = _path_deviation_config()
         usable = [point for point in self._history if point.heading_rad is not None]
         if usable:
             latest_time = usable[-1].timestamp_s
-            recent = [point for point in usable if (latest_time - point.timestamp_s) <= TURN_WINDOW_S]
+            recent = [
+                point
+                for point in usable
+                if (latest_time - point.timestamp_s) <= float(cfg.get("turn_window_s", 8.0))
+            ]
             if len(recent) >= 4:
                 usable = recent
             else:
@@ -644,9 +732,10 @@ class AircraftTurnMonitor:
             return None, None, 0, None
         turn_rate_dps = math.degrees(slope)
         turn_sign = 0
-        if turn_rate_dps > TURN_RATE_THRESHOLD_DPS:
+        turn_rate_threshold_dps = float(cfg.get("turn_rate_threshold_dps", 1.0))
+        if turn_rate_dps > turn_rate_threshold_dps:
             turn_sign = 1
-        elif turn_rate_dps < -TURN_RATE_THRESHOLD_DPS:
+        elif turn_rate_dps < -turn_rate_threshold_dps:
             turn_sign = -1
         latest_speed = self._history[-1].speed_mps
         actual_radius = None
@@ -658,6 +747,7 @@ class AircraftTurnMonitor:
         return turn_rate_dps, actual_radius, turn_sign, ideal_radius
 
     def _update_ideal_track(self, point: TrackPoint) -> None:
+        cfg = _path_deviation_config()
         turn_rate_dps, _actual_radius, turn_sign, ideal_radius = self._estimate_turn_metrics()
         speed_mps = point.speed_mps
         if (
@@ -672,7 +762,8 @@ class AircraftTurnMonitor:
         if (
             self._active_turn is None
             or self._active_turn.turn_sign != turn_sign
-            or (point.timestamp_s - self._active_turn.timestamp_s) > TURN_GAP_RESET_S
+            or (point.timestamp_s - self._active_turn.timestamp_s)
+            > float(cfg.get("turn_gap_reset_s", TURN_GAP_RESET_S))
         ):
             self._active_turn = IdealTurnState(
                 timestamp_s=point.timestamp_s,
@@ -715,9 +806,10 @@ class AircraftTurnMonitor:
         spiral_radius_m: float | None,
         spiral_radial_span_m: float | None,
     ) -> tuple[str, float | None, float | None, float | None, float | None]:
+        cfg = _path_deviation_config()
         if spiral_state != "none":
             self._spiral_hold_state = str(spiral_state)
-            self._spiral_hold_until_s = float(latest_timestamp_s) + float(SPIRAL_HOLD_S)
+            self._spiral_hold_until_s = float(latest_timestamp_s) + float(cfg.get("hold_s", 2.0))
             self._spiral_hold_wp_id = self._current_waypoint_id
             self._spiral_hold_score = spiral_score
             self._spiral_hold_angle_deg = spiral_angle_deg
@@ -747,7 +839,10 @@ class AircraftTurnMonitor:
                 and self._current_waypoint_position_m is not None
             ):
                 current_distance_m = _distance_m(position_m, self._current_waypoint_position_m)
-                release_distance_m = max(260.0, float(hold_radius_m) * float(SPIRAL_RELEASE_FACTOR))
+                release_distance_m = max(
+                    float(cfg.get("release_min_distance_m", 240.0)),
+                    float(hold_radius_m) * float(cfg.get("release_factor", 2.3)),
+                )
                 if current_distance_m <= release_distance_m:
                     return (
                         self._spiral_hold_state,
@@ -779,6 +874,7 @@ class AircraftTurnMonitor:
         ideal_radius_m: float | None,
         turn_circle_center_m: tuple[float, float] | None,
     ) -> tuple[int | None, tuple[float, float] | None, dict[str, float] | None, float | None]:
+        cfg = _path_deviation_config()
         candidate_allowed = spiral_state == "warning" or (
             self._alt_waypoint_active_id is not None and spiral_state in {"watch", "warning"}
         )
@@ -804,17 +900,19 @@ class AircraftTurnMonitor:
             self._alt_waypoint_arm_s = latest.timestamp_s
 
         armed_s = float(self._alt_waypoint_arm_s if self._alt_waypoint_arm_s is not None else latest.timestamp_s)
-        if self._alt_waypoint_active_id is None and (latest.timestamp_s - armed_s) < float(ALT_WAYPOINT_TRIGGER_S):
-            return None, None, None, max(0.0, float(ALT_WAYPOINT_TRIGGER_S) - (latest.timestamp_s - armed_s))
+        alt_waypoint_trigger_s = float(cfg.get("alt_waypoint_trigger_s", 2.0))
+        if self._alt_waypoint_active_id is None and (latest.timestamp_s - armed_s) < alt_waypoint_trigger_s:
+            return None, None, None, max(0.0, alt_waypoint_trigger_s - (latest.timestamp_s - armed_s))
 
         if self._alt_waypoint_active_id is None:
             self._alt_waypoint_active_id = self._alloc_alt_waypoint_id()
 
         center_x_m, center_y_m = turn_circle_center_m
         current_angle_rad = math.atan2(latest.y_m - center_y_m, latest.x_m - center_x_m)
+        alt_waypoint_lead_time_s = float(cfg.get("alt_waypoint_lead_time_s", 8.0))
         lead_angle_rad = (
             (float(latest.speed_mps) / float(ideal_radius_m))
-            * float(ALT_WAYPOINT_LEAD_TIME_S)
+            * alt_waypoint_lead_time_s
             * float(turn_sign)
         )
         candidate_angle_rad = current_angle_rad + lead_angle_rad
@@ -838,8 +936,87 @@ class AircraftTurnMonitor:
             self._alt_waypoint_active_id,
             candidate_position_m,
             candidate_coordinate,
-            float(ALT_WAYPOINT_LEAD_TIME_S),
+            alt_waypoint_lead_time_s,
         )
+
+    def _current_coordinate(self, latest: TrackPoint) -> dict[str, float] | None:
+        if self._ref_lat_deg is None or self._ref_lon_deg is None:
+            return None
+        lat_deg, lon_deg = _local_m_to_latlon(
+            latest.x_m,
+            latest.y_m,
+            self._ref_lat_deg,
+            self._ref_lon_deg,
+        )
+        return {
+            "latitude": float(lat_deg),
+            "longitude": float(lon_deg),
+        }
+
+    def _estimate_next_mission_entry_coordinate(
+        self,
+        *,
+        latest: TrackPoint,
+        is_turning: bool,
+        turn_sign: int,
+        ideal_radius_m: float | None,
+        actual_radius_m: float | None,
+        turn_circle_center_m: tuple[float, float] | None,
+        fallback_coordinate: dict[str, float] | None,
+    ) -> tuple[dict[str, float] | None, float | None]:
+        next_collab_cfg = get_next_collab_settings()
+        lead_s = float(next_collab_cfg.get("entry_lead_time_s", NEXT_MISSION_ENTRY_LEAD_TIME_S))
+        if self._ref_lat_deg is None or self._ref_lon_deg is None:
+            return fallback_coordinate, 0.0 if fallback_coordinate is not None else None
+
+        if (
+            not is_turning
+            or turn_sign == 0
+            or turn_circle_center_m is None
+            or latest.speed_mps is None
+        ):
+            return fallback_coordinate, 0.0 if fallback_coordinate is not None else None
+
+        radius_m = None
+        for candidate in (ideal_radius_m, actual_radius_m):
+            if candidate is None:
+                continue
+            try:
+                radius_val = float(candidate)
+            except Exception:
+                continue
+            if radius_val > 1.0:
+                radius_m = radius_val
+                break
+        if radius_m is None:
+            return fallback_coordinate, 0.0 if fallback_coordinate is not None else None
+
+        center_x_m, center_y_m = turn_circle_center_m
+        current_angle_rad = math.atan2(latest.y_m - center_y_m, latest.x_m - center_x_m)
+        lead_angle_rad = (
+            (float(latest.speed_mps) / float(radius_m))
+            * float(lead_s)
+            * float(turn_sign)
+        )
+        projected_angle_rad = current_angle_rad + lead_angle_rad
+        projected_x_m = center_x_m + (math.cos(projected_angle_rad) * float(radius_m))
+        projected_y_m = center_y_m + (math.sin(projected_angle_rad) * float(radius_m))
+        lat_deg, lon_deg = _local_m_to_latlon(
+            projected_x_m,
+            projected_y_m,
+            self._ref_lat_deg,
+            self._ref_lon_deg,
+        )
+        coord: dict[str, float] = {
+            "latitude": float(lat_deg),
+            "longitude": float(lon_deg),
+        }
+        if fallback_coordinate is not None and "altitude" in fallback_coordinate:
+            try:
+                coord["altitude"] = float(fallback_coordinate.get("altitude", 0.0))
+            except Exception:
+                pass
+        return coord, float(lead_s)
 
     def build_view(self, now_wall_time_s: float | None = None) -> AircraftTurnView:
         now_wall_time_s = float(now_wall_time_s if now_wall_time_s is not None else time.monotonic())
@@ -851,6 +1028,7 @@ class AircraftTurnMonitor:
                 actual_points=[],
                 ideal_points=[],
                 position_m=None,
+                position_coordinate=None,
                 heading_rad=None,
                 raw_heading_deg=None,
                 speed_mps=None,
@@ -861,11 +1039,15 @@ class AircraftTurnMonitor:
                 turn_circle_center_m=None,
                 turn_circle_radius_m=None,
                 current_waypoint_id=None,
+                current_waypoint_pass_type=None,
+                on_mission=None,
                 current_waypoint_position_m=None,
                 alternate_waypoint_id=None,
                 alternate_waypoint_position_m=None,
                 alternate_waypoint_coordinate=None,
                 alternate_waypoint_eta_s=None,
+                predicted_entry_coordinate=None,
+                predicted_entry_eta_s=None,
                 current_waypoint_is_loiter=False,
                 spiral_state="none",
                 spiral_score=None,
@@ -894,7 +1076,12 @@ class AircraftTurnMonitor:
         age_s = None
         if self._last_wall_time_s is not None:
             age_s = max(0.0, now_wall_time_s - self._last_wall_time_s)
-        is_turning = bool(turn_sign != 0 and age_s is not None and age_s <= STALE_TIMEOUT_S)
+        cfg = _path_deviation_config()
+        is_turning = bool(
+            turn_sign != 0
+            and age_s is not None
+            and age_s <= float(cfg.get("stale_timeout_s", 5.0))
+        )
         if not is_turning:
             turn_sign = 0
             turn_circle_center = None
@@ -925,6 +1112,18 @@ class AircraftTurnMonitor:
             ideal_radius_m=ideal_radius_m,
             turn_circle_center_m=turn_circle_center,
         )
+        position_coordinate = self._current_coordinate(latest)
+        predicted_entry_coordinate, predicted_entry_eta_s = (
+            self._estimate_next_mission_entry_coordinate(
+                latest=latest,
+                is_turning=is_turning,
+                turn_sign=turn_sign,
+                ideal_radius_m=ideal_radius_m,
+                actual_radius_m=actual_radius_m,
+                turn_circle_center_m=turn_circle_center,
+                fallback_coordinate=position_coordinate,
+            )
+        )
         return AircraftTurnView(
             aircraft_id=self.aircraft_id,
             label=self.label,
@@ -932,6 +1131,7 @@ class AircraftTurnMonitor:
             actual_points=list(self._actual_points),
             ideal_points=list(self._ideal_points),
             position_m=(latest.x_m, latest.y_m),
+            position_coordinate=position_coordinate,
             heading_rad=latest.heading_rad,
             raw_heading_deg=latest.raw_heading_deg,
             speed_mps=latest.speed_mps,
@@ -942,11 +1142,19 @@ class AircraftTurnMonitor:
             turn_circle_center_m=turn_circle_center,
             turn_circle_radius_m=ideal_radius_m if is_turning else None,
             current_waypoint_id=self._current_waypoint_id,
+            current_waypoint_pass_type=(
+                self._current_waypoint_info.waypoint_pass_type
+                if self._current_waypoint_info is not None
+                else None
+            ),
+            on_mission=self._on_mission,
             current_waypoint_position_m=self._current_waypoint_position_m,
             alternate_waypoint_id=alternate_waypoint_id,
             alternate_waypoint_position_m=alternate_waypoint_position_m,
             alternate_waypoint_coordinate=alternate_waypoint_coordinate,
             alternate_waypoint_eta_s=alternate_waypoint_eta_s,
+            predicted_entry_coordinate=predicted_entry_coordinate,
+            predicted_entry_eta_s=predicted_entry_eta_s,
             current_waypoint_is_loiter=self._current_waypoint_is_loiter,
             spiral_state=spiral_state,
             spiral_score=spiral_score,
@@ -990,6 +1198,7 @@ class TurnRadiusMonitorStore:
             speed_mps = _coerce_float(_first_present(velocity, "speed", "Speed"))
             raw_heading_deg = _coerce_float(_first_present(velocity, "heading", "Heading"))
             current_waypoint_id = _extract_current_waypoint_id(item)
+            on_mission = _extract_on_mission(item)
             current_waypoint_info = self._waypoint_lookup.resolve(int(aircraft_id), current_waypoint_id)
             if latitude is None or longitude is None:
                 continue
@@ -1001,6 +1210,7 @@ class TurnRadiusMonitorStore:
                 speed_mps=speed_mps,
                 raw_heading_deg=raw_heading_deg,
                 current_waypoint_id=current_waypoint_id,
+                on_mission=on_mission,
                 current_waypoint_info=current_waypoint_info,
             )
 
@@ -1014,6 +1224,7 @@ class TurnRadiusMonitorStore:
                 actual_points=[],
                 ideal_points=[],
                 position_m=None,
+                position_coordinate=None,
                 heading_rad=None,
                 raw_heading_deg=None,
                 speed_mps=None,
@@ -1024,11 +1235,15 @@ class TurnRadiusMonitorStore:
                 turn_circle_center_m=None,
                 turn_circle_radius_m=None,
                 current_waypoint_id=None,
+                current_waypoint_pass_type=None,
+                on_mission=None,
                 current_waypoint_position_m=None,
                 alternate_waypoint_id=None,
                 alternate_waypoint_position_m=None,
                 alternate_waypoint_coordinate=None,
                 alternate_waypoint_eta_s=None,
+                predicted_entry_coordinate=None,
+                predicted_entry_eta_s=None,
                 current_waypoint_is_loiter=False,
                 spiral_state="none",
                 spiral_score=None,

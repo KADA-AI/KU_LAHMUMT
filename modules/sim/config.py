@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import socket
 from pathlib import Path
 
 
@@ -39,7 +40,7 @@ WEB_DIR = _env_path("SIM_WEB_DIR", SIM_DIR / "web")
 MBTILES_PATH = _env_path("SIM_MBTILES_PATH", RESOURCE_DIR / "korea.mbtiles")
 DEM_DIR = _env_path("SIM_DEM_DIR", RESOURCE_DIR)
 
-SERVER_HOST = os.getenv("SIM_SERVER_HOST", "127.0.0.1")
+SERVER_HOST = os.getenv("SIM_SERVER_HOST", "0.0.0.0")
 SERVER_PORT = _env_int("SIM_SERVER_PORT", 8000)
 
 # Map defaults (Jipo-ri focus)
@@ -66,7 +67,7 @@ SIM_BASE_DT = _env_float("SIM_BASE_DT", 0.01)
 SIM_TIME_SCALE = _env_float("SIM_TIME_SCALE", 20.0)
 SIM_INTERNAL_STEP_HZ = _env_float("SIM_INTERNAL_STEP_HZ", 15.0)
 SIM_0401_IDLE_HZ = _env_float("SIM_0401_IDLE_HZ", 5.0)
-SIM_0401_ACTIVE_HZ = _env_float("SIM_0401_ACTIVE_HZ", 15.0)
+SIM_0401_ACTIVE_HZ = _env_float("SIM_0401_ACTIVE_HZ", 5.0)
 SIM_POS_TOL = _env_float("SIM_POS_TOL", 30.0)
 SIM_SPEED_UAV = _env_float("SIM_SPEED_UAV", 90.0)
 SIM_SPEED_LAH = _env_float("SIM_SPEED_LAH", 60.0)
@@ -99,3 +100,53 @@ def wrap_deg(a: float) -> float:
     if a < 0:
         a += 360.0
     return a
+
+
+def resolve_server_binding(
+    host: str | None = None,
+    port: int | None = None,
+    *,
+    search_span: int = 24,
+) -> tuple[str, int]:
+    bind_host = str(host or SERVER_HOST or "0.0.0.0").strip() or "0.0.0.0"
+    preferred_port = int(port if port is not None else SERVER_PORT)
+    if preferred_port < 0:
+        preferred_port = 0
+
+    def _can_bind(candidate_port: int) -> bool:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            sock.bind((bind_host, int(candidate_port)))
+            return True
+        except OSError:
+            return False
+        finally:
+            try:
+                sock.close()
+            except Exception:
+                pass
+
+    if preferred_port == 0:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            sock.bind((bind_host, 0))
+            return bind_host, int(sock.getsockname()[1])
+        finally:
+            try:
+                sock.close()
+            except Exception:
+                pass
+
+    for candidate in range(preferred_port, preferred_port + max(1, int(search_span))):
+        if _can_bind(candidate):
+            return bind_host, int(candidate)
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.bind((bind_host, 0))
+        return bind_host, int(sock.getsockname()[1])
+    finally:
+        try:
+            sock.close()
+        except Exception:
+            pass

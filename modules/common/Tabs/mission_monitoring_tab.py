@@ -261,6 +261,8 @@ class MissionMonitoringTab(CSCTabBase):
         except Exception:
             pass
         try:
+            if hasattr(self, "send_tx_row"):
+                return bool(self.send_tx_row(row, interactive=False))
             self._on_tx_double_clicked(row, 0)
             return True
         finally:

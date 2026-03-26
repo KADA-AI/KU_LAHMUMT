@@ -8,7 +8,6 @@ from PyQt5.QtWidgets import (
 )
 
 from .csc_tab_base import CSCTabBase, _now_ms_since_2000
-from push_center import push_message
 
 
 class ManageInfo(CSCTabBase):
@@ -150,8 +149,8 @@ class ManageInfo(CSCTabBase):
         # 0101 행은 버튼 대신 모드 콤보가 들어가므로 action 열을 별도로 넓힌다.
         header = self.tbl_tx.horizontalHeader()
         header.setSectionResizeMode(3, QHeaderView.Fixed)
-        self.tbl_tx.setColumnWidth(3, 148)
-        self.tbl_tx.setColumnWidth(4, 84)
+        self.tbl_tx.setColumnWidth(3, 124)
+        self.tbl_tx.setColumnWidth(4, 78)
 
         # 행 높이만 살짝 확보(테이블이 작아도 콤보는 안정적으로 보임)
         self.tbl_tx.setRowHeight(row, max(40, self.tbl_tx.rowHeight(row)))
@@ -161,7 +160,7 @@ class ManageInfo(CSCTabBase):
         combo.setEditable(False)
         combo.setMaxVisibleItems(6)
         combo.setSizeAdjustPolicy(QComboBox.AdjustToContentsOnFirstShow)
-        combo.setMinimumWidth(138)
+        combo.setMinimumWidth(116)
         combo.setMaximumHeight(34)
         combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
@@ -193,17 +192,27 @@ class ManageInfo(CSCTabBase):
         if self._mode_combo is None:
             return
         mode = int(self._mode_combo.currentData())
-        self._send_system_mode(row, mode)
+        self._send_system_mode(row, mode, interactive=True)
 
-    def _send_system_mode(self, row: int, mode: int) -> None:
+    def _sync_mode_combo(self, mode: int) -> None:
+        if self._mode_combo is None:
+            return
+        for i in range(self._mode_combo.count()):
+            try:
+                if int(self._mode_combo.itemData(i)) != int(mode):
+                    continue
+            except Exception:
+                continue
+            if self._mode_combo.currentIndex() != i:
+                self._mode_combo.blockSignals(True)
+                self._mode_combo.setCurrentIndex(i)
+                self._mode_combo.blockSignals(False)
+            break
+
+    def _send_system_mode(self, row: int, mode: int, *, interactive: bool = False) -> bool:
+        previous_mode = int(self._current_system_mode)
         self._current_system_mode = int(mode)
-        # 콤보 상태 동기화(외부 호출 대비)
-        if self._mode_combo:
-            for i in range(self._mode_combo.count()):
-                if int(self._mode_combo.itemData(i)) == mode:
-                    if self._mode_combo.currentIndex() != i:
-                        self._mode_combo.setCurrentIndex(i)
-                    break
+        self._sync_mode_combo(mode)
 
         body = {
             "timestamp": _now_ms_since_2000(),
@@ -211,19 +220,27 @@ class ManageInfo(CSCTabBase):
             "systemMode": int(mode),
         }
 
+        if interactive:
+            body = self._confirm_tx_payload("0101", row, body, self.periodic_config.get("0101"))
+            if body is None:
+                self._current_system_mode = previous_mode
+                self._sync_mode_combo(previous_mode)
+                state_item = self.tbl_tx.item(row, 2)
+                if state_item:
+                    state_item.setText("전송 취소")
+                return False
+            try:
+                confirmed_mode = int(body.get("systemMode", mode))
+            except Exception:
+                confirmed_mode = int(mode)
+            self._current_system_mode = confirmed_mode
+            self._sync_mode_combo(confirmed_mode)
+
         state_item = self.tbl_tx.item(row, 2)
         if state_item:
-            state_item.setText("Sending")
+            state_item.setText("발신 중")
 
-        ok = push_message(
-            "0101",
-            self.messenger,
-            on_done=lambda mid, raw: self._mark_single_sent(row, mid, raw),
-            body_dict=body,
-        )
-        if not ok and state_item:
-            state_item.setText("Send Failed")
-
+        return self._push_tx_once(row, "0101", body)
     def _build_overridden_body(self, msg_id: str):
         if str(msg_id).strip() == "0101":
             mode = self._current_system_mode
@@ -247,6 +264,6 @@ class ManageInfo(CSCTabBase):
                 mode = int(self._mode_combo.currentData())
             else:
                 mode = int(self._current_system_mode)
-            self._send_system_mode(row, mode)
+            self._send_system_mode(row, mode, interactive=True)
             return
         super()._on_tx_double_clicked(row, col)

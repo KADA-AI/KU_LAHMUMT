@@ -26,6 +26,7 @@ import { initSimClient } from "./js/sim_client.js";
 
 (() => {
   const buildingToggle = document.getElementById("toggle-buildings");
+  const sweepLineToggle = document.getElementById("toggle-sweep-lines");
 
   const setStatus = (text) => {
     logStatus(text, { key: "app-status", ttlMs: 4500 });
@@ -207,19 +208,40 @@ import { initSimClient } from "./js/sim_client.js";
   initScenarioPanel(map);
   init0401Panel();
   initRightSidePanel();
-  initLeftSidePanel();
   initIntegrationPanel();
   initMissionOptionPopup();
   const missionPaths = initMissionPaths(map);
   window.missionPathLoader = missionPaths.loadFromResponse;
   window.loadMissionPathsFromServer = missionPaths.loadFromServer;
   window.setSelectedAgentPath = missionPaths.setSelectedAgent;
+  window.setMissionCurrentWaypoints = missionPaths.setCurrentWaypoints;
+  window.setSweepLineVisibility = missionPaths.setSweepLinesVisible;
+  if (sweepLineToggle && typeof missionPaths.setSweepLinesVisible === "function") {
+    const setSweepToggleState = (visible) => {
+      sweepLineToggle.classList.toggle("is-active", visible);
+      sweepLineToggle.setAttribute("aria-pressed", visible ? "true" : "false");
+      missionPaths.setSweepLinesVisible(visible);
+    };
+    setSweepToggleState(true);
+    sweepLineToggle.addEventListener("click", () => {
+      const nextVisible = !sweepLineToggle.classList.contains("is-active");
+      setSweepToggleState(nextVisible);
+      setStatus(nextVisible ? "Sweep lines shown." : "Sweep lines hidden.");
+    });
+  }
   const vehicleMarkers = initVehicleMarkers(map);
   window.missionVehicleLoader = vehicleMarkers.loadFromReference;
   window.getAgentPosition = vehicleMarkers.getPosition;
   window.getAgentPositions = vehicleMarkers.getPositions;
   const targetMarkers = initTargetMarkers(map);
   window.missionTargetLoader = targetMarkers.loadFromReference;
+  initLeftSidePanel({
+    map,
+    getFilmingViews: vehicleMarkers.getFilmingViews,
+    subscribeFilmingViews: vehicleMarkers.subscribeFilmingViews,
+    getTargets: targetMarkers.getTargets,
+    subscribeTargets: targetMarkers.subscribeTargets,
+  });
   const projectileMarkers = initProjectileMarkers(map);
   window.missionProjectileLoader = projectileMarkers.loadFromReference;
   const impactEffects = initImpactEffects(map);
@@ -284,9 +306,39 @@ import { initSimClient } from "./js/sim_client.js";
     captureInitialView();
   });
 
+  const monitoringToggle = document.getElementById("monitoring-toggle");
+  const monitoringMeta = document.getElementById("monitoring-meta");
+  const setMonitoringMode = async (enabled) => {
+    const next = Boolean(enabled);
+    if (next && typeof simClient.ensureIntegrationReady === "function") {
+      const result = await simClient.ensureIntegrationReady();
+      if (!result?.ok) {
+        setStatus(`Monitoring link pending: ${result?.error || "nFusion offline"}`);
+      }
+    }
+    document.body.classList.toggle("is-monitoring", next);
+    if (monitoringMeta) {
+      monitoringMeta.textContent = next ? "0401 RX @ 5Hz" : "SIM playback";
+    }
+    if (typeof simClient.setMode === "function") {
+      simClient.setMode(next ? "monitor" : "sim");
+    }
+    setStatus(next ? "Monitoring mode enabled." : "Monitoring mode disabled.");
+  };
+  if (monitoringToggle) {
+    monitoringToggle.addEventListener("change", (event) => {
+      void setMonitoringMode(event.target.checked);
+    });
+  }
+  window.setMonitoringMode = (enabled) => {
+    void setMonitoringMode(enabled);
+  };
+
   const simTimeEl = document.getElementById("sim-time");
   if (simTimeEl && typeof simClient.subscribe === "function") {
     let lastSec = null;
+    let lastMonitorTs = null;
+    const EPOCH_2000 = Date.UTC(2000, 0, 1, 0, 0, 0, 0);
     const pad = (value) => String(value).padStart(2, "0");
     const formatTime = (secs) => {
       const s = Math.max(0, Math.floor(secs));
@@ -295,7 +347,24 @@ import { initSimClient } from "./js/sim_client.js";
       const ss = s % 60;
       return `T+${pad(h)}:${pad(m)}:${pad(ss)}`;
     };
+    const formatMonitorTime = (timestamp) => {
+      const date = new Date(EPOCH_2000 + timestamp);
+      if (Number.isNaN(date.getTime())) {
+        return "LIVE 0401";
+      }
+      return `LIVE ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+    };
     simClient.subscribe((state) => {
+      if (typeof simClient.getMode === "function" && simClient.getMode() === "monitor") {
+        const timestamp = Number(state?.timestamp);
+        if (!Number.isFinite(timestamp) || timestamp === lastMonitorTs) {
+          return;
+        }
+        lastMonitorTs = timestamp;
+        lastSec = null;
+        simTimeEl.textContent = formatMonitorTime(timestamp);
+        return;
+      }
       const simTime = Number(state?.simTime);
       if (!Number.isFinite(simTime)) {
         return;
@@ -305,6 +374,7 @@ import { initSimClient } from "./js/sim_client.js";
         return;
       }
       lastSec = sec;
+      lastMonitorTs = null;
       simTimeEl.textContent = formatTime(sec);
     });
   }

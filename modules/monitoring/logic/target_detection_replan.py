@@ -6,14 +6,16 @@ import os
 import threading
 from typing import Any, Callable
 
+from modules.common import prior_target_rediscovery_store
 from modules.monitoring.logic.init_replan import allocate_mission_plan_ids, collect_input_mission_ids
 from modules.monitoring.logic.mission_update import load_db_json
+from modules.monitoring.logic.replan_runtime_settings import get_target_detection_settings
 from modules.monitoring.logic.target_info import (
     update_target_info_from_0402,
     save_target_info,
 )
 try:
-    from modules.mission_planning.attack_assignment_state import get_used_manned_ids
+    from modules.mission_planning.runtime.attack_assignment_state import get_used_manned_ids
 except Exception:  # pragma: no cover - optional dependency
     def get_used_manned_ids(_input_package_id: int | None) -> set[int]:
         return set()
@@ -42,6 +44,44 @@ OPTION_PRESETS = (
     (2, "공격 특화"),
     (3, "공격 배제"),
 )
+
+
+def _target_detection_config() -> dict[str, Any]:
+    return get_target_detection_settings()
+
+
+def _watcher_uav_ids() -> tuple[int, ...]:
+    values = _target_detection_config().get("watcher_uav_ids") or list(WATCHER_UAV_IDS)
+    out = [
+        int(item)
+        for item in values
+        if _coerce_int(item) is not None and int(_coerce_int(item)) > 0
+    ]
+    return tuple(out) or tuple(WATCHER_UAV_IDS)
+
+
+def _attack_manned_ids() -> tuple[int, ...]:
+    values = _target_detection_config().get("attack_manned_ids") or list(ATTACK_MANNED_IDS)
+    out = [
+        int(item)
+        for item in values
+        if _coerce_int(item) is not None and int(_coerce_int(item)) > 0
+    ]
+    return tuple(out) or tuple(ATTACK_MANNED_IDS)
+
+
+def _option_presets() -> tuple[tuple[int, str], ...]:
+    raw_items = _target_detection_config().get("option_presets") or []
+    out: list[tuple[int, str]] = []
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        option_id = _coerce_int(item.get("option_id") or item.get("optionID"))
+        option_name = str(item.get("option_name") or item.get("optionName") or "").strip()
+        if option_id is None or option_id <= 0 or not option_name:
+            continue
+        out.append((int(option_id), option_name))
+    return tuple(out) or OPTION_PRESETS
 
 
 def _coerce_int(value: object) -> int | None:
@@ -87,7 +127,7 @@ def _assign_watcher_id(entry: dict[str, Any], used_watchers: set[int]) -> int | 
     if watcher_id is not None:
         used_watchers.add(watcher_id)
         return watcher_id
-    for candidate in WATCHER_UAV_IDS:
+    for candidate in _watcher_uav_ids():
         if candidate not in used_watchers:
             used_watchers.add(candidate)
             return candidate
@@ -308,9 +348,12 @@ def _dedupe_candidates_by_target_id(candidates: list[dict[str, Any]]) -> list[di
     return [item[1] for item in best_by_target.values()]
 
 
+def _is_prior_mission_rediscovery(entry: dict[str, Any]) -> bool:
+    return bool(entry.get("priorMissionRediscovered")) or bool(entry.get("priorMissionMatched"))
+
+
 class TargetDetectionCoordinator:
     REPLAN_LEVEL = 2
-    REPLAN_COOLDOWN_MS = int(os.getenv("MSM_0402_REPLAN_COOLDOWN_MS", "10000"))
 
     def __init__(
         self,
@@ -380,6 +423,9 @@ class TargetDetectionCoordinator:
                         entry = dict(raw)
                     else:
                         entry = dict(entry)
+                        for extra_key, extra_value in dict(raw).items():
+                            if extra_key in {"key", "priorMissionMatched", "priorMissionRediscovered", "handledStateReset", "priorMissionIDList", "priorMissionTypeList"}:
+                                entry[extra_key] = extra_value
                     entry["key"] = key
                     candidates.append(entry)
             else:
@@ -420,6 +466,9 @@ class TargetDetectionCoordinator:
             candidates = deduped
             if not candidates:
                 return [], logs
+            if any(_is_prior_mission_rediscovery(entry) for entry in candidates):
+                candidates.sort(key=lambda entry: 0 if _is_prior_mission_rediscovery(entry) else 1)
+                logs.append("[0402] prior-mission rediscovery prioritized in candidate order")
 
             if system_mode not in (3, 4):
                 logs.append(f"[0402] replan skipped: mode={system_mode} (need 3/4)")
@@ -430,7 +479,7 @@ class TargetDetectionCoordinator:
                 mission_ids = collect_input_mission_ids()
 
             used_manned = get_used_manned_ids(package_id)
-            available_slots = sum(1 for aid in ATTACK_MANNED_IDS if aid not in used_manned)
+            available_slots = sum(1 for aid in _attack_manned_ids() if aid not in used_manned)
             updated_info = False
             if available_slots <= 0:
                 logs.append(
@@ -456,6 +505,11 @@ class TargetDetectionCoordinator:
                     key = str(entry.get("key") or target_id)
                     watcher_id = _coerce_int(entry.get("watcherID"))
                     self._target_trigger_history[target_id] = now_ts
+                    if _is_prior_mission_rediscovery(entry):
+                        logs.append(
+                            f"[0402] prior-mission rediscovery held for retry without isUsed mark: targetID={target_id}"
+                        )
+                        continue
                     if _mark_target_used_in_info(
                         info,
                         key=key,
@@ -480,9 +534,16 @@ class TargetDetectionCoordinator:
                     continue
                 if _target_is_blocked_by_state(info, target_id):
                     continue
+                is_prior_rediscovery = _is_prior_mission_rediscovery(entry)
                 prev_ts = self._target_trigger_history.get(target_id)
-                if prev_ts is not None and (now_ts - prev_ts) < self.REPLAN_COOLDOWN_MS:
+                cooldown_ms = int(_target_detection_config().get("cooldown_ms", 10000))
+                if (not is_prior_rediscovery) and prev_ts is not None and (now_ts - prev_ts) < cooldown_ms:
                     continue
+                if is_prior_rediscovery:
+                    prior_ids = entry.get("priorMissionIDList") or []
+                    logs.append(
+                        f"[0402] prior-mission rediscovery accepted: targetID={target_id}, priorMissionID={prior_ids}"
+                    )
 
                 watcher_id = _assign_watcher_id(entry, used_watchers)
                 entry["watcherID"] = watcher_id
@@ -499,13 +560,14 @@ class TargetDetectionCoordinator:
                 target_type = _coerce_int(entry.get("targetType"))
                 reason_text = _format_target_reason(watcher_id, target_type, target_id)
 
-                plan_ids = allocate_mission_plan_ids(len(OPTION_PRESETS))
+                presets = _option_presets()
+                plan_ids = allocate_mission_plan_ids(len(presets))
                 if not plan_ids:
                     logs.append("[0402] missionPlanID allocation failed; skip")
                     continue
 
                 pending_options: list[dict[str, Any]] = []
-                for (option_id, name), plan_id in zip(OPTION_PRESETS, plan_ids):
+                for (option_id, name), plan_id in zip(presets, plan_ids):
                     pending_options.append(
                         {
                             "optionID": int(option_id),
@@ -523,7 +585,7 @@ class TargetDetectionCoordinator:
                     "threat": entry.get("threat"),
                     "targetInFrame": entry.get("targetInFrame"),
                     "coordinate": entry.get("coordinate"),
-                    "preferredOptionCount": len(OPTION_PRESETS),
+                    "preferredOptionCount": len(presets),
                     "snapshot": entry,
                 }
 
@@ -549,6 +611,18 @@ class TargetDetectionCoordinator:
                     watcher_id=watcher_id,
                 ):
                     updated_info = True
+                if is_prior_rediscovery:
+                    consumed = prior_target_rediscovery_store.consume_target(
+                        target_id,
+                        timestamp=ts,
+                        reason="0402_replan_dispatched",
+                        mission_plan_ids=plan_ids,
+                        watcher_id=watcher_id,
+                        key=key,
+                    )
+                    logs.append(
+                        f"[0402] prior-mission rediscovery consumed: targetID={target_id}, entries={len(consumed)}"
+                    )
                 logs.append(f"[0402] target replan prepared: key={key}, targetID={target_id}")
 
             if updated_info:

@@ -558,6 +558,15 @@ class MainWindow(QMainWindow):
             running = "0102" in getattr(tab, "periodic_timers", {})
             if (on and not running) or ((not on) and running):
                 try:
+                    if hasattr(tab, "send_tx_row"):
+                        ok = bool(tab.send_tx_row(target_row, interactive=False))
+                        self._append_log_line(
+                            f"[CTRL] 0102 direct handler → {'ON' if on else 'OFF'} 요청"
+                        )
+                        return ok
+                except Exception:
+                    pass
+                try:
                     btn = tbl.cellWidget(target_row, 3)
                     if btn is not None and hasattr(btn, "click"):
                         btn.click()

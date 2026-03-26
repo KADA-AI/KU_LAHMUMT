@@ -3,7 +3,7 @@ Shared configuration constants for MissionPlanner modules.
 Adjust values here to propagate consistently across area/corridor sweep logic.
 """
 
-DEFAULT_SWEEP_SEPARATION_M = 600
+DEFAULT_SWEEP_SEPARATION_M = 1000
 
 # Apply extra margin to sweep spacing (e.g., 1.1 = +10% wider).
 SWEEP_SPACING_MARGIN = 1.1

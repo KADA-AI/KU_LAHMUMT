@@ -1,71 +1,59 @@
 # Mission Planning Structure
 
-`modules/mission_planning` is organized conservatively so runtime behavior stays intact.
+`modules/mission_planning` keeps only the active mission-planning runtime at the package root.
 
-## Runtime entrypoints
+## Active root layout
 
 - `mission_planning_gui.py`
-  - actual GUI entrypoint used by the system
-  - orchestrates initial planning / replan flow
-  - imports:
-    - `MissionPlanner/AnS/mission_pipeline.py`
-    - `MissionPlanner/data_def/d0302.py`
-    - `MissionPlanner/data_def/d0303.py`
-    - `MissionPlanner/data_def/d0304.py`
-
-- `prior_mission_pipeline.py`
-- `attack_plan_pipeline.py`
-  - top-level compatibility entrypoints kept for existing callers
-
-## Main folders
-
+  - main GUI entrypoint used by the system
+  - orchestrates initial planning and replan flow
 - `MissionPlanner/`
-  - core legacy mission-planning engine
-  - keep this stable: most 0302/0303/0304 behavior still depends on it
-  - `planning_enhanced/` now contains the migrated line/area split, expected-path,
-    expected-velocity, and 0302 export logic copied out of `test_mission_planning`
-    and adapted for production use
-- `MissionVisualizer/`
-  - standalone visualization tools
+  - core mission-planning engine and production 0302/0303/0304 generation path
+  - `data_def/` remains the primary execution path
+  - `planning_enhanced/` remains production logic, not test code
 - `pipelines/`
-  - attack/prior replan pipeline implementations
-  - path trimming / attack helper logic
+  - runtime pipeline implementations
+  - attack, prior-mission, and replan helper logic
 - `runtime/`
-  - JSON I/O
+  - runtime JSON I/O
   - latest input cache
-  - attack assignment state
-  - plan/file logging helpers
+  - mission-planning state and logging helpers
 - `ui/`
-  - GUI bootstrap helpers
-  - support widgets / relationship explorer
+  - active GUI widgets and environment helpers
+- `legacy/`
+  - archived wrappers, standalone tools, tests, documents, and static leftovers
+- `_paths.py`
+  - shared path helpers for runtime modules
 
-## Top-level wrappers
+## Preset cleanup
 
-Legacy import paths are preserved through thin wrapper modules at the top level.
+- The GUI exposes only the base preset: `dubins_mode`
+- General mission-planning options now all run through the same base preset path
+- Manual FOV is a mode inside the base preset, not a separate preset
+- Removed preset/profile branches are documented under `legacy/`
+- Runtime behavior that still matters follows downstream values such as:
+  - `area_sweep_mode`
+  - `area_split_mode`
+  - `uav_plan_mode`
+  - auto/manual FOV mode
 
-Examples:
+In other words, preset-specific branching was removed from the general mission-planning path without rewriting the attack, prior-mission, or replan execution logic.
 
-- `modules.mission_planning.attack_plan_pipeline`
-- `modules.mission_planning.prior_mission_pipeline`
-- `modules.mission_planning.json_io`
-- `modules.mission_planning.attack_assignment_state`
+## Refactor boundary
 
-The real implementations now live under `pipelines/`, `runtime/`, or `ui/`.
+Safe to archive or reorganize:
 
-## Safe refactor boundary
-
-Safe to reorganize:
-
-- replan helper modules
-- runtime/state/cache helpers
-- UI helper modules
-- documentation
+- wrapper modules no longer imported by active runtime code
+- standalone app folders not used by the active runtime
+- tests, exploratory tools, and documents
+- static/generated leftovers
 
 Do not move casually:
 
 - `MissionPlanner/AnS/`
-- `MissionPlanner/data_def/`
-- `mission_planning_gui.py`
+- `MissionPlanner/data_def/` except for narrowly-scoped runtime-safe helper extraction
 - `MissionPlanner/planning_enhanced/`
+- `mission_planning_gui.py`
+- attack, prior-mission, and replan pipeline behavior
 
-Those are still the primary execution path for mission generation.
+These remain the primary runtime path for mission generation.

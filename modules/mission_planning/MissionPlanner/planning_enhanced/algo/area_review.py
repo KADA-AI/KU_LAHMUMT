@@ -19,7 +19,7 @@ _AREA_TYPES = {2, 3, 6}
 
 
 def _runtime_area_sweep_mode() -> str:
-    raw = str(get_runtime_str("area_sweep_mode", "parallel") or "parallel").strip().lower()
+    raw = str(get_runtime_str("area_sweep_mode", "vertical") or "vertical").strip().lower()
     if raw in {"vertical", "ver", "perpendicular", "orthogonal"}:
         return "vertical"
     if raw in {"nadir", "directdown", "bf_nadir"}:
@@ -306,10 +306,357 @@ def _rebuild_pieces_with_replacements(
     return out
 
 
+def _coord_copy(coord: Optional[Dict[str, Any]]) -> Optional[Dict[str, float]]:
+    if not isinstance(coord, dict):
+        return None
+    if "latitude" not in coord or "longitude" not in coord:
+        return None
+    return {
+        "latitude": _to_float(coord.get("latitude")),
+        "longitude": _to_float(coord.get("longitude")),
+        "altitude": _to_float(coord.get("altitude"), 0.0),
+    }
+
+
+def _takeover_map(mrpk: Optional[Dict[str, Any]]) -> Dict[int, Dict[str, float]]:
+    if not isinstance(mrpk, dict):
+        return {}
+    infos = mrpk.get("takeOverInfoList")
+    if not isinstance(infos, list):
+        return {}
+    out: Dict[int, Dict[str, float]] = {}
+    for item in infos:
+        if not isinstance(item, dict):
+            continue
+        try:
+            aid = int(item.get("aircraftID"))
+        except Exception:
+            continue
+        coord = _coord_copy(item.get("coordinate"))
+        if coord is None:
+            continue
+        out[int(aid)] = coord
+    return out
+
+
+def _piece_centroid_coord(piece: SplitPiece) -> Optional[Dict[str, float]]:
+    data = piece.data if isinstance(piece.data, dict) else {}
+    coords = data.get("coordinateList")
+    if not isinstance(coords, list) or len(coords) < 3:
+        return None
+    lat0 = _to_float(coords[0].get("latitude"))
+    lon0 = _to_float(coords[0].get("longitude"))
+    alt0 = _to_float(coords[0].get("altitude"), 0.0)
+    poly = _piece_polygon_xy(piece, lat0, lon0)
+    if poly is None:
+        return None
+    clat, clon = sa._xy2llh(float(poly.centroid.x), float(poly.centroid.y), lat0, lon0)
+    return {
+        "latitude": float(clat),
+        "longitude": float(clon),
+        "altitude": float(alt0),
+    }
+
+
+def _piece_projection_span_m(piece: SplitPiece, cut_bearing_deg: float) -> float:
+    data = piece.data if isinstance(piece.data, dict) else {}
+    coords = data.get("coordinateList")
+    if not isinstance(coords, list) or len(coords) < 3:
+        return 0.0
+    lat0 = _to_float(coords[0].get("latitude"))
+    lon0 = _to_float(coords[0].get("longitude"))
+    poly = _piece_polygon_xy(piece, lat0, lon0)
+    if poly is None:
+        return 0.0
+    th = math.radians(float(cut_bearing_deg))
+    nx, ny = math.cos(th), -math.sin(th)
+    vals = [float(nx * x + ny * y) for x, y in list(poly.exterior.coords)]
+    if not vals:
+        return 0.0
+    return float(max(vals) - min(vals))
+
+
+def _piece_within_segment_limit(
+    piece: SplitPiece,
+    *,
+    axis_bearing_deg: float,
+    max_segment_m: float,
+) -> tuple[bool, float]:
+    span_m = float(_piece_projection_span_m(piece, axis_bearing_deg))
+    limit_m = max(float(max_segment_m), 1.0)
+    return span_m <= (limit_m + 1e-6), span_m
+
+
+def _sort_parts_near_uav(
+    parts: List[Dict[str, Any]],
+    uav_coord: Dict[str, float],
+    cut_bearing_deg: float,
+    lat0: float,
+    lon0: float,
+) -> List[Dict[str, Any]]:
+    if len(parts) <= 1:
+        return parts
+    th = math.radians(float(cut_bearing_deg))
+    nx, ny = math.cos(th), -math.sin(th)
+
+    def _centroid_proj(item: Dict[str, Any]) -> float:
+        coords = item.get("coordinateList")
+        if not isinstance(coords, list) or len(coords) < 3:
+            return 0.0
+        poly_xy = [sa.llh_to_xy(_to_float(p.get("latitude")), _to_float(p.get("longitude")), lat0, lon0) for p in coords]
+        poly = Polygon(poly_xy)
+        if not poly.is_valid:
+            poly = poly.buffer(0)
+        picked = _largest_polygon(poly)
+        if picked is None:
+            return 0.0
+        return float(nx * picked.centroid.x + ny * picked.centroid.y)
+
+    ux, uy = sa.llh_to_xy(_to_float(uav_coord.get("latitude")), _to_float(uav_coord.get("longitude")), lat0, lon0)
+    u_proj = float(nx * ux + ny * uy)
+    ordered = sorted(parts, key=_centroid_proj)
+    if not ordered:
+        return parts
+    first_proj = _centroid_proj(ordered[0])
+    last_proj = _centroid_proj(ordered[-1])
+    if abs(u_proj - last_proj) < abs(u_proj - first_proj):
+        ordered.reverse()
+    return ordered
+
+
+def _apply_replan_local_bearing(
+    data: Dict[str, Any],
+    move_bearing_deg: float,
+    uav_coord: Optional[Dict[str, float]],
+    *,
+    split_count: int,
+    projected_span_m: float,
+    max_segment_m: float,
+    piece_index: int,
+    sub_index: Optional[int] = None,
+    source_piece_data: Optional[Dict[str, Any]] = None,
+) -> None:
+    boundary_axis_deg = (float(move_bearing_deg) + 90.0) % 360.0
+    data["bearingFromPrev"] = float(move_bearing_deg)
+    data["bearing_deg"] = float(move_bearing_deg)
+    data["phaseMoveBearing_deg"] = float(move_bearing_deg)
+    data["phaseSplitBearing_deg"] = float(move_bearing_deg)
+    data["splitBearing_deg"] = float(move_bearing_deg)
+    data["boundaryAxisBearing_deg"] = float(boundary_axis_deg)
+    data["bearingIn_deg"] = float(move_bearing_deg)
+    if uav_coord is not None:
+        data["prevPoint"] = {
+            "latitude": float(uav_coord.get("latitude", 0.0)),
+            "longitude": float(uav_coord.get("longitude", 0.0)),
+            "altitude": int(round(float(uav_coord.get("altitude", 0.0) or 0.0))),
+        }
+
+    review = data.get("reviewArea") if isinstance(data.get("reviewArea"), dict) else {}
+    review.update(
+        {
+            "mode": "replan_local_assigned",
+            "localAssigned": True,
+            "subdivided": bool(int(split_count) > 1),
+            "fromPieceIndex": int(piece_index),
+            "splitCount": int(max(1, split_count)),
+            "projectedSpanM": float(max(0.0, projected_span_m)),
+            "segmentLenM": float(max(0.0, projected_span_m) / float(max(1, split_count))),
+            "maxSegmentM": float(max_segment_m),
+            "axisBearingDeg": float(move_bearing_deg),
+        }
+    )
+    if sub_index is not None:
+        review["subIndex"] = int(sub_index)
+    if isinstance(source_piece_data, dict):
+        review["fromPieceCoordinateList"] = copy.deepcopy(source_piece_data.get("coordinateList"))
+        review["fromPieceRawCoordinateList"] = copy.deepcopy(source_piece_data.get("rawCoordinateList"))
+    data["reviewArea"] = review
+
+
+def _subdivide_piece_by_local_assignment(
+    piece: SplitPiece,
+    uav_coord: Dict[str, float],
+    max_segment_m: float,
+) -> Tuple[List[SplitPiece], Dict[str, Any]]:
+    data = piece.data if isinstance(piece.data, dict) else {}
+    coords = data.get("coordinateList")
+    if not isinstance(coords, list) or len(coords) < 3:
+        return [piece], {"changed": False, "reason": "invalid_polygon_coords"}
+
+    center = _piece_centroid_coord(piece)
+    if center is None:
+        return [piece], {"changed": False, "reason": "invalid_polygon_geom"}
+
+    local_bearing_deg = float(sa._bearing_deg(uav_coord, center))
+    projected_span_m = _piece_projection_span_m(piece, local_bearing_deg)
+    split_count = max(1, int(math.ceil(projected_span_m / float(max(max_segment_m, 1.0)))))
+
+    _apply_replan_local_bearing(
+        data,
+        local_bearing_deg,
+        uav_coord,
+        split_count=split_count,
+        projected_span_m=projected_span_m,
+        max_segment_m=max_segment_m,
+        piece_index=int(piece.piece_index),
+    )
+
+    if split_count <= 1:
+        return [piece], {
+            "changed": False,
+            "localized": True,
+            "splitCount": int(split_count),
+            "projectedSpanM": float(projected_span_m),
+            "axisBearingDeg": float(local_bearing_deg),
+        }
+
+    lat0 = _to_float(coords[0].get("latitude"))
+    lon0 = _to_float(coords[0].get("longitude"))
+    try:
+        parts = sa.divide_search_area_clip(
+            coords,
+            split_count,
+            float(local_bearing_deg),
+            ref_lat0=lat0,
+            ref_lon0=lon0,
+        )
+    except Exception:
+        return [piece], {
+            "changed": False,
+            "localized": True,
+            "reason": "split_failed",
+            "splitCount": int(split_count),
+            "projectedSpanM": float(projected_span_m),
+            "axisBearingDeg": float(local_bearing_deg),
+        }
+
+    parts = _sort_parts_near_uav(parts, uav_coord, local_bearing_deg, lat0, lon0)
+    if len(parts) <= 1:
+        return [piece], {
+            "changed": False,
+            "localized": True,
+            "reason": "split_not_effective",
+            "splitCount": int(split_count),
+            "projectedSpanM": float(projected_span_m),
+            "axisBearingDeg": float(local_bearing_deg),
+        }
+
+    new_pieces: List[SplitPiece] = []
+    for idx, part in enumerate(parts, start=1):
+        new_data = copy.deepcopy(piece.data)
+        new_data["coordinateList"] = copy.deepcopy(part.get("coordinateList", []))
+        new_data["rawCoordinateList"] = copy.deepcopy(part.get("rawCoordinateList", []))
+        if "postProcess" in part:
+            new_data["postProcess"] = copy.deepcopy(part.get("postProcess"))
+        if "meanAltitude" in part:
+            new_data["meanAltitude"] = part.get("meanAltitude")
+        if "altitudeVariance" in part:
+            new_data["altitudeVariance"] = part.get("altitudeVariance")
+        _apply_replan_local_bearing(
+            new_data,
+            local_bearing_deg,
+            uav_coord,
+            split_count=split_count,
+            projected_span_m=projected_span_m,
+            max_segment_m=max_segment_m,
+            piece_index=int(piece.piece_index),
+            sub_index=int(idx),
+            source_piece_data=data,
+        )
+        new_pieces.append(
+            SplitPiece(
+                parent_order=int(piece.parent_order),
+                mission_id=piece.mission_id,
+                mission_type=int(piece.mission_type),
+                piece_index=int(piece.piece_index),
+                data=new_data,
+                assigned_uav=piece.assigned_uav,
+            )
+        )
+
+    return new_pieces, {
+        "changed": True,
+        "localized": True,
+        "splitCount": int(split_count),
+        "projectedSpanM": float(projected_span_m),
+        "segmentLenM": float(projected_span_m / float(max(1, split_count))),
+        "axisBearingDeg": float(local_bearing_deg),
+        "newPieceCount": int(len(new_pieces)),
+    }
+
+
+def review_assigned_areas_local(
+    split_result: SplitRunResult,
+    mrpk: Dict[str, Any],
+    max_segment_m: float = 3000.0,
+) -> Dict[str, Any]:
+    if split_result is None:
+        return {
+            "changed": False,
+            "targets": 0,
+            "oldPieceCount": 0,
+            "newPieceCount": 0,
+            "details": [],
+        }
+
+    takeover_map = _takeover_map(mrpk)
+    replacements: Dict[Tuple[int, int], List[SplitPiece]] = {}
+    details: List[Dict[str, Any]] = []
+    targets = 0
+    localized = 0
+
+    for piece in split_result.pieces:
+        if int(piece.mission_type) not in _AREA_TYPES:
+            continue
+        aid = int(piece.assigned_uav or 0)
+        detail = {
+            "parentOrder": int(piece.parent_order),
+            "pieceIndex": int(piece.piece_index),
+            "splitStage": int((piece.data or {}).get("splitStage", 0) or 0),
+            "assignedUav": int(aid),
+        }
+        if aid <= 0:
+            detail.update({"changed": False, "reason": "unassigned_piece"})
+            details.append(detail)
+            continue
+        uav_coord = takeover_map.get(aid)
+        if uav_coord is None:
+            detail.update({"changed": False, "reason": "missing_takeover"})
+            details.append(detail)
+            continue
+
+        targets += 1
+        new_pieces, meta = _subdivide_piece_by_local_assignment(
+            piece,
+            uav_coord=uav_coord,
+            max_segment_m=max_segment_m,
+        )
+        if meta.get("localized"):
+            localized += 1
+        if meta.get("changed"):
+            replacements[(int(piece.parent_order), int(piece.piece_index))] = new_pieces
+        detail.update(meta)
+        details.append(detail)
+
+    old_count = len(split_result.pieces)
+    if replacements:
+        split_result.pieces = _rebuild_pieces_with_replacements(split_result.pieces, replacements)
+    new_count = len(split_result.pieces)
+    return {
+        "changed": bool(replacements or localized > 0),
+        "targets": int(targets),
+        "localized": int(localized),
+        "oldPieceCount": int(old_count),
+        "newPieceCount": int(new_count),
+        "details": details,
+        "mode": "replan_local_assigned",
+    }
+
+
 def review_overflow_areas(
     split_result: SplitRunResult,
     expected_paths: List[Dict[str, Any]],
-    max_segment_m: float = 550.0,
+    max_segment_m: float = 3000.0,
 ) -> Dict[str, Any]:
     if _runtime_area_sweep_mode() == "nadir":
         return {
@@ -423,6 +770,38 @@ def review_overflow_areas(
 
             # If only one side is patternType==6, split that side only.
             if pt1 == 6 and pt2 != 6:
+                within1, span1 = _piece_within_segment_limit(
+                    piece1,
+                    axis_bearing_deg=axis1,
+                    max_segment_m=max_segment_m,
+                )
+                if within1:
+                    details.append(
+                        {
+                            "parentOrder": int(piece1.parent_order),
+                            "pieceIndex": int(piece1.piece_index),
+                            "splitStage": int((piece1.data or {}).get("splitStage", 0) or 0),
+                            "source": source,
+                            "changed": False,
+                            "reason": "skip_piece_span_within_limit",
+                            "patternType": int(pt1),
+                            "axisBearingDeg": float(axis1),
+                            "projectedSpanM": float(span1),
+                            "maxSegmentM": float(max_segment_m),
+                        }
+                    )
+                    details.append(
+                        {
+                            "parentOrder": int(piece2.parent_order),
+                            "pieceIndex": int(piece2.piece_index),
+                            "splitStage": int((piece2.data or {}).get("splitStage", 0) or 0),
+                            "source": source,
+                            "changed": False,
+                            "reason": "skip_patternType_not_6",
+                            "patternType": int(pt2),
+                        }
+                    )
+                    continue
                 new1, meta1 = _subdivide_piece_by_segment(
                     piece1,
                     seg_start=seg1_s,
@@ -457,6 +836,38 @@ def review_overflow_areas(
                 continue
 
             if pt1 != 6 and pt2 == 6:
+                within2, span2 = _piece_within_segment_limit(
+                    piece2,
+                    axis_bearing_deg=axis2,
+                    max_segment_m=max_segment_m,
+                )
+                if within2:
+                    details.append(
+                        {
+                            "parentOrder": int(piece1.parent_order),
+                            "pieceIndex": int(piece1.piece_index),
+                            "splitStage": int((piece1.data or {}).get("splitStage", 0) or 0),
+                            "source": source,
+                            "changed": False,
+                            "reason": "skip_patternType_not_6",
+                            "patternType": int(pt1),
+                        }
+                    )
+                    details.append(
+                        {
+                            "parentOrder": int(piece2.parent_order),
+                            "pieceIndex": int(piece2.piece_index),
+                            "splitStage": int((piece2.data or {}).get("splitStage", 0) or 0),
+                            "source": source,
+                            "changed": False,
+                            "reason": "skip_piece_span_within_limit",
+                            "patternType": int(pt2),
+                            "axisBearingDeg": float(axis2),
+                            "projectedSpanM": float(span2),
+                            "maxSegmentM": float(max_segment_m),
+                        }
+                    )
+                    continue
                 new2, meta2 = _subdivide_piece_by_segment(
                     piece2,
                     seg_start=seg2_s,
@@ -491,6 +902,48 @@ def review_overflow_areas(
                 continue
 
             split_n = max(1, int(math.ceil(max(len1, len2) / float(max_segment_m))))
+            within1, span1 = _piece_within_segment_limit(
+                piece1,
+                axis_bearing_deg=axis1,
+                max_segment_m=max_segment_m,
+            )
+            within2, span2 = _piece_within_segment_limit(
+                piece2,
+                axis_bearing_deg=axis2,
+                max_segment_m=max_segment_m,
+            )
+            if within1 and within2:
+                details.append(
+                    {
+                        "parentOrder": int(piece1.parent_order),
+                        "pieceIndex": int(piece1.piece_index),
+                        "splitStage": int((piece1.data or {}).get("splitStage", 0) or 0),
+                        "source": source,
+                        "changed": False,
+                        "reason": "skip_piece_span_within_limit",
+                        "axisBearingDeg": float(axis1),
+                        "pairSegmentLenM": float(len1),
+                        "patternType": int(pt1),
+                        "projectedSpanM": float(span1),
+                        "maxSegmentM": float(max_segment_m),
+                    }
+                )
+                details.append(
+                    {
+                        "parentOrder": int(piece2.parent_order),
+                        "pieceIndex": int(piece2.piece_index),
+                        "splitStage": int((piece2.data or {}).get("splitStage", 0) or 0),
+                        "source": source,
+                        "changed": False,
+                        "reason": "skip_piece_span_within_limit",
+                        "axisBearingDeg": float(axis2),
+                        "pairSegmentLenM": float(len2),
+                        "patternType": int(pt2),
+                        "projectedSpanM": float(span2),
+                        "maxSegmentM": float(max_segment_m),
+                    }
+                )
+                continue
 
             new1, meta1 = _subdivide_piece_by_segment(
                 piece1,
@@ -583,6 +1036,27 @@ def review_overflow_areas(
                 continue
             dbg = _pick_dir(piece)
             axis = _axis_bearing_deg(piece, dbg)
+            within, span = _piece_within_segment_limit(
+                piece,
+                axis_bearing_deg=axis,
+                max_segment_m=max_segment_m,
+            )
+            if within:
+                details.append(
+                    {
+                        "parentOrder": int(piece.parent_order),
+                        "pieceIndex": int(piece.piece_index),
+                        "splitStage": int((piece.data or {}).get("splitStage", 0) or 0),
+                        "source": source,
+                        "changed": False,
+                        "reason": "skip_piece_span_within_limit",
+                        "axisBearingDeg": float(axis),
+                        "projectedSpanM": float(span),
+                        "maxSegmentM": float(max_segment_m),
+                        "patternType": int(pt),
+                    }
+                )
+                continue
             new_pieces, meta = _subdivide_piece_by_segment(
                 piece,
                 seg_start=coords[0],

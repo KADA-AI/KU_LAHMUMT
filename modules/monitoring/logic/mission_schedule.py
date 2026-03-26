@@ -89,9 +89,13 @@ def build_aircraft_schedule_view(
             "timestamp_ms": None,
         }
 
-    mission_progress = (progress_snapshot or {}).get("mission_progress") or {}
+    snapshot = progress_snapshot or {}
+    mission_progress = snapshot.get("mission_progress") or {}
+    current_mission_map = snapshot.get("aircraft_current_mission") or {}
     timestamp_ms = _coerce_int((progress_snapshot or {}).get("timestamp_ms"))
-    current_mission_id = _coerce_int(entry.get("current_individual_mission_id"))
+    current_mission_id = _coerce_int(current_mission_map.get(int(aircraft_id)))
+    if current_mission_id is None:
+        current_mission_id = _coerce_int(entry.get("current_individual_mission_id"))
 
     path_rows: list[dict[str, Any]] = []
     imaging_rows: list[dict[str, Any]] = []

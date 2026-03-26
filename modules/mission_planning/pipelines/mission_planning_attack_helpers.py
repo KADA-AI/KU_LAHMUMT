@@ -8,15 +8,17 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 try:
+    from ..runtime.attack_assignment_state import (
+        get_last_assigned_manned_id,
+        set_last_assigned_manned_id,
+    )
+    from ..MissionPlanner.runtime_settings import get_runtime_attack_int, get_runtime_attack_int_list
+except Exception:
     from modules.mission_planning.runtime.attack_assignment_state import (
         get_last_assigned_manned_id,
         set_last_assigned_manned_id,
     )
-except ModuleNotFoundError:
-    from attack_assignment_state import (
-        get_last_assigned_manned_id,
-        set_last_assigned_manned_id,
-    )
+    from modules.mission_planning.MissionPlanner.runtime_settings import get_runtime_attack_int, get_runtime_attack_int_list
 
 LogEmitter = Optional[Callable[[str], None]]
 
@@ -224,7 +226,8 @@ def apply_attack_customizations(
             f"[WARN] 공격 옵션(variant={variant_no})에 target 좌표 정보가 없어 기본 임무를 유지합니다.",
         )
         return
-    manned_missions = [im for im in missions if int(im.get("aircraftID", 0)) in (2, 3)]
+    allowed_manned_ids = set(get_runtime_attack_int_list("manned_candidate_ids", [2, 3]))
+    manned_missions = [im for im in missions if int(im.get("aircraftID", 0)) in allowed_manned_ids]
     if not manned_missions:
         _safe_emit(log_cb, f"[WARN] 공격 옵션(variant={variant_no}) 대상 유인기 임무를 찾지 못했습니다.")
         return
@@ -302,7 +305,7 @@ def apply_attack_customizations(
         next_waypoint_id=0,
         eta_ms=travel_eta_ms,
         target_id_value=target_id_int,
-        weapon_type_value=1,
+        weapon_type_value=get_runtime_attack_int("weapon_type", 2),
         ecf_value=1.0,
     )
 

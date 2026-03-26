@@ -20,6 +20,7 @@ else:
     HAS_CLR_REPLANREQUEST = True
 
 from nFusion.Model.CommonType import *  # noqa: F401,F403
+from modules.common import replan_request_transport_store
 from .database import received_db
 from receive_center import notify
 
@@ -252,6 +253,19 @@ def _to_dict_ReplanRequest(obj: Any) -> dict:
     return d
 
 
+def _merge_transport_payload(base_payload: dict, transport_payload: dict) -> dict:
+    if not isinstance(base_payload, dict):
+        return dict(transport_payload or {})
+    if not isinstance(transport_payload, dict):
+        return dict(base_payload)
+
+    merged = dict(transport_payload)
+    for key, value in base_payload.items():
+        if key not in merged or merged.get(key) in (None, "", [], {}):
+            merged[key] = value
+    return merged
+
+
 # ── Receiver definition ─────────────────────────────────────────────────────────
 
 if HAS_CLR_REPLANREQUEST:
@@ -268,6 +282,18 @@ if HAS_CLR_REPLANREQUEST:
                 body = _try_read_db_body("0902", data)
                 if body is None:
                     body = _to_dict_ReplanRequest(data)
+                if isinstance(body, dict):
+                    transport_payload = None
+                    try:
+                        transport_payload = replan_request_transport_store.load_payload(
+                            int(body.get("timestamp") or 0),
+                            reason=body.get("replanRequest") or body.get("replanReason"),
+                            replan_level=body.get("replanLevel"),
+                        )
+                    except Exception:
+                        transport_payload = None
+                    if isinstance(transport_payload, dict) and transport_payload:
+                        body = _merge_transport_payload(body, transport_payload)
 
                 payload = json.dumps(body, ensure_ascii=False).encode("utf-8", "ignore")
                 notify("0902", payload)

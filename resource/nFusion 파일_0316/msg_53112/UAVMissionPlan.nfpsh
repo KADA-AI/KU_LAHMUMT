@@ -1,0 +1,8 @@
+# message ID 53112
+
+byte presenceVector
+byte[] timestamp
+uint missionPlanID
+uint aircraftID
+uint missionSegmentN
+MissionSegment[] missionSegmentList

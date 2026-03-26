@@ -47,6 +47,7 @@ class WaypointTarget:
     speed: float | None = None
     filming: dict | None = None
     wp_id: int | None = None
+    is_done: bool = False
     hover_time: float | None = None
     loiter: dict | None = None
     attack: dict | None = None
@@ -173,6 +174,7 @@ class WaypointPIDController:
                             speed=wp.get("speed"),
                             filming=filming,
                             wp_id=int(wp_id) if wp_id is not None else None,
+                            is_done=bool(wp.get("is_done", False)),
                             hover_time=float(hover_time) if hover_time is not None else None,
                             loiter=loiter,
                             attack=attack if isinstance(attack, dict) else None,

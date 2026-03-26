@@ -1,36 +1,9 @@
 from __future__ import annotations
 
 import math
-import inspect
 from typing import List, Tuple
 
-try:
-    from ..UAV_missionPlanning import UAVMissionPlanner
-except ImportError:
-    from UAV_missionPlanning import UAVMissionPlanner  # type: ignore
-
 PointLL = Tuple[float, float]
-
-
-def plan_route_dtatrim(
-    input_lla: List[PointLL],
-    *,
-    cruise_speed: float,
-    heading_tol_deg: float,
-) -> List[dict]:
-    """DTA + autopilot sim + heading tolerance simplification."""
-    kwargs = {
-        "cruise_speed": cruise_speed,
-        "heading_tol_deg": heading_tol_deg,
-        "store": False,
-    }
-    try:
-        sig = inspect.signature(UAVMissionPlanner.plan_route_only)
-        if "insert_turn_waypoints" in sig.parameters:
-            kwargs["insert_turn_waypoints"] = False
-    except Exception:
-        pass
-    return UAVMissionPlanner.plan_route_only(input_lla, **kwargs)
 
 
 def plan_route_linear(

@@ -7,9 +7,11 @@ from ..models import SplitPiece, SplitRunResult
 
 
 PROFILE_DEFAULT = 6
-PROFILE_RECON = 4
-PROFILE_MIN_TIME = 5
-VALID_PROFILE_CODES = {PROFILE_DEFAULT, PROFILE_RECON, PROFILE_MIN_TIME}
+# Legacy profile names remain available for compatibility, but general mission
+# planning now resolves to the single base profile only.
+PROFILE_RECON = PROFILE_DEFAULT
+PROFILE_MIN_TIME = PROFILE_DEFAULT
+VALID_PROFILE_CODES = {PROFILE_DEFAULT}
 BASE_PACKAGE_TYPES = {1, 2, 3}
 
 
@@ -43,22 +45,9 @@ def _is_coordinate_detail(mission: Dict[str, Any]) -> bool:
 
 
 def _pick_area_pattern(mission_type: int, profile_code: int, piece_index: int = 1) -> int:
-    parity = int(piece_index) % 2
-    if profile_code == PROFILE_DEFAULT:
-        # default: disable direct-down(3) and offset(4) for area
-        return 6
-    if mission_type == 6:
-        # urban fixed profile: 3(45%), 4(45%), 6(10%)
-        if parity == 1:
-            return 3
-        return 4
-    if profile_code == PROFILE_RECON:
-        # reconnaissance-focused: 3(50%), 4(50%)
-        return 3 if parity == 1 else 4
-    if profile_code == PROFILE_MIN_TIME:
-        # minimum-time: 6(100%)
-        return 6
-    # fallback
+    _ = mission_type
+    _ = profile_code
+    _ = piece_index
     return 6
 
 

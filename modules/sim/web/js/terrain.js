@@ -9,8 +9,8 @@ export const setupTerrainToggle = (map, config) => {
       return;
     }
     if (shouldEnable) {
-      if (map.getSource("dem")) {
-        map.setTerrain({ source: "dem", exaggeration: config.dem.exaggeration });
+      if (map.getSource("dem-terrain")) {
+        map.setTerrain({ source: "dem-terrain", exaggeration: config.dem.exaggeration });
       }
     } else {
       map.setTerrain(null);

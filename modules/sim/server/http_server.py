@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import mimetypes
 import os
 from http import HTTPStatus
@@ -27,6 +28,7 @@ from ..config import (
 from ..integration.integration_service import IntegrationService
 from ..mission.mission_loader import load_flight_paths
 from ..mission.mission_plan_loader import build_mission_plan_payload
+from ..mission.monitoring_loader import build_monitoring_snapshot
 from ..runtime.sim_service import SimulationService
 from ..map.dem_tiles import load_dem_provider
 from ..map.mbtiles import MBTiles
@@ -128,6 +130,9 @@ class MapRequestHandler(BaseHTTPRequestHandler):
         if path.startswith("/api/sim/"):
             self._serve_sim_get(path)
             return
+        if path.startswith("/api/monitoring/"):
+            self._serve_monitoring_get(path)
+            return
         if path.startswith("/api/mission/"):
             self._serve_mission_get(path)
             return
@@ -187,6 +192,7 @@ class MapRequestHandler(BaseHTTPRequestHandler):
         tile_url = f"{base_url}/tiles/{{z}}/{{x}}/{{y}}.{ext}"
         dem_url = f"{base_url}/dem/{{z}}/{{x}}/{{y}}.png"
         dem_available = "1" if self.server.dem_provider else "0"
+        dem_bounds_json = _format_bounds(_dem_bounds_lonlat(self.server.dem_provider))
         html = (
             html.replace("__TILE_URL__", tile_url)
             .replace("__MIN_ZOOM__", str(info.min_zoom))
@@ -196,6 +202,7 @@ class MapRequestHandler(BaseHTTPRequestHandler):
             .replace("__START_ZOOM__", str(start_zoom))
             .replace("__BOUNDS_JSON__", bounds_json)
             .replace("__DEM_URL__", dem_url)
+            .replace("__DEM_BOUNDS__", dem_bounds_json)
             .replace("__DEM_AVAILABLE__", dem_available)
             .replace("__DEM_TILE_SIZE__", str(DEM_TILE_SIZE))
             .replace("__DEM_MAX_ZOOM__", str(DEM_MAX_ZOOM))
@@ -213,6 +220,9 @@ class MapRequestHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         if parsed.path == "/api/integration/state":
             self._send_json(integration.get_state())
+            return
+        if parsed.path == "/api/integration/settings":
+            self._send_json(integration.get_settings())
             return
         if parsed.path == "/api/integration/payload":
             query = parse_qs(parsed.query or "")
@@ -233,6 +243,18 @@ class MapRequestHandler(BaseHTTPRequestHandler):
             result = integration.toggle_send(msg_id)
             self._send_json(result)
             return
+        if path == "/api/integration/activate":
+            ready = integration.ensure_ready()
+            status = HTTPStatus.OK if ready else HTTPStatus.SERVICE_UNAVAILABLE
+            self._send_json(
+                {
+                    "ok": ready,
+                    "enabled": integration.enabled,
+                    "error": integration.error,
+                },
+                status,
+            )
+            return
         if path == "/api/integration/generate":
             msg_id = (body or {}).get("msgId")
             result = integration.generate(msg_id)
@@ -247,6 +269,11 @@ class MapRequestHandler(BaseHTTPRequestHandler):
             payload = (body or {}).get("body")
             result = integration.send_custom(msg_id, payload)
             self._send_json(result)
+            return
+        if path == "/api/integration/settings":
+            result = integration.update_settings(body or {})
+            status = HTTPStatus.OK if result.get("ok") else HTTPStatus.BAD_REQUEST
+            self._send_json(result, status)
             return
         self._send_json({"ok": False, "error": "Not found"}, HTTPStatus.NOT_FOUND)
 
@@ -324,6 +351,15 @@ class MapRequestHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/sim/ping":
             self._send_json({"ok": True})
+            return
+        self._send_json({"ok": False, "error": "Not found"}, HTTPStatus.NOT_FOUND)
+
+    def _serve_monitoring_get(self, path: str) -> None:
+        if path == "/api/monitoring/state":
+            integration = getattr(self.server, "integration", None)
+            query = parse_qs(urlparse(self.path).query or "")
+            mission_since = (query.get("missionSince") or [""])[0]
+            self._send_json(build_monitoring_snapshot(integration, mission_since=mission_since))
             return
         self._send_json({"ok": False, "error": "Not found"}, HTTPStatus.NOT_FOUND)
 
@@ -413,7 +449,28 @@ class MapRequestHandler(BaseHTTPRequestHandler):
             self._send_json(result)
             return
         if path == "/api/sim/play":
-            self._send_json(sim.play())
+            settings_payload = (body or {}).get("integrationSettings")
+            settings_result = None
+            integration = getattr(self.server, "integration", None)
+            if integration is not None and isinstance(settings_payload, dict):
+                settings_result = integration.update_settings(settings_payload)
+                if not settings_result.get("ok"):
+                    self._send_json(settings_result, HTTPStatus.BAD_REQUEST)
+                    return
+            if integration is not None and not integration.ensure_ready():
+                self._send_json(
+                    {
+                        "ok": False,
+                        "error": integration.error or "Integration unavailable",
+                        "integrationSettings": settings_result,
+                    },
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                )
+                return
+            result = sim.play()
+            if settings_result is not None:
+                result["integrationSettings"] = settings_result
+            self._send_json(result)
             return
         if path == "/api/sim/pause":
             self._send_json(sim.pause())
@@ -621,3 +678,22 @@ def _format_bounds(bounds: Optional[tuple[float, float, float, float]]) -> str:
         return "null"
     min_lon, min_lat, max_lon, max_lat = bounds
     return json.dumps([[min_lon, min_lat], [max_lon, max_lat]])
+
+
+def _mercator_to_lonlat(x: float, y: float) -> tuple[float, float]:
+    lon = (float(x) / 20037508.342789244) * 180.0
+    lat = (float(y) / 20037508.342789244) * 180.0
+    lat = 180.0 / math.pi * (2.0 * math.atan(math.exp(lat * math.pi / 180.0)) - (math.pi / 2.0))
+    return lon, lat
+
+
+def _dem_bounds_lonlat(provider) -> Optional[tuple[float, float, float, float]]:
+    if provider is None:
+        return None
+    bounds = getattr(provider, "bounds_mercator", None)
+    if not bounds:
+        return None
+    west, south, east, north = bounds
+    min_lon, min_lat = _mercator_to_lonlat(west, south)
+    max_lon, max_lat = _mercator_to_lonlat(east, north)
+    return (min_lon, min_lat, max_lon, max_lat)

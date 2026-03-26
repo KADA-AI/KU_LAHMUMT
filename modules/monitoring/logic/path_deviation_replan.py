@@ -7,12 +7,16 @@ from typing import Any, Callable
 from modules.common import path_deviation_replan_store
 from modules.monitoring.logic.init_replan import allocate_mission_plan_ids, collect_input_mission_ids
 from modules.monitoring.logic.mission_update import load_db_json
-from modules.monitoring.logic.turn_radius_monitor import AircraftTurnView, TRACKED_AIRCRAFT_IDS
+from modules.monitoring.logic.turn_radius_monitor import (
+    ALT_WAYPOINT_ID_BASE,
+    AircraftTurnView,
+    TRACKED_AIRCRAFT_IDS,
+)
 
 
 REPLAN_LEVEL = 3
-REPLAN_REASON = "000 무인기 경로 미추종으로 인한 재계획"
-OPTION_NAME = "비행/촬영"
+REPLAN_REASON_TEMPLATE = "\ubb34\uc778\uae30 {uav_index}\ubc88 \uacbd\ub85c \ubbf8\ucd94\uc885\uc73c\ub85c \uc778\ud55c \uc7ac\uacc4\ud68d"
+OPTION_NAME = "\ube44\ud589/\ucd2c\uc601"
 TRIGGER_TYPE = "pathDeviation"
 
 
@@ -44,6 +48,15 @@ def _extract_waypoint_id(value: object | None) -> int | None:
     return _coerce_int(value)
 
 
+def _format_path_deviation_reason(aircraft_id: int | None) -> str:
+    aid = _coerce_int(aircraft_id)
+    if aid is not None and 4 <= aid <= 6:
+        return REPLAN_REASON_TEMPLATE.format(uav_index=aid - 3)
+    if aid is not None and aid > 0:
+        return f"\ud56d\uacf5\uae30 {aid}\ubc88 \uacbd\ub85c \ubbf8\ucd94\uc885\uc73c\ub85c \uc778\ud55c \uc7ac\uacc4\ud68d"
+    return "\ubbf8\uc0c1 \ubb34\uc778\uae30 \uacbd\ub85c \ubbf8\ucd94\uc885\uc73c\ub85c \uc778\ud55c \uc7ac\uacc4\ud68d"
+
+
 @dataclass(frozen=True)
 class SourceMissionArtifacts:
     input_mission_package_id: int | None
@@ -55,7 +68,7 @@ class SourceMissionArtifacts:
 
 @dataclass
 class PathDeviationReplanState:
-    last_trigger_key_by_aircraft: dict[int, tuple[int, int, int, int]] = field(default_factory=dict)
+    last_trigger_key_by_aircraft: dict[int, tuple[int, int, int]] = field(default_factory=dict)
 
 
 class PathDeviationReplanCoordinator:
@@ -90,31 +103,47 @@ class PathDeviationReplanCoordinator:
 
         payloads: list[dict[str, Any]] = []
         for aircraft_id in TRACKED_AIRCRAFT_IDS:
-            view = views.get(int(aircraft_id))
+            aircraft_id_int = int(aircraft_id)
+            view = views.get(aircraft_id_int)
             if view is None:
+                self._state.last_trigger_key_by_aircraft.pop(aircraft_id_int, None)
                 continue
-            if not self._is_trigger_view(view):
+            if _coerce_int(getattr(view, "on_mission", None)) == 2:
+                self._state.last_trigger_key_by_aircraft.pop(aircraft_id_int, None)
                 continue
-            if aircraft_filter is not None:
-                try:
-                    if not bool(aircraft_filter(int(aircraft_id))):
-                        continue
-                except Exception:
-                    continue
 
             current_waypoint_id = _coerce_int(view.current_waypoint_id)
             if current_waypoint_id is None or current_waypoint_id <= 0:
+                self._state.last_trigger_key_by_aircraft.pop(aircraft_id_int, None)
                 continue
+            if current_waypoint_id >= int(ALT_WAYPOINT_ID_BASE):
+                # Path-deviation alternate WP(900000+) is already a recovery waypoint.
+                # Re-triggering on that synthetic WP causes chained self-replans.
+                self._state.last_trigger_key_by_aircraft.pop(aircraft_id_int, None)
+                continue
+
+            if not self._is_trigger_view(view):
+                self._state.last_trigger_key_by_aircraft.pop(aircraft_id_int, None)
+                continue
+
+            if aircraft_filter is not None:
+                try:
+                    if not bool(aircraft_filter(aircraft_id_int)):
+                        self._state.last_trigger_key_by_aircraft.pop(aircraft_id_int, None)
+                        continue
+                except Exception:
+                    self._state.last_trigger_key_by_aircraft.pop(aircraft_id_int, None)
+                    continue
 
             artifacts = self._resolve_source_artifacts(
                 source_plan_id=int(current_mission_plan_id),
-                aircraft_id=int(aircraft_id),
+                aircraft_id=aircraft_id_int,
                 current_waypoint_id=int(current_waypoint_id),
             )
             if artifacts is None:
                 logs.append(
                     f"[0401] path-deviation replan skipped: source artifacts unresolved "
-                    f"(aircraftID={aircraft_id}, currentWP={current_waypoint_id})"
+                    f"(aircraftID={aircraft_id_int}, currentWP={current_waypoint_id})"
                 )
                 continue
 
@@ -127,44 +156,44 @@ class PathDeviationReplanCoordinator:
 
             trigger_key = (
                 int(current_mission_plan_id),
-                int(aircraft_id),
+                aircraft_id_int,
                 int(current_waypoint_id),
-                int(alt_waypoint_id),
             )
-            if self._state.last_trigger_key_by_aircraft.get(int(aircraft_id)) == trigger_key:
+            if self._state.last_trigger_key_by_aircraft.get(aircraft_id_int) == trigger_key:
                 continue
 
             mission_plan_ids = allocate_mission_plan_ids(1)
             if not mission_plan_ids:
                 logs.append(
                     f"[0401] path-deviation replan skipped: MissionPlanID allocation failed "
-                    f"(aircraftID={aircraft_id})"
+                    f"(aircraftID={aircraft_id_int})"
                 )
                 continue
 
             mission_plan_id = int(mission_plan_ids[0])
             now_ts = int(self._now_ms())
+            replan_reason = _format_path_deviation_reason(int(aircraft_id))
             payload = self._build_payload(
                 timestamp_ms=now_ts,
                 mission_plan_id=mission_plan_id,
                 source_plan_id=int(current_mission_plan_id),
-                aircraft_id=int(aircraft_id),
+                aircraft_id=aircraft_id_int,
                 current_waypoint_id=int(current_waypoint_id),
                 alt_waypoint_id=int(alt_waypoint_id),
                 alt_latitude=alt_lat,
                 alt_longitude=alt_lon,
                 view=view,
                 artifacts=artifacts,
-                replan_reason=REPLAN_REASON,
+                replan_reason=replan_reason,
             )
             detail_payload = dict(payload.get("replanDetail") or {})
             self._persist_detail(int(mission_plan_id), detail_payload)
             payloads.append(payload)
-            self._state.last_trigger_key_by_aircraft[int(aircraft_id)] = trigger_key
+            self._state.last_trigger_key_by_aircraft[aircraft_id_int] = trigger_key
             logs.append(
                 f"[0401] path-deviation replan prepared "
-                f"(aircraftID={aircraft_id}, currentWP={current_waypoint_id}, altWP={alt_waypoint_id}, "
-                f"missionPlanID={mission_plan_id}, reason={REPLAN_REASON})"
+                f"(aircraftID={aircraft_id_int}, currentWP={current_waypoint_id}, altWP={alt_waypoint_id}, "
+                f"missionPlanID={mission_plan_id}, reason={replan_reason})"
             )
 
         return payloads, logs

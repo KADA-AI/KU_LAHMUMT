@@ -1,0 +1,123 @@
+{
+  "timestamp": "2026-03-26T05:54:37.411801+00:00",
+  "status": "success",
+  "stopReason": null,
+  "reason": "무인기 2번 경로 미추종으로 인한 재계획",
+  "replanLevel": 3,
+  "sessionId": null,
+  "context": {
+    "plan_ids": [
+      700000011
+    ],
+    "option_names": [
+      "비행/촬영"
+    ],
+    "mission_ids": [
+      70000001
+    ],
+    "reason": "무인기 2번 경로 미추종으로 인한 재계획",
+    "replan_detail": {
+      "trigger": "0401",
+      "triggerType": "pathDeviation",
+      "sourceMissionPlanID": 700000009,
+      "aircraftID": 5,
+      "inputMissionPackageID": 100,
+      "individualMissionPackageID": 800000044,
+      "individualMissionID": 900000192,
+      "pathID": 500000042,
+      "currentWaypointID": 1225,
+      "alternateWaypointID": 905001,
+      "alternateWaypointCoordinate": {
+        "latitude": 38.114979178187326,
+        "longitude": 127.27162528636507
+      },
+      "alternateWaypointEtaS": 8.0,
+      "spiralState": "warning",
+      "spiralAngleDeg": 349.5184280852388,
+      "idealRadiusM": 449.9900550842285,
+      "actualRadiusM": 450.4881922585276,
+      "turnRateDegS": -5.087323973751157,
+      "selectedReplanReason": "무인기 2번 경로 미추종으로 인한 재계획",
+      "timestamp": 827819677276
+    },
+    "replan_level": 3,
+    "inputMissionPackageID": 100
+  },
+  "planIds": [
+    700000011
+  ],
+  "summary": {
+    "mode": "pathDeviation",
+    "plan_ids": [
+      700000011
+    ],
+    "option_names": [
+      "비행/촬영"
+    ],
+    "log_path": "C:\\Users\\LAHMUMT_2\\Desktop\\DSS_KU\\Logs\\Scenario_2026-03-26T132327\\SBC3\\DSS_Internal\\PathDeviation_5_827819677449.json",
+    "removed_waypoint_id": 1225,
+    "inserted_waypoint_id": 1491
+  },
+  "steps": [
+    {
+      "step": "start",
+      "status": "info",
+      "detail": {
+        "reason": "무인기 2번 경로 미추종으로 인한 재계획",
+        "plan_ids": [
+          700000011
+        ],
+        "replan_level": 3
+      }
+    },
+    {
+      "step": "path_deviation_pipeline",
+      "status": "success",
+      "detail": {
+        "mode": "pathDeviation",
+        "plan_ids": [
+          700000011
+        ],
+        "option_names": [
+          "비행/촬영"
+        ],
+        "log_path": "C:\\Users\\LAHMUMT_2\\Desktop\\DSS_KU\\Logs\\Scenario_2026-03-26T132327\\SBC3\\DSS_Internal\\PathDeviation_5_827819677449.json",
+        "removed_waypoint_id": 1225,
+        "inserted_waypoint_id": 1491
+      }
+    }
+  ],
+  "issues": [],
+  "messages": [
+    {
+      "ts": "2026-03-26T05:54:37.413801+00:00",
+      "text": "[STEP 0] Replan pipeline start (reason=무인기 2번 경로 미추종으로 인한 재계획)"
+    },
+    {
+      "ts": "2026-03-26T05:54:37.421803+00:00",
+      "text": "[PATHDEV] Level-3 path deviation request detected. Using dedicated pipeline."
+    },
+    {
+      "ts": "2026-03-26T05:54:37.551830+00:00",
+      "text": "[PATHDEV] stored path-deviation artifacts -> plan:700000011.json, imp:800000052.json, fp:500000053.json (4.4 ms)"
+    },
+    {
+      "ts": "2026-03-26T05:54:37.552830+00:00",
+      "text": "[PATHDEV] log captured -> C:\\Users\\LAHMUMT_2\\Desktop\\DSS_KU\\Logs\\Scenario_2026-03-26T132327\\SBC3\\DSS_Internal\\PathDeviation_5_827819677449.json"
+    },
+    {
+      "ts": "2026-03-26T05:54:37.554831+00:00",
+      "text": "[PATHDEV][DELIVERY] direct push start (planIds=700000011)"
+    },
+    {
+      "ts": "2026-03-26T05:54:37.554831+00:00",
+      "text": "[STEP 4] 0301 push queued (planIds=700000011)"
+    },
+    {
+      "ts": "2026-03-26T05:54:37.554831+00:00",
+      "text": "[INFO] Direct delivery -> skip 0901/0701, send 0301+0903(+0702 fallback)"
+    }
+  ],
+  "missionPlanID": 700000011,
+  "logPath": "C:\\Users\\LAHMUMT_2\\Desktop\\DSS_KU\\Logs\\Scenario_2026-03-26T132327\\SBC3\\DSS_Internal\\missionPlan_700000011.json"
+}

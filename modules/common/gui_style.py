@@ -122,44 +122,51 @@ def polish_message_table(table: QTableWidget) -> None:
     if table is None:
         return
 
+    object_name = (table.objectName() or "").strip()
+    if not object_name:
+        object_name = "MessageTable"
+        table.setObjectName(object_name)
+    is_plain_grid = object_name == "PlainGrid"
+
     try:
-        table.setObjectName("MessageTable")
         table.setShowGrid(False)
         table.setAlternatingRowColors(True)
         table.setWordWrap(False)
         table.setSelectionBehavior(QAbstractItemView.SelectRows)
         table.setSelectionMode(QAbstractItemView.NoSelection)
+        table.setTextElideMode(Qt.ElideRight)
         table.setFocusPolicy(table.focusPolicy())
         table.setCornerButtonEnabled(False)
         table.verticalHeader().setVisible(False)
-        table.verticalHeader().setDefaultSectionSize(40)
-        table.verticalHeader().setMinimumSectionSize(34)
+        table.verticalHeader().setDefaultSectionSize(34 if is_plain_grid else 40)
+        table.verticalHeader().setMinimumSectionSize(30 if is_plain_grid else 34)
         header = table.horizontalHeader()
         header.setHighlightSections(False)
         header.setStretchLastSection(False)
-        header.setDefaultAlignment(header.defaultAlignment())
+        header.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        header.setMinimumSectionSize(74)
     except Exception:
         pass
 
     header = table.horizontalHeader()
     cols = int(table.columnCount())
     if cols == 5:
-        _set_mode(header, 0, QHeaderView.Fixed, 88)
-        _set_mode(header, 1, QHeaderView.Stretch)
-        _set_mode(header, 2, QHeaderView.Stretch)
-        _set_mode(header, 3, QHeaderView.Fixed, 94)
-        _set_mode(header, 4, QHeaderView.Fixed, 86)
-    elif cols == 4:
-        _set_mode(header, 0, QHeaderView.Fixed, 88)
-        _set_mode(header, 1, QHeaderView.Stretch)
-        _set_mode(header, 2, QHeaderView.Stretch)
-        _set_mode(header, 3, QHeaderView.Fixed, 86)
-    elif cols == 3:
-        _set_mode(header, 0, QHeaderView.Fixed, 88)
-        _set_mode(header, 1, QHeaderView.Stretch)
-        _set_mode(header, 2, QHeaderView.Fixed, 120)
-    elif cols == 2:
         _set_mode(header, 0, QHeaderView.Fixed, 90)
+        _set_mode(header, 1, QHeaderView.Stretch)
+        _set_mode(header, 2, QHeaderView.ResizeToContents)
+        _set_mode(header, 3, QHeaderView.Fixed, 82)
+        _set_mode(header, 4, QHeaderView.Fixed, 78)
+    elif cols == 4:
+        _set_mode(header, 0, QHeaderView.Fixed, 90)
+        _set_mode(header, 1, QHeaderView.Stretch)
+        _set_mode(header, 2, QHeaderView.ResizeToContents)
+        _set_mode(header, 3, QHeaderView.Fixed, 78)
+    elif cols == 3:
+        _set_mode(header, 0, QHeaderView.Fixed, 90)
+        _set_mode(header, 1, QHeaderView.Stretch)
+        _set_mode(header, 2, QHeaderView.ResizeToContents)
+    elif cols == 2:
+        _set_mode(header, 0, QHeaderView.Fixed, 84 if is_plain_grid else 96)
         _set_mode(header, 1, QHeaderView.Stretch)
 
 

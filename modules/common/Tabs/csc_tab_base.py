@@ -2,6 +2,8 @@
 from __future__ import annotations
 from datetime import datetime
 from collections import deque
+import copy
+import importlib
 import time
 from typing import Optional, Sequence, Tuple, Dict
 
@@ -15,7 +17,11 @@ import os
 
 from PyQt5.QtGui import QColor, QTextCursor
 from PyQt5.QtCore import Qt, QTimer
+from modules.common import db_paths
 from modules.common.gui_style import polish_message_table
+from modules.common.message_payload_dialog import MessagePayloadDialog, load_message_field_specs
+from modules.common.option_codes import DEFAULT_OPTION_CODE_SEQUENCE
+from modules.common.source_utils import override_source_fields
 try:
     from push_center import push_message
 except ModuleNotFoundError:
@@ -29,6 +35,17 @@ _EPOCH2000_MS = 946684800000
 def _now_ms_since_2000():
     import time
     return int(time.time() * 1000) - _EPOCH2000_MS
+
+
+_COMMON_DIALOG_DB_RULES = {
+    "0201": ("InputMissionPlan", "inputMissionPackageID", None),
+    "0203": ("MissionReferenceInfo", "missionReferencePackageID", None),
+    "0301": ("MissionPlan", "missionPlanID", None),
+    "0302": ("IndividualMissionPlan", "individualMissionPackageID", None),
+    "0303": ("FlightPath", "pathID", None),
+    "0304": ("FlightPath", "pathID", "123"),
+    "0903": ("MissionPlan", "missionPlanID", None),
+}
 
 class CSCTabBase(QWidget):
     """Common CSC tab base."""
@@ -50,6 +67,9 @@ class CSCTabBase(QWidget):
     def __init__(self, *, messenger, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.messenger = messenger
+        self._push_message_names = {
+            str(msg_id).zfill(4): name for msg_id, name in getattr(self, "PUSH_MESSAGES", [])
+        }
 
         self.periodic_config: Dict[str, Optional[float]] = {
             '0000': None,  
@@ -89,6 +109,7 @@ class CSCTabBase(QWidget):
 
         # 2) 동작 중인 타이머 사전: { msg_id: QTimer }
         self.periodic_timers: Dict[str, QTimer] = {}
+        self._periodic_payload_templates: Dict[str, dict] = {}
         # 3) 수신 자동완료 타이머 사전: { msg_id: QTimer }
         self.receive_timers: Dict[str, QTimer] = {}
         # 4) 비주기 수신 횟수 카운트용 사전: { msg_id: int }
@@ -252,21 +273,33 @@ class CSCTabBase(QWidget):
         for mid, name in data:
             r = tbl.rowCount()
             tbl.insertRow(r)
-            tbl.setItem(r, 0, QTableWidgetItem(mid))
-            tbl.setItem(r, 1, QTableWidgetItem(name))
-            tbl.setItem(r, 2, QTableWidgetItem(default_state))
+            item_mid = QTableWidgetItem(mid)
+            item_name = QTableWidgetItem(name)
+            item_state = QTableWidgetItem(default_state)
+            item_mid.setToolTip(mid)
+            item_name.setToolTip(name)
+            item_state.setToolTip(default_state)
+            tbl.setItem(r, 0, item_mid)
+            tbl.setItem(r, 1, item_name)
+            tbl.setItem(r, 2, item_state)
 
             if is_tx_table:
                 btn_send = QPushButton("발신")
+                btn_send.setObjectName("SecondaryButton")
+                btn_send.setMinimumHeight(32)
                 btn_send.clicked.connect(lambda _, row=r: self._on_tx_button_clicked(row))
                 tbl.setCellWidget(r, 3, btn_send)
 
                 btn_view = QPushButton("보기")
+                btn_view.setObjectName("SecondaryButton")
+                btn_view.setMinimumHeight(32)
                 btn_view.clicked.connect(lambda _, row=r: self._on_tx_view_button_clicked(row))
                 tbl.setCellWidget(r, 4, btn_view)
 
             elif is_rx_table:
                 btn_view = QPushButton("보기")
+                btn_view.setObjectName("SecondaryButton")
+                btn_view.setMinimumHeight(32)
                 btn_view.clicked.connect(lambda _, row=r: self._on_rx_view_button_clicked(row))
                 tbl.setCellWidget(r, 3, btn_view)
 
@@ -463,7 +496,7 @@ class CSCTabBase(QWidget):
         dlg.exec_()
 
     def _on_tx_button_clicked(self, row: int):
-        self._on_tx_double_clicked(row, 0)
+        return self.send_tx_row(row, interactive=True)
 
     def _make_tx_table(self) -> QTableWidget:
         tbl = QTableWidget(0, 5)
@@ -549,24 +582,52 @@ class CSCTabBase(QWidget):
         self._write_log(self.log_rx, "RECV", msg_id, raw)
 
     # ──────────── 더블클릭 → Push (주기/비주기) ────────────────
+    def send_tx_row(self, row: int, *, interactive: bool = False) -> bool:
+        return self._dispatch_tx(row, interactive=interactive)
+
     def _on_tx_double_clicked(self, row: int, _col: int):
-        msg_id = self.tbl_tx.item(row, 0).text()
+        return self._on_tx_button_clicked(row)
+
+    def _dispatch_tx(self, row: int, *, interactive: bool) -> bool:
+        item = self.tbl_tx.item(row, 0)
+        if item is None:
+            return False
+
+        msg_id = item.text()
         freq = self.periodic_config.get(msg_id, None)
-        body = self._build_overridden_body(msg_id)
+
+        if freq is not None and msg_id in self.periodic_timers:
+            self._stop_periodic_send(msg_id, row)
+            return True
+
+        body = self._clone_tx_body(self._build_overridden_body(msg_id))
+        if self._should_confirm_tx(msg_id, interactive):
+            body = self._confirm_tx_payload(msg_id, row, body, freq)
+            if body is None:
+                state_item = self.tbl_tx.item(row, 2)
+                if state_item is not None:
+                    state_item.setText("전송 취소")
+                return False
 
         if freq is None:
-            ok = push_message(
-                msg_id, self.messenger,
-                on_done=lambda mid, raw: self._mark_single_sent(row, mid, raw),
-                body_dict=body
-            )
-            if not ok:
-                self.tbl_tx.item(row, 2).setText("발신 실패")
-        else:
-            if msg_id in self.periodic_timers:
-                self._stop_periodic_send(msg_id, row)
-            else:
-                self._start_periodic_send(msg_id, row, freq)
+            return self._push_tx_once(row, msg_id, body)
+
+        self._start_periodic_send(msg_id, row, freq, body_override=body)
+        return True
+
+    def _push_tx_once(self, row: int, msg_id: str, body: dict | None) -> bool:
+        ok = push_message(
+            msg_id,
+            self.messenger,
+            on_done=lambda mid, raw: self._mark_single_sent(row, mid, raw),
+            body_dict=body,
+        )
+        if not ok:
+            state_item = self.tbl_tx.item(row, 2)
+            if state_item is not None:
+                state_item.setText("발신 실패")
+            return False
+        return True
 
     def _receive_timeout(self, msg_id: str):
         for r in range(self.tbl_rx.rowCount()):
@@ -602,7 +663,7 @@ class CSCTabBase(QWidget):
         self._write_log(self.log_tx, "SEND", msg_id, raw)
 
     # ──────────── 주기 전송 관리 ─────────────────────
-    def _start_periodic_send(self, msg_id: str, row: int, freq_hz: float):
+    def _start_periodic_send(self, msg_id: str, row: int, freq_hz: float, body_override: dict | None = None):
         interval_ms = int(1000.0 / freq_hz)
         timer = QTimer(self)
         timer.setInterval(interval_ms)
@@ -610,6 +671,10 @@ class CSCTabBase(QWidget):
         timer.start()
 
         self.periodic_timers[msg_id] = timer
+        if isinstance(body_override, dict):
+            self._periodic_payload_templates[msg_id] = copy.deepcopy(body_override)
+        else:
+            self._periodic_payload_templates.pop(msg_id, None)
         state_item = self.tbl_tx.item(row, 2)
         if state_item is not None:
             state_item.setText(self._format_rate_state("주기송신", freq_hz, None))
@@ -621,6 +686,7 @@ class CSCTabBase(QWidget):
             timer.stop()
             timer.deleteLater()
             del self.periodic_timers[msg_id]
+        self._periodic_payload_templates.pop(msg_id, None)
 
         self.tbl_tx.item(row, 2).setText("전송 정지")
 
@@ -639,9 +705,221 @@ class CSCTabBase(QWidget):
             "source": self._sw_code(),
             "status": self._self_diag_status(),
         }
-    
+
+    def default_tx_payload(self, msg_id: str, body: dict | None = None) -> dict | None:
+        mid = str(msg_id).strip().zfill(4)
+        seed = self._clone_tx_body(body)
+        if not isinstance(seed, dict) or not seed:
+            seed = self._clone_tx_body(self._build_overridden_body(mid))
+        if not isinstance(seed, dict) or not seed:
+            seed = self._build_dialog_seed_payload(mid)
+        if not isinstance(seed, dict):
+            return seed
+        return self._normalize_dialog_payload(mid, seed)
+
+    def edit_tx_payload(
+        self,
+        msg_id: str,
+        body: dict | None,
+        *,
+        periodic_rate_hz: float | None = None,
+    ) -> dict | None:
+        mid = str(msg_id).zfill(4)
+        name = self._push_message_names.get(mid, mid)
+        dialog = MessagePayloadDialog(
+            mid,
+            name,
+            self.default_tx_payload(mid, body) or {},
+            periodic_rate_hz=periodic_rate_hz,
+            parent=self,
+        )
+        if dialog.exec_() != QDialog.Accepted:
+            return None
+        return dialog.payload
+
+    def _should_confirm_tx(self, msg_id: str, interactive: bool) -> bool:
+        return bool(interactive and str(msg_id).zfill(4) in self._push_message_names)
+
+    def _confirm_tx_payload(
+        self,
+        msg_id: str,
+        row: int,
+        body: dict | None,
+        freq_hz: float | None,
+    ) -> dict | None:
+        return self.edit_tx_payload(msg_id, body, periodic_rate_hz=freq_hz)
+
+    def _build_dialog_seed_payload(self, msg_id: str) -> dict:
+        mid = str(msg_id).strip().zfill(4)
+        timestamp = _now_ms_since_2000()
+        source = self._sw_code()
+
+        if mid == "0001":
+            return {
+                "timestamp": timestamp,
+                "source": source,
+                "contents": "",
+            }
+
+        if mid == "0102":
+            return {
+                "timestamp": timestamp,
+                "source": source,
+                "status": self._self_diag_status(),
+            }
+
+        if mid in _COMMON_DIALOG_DB_RULES:
+            directory_name, field_name, prefix_chars = _COMMON_DIALOG_DB_RULES[mid]
+            return {
+                "timestamp": timestamp,
+                "source": source,
+                field_name: self._latest_numeric_id(directory_name, prefix_chars=prefix_chars),
+            }
+
+        if mid == "0305":
+            return {
+                "timestamp": timestamp,
+                "source": source,
+                "missionPlanningStatus": 1,
+                "replanReason": "",
+            }
+
+        if mid == "0701":
+            option_name = DEFAULT_OPTION_CODE_SEQUENCE[0] if DEFAULT_OPTION_CODE_SEQUENCE else "OPTION_A"
+            return {
+                "timestamp": timestamp,
+                "source": source,
+                "autoExecution": False,
+                "optionList": [
+                    {
+                        "optionID": 1,
+                        "optionName": option_name,
+                        "missionPlanID": self._latest_numeric_id("MissionPlan"),
+                        "survivalRate": 1,
+                        "timeContraction": 1,
+                        "recogEffectiveness": 1,
+                        "distance": 15000,
+                        "target": 0,
+                    }
+                ],
+            }
+
+        if mid == "0901":
+            option_name = DEFAULT_OPTION_CODE_SEQUENCE[0] if DEFAULT_OPTION_CODE_SEQUENCE else "OPTION_A"
+            return {
+                "timestamp": timestamp,
+                "source": source,
+                "requestTime": timestamp,
+                "pendingOptionList": [
+                    {
+                        "optionID": 1,
+                        "optionName": option_name,
+                        "missionPlanID": self._latest_numeric_id("MissionPlan"),
+                    }
+                ],
+            }
+
+        if mid == "0902":
+            return {
+                "timestamp": timestamp,
+                "source": source,
+                "replanRequestTime": {
+                    "replanRequestTimestamp": timestamp,
+                },
+                "replanLevel": 1,
+                "inputMissionIDList": [],
+                "replanRequest": "",
+                "optionList": [],
+            }
+
+        generated = self._generate_dialog_payload(mid)
+        if isinstance(generated, dict) and generated:
+            return generated
+
+        return {
+            "timestamp": timestamp,
+            "source": source,
+        }
+
+    def _generate_dialog_payload(self, msg_id: str) -> dict | None:
+        mid = str(msg_id).strip().zfill(4)
+        try:
+            module = importlib.import_module(f"modules.common.generator.message{mid}_generator")
+            factory = getattr(module, f"make_msg{mid}_body", None)
+            if not callable(factory):
+                return None
+        except Exception:
+            return None
+
+        try:
+            payload = factory(source=self._sw_code())
+        except TypeError:
+            try:
+                payload = factory(self._sw_code())
+            except Exception:
+                return None
+        except Exception:
+            return None
+
+        if not isinstance(payload, dict):
+            return None
+        return override_source_fields(payload, self._sw_code())
+
+    def _normalize_dialog_payload(self, msg_id: str, body: dict) -> dict:
+        if not isinstance(body, dict):
+            return body
+
+        canonical_names = {
+            spec.name.lower(): spec.name for spec in load_message_field_specs(str(msg_id).zfill(4))
+        }
+        normalized: dict = {}
+        for key, value in body.items():
+            name = str(key)
+            normalized[canonical_names.get(name.lower(), name)] = value
+        return normalized
+
+    def _latest_numeric_id(self, directory_name: str, *, prefix_chars: str | None = None) -> int:
+        try:
+            directory = db_paths.ensure_db_payload(directory_name)
+        except Exception:
+            try:
+                directory = db_paths.get_db_subpath(directory_name)
+            except Exception:
+                return 0
+
+        latest = 0
+        try:
+            for path in directory.glob("*.json"):
+                stem = path.stem
+                if not stem.isdigit():
+                    continue
+                if prefix_chars and stem[:1] not in prefix_chars:
+                    continue
+                latest = max(latest, int(stem))
+        except Exception:
+            return latest
+        return latest
+
+    @staticmethod
+    def _clone_tx_body(body: dict | None):
+        if isinstance(body, dict):
+            return copy.deepcopy(body)
+        return body
+
+    def _refresh_runtime_fields(self, body: dict | None) -> dict | None:
+        if not isinstance(body, dict):
+            return body
+        refreshed = copy.deepcopy(body)
+        for key in ("timestamp", "Timestamp"):
+            if key in refreshed:
+                refreshed[key] = _now_ms_since_2000()
+        return refreshed
+
     def _periodic_timeout(self, msg_id: str, row: int):
-        body = self._build_overridden_body(msg_id)
+        template = self._periodic_payload_templates.get(msg_id)
+        body = self._refresh_runtime_fields(template)
+        if body is None:
+            body = self._refresh_runtime_fields(self._build_overridden_body(msg_id))
         ok = push_message(
             msg_id, self.messenger,
             on_done=lambda mid, raw: self._log_only(row, mid, raw),

@@ -3,6 +3,15 @@
 const SEND_CUSTOM_ENDPOINT = "/api/integration/send_custom";
 const EPOCH_2000 = Date.UTC(2000, 0, 1, 0, 0, 0, 0);
 const DEFAULT_PRIOR_ALT = 1000;
+const ENEMY_PICKER_OFFSETS = new Map([
+  [0, { x: 0, y: -98 }],
+  [1, { x: 92, y: -48 }],
+  [2, { x: 110, y: 18 }],
+  [3, { x: 46, y: 88 }],
+  [4, { x: -46, y: 88 }],
+  [5, { x: -110, y: 18 }],
+  [6, { x: -92, y: -48 }],
+]);
 
 const nowMs2000 = () => Date.now() - EPOCH_2000;
 
@@ -87,6 +96,11 @@ export const initScenarioPanel = (map) => {
   const enemyButtons = enemyPicker
     ? Array.from(enemyPicker.querySelectorAll("[data-enemy-type]"))
     : [];
+  const modeChip = document.getElementById("scenario-mode-chip");
+  const tabButtons = Array.from(panel.querySelectorAll("[data-scn-tab]"));
+  const cards = Array.from(panel.querySelectorAll(".scenario-card"));
+  const tabOrder = ["0202", "0801", "0802", "0803", "enemy"];
+  const cardByTab = new Map(tabOrder.map((key, index) => [key, cards[index] || null]));
 
   let picking = false;
   let enemyPicking = false;
@@ -98,6 +112,7 @@ export const initScenarioPanel = (map) => {
   let overlayMode = null;
   let overlayAlt = null;
   let last0202Coord = null;
+  let activeTab = "0202";
 
   const overlayTexts = {
     prior: {
@@ -123,12 +138,76 @@ export const initScenarioPanel = (map) => {
     if (next && typeof window.setMissionPanelOpen === "function") {
       window.setMissionPanelOpen(false);
     }
+    if (next) {
+      updateModeChip();
+    }
   };
 
   window.setScenarioPanelOpen = setOpen;
 
+  const setActiveTab = (tabId) => {
+    activeTab = tabOrder.includes(tabId) ? tabId : "0202";
+    tabButtons.forEach((button) => {
+      const selected = button.dataset.scnTab === activeTab;
+      button.classList.toggle("is-active", selected);
+      button.setAttribute("aria-selected", selected ? "true" : "false");
+    });
+    cardByTab.forEach((card, key) => {
+      if (!card) {
+        return;
+      }
+      const selected = key === activeTab;
+      card.classList.toggle("is-active", selected);
+      card.classList.toggle("is-hidden", !selected);
+    });
+  };
+
+  const updateModeChip = () => {
+    if (!modeChip) {
+      return;
+    }
+    if (enemyPicking) {
+      modeChip.textContent = "Enemy Placement";
+      return;
+    }
+    if (picking) {
+      modeChip.textContent = "Map Input";
+      return;
+    }
+    if (activeTab === "0801") {
+      modeChip.textContent = "Mission Trigger";
+      return;
+    }
+    if (activeTab === "0802") {
+      modeChip.textContent = "Force Command";
+      return;
+    }
+    if (activeTab === "0803") {
+      modeChip.textContent = "Execution Control";
+      return;
+    }
+    if (activeTab === "enemy") {
+      modeChip.textContent = "Threat Layout";
+      return;
+    }
+    const isCoord = !type0202 || type0202.value === "coord";
+    modeChip.textContent = isCoord ? "Coordinate Orientation" : "Target Orientation";
+  };
+
+  tabButtons.forEach((button) => {
+    button.setAttribute("role", "tab");
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      setActiveTab(button.dataset.scnTab || "0202");
+      updateModeChip();
+    });
+  });
+
   const applyOverlayMode = (mode) => {
     overlayMode = mode;
+    if (overlay) {
+      overlay.classList.toggle("is-enemy-mode", mode === "enemy");
+    }
     if (!overlayTitle || !overlayHint) {
       return;
     }
@@ -156,6 +235,7 @@ export const initScenarioPanel = (map) => {
   const setPicking = (next) => {
     picking = Boolean(next);
     if (picking) {
+      setActiveTab("0202");
       enemyPicking = false;
       enemyMenuActive = false;
       enemySelection = null;
@@ -180,6 +260,7 @@ export const initScenarioPanel = (map) => {
       type0202.value = "coord";
       syncType();
     }
+    updateModeChip();
   };
 
   const hideEnemyPicker = () => {
@@ -194,6 +275,7 @@ export const initScenarioPanel = (map) => {
   const setEnemyPicking = (next) => {
     enemyPicking = Boolean(next);
     if (enemyPicking) {
+      setActiveTab("enemy");
       setPicking(false);
       overlayAlt = 0;
       applyOverlayMode("enemy");
@@ -216,6 +298,7 @@ export const initScenarioPanel = (map) => {
     if (canvas) {
       canvas.style.cursor = enemyPicking || picking ? "crosshair" : "";
     }
+    updateModeChip();
   };
 
   const syncType = () => {
@@ -229,6 +312,7 @@ export const initScenarioPanel = (map) => {
     if (!isCoord && picking) {
       setPicking(false);
     }
+    updateModeChip();
   };
 
   const updateOverlay = (lngLat, point, altOverride) => {
@@ -260,12 +344,18 @@ export const initScenarioPanel = (map) => {
     if (!enemyButtons.length) {
       return;
     }
-    const radius = 64;
     const count = enemyButtons.length;
     enemyButtons.forEach((btn, idx) => {
+      const typeId = Math.trunc(num(btn.dataset.enemyType, idx) ?? idx);
+      const offset = ENEMY_PICKER_OFFSETS.get(typeId);
+      if (offset) {
+        btn.style.transform =
+          `translate(-50%, -50%) translate(${offset.x.toFixed(1)}px, ${offset.y.toFixed(1)}px)`;
+        return;
+      }
       const angle = (idx / count) * Math.PI * 2 - Math.PI / 2;
-      const dx = Math.cos(angle) * radius;
-      const dy = Math.sin(angle) * radius;
+      const dx = Math.cos(angle) * 112;
+      const dy = Math.sin(angle) * 88;
       btn.style.transform = `translate(-50%, -50%) translate(${dx.toFixed(1)}px, ${dy.toFixed(1)}px)`;
     });
   };
@@ -471,7 +561,9 @@ export const initScenarioPanel = (map) => {
   if (type0202) {
     type0202.addEventListener("change", syncType);
   }
+  setActiveTab(activeTab);
   syncType();
+  updateModeChip();
 
   if (pick0202) {
     pick0202.addEventListener("click", () => {

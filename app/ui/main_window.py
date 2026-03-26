@@ -12,7 +12,7 @@ from .zones import GRID_ROWS, GRID_COLS, ZONES
 from ..widgets.cards import Card
 from ..widgets.module_with_log import ModuleWithLog
 from ..widgets.operation_flow_panel import OperationFlowPanel
-import os, sys, subprocess, json, socket, shutil
+import os, sys, subprocess, json, socket, shutil, re
 from pathlib import Path
 from modules.common import db_paths
 from modules.common.process_console import (
@@ -21,7 +21,23 @@ from modules.common.process_console import (
     should_show_module_consoles,
 )
 
-APP_TITLE = "KU Mission Decision Support Dashboard (v1.1.3)"
+CHANGE_LOG_PATH = db_paths.PROJECT_ROOT / "change_log.md"
+_VERSION_LINE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\s+(v[0-9.]+)\s+-")
+
+
+def _load_app_version() -> str:
+    try:
+        for line in CHANGE_LOG_PATH.read_text(encoding="utf-8").splitlines():
+            match = _VERSION_LINE_RE.match(line.strip())
+            if match:
+                return match.group(1)
+    except Exception:
+        pass
+    return "v1.1.31"
+
+
+APP_VERSION = _load_app_version()
+APP_TITLE = f"KU Mission Decision Support Dashboard ({APP_VERSION})"
 REFERENCE_PDF_PATH = db_paths.PROJECT_ROOT / "ref" / "04. 모듈 간 인터페이스 설계-v7-20260116_175548.pdf"
 if not REFERENCE_PDF_PATH.exists():
     REFERENCE_PDF_PATH = db_paths.PROJECT_ROOT / "ref" / "04. 모듈 간 인터페이스 설계-v7-20250917_133206.pdf"
@@ -41,7 +57,7 @@ class MainWindow(QMainWindow):
         self._scenario_status_dot: Optional[QLabel] = None
         self._scenario_status_label: Optional[QLabel] = None
         self._version_notes: Optional[QPlainTextEdit] = None
-        self._version_notes_path: Path = db_paths.PROJECT_ROOT / "change_log.md"
+        self._version_notes_path: Path = CHANGE_LOG_PATH
 
         # Middleware widget references
         self._middleware_card: Optional[QWidget] = None
@@ -263,7 +279,7 @@ class MainWindow(QMainWindow):
         meta_row.setContentsMargins(0, 4, 0, 0)
         meta_row.setSpacing(8)
 
-        version_badge = QLabel("v1.1.3", card)
+        version_badge = QLabel(APP_VERSION, card)
         version_badge.setObjectName("HeaderBadge")
         meta_row.addWidget(version_badge, 0, Qt.AlignLeft)
 
@@ -480,7 +496,7 @@ class MainWindow(QMainWindow):
             return le
 
         self._mw_name = _mk_line("AVS1", 110, "AVS1")
-        self._mw_addr = _mk_line("203.", 110, "192.")
+        self._mw_addr = _mk_line("203", 110, "192")
         self._mw_local = _mk_line("10", 72, "10")
         self._mw_external = _mk_line("100", 72, "100")
 
@@ -512,21 +528,31 @@ class MainWindow(QMainWindow):
         self._load_middleware_config()
         return card
 
-
-    def _apply_middleware(self) -> None:
-        """Persist middleware settings to every nFusionSettings.json in the project."""
+    def _current_middleware_settings(self) -> dict:
         name = (self._mw_name.text() or "").strip() or "AVS1"
-        net = (self._mw_addr.text() or "").strip() or "192."
-        if not net.endswith('.'):
-            net += '.'
+        network = (self._mw_addr.text() or "").strip() or "192"
         try:
             local = int((self._mw_local.text() or "10").strip())
         except Exception:
             local = 10
         try:
-            ext = int((self._mw_external.text() or "100").strip())
+            external = int((self._mw_external.text() or "100").strip())
         except Exception:
-            ext = 100
+            external = 100
+        return {
+            "Name": name,
+            "NetworkAddress": network,
+            "LocalDomain": local,
+            "ExternalDomain": external,
+        }
+
+    def _apply_middleware(self) -> dict:
+        """Persist middleware settings to every nFusionSettings.json in the project."""
+        settings = self._current_middleware_settings()
+        name = settings["Name"]
+        net = settings["NetworkAddress"]
+        local = settings["LocalDomain"]
+        ext = settings["ExternalDomain"]
 
         cfg = {
             "Middleware": {
@@ -566,6 +592,7 @@ class MainWindow(QMainWindow):
 
         self._last_middleware_prefix = ip_prefix
         self.validate_launch_prerequisites(show_message=False)
+        return settings
 
     def _load_middleware_config(self) -> None:
         """Load existing middleware configuration if available."""
@@ -586,12 +613,13 @@ class MainWindow(QMainWindow):
         if self._mw_name is not None and mw.get("Name") is not None:
             self._mw_name.setText(str(mw["Name"]))
         if self._mw_addr is not None and mw.get("NetworkAddress") is not None:
-            self._mw_addr.setText(str(mw["NetworkAddress"]))
+            raw_network = str(mw["NetworkAddress"])
+            normalized_network = self._normalize_network_prefix(raw_network)
+            self._mw_addr.setText(normalized_network or raw_network.rstrip("."))
         if self._mw_local is not None and mw.get("LocalDomain") is not None:
             self._mw_local.setText(str(mw["LocalDomain"]))
         if self._mw_external is not None and mw.get("ExternalDomain") is not None:
             self._mw_external.setText(str(mw["ExternalDomain"]))
-
 
     def _find_project_root(self) -> Path:
         """Locate the project root by searching for run.py upward."""
@@ -713,7 +741,7 @@ class MainWindow(QMainWindow):
             if number < 0 or number > 255:
                 return ""
             normalized.append(str(number))
-        return ".".join(normalized) + "."
+        return ".".join(normalized)
 
     def _validate_path_settings(self) -> dict:
         info = db_paths.get_info()
@@ -777,7 +805,7 @@ class MainWindow(QMainWindow):
         if not name.strip():
             problems.append("Middleware Name이 비어 있습니다.")
         if not prefix:
-            problems.append("NetworkAddress 형식이 올바르지 않습니다. 예: 192.168.100.")
+            problems.append("NetworkAddress 형식이 올바르지 않습니다. 예: 192.168.100")
         try:
             int(local_text.strip())
         except Exception:
@@ -1077,10 +1105,19 @@ class MainWindow(QMainWindow):
             return
 
         try:
+            self._apply_middleware()
             show_console = should_show_module_consoles()
             env = os.environ.copy()
             env["PYTHONUNBUFFERED"] = "1"
             env["KU_CONSOLE_TITLE"] = "KU Simulation Console"
+            try:
+                from modules.sim.config import resolve_server_binding
+
+                host, port = resolve_server_binding()
+            except Exception:
+                host, port = "0.0.0.0", 8000
+            env["SIM_SERVER_HOST"] = str(host)
+            env["SIM_SERVER_PORT"] = str(port)
             proc = subprocess.Popen(
                 [preferred_console_python(sys.executable), str(script)],
                 cwd=str(root),
@@ -1089,20 +1126,12 @@ class MainWindow(QMainWindow):
             )
             try:
                 import webbrowser
-                try:
-                    from modules.sim.config import SERVER_HOST, SERVER_PORT
-                    host = str(SERVER_HOST)
-                    port = int(SERVER_PORT)
-                    if host in ("0.0.0.0", "::"):
-                        host = "127.0.0.1"
-                    url = f"http://{host}:{port}/"
-                except Exception:
-                    url = "http://127.0.0.1:8000/"
+                url = f"http://127.0.0.1:{int(port)}/"
                 webbrowser.open(url, new=2)
             except Exception:
                 pass
             self._role_processes["sim"] = proc
-            self._log_to_modules("[RUN] Simulation launched")
+            self._log_to_modules(f"[RUN] Simulation launched ({host}:{port})")
         except Exception as exc:
             self._log_to_modules(f"[RUN ERR] Simulation launch failed: {exc}")
 

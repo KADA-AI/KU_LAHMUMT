@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Optional, Tuple, List, Set
 
 from modules.common import db_paths
+from modules.common import prior_target_rediscovery_store
 
 _TARGET_INFO_NAME = "targetInfo.json"
 
@@ -167,6 +168,33 @@ def _make_target_key(entry: Dict[str, Any]) -> Optional[str]:
     if watcher_id is None:
         return str(target_id)
     return f"{target_id}-{watcher_id}"
+
+
+def _has_handled_state_for_target(target_map: Dict[str, Dict[str, Any]], target_id: int) -> bool:
+    for entry in target_map.values():
+        if not isinstance(entry, dict):
+            continue
+        if _to_int(entry.get("targetID")) != int(target_id):
+            continue
+        if _normalize_flag(entry.get("isUsed")) == 1 or _normalize_flag(entry.get("isIgnored")) == 1:
+            return True
+    return False
+
+
+def _clear_handled_state_for_target(target_map: Dict[str, Dict[str, Any]], target_id: int) -> bool:
+    changed = False
+    for entry in target_map.values():
+        if not isinstance(entry, dict):
+            continue
+        if _to_int(entry.get("targetID")) != int(target_id):
+            continue
+        if _normalize_flag(entry.get("isUsed")) != 0:
+            entry["isUsed"] = 0
+            changed = True
+        if _normalize_flag(entry.get("isIgnored")) != 0:
+            entry["isIgnored"] = 0
+            changed = True
+    return changed
 
 
 def _serialize_target(
@@ -474,35 +502,86 @@ def update_target_info_from_0402(message: Any) -> Tuple[Dict[str, Any], List[Dic
                     ):
                         break
 
-            existed_before = key in tracking_map
-            if not existed_before and target_id is not None:
-                handled_elsewhere = False
-                for prev_entry in tracking_map.values():
-                    if not isinstance(prev_entry, dict):
-                        continue
-                    if _to_int(prev_entry.get("targetID")) != _to_int(target_id):
-                        continue
-                    prev_used = _normalize_flag(prev_entry.get("isUsed"))
-                    prev_ignored = _normalize_flag(prev_entry.get("isIgnored"))
-                    if prev_used == 1 or prev_ignored == 1:
-                        handled_elsewhere = True
-                        break
-
-                if not handled_elsewhere:
-                    new_targets.append(
+            handled_elsewhere = False
+            prior_rediscovery_entries: List[Dict[str, Any]] = []
+            prior_ids: List[int] = []
+            prior_types: List[int] = []
+            if target_id is not None:
+                handled_elsewhere = _has_handled_state_for_target(
+                    tracking_map,
+                    int(target_id),
+                )
+                try:
+                    prior_rediscovery_entries = prior_target_rediscovery_store.match_detection(
+                        target_id=int(target_id),
+                        coordinate=serialized.get("coordinate"),
+                        watcher_id=_to_int(serialized.get("watcherID")),
+                        key=key,
+                        timestamp=timestamp,
+                    )
+                except Exception:
+                    prior_rediscovery_entries = []
+                if prior_rediscovery_entries:
+                    prior_ids = sorted(
                         {
-                            "key": key,
-                            "targetID": target_id,
-                            "watcherID": serialized.get("watcherID"),
-                            "targetType": serialized.get("targetType"),
-                            "coordinate": serialized.get("coordinate"),
-                            "firstDetected": serialized.get("firstDetected"),
-                            "lastUpdated": serialized.get("lastUpdated"),
-                            "elapsedMs": serialized.get("sinceFirstDetectedMs"),
-                            "threat": serialized.get("threat"),
-                            "timestamp": timestamp,
+                            int(pid)
+                            for pid in (_to_int(item.get("priorMissionID")) for item in prior_rediscovery_entries)
+                            if pid is not None and pid > 0
                         }
                     )
+                    prior_types = sorted(
+                        {
+                            int(mtype)
+                            for mtype in (_to_int(item.get("missionType")) for item in prior_rediscovery_entries)
+                            if mtype is not None and mtype > 0
+                        }
+                    )
+                if prior_rediscovery_entries and handled_elsewhere:
+                    _clear_handled_state_for_target(tracking_map, int(target_id))
+                    _clear_handled_state_for_target(target_map, int(target_id))
+                    serialized["isUsed"] = 0
+                    serialized["isIgnored"] = 0
+                    serialized["priorMissionRediscovered"] = True
+                if prior_ids:
+                    serialized["priorMissionIDList"] = prior_ids
+                if prior_types:
+                    serialized["priorMissionTypeList"] = prior_types
+
+            existed_before = key in tracking_map
+            if target_id is not None and prior_rediscovery_entries:
+                replan_candidate = {
+                    "key": key,
+                    "targetID": target_id,
+                    "watcherID": serialized.get("watcherID"),
+                    "targetType": serialized.get("targetType"),
+                    "coordinate": serialized.get("coordinate"),
+                    "firstDetected": serialized.get("firstDetected"),
+                    "lastUpdated": serialized.get("lastUpdated"),
+                    "elapsedMs": serialized.get("sinceFirstDetectedMs"),
+                    "threat": serialized.get("threat"),
+                    "timestamp": timestamp,
+                    "priorMissionMatched": True,
+                    "priorMissionRediscovered": bool(serialized.get("priorMissionRediscovered")),
+                    "handledStateReset": bool(serialized.get("priorMissionRediscovered")),
+                    "priorMissionIDList": serialized.get("priorMissionIDList") or [],
+                    "priorMissionTypeList": serialized.get("priorMissionTypeList") or [],
+                }
+                new_targets.append(replan_candidate)
+            elif not existed_before and target_id is not None and not handled_elsewhere:
+                new_targets.append(
+                    {
+                        "key": key,
+                        "targetID": target_id,
+                        "watcherID": serialized.get("watcherID"),
+                        "targetType": serialized.get("targetType"),
+                        "coordinate": serialized.get("coordinate"),
+                        "firstDetected": serialized.get("firstDetected"),
+                        "lastUpdated": serialized.get("lastUpdated"),
+                        "elapsedMs": serialized.get("sinceFirstDetectedMs"),
+                        "threat": serialized.get("threat"),
+                        "timestamp": timestamp,
+                    }
+                )
 
             target_map[key] = serialized
             tracking_map[key] = dict(serialized)

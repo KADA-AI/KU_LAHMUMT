@@ -38,6 +38,61 @@ const FLIGHT_MODE_LABELS = {
   9: "표적추적비행",
 };
 
+const coerceInt = (value, fallback = null) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.trunc(parsed) : fallback;
+};
+
+const pickNested = (value, keys) => {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  for (const key of keys) {
+    if (value[key] !== undefined && value[key] !== null) {
+      return value[key];
+    }
+  }
+  return null;
+};
+
+const readWaypointId = (entry) => {
+  const direct = entry?.currentWaypointID ?? entry?.CurrentWaypointID;
+  const nested = pickNested(direct, [
+    "waypointID",
+    "WaypointID",
+    "id",
+    "ID",
+  ]);
+  if (nested !== null) {
+    return coerceInt(nested, null);
+  }
+  const viaInfo = entry?.unmannedInfo?.currentWaypointID ?? entry?.unmannedInfo?.CurrentWaypointID;
+  const viaInfoNested = pickNested(viaInfo, ["waypointID", "WaypointID", "id", "ID"]);
+  if (viaInfoNested !== null) {
+    return coerceInt(viaInfoNested, null);
+  }
+  return coerceInt(direct ?? viaInfo, null);
+};
+
+const readTargetId = (entry) => {
+  const target = entry?.targetFollowing || entry?.TargetFollowing || entry?.unmannedInfo?.targetFollowing || entry?.unmannedInfo?.TargetFollowing;
+  const nested = pickNested(target, ["targetID", "TargetID", "id", "ID"]);
+  if (nested !== null) {
+    return coerceInt(nested, null);
+  }
+  return coerceInt(entry?.targetID ?? entry?.TargetID, null);
+};
+
+const readFlightMode = (entry) => {
+  const value = entry?.flightMode ?? entry?.FlightMode ?? entry?.unmannedInfo?.flightMode ?? entry?.unmannedInfo?.FlightMode;
+  return coerceInt(value, null);
+};
+
+const readOnMission = (entry) => {
+  const value = entry?.onMission ?? entry?.OnMission ?? entry?.unmannedInfo?.onMission ?? entry?.unmannedInfo?.OnMission;
+  return coerceInt(value, null);
+};
+
 const applySimState = (status, simEntry) => {
   if (!status || !simEntry) {
     return status;
@@ -76,6 +131,28 @@ const applySimState = (status, simEntry) => {
   } else if (typeof simEntry.alive === "boolean") {
     agent.health = simEntry.alive ? 1 : 2;
   }
+  const currentWaypointID = readWaypointId(simEntry);
+  const targetID = readTargetId(simEntry);
+  if (agent.isUnmanned) {
+    const flightMode = readFlightMode(simEntry);
+    const onMission = readOnMission(simEntry);
+    if (Number.isFinite(flightMode)) {
+      agent.unmannedInfo.flightMode = flightMode;
+    }
+    if (Number.isFinite(onMission)) {
+      agent.unmannedInfo.onMission = onMission;
+    }
+    if (Number.isFinite(currentWaypointID)) {
+      agent.unmannedInfo.currentWaypointID = currentWaypointID;
+    }
+    if (Number.isFinite(targetID)) {
+      if (agent.unmannedInfo.targetFollowing && typeof agent.unmannedInfo.targetFollowing === "object") {
+        agent.unmannedInfo.targetFollowing.targetID = targetID;
+      } else {
+        agent.unmannedInfo.targetFollowing = { targetID };
+      }
+    }
+  }
   if (!agent.isUnmanned && simEntry.weapons) {
     const weapons = simEntry.weapons;
     if (Number.isFinite(Number(weapons.type1))) {
@@ -86,16 +163,6 @@ const applySimState = (status, simEntry) => {
     }
     if (Number.isFinite(Number(weapons.type3))) {
       agent.mannedInfo.weapons.type3 = Number(weapons.type3);
-    }
-  }
-  if (agent.isUnmanned) {
-    const flightMode = Number(simEntry.flightMode);
-    if (Number.isFinite(flightMode)) {
-      agent.unmannedInfo.flightMode = flightMode;
-    }
-    const onMission = Number(simEntry.onMission);
-    if (Number.isFinite(onMission)) {
-      agent.unmannedInfo.onMission = onMission;
     }
   }
   return status;

@@ -65,6 +65,27 @@ def _extract_coord(item: dict[str, Any]) -> tuple[float, float, float | None] | 
     return lat_v, lon_v, alt_v
 
 
+def _extract_loiter(item: dict[str, Any]) -> dict[str, Any] | None:
+    loiter = (
+        item.get("loiter")
+        or item.get("Loiter")
+        or item.get("loiterProperty")
+        or item.get("LoiterProperty")
+        or item.get("loiter_prop")
+    )
+    return loiter if isinstance(loiter, dict) else None
+
+
+def _waypoint_mode(item: dict[str, Any]) -> str:
+    loiter = _extract_loiter(item)
+    pass_type = _coerce_int(item.get("waypointPassType") or item.get("WaypointPassType"))
+    if loiter is not None or pass_type == 2:
+        return "loiter"
+    if pass_type == 1:
+        return "fly-by"
+    return "fly-over"
+
+
 def _order_waypoints(raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if not raw:
         return []
@@ -196,6 +217,8 @@ def build_features_from_flight_paths(
         coords: list[list[float]] = []
         alts: list[float | None] = []
         wp_ids: list[int | None] = []
+        wp_pass_types: list[int | None] = []
+        wp_modes: list[str] = []
         alt_values: list[float] = []
         for wp in waypoints:
             if not isinstance(wp, dict):
@@ -211,6 +234,8 @@ def build_features_from_flight_paths(
             except Exception:
                 wp_id = None
             wp_ids.append(wp_id)
+            wp_pass_types.append(_coerce_int(wp.get("waypointPassType") or wp.get("WaypointPassType")))
+            wp_modes.append(_waypoint_mode(wp))
             alts.append(float(alt) if alt is not None else None)
             if alt is not None:
                 alt_values.append(float(alt))
@@ -230,6 +255,8 @@ def build_features_from_flight_paths(
             "coords": coords,
             "alts": alts,
             "wpIds": wp_ids,
+            "wpPassTypes": wp_pass_types,
+            "wpModes": wp_modes,
             "altMin": min(alt_values) if alt_values else None,
             "altMax": max(alt_values) if alt_values else None,
         }

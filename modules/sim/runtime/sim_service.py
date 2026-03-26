@@ -1593,6 +1593,20 @@ class SimulationService:
             return float(SIM_PROJECTILE_HIT_RADIUS_MISSILE)
         return float(SIM_PROJECTILE_HIT_RADIUS_GUN)
 
+    @staticmethod
+    def _bearing_deg(from_x: float, from_y: float, to_x: float, to_y: float) -> float:
+        return math.degrees(math.atan2(to_y - from_y, to_x - from_x)) % 360.0
+
+    def _target_fire_age(self, target_id: int) -> float | None:
+        last_fire = self._last_enemy_fire.get(int(target_id))
+        if last_fire is None:
+            return None
+        try:
+            age = float(self.sim_time) - float(last_fire)
+        except Exception:
+            return None
+        return max(0.0, age)
+
     def _spawn_projectile(
         self,
         *,
@@ -1704,6 +1718,28 @@ class SimulationService:
 
     def _target_to_dict(self, target: GroundTarget, geo: GeoConverter) -> dict:
         lon, lat = geo.xy_to_lonlat(target.x, target.y)
+        threat = getattr(target, "threat", None)
+        weapon = getattr(threat, "weapon", None) if threat is not None else None
+        threat_state = getattr(threat, "state", None) if threat is not None else None
+        weapon_kind = None
+        weapon_range = 0.0
+        weapon_reload = 0.0
+        ammo = None
+        detected = False
+        exposure_time = 0.0
+        if weapon is not None:
+            weapon_kind = "missile" if weapon.weapon_type is WeaponType.MISSILE else "gun"
+            weapon_range = float(getattr(weapon, "a_range", 0.0) or 0.0)
+            weapon_reload = float(getattr(weapon, "reload", 0.0) or 0.0)
+        if threat_state is not None:
+            detected = bool(getattr(threat_state, "detected", False))
+            exposure_time = float(getattr(threat_state, "t_exposed", 0.0) or 0.0)
+            ammo_value = getattr(threat_state, "ammo", None)
+            if ammo_value is not None:
+                try:
+                    ammo = int(ammo_value)
+                except Exception:
+                    ammo = None
         return {
             "id": int(target.id),
             "type": int(target.type_id),
@@ -1713,6 +1749,19 @@ class SimulationService:
             "alt": float(target.z),
             "moving": bool(target.moving),
             "alive": bool(target.alive),
+            "heading": float(getattr(target, "heading", 0.0) or 0.0),
+            "headingRate": float(getattr(target, "heading_rate", 0.0) or 0.0),
+            "speed": float(getattr(target, "v", 0.0) or 0.0),
+            "speedMin": float(getattr(target, "vmin", 0.0) or 0.0),
+            "speedMax": float(getattr(target, "vmax", 0.0) or 0.0),
+            "roamRadius": float(getattr(target, "roam_radius", 0.0) or 0.0) if getattr(target, "roam_radius", None) is not None else None,
+            "detected": detected,
+            "exposureTime": exposure_time,
+            "ammo": ammo,
+            "weaponKind": weapon_kind,
+            "weaponRange": weapon_range,
+            "reload": weapon_reload,
+            "lastFireAge": self._target_fire_age(int(target.id)),
         }
 
     def add_target(self, payload: dict) -> dict:
@@ -1764,6 +1813,101 @@ class SimulationService:
             self._last_0402_sim_time = None
         return {"ok": True}
 
+    @staticmethod
+    def _controller_progress_signature(controller: WaypointPIDController | None) -> tuple[tuple[int, int, int, int], ...]:
+        if not isinstance(controller, WaypointPIDController):
+            return ()
+        targets = getattr(controller, "targets", None)
+        if not isinstance(targets, list) or not targets:
+            return ()
+        signature: list[tuple[int, int, int, int]] = []
+        for idx, target in enumerate(targets):
+            wp_id = _coerce_int(getattr(target, "wp_id", None), None)
+            input_id = _coerce_int(getattr(target, "input_mission_id", None), None)
+            individual_id = _coerce_int(getattr(target, "individual_mission_id", None), None)
+            path_id = _coerce_int(getattr(target, "path_id", None), None)
+            signature.append((
+                int(wp_id) if wp_id is not None else -int(idx + 1),
+                int(input_id or 0),
+                int(individual_id or 0),
+                int(path_id or 0),
+            ))
+        return tuple(signature)
+
+    def _capture_controller_progress(self, controller: WaypointPIDController | None) -> dict[str, Any] | None:
+        signature = self._controller_progress_signature(controller)
+        if not signature:
+            return None
+        return {
+            "signature": signature,
+            "curr_idx": int(getattr(controller, "curr_idx", 0) or 0),
+            "closest_wp_idx": int(getattr(controller, "_closest_wp_idx", 0) or 0),
+            "finished": bool(getattr(controller, "finished", False)),
+            "blocked": bool(getattr(controller, "blocked", False)),
+            "blocked_input_id": _coerce_int(getattr(controller, "blocked_input_id", None), None),
+            "blocked_idx": _coerce_int(getattr(controller, "_blocked_idx", None), None),
+            "force_hover": bool(getattr(controller, "force_hover", False)),
+            "is_hovering": bool(getattr(controller, "is_hovering", False)),
+            "hover_timer": float(getattr(controller, "hover_timer", 0.0) or 0.0),
+            "is_loitering": bool(getattr(controller, "is_loitering", False)),
+            "loiter_timer": float(getattr(controller, "loiter_timer", 0.0) or 0.0),
+            "loiter_center": tuple(getattr(controller, "loiter_center", (0.0, 0.0, 0.0)) or (0.0, 0.0, 0.0)),
+            "loiter_radius": float(getattr(controller, "loiter_radius", 0.0) or 0.0),
+            "loiter_speed": float(getattr(controller, "loiter_speed", 0.0) or 0.0),
+            "loiter_dir": float(getattr(controller, "loiter_dir", 1.0) or 1.0),
+            "loiter_angle": float(getattr(controller, "loiter_angle", 0.0) or 0.0),
+            "loiter_angle_locked": bool(getattr(controller, "loiter_angle_locked", False)),
+        }
+
+    def _restore_controller_progress(
+        self,
+        controller: WaypointPIDController | None,
+        snapshot: dict[str, Any] | None,
+    ) -> bool:
+        if not isinstance(controller, WaypointPIDController) or not isinstance(snapshot, dict):
+            return False
+        current_signature = self._controller_progress_signature(controller)
+        saved_signature = tuple(snapshot.get("signature") or ())
+        if not current_signature or current_signature != saved_signature:
+            return False
+        targets = getattr(controller, "targets", None)
+        if not isinstance(targets, list) or not targets:
+            return False
+        last_idx = max(0, len(targets) - 1)
+        curr_idx = _coerce_int(snapshot.get("curr_idx"), 0)
+        closest_idx = _coerce_int(snapshot.get("closest_wp_idx"), 0)
+        blocked_idx = _coerce_int(snapshot.get("blocked_idx"), None)
+        controller.curr_idx = max(0, min(int(curr_idx or 0), last_idx))
+        controller._closest_wp_idx = max(0, min(int(closest_idx or controller.curr_idx), last_idx))
+        controller.finished = bool(snapshot.get("finished", False))
+        controller.blocked = bool(snapshot.get("blocked", False))
+        controller.blocked_input_id = _coerce_int(snapshot.get("blocked_input_id"), None)
+        controller._blocked_idx = (
+            max(0, min(int(blocked_idx), last_idx))
+            if blocked_idx is not None
+            else None
+        )
+        controller.force_hover = bool(snapshot.get("force_hover", False))
+        controller.is_hovering = bool(snapshot.get("is_hovering", False))
+        controller.hover_timer = float(snapshot.get("hover_timer", 0.0) or 0.0)
+        controller.is_loitering = bool(snapshot.get("is_loitering", False))
+        controller.loiter_timer = float(snapshot.get("loiter_timer", 0.0) or 0.0)
+        loiter_center = snapshot.get("loiter_center")
+        if isinstance(loiter_center, (list, tuple)) and len(loiter_center) == 3:
+            controller.loiter_center = (
+                float(loiter_center[0]),
+                float(loiter_center[1]),
+                float(loiter_center[2]),
+            )
+        controller.loiter_radius = float(snapshot.get("loiter_radius", 0.0) or 0.0)
+        controller.loiter_speed = float(snapshot.get("loiter_speed", 0.0) or 0.0)
+        controller.loiter_dir = float(snapshot.get("loiter_dir", 1.0) or 1.0)
+        controller.loiter_angle = float(snapshot.get("loiter_angle", 0.0) or 0.0)
+        controller.loiter_angle_locked = bool(snapshot.get("loiter_angle_locked", False))
+        controller.just_advanced = False
+        controller.advance_reason = None
+        return True
+
     def load_mission(self, payload: dict) -> dict:
         preserve_state = _coerce_bool(
             payload.get("preserveState")
@@ -1792,6 +1936,7 @@ class SimulationService:
         prev_last_0402: float | None = None
         prev_ts_anchor: int | None = None
         prev_forced: dict[str, dict[str, Any]] | None = None
+        prev_controller_progress: dict[int, dict[str, Any]] = {}
         if preserve_state:
             with self._lock:
                 prev_geo = self.geo
@@ -1820,6 +1965,11 @@ class SimulationService:
                             "crashed": bool(simv.crashed),
                             "alt": float(getattr(s, "z", 0.0)),
                         }
+                        controller_snapshot = self._capture_controller_progress(
+                            getattr(simv, "controller", None)
+                        )
+                        if controller_snapshot is not None:
+                            prev_controller_progress[int(simv.aircraft_id)] = controller_snapshot
                 prev_overrides = {k: dict(v) for k, v in (self._agent_overrides or {}).items()}
                 prev_sim_time = float(self.sim_time)
                 prev_step_count = int(self.step_count)
@@ -1955,6 +2105,7 @@ class SimulationService:
                         "alt": alt,
                         "speed": speed,
                         "wp_id": wp_id,
+                        "is_done": _coerce_bool(wp.get("isDone"), False),
                         "hover_time": hover_time,
                         "loiter": loiter,
                         "pass_type": pass_type,
@@ -2152,6 +2303,7 @@ class SimulationService:
                                 "alt": alt,
                                 "speed": speed,
                                 "wp_id": wp_id,
+                                "is_done": _coerce_bool(wp.get("isDone"), False),
                                 "hover_time": hover_time,
                                 "loiter": loiter,
                                 "pass_type": pass_type,
@@ -2280,6 +2432,7 @@ class SimulationService:
                                 "alt": alt,
                                 "speed": speed,
                                 "wp_id": wp_id,
+                                "is_done": _coerce_bool(wp.get("isDone"), False),
                                 "hover_time": hover_time,
                                 "loiter": loiter,
                                 "pass_type": pass_type,
@@ -2375,15 +2528,16 @@ class SimulationService:
                             "alt": alt,
                             "speed": speed,
                             "wp_id": wp_id,
-                        "hover_time": hover_time,
-                        "loiter": loiter,
-                        "pass_type": pass_type,
-                                "filming": filming,
-                                "attack": attack if isinstance(attack, dict) else None,
-                                "path_id": pid,
-                                "sep_m": path_sep_m,
-                            }
-                        )
+                            "is_done": _coerce_bool(wp.get("isDone"), False),
+                            "hover_time": hover_time,
+                            "loiter": loiter,
+                            "pass_type": pass_type,
+                            "filming": filming,
+                            "attack": attack if isinstance(attack, dict) else None,
+                            "path_id": pid,
+                            "sep_m": path_sep_m,
+                        }
+                    )
             if combined_by_aircraft:
                 for aircraft_id, combined in combined_by_aircraft.items():
                     if len(combined) < 2:
@@ -2437,6 +2591,28 @@ class SimulationService:
         lat_avg = sum(lat for _, lat in all_latlons) / len(all_latlons)
 
         spawn_latlon: dict[int, tuple[float, float, float]] = {}
+        for path in paths:
+            if not isinstance(path, PathDefinition):
+                continue
+            first_wp = (path.waypoints or [None])[0]
+            if not isinstance(first_wp, dict):
+                continue
+            try:
+                aircraft_id = int(path.aircraft_id)
+            except Exception:
+                continue
+            if aircraft_id <= 0:
+                continue
+            lat = _coerce_float(first_wp.get("lat"), float("nan"))
+            lon = _coerce_float(first_wp.get("lon"), float("nan"))
+            if not math.isfinite(lat) or not math.isfinite(lon):
+                continue
+            alt = _coerce_float(first_wp.get("alt"), 0.0)
+            spawn_latlon[aircraft_id] = (
+                lat,
+                lon,
+                self._resolve_spawn_altitude(aircraft_id, lat, lon, alt),
+            )
         for item in take_over_list:
             if not isinstance(item, dict):
                 continue
@@ -2445,6 +2621,8 @@ class SimulationService:
             except Exception:
                 aircraft_id = 0
             if aircraft_id <= 0:
+                continue
+            if aircraft_id in spawn_latlon:
                 continue
             coord = _extract_coord(item)
             if coord is None:
@@ -2499,6 +2677,8 @@ class SimulationService:
             self._build_vehicles(paths)
             retained_labels: set[str] = set()
             retained_aircraft_ids: set[int] = set()
+            compatible_updated_labels: set[str] = set()
+            compatible_updated_aircraft_ids: set[int] = set()
             updated_aircraft_ids = {int(p.aircraft_id) for p in paths}
             if preserve_state and prev_states:
                 for simv in self.vehicles.values():
@@ -2512,6 +2692,15 @@ class SimulationService:
                     if not state.get("alive", True):
                         self._apply_vehicle_hit(simv)
                         simv.crashed = bool(state.get("crashed", True))
+            if preserve_state and prev_controller_progress:
+                for simv in self.vehicles.values():
+                    aircraft_id = int(simv.aircraft_id)
+                    snapshot = prev_controller_progress.get(aircraft_id)
+                    if snapshot is None:
+                        continue
+                    if self._restore_controller_progress(simv.controller, snapshot):
+                        compatible_updated_labels.add(simv.label)
+                        compatible_updated_aircraft_ids.add(aircraft_id)
             if preserve_state and prev_vehicles:
                 for label, prev_simv in prev_vehicles.items():
                     aid = int(prev_simv.aircraft_id)
@@ -2562,28 +2751,29 @@ class SimulationService:
                                 speed=speed,
                                 angle=info.get("angle"),
                             )
-            if preserve_state and retained_labels:
+            restored_labels = set(retained_labels) | set(compatible_updated_labels)
+            if preserve_state and restored_labels:
                 if prev_tracking is not None:
                     self._tracking_state = {
                         label: prev_tracking[label]
-                        for label in retained_labels
+                        for label in restored_labels
                         if label in prev_tracking
                     }
                 if prev_tracking_owner is not None:
                     self._tracking_target_owner = {
                         int(tid): lbl
                         for tid, lbl in prev_tracking_owner.items()
-                        if lbl in retained_labels
+                        if lbl in restored_labels
                     }
                 if prev_line_search_state is not None:
-                    for label in retained_labels:
+                    for label in restored_labels:
                         if label in prev_line_search_state:
                             self._line_search_state[label] = prev_line_search_state[label]
                 if prev_line_search_debug is not None:
-                    for label in retained_labels:
+                    for label in restored_labels:
                         if label in prev_line_search_debug:
                             self._line_search_debug[label] = prev_line_search_debug[label]
-                for label in retained_labels:
+                for label in restored_labels:
                     simv = self.vehicles.get(label)
                     if simv is not None:
                         self._update_filming_target(simv, 0.0)
@@ -2645,9 +2835,10 @@ class SimulationService:
                 self.current_input_mission_idx_by_aircraft = {}
                 self._block_indices = {}
                 self._spawn_by_aircraft = spawn_by_aircraft
-            if preserve_state and prev_input_order and retained_aircraft_ids:
-                for aid in retained_aircraft_ids:
-                    if aid in updated_aircraft_ids:
+            preserved_input_aircraft_ids = set(retained_aircraft_ids) | set(compatible_updated_aircraft_ids)
+            if preserve_state and prev_input_order and preserved_input_aircraft_ids:
+                for aid in preserved_input_aircraft_ids:
+                    if aid in updated_aircraft_ids and aid not in compatible_updated_aircraft_ids:
                         continue
                     if aid in prev_input_order:
                         self.input_mission_order_by_aircraft[aid] = list(prev_input_order[aid])
@@ -3133,6 +3324,7 @@ class SimulationService:
             return False
         if target_id <= 0:
             return False
+        related_ids = self._related_target_ids_in_info(target_id)
         target_map = self._load_target_info_map()
         for entry in target_map.values():
             if not isinstance(entry, dict):
@@ -3141,7 +3333,7 @@ class SimulationService:
                 entry_id = int(entry.get("targetID", -1))
             except Exception:
                 continue
-            if entry_id != target_id:
+            if entry_id not in related_ids:
                 continue
             try:
                 if int(entry.get("isIgnored") or 0) != 0:
@@ -3149,6 +3341,59 @@ class SimulationService:
             except Exception:
                 continue
         return False
+
+    def _related_target_ids_in_info(self, target_id: int) -> set[int]:
+        related_ids: set[int] = set()
+        try:
+            target_id_int = int(target_id)
+        except Exception:
+            return related_ids
+        if target_id_int <= 0:
+            return related_ids
+        related_ids.add(target_id_int)
+        try:
+            mapped = self._target_id_map_0402.get(target_id_int)
+            if mapped is not None:
+                mapped_int = int(mapped)
+                if mapped_int > 0:
+                    related_ids.add(mapped_int)
+        except Exception:
+            pass
+        for raw_id, assigned_id in list(self._target_id_map_0402.items()):
+            try:
+                raw_int = int(raw_id)
+                assigned_int = int(assigned_id)
+            except Exception:
+                continue
+            if raw_int <= 0 or assigned_int <= 0:
+                continue
+            if raw_int == target_id_int or assigned_int == target_id_int:
+                related_ids.add(raw_int)
+                related_ids.add(assigned_int)
+        return related_ids
+
+    def _target_is_destroyed_in_info(self, target_id: int) -> bool:
+        related_ids = self._related_target_ids_in_info(target_id)
+        if not related_ids:
+            return False
+        target_map = self._load_target_info_map()
+        matched = False
+        for entry in target_map.values():
+            if not isinstance(entry, dict):
+                continue
+            try:
+                entry_id = int(entry.get("targetID", -1))
+            except Exception:
+                continue
+            if entry_id not in related_ids:
+                continue
+            matched = True
+            # targetInfo can retain stale destroyed summary rows while the
+            # active watcher-specific row is still alive; only stop when all
+            # matching rows agree the target is destroyed.
+            if not _coerce_bool(entry.get("isDestroyed"), False):
+                return False
+        return matched
 
     def _ground_target_is_ignored(self, target: GroundTarget) -> bool:
         try:
@@ -3885,6 +4130,11 @@ class SimulationService:
         if target_id in self._destroyed_target_ids:
             return
         self._destroyed_target_ids.add(target_id)
+        related_ids = self._related_target_ids_in_info(target_id) or {target_id}
+        for related_id in related_ids:
+            virtual = self._virtual_targets.get(int(related_id))
+            if virtual is not None:
+                virtual.alive = False
         self._update_target_info_destroyed(target, watcher_id)
         self._record_0402_target_destroyed(target, watcher_id)
 
@@ -4161,6 +4411,9 @@ class SimulationService:
             if self._target_is_ignored_in_info(int(state.target_id)):
                 self._stop_tracking(simv, advance=True)
                 return
+            if self._target_is_destroyed_in_info(int(state.target_id)):
+                self._stop_tracking(simv, advance=state.advance_on_complete)
+                return
             if not state.target.alive:
                 self._stop_tracking(simv, advance=state.advance_on_complete)
                 return
@@ -4226,7 +4479,7 @@ class SimulationService:
                             manual=True,
                             advance_on_complete=True,
                         )
-                    return
+                        return
         if not self.auto_track_always:
             if not (isinstance(filming_prop, dict) and int(filming_prop.get("operationMode") or 0) == 3):
                 return
@@ -4448,6 +4701,7 @@ class SimulationService:
                         pos=(x, y, z),
                         speed=wp.get("speed"),
                         wp_id=wp.get("wp_id"),
+                        is_done=bool(wp.get("is_done", False)),
                         hover_time=wp.get("hover_time"),
                         loiter=wp.get("loiter"),
                         filming=wp.get("filming"),
@@ -4515,6 +4769,12 @@ class SimulationService:
                 allow_hover=allow_hover,
                 hold_on_complete=path.airframe == "uav",
             )
+            first_active_idx = next(
+                (idx for idx, target in enumerate(wp_targets) if not bool(getattr(target, "is_done", False))),
+                0,
+            )
+            controller.curr_idx = int(first_active_idx)
+            controller._closest_wp_idx = int(first_active_idx)
             block = self._block_indices.get(path.aircraft_id)
             if block:
                 try:
@@ -4691,6 +4951,9 @@ class SimulationService:
     def _resolve_actual_target_from_info(self, target_id: int) -> GroundTarget | None:
         if self.geo is None or not self.targets:
             return None
+        related_ids = self._related_target_ids_in_info(int(target_id))
+        if self._target_is_destroyed_in_info(int(target_id)):
+            return None
         target_list = self._load_target_info_map()
         if not target_list:
             return None
@@ -4702,9 +4965,9 @@ class SimulationService:
                 entry_id = int(entry.get("targetID", -1))
             except Exception:
                 continue
-            if entry_id != int(target_id):
+            if related_ids and entry_id not in related_ids:
                 continue
-            if entry.get("isDestroyed") is True:
+            if _coerce_bool(entry.get("isDestroyed"), False):
                 continue
             if self._target_is_ignored_in_info(int(target_id)):
                 return None
@@ -4748,6 +5011,13 @@ class SimulationService:
             # allow virtual targets even if real targets are missing
             if self.geo is None:
                 return None
+        related_ids = self._related_target_ids_in_info(int(target_id))
+        if self._target_is_destroyed_in_info(int(target_id)):
+            for related_id in related_ids:
+                virtual = self._virtual_targets.get(int(related_id))
+                if virtual is not None:
+                    virtual.alive = False
+            return None
         target_list = self._load_target_info_map()
         if not target_list:
             return None
@@ -4760,9 +5030,9 @@ class SimulationService:
                 entry_id = int(entry.get("targetID", -1))
             except Exception:
                 continue
-            if entry_id != int(target_id):
+            if related_ids and entry_id not in related_ids:
                 continue
-            if entry.get("isDestroyed") is True:
+            if _coerce_bool(entry.get("isDestroyed"), False):
                 continue
             if self._target_is_ignored_in_info(int(target_id)):
                 return None
@@ -5109,6 +5379,10 @@ class SimulationService:
                     best_state = (s.x, s.y, s.z)
             if best is None or best_state is None:
                 continue
+            if not tgt.moving:
+                desired_heading = self._bearing_deg(tgt.x, tgt.y, best_state[0], best_state[1])
+                tgt.heading = float(desired_heading)
+                tgt.heading_rate = 0.0
             los = self._check_los_flat(best_state[0], best_state[1], best_state[2], tgt.x, tgt.y, tgt.z)
             tgt.threat.detection_prob(best_dist, los, dt)
             if not tgt.threat.state.detected:
@@ -5371,8 +5645,39 @@ class SimulationService:
             if simv.airframe == "uav":
                 flight_mode = int(self._flight_mode_for(simv))
                 on_mission = int(self._on_mission_for(simv))
+                current_wp = 0
+                target_id = 0
+                tracking = self._tracking_state.get(simv.label)
+                forced = self._forced_commands.get(simv.label)
+                if tracking is not None and tracking.saved_wp_id is not None:
+                    current_wp = int(tracking.saved_wp_id)
+                else:
+                    try:
+                        tgt = simv.controller.current_target()
+                    except Exception:
+                        tgt = None
+                    if tgt is not None and tgt.wp_id is not None:
+                        try:
+                            current_wp = int(tgt.wp_id)
+                        except Exception:
+                            current_wp = 0
+                    elif forced is not None:
+                        try:
+                            current_wp = int(forced.get("current_wp_id") or 0)
+                        except Exception:
+                            current_wp = 0
+                if tracking is None:
+                    try:
+                        if getattr(simv.controller, "finished", False):
+                            current_wp = 0
+                    except Exception:
+                        pass
+                if tracking is not None and tracking.stage >= 1 and tracking.target.alive:
+                    target_id = self._assign_0402_target_id(tracking.target)
                 entry["flightMode"] = flight_mode
                 entry["onMission"] = on_mission
+                entry["currentWaypointID"] = int(current_wp)
+                entry["targetID"] = int(target_id)
                 if flight_mode == 8:
                     center = None
                     ctrl = simv.controller

@@ -21,17 +21,17 @@ const FOOTPRINT_MIN_RADIUS_M = 15;
 const FOOTPRINT_MAX_RADIUS_M = 5000;
 const FOOTPRINT_ASPECT = 16 / 9;
 const FOOTPRINT_CURRENT_OPACITY = 0.2;
-const FOOTPRINT_TRAIL_MAX = 600;
+const FOOTPRINT_TRAIL_MAX = 240;
 const FOOTPRINT_TRAIL_OPACITY = 0.12;
-const FOOTPRINT_TRAIL_SAMPLE_STEP = 1;
-const TRAIL_MAX_METERS = 2000;
+const FOOTPRINT_TRAIL_SAMPLE_STEP = 2;
+const TRAIL_MAX_METERS = 1400;
 const TRAIL_MIN_SEGMENT_M = 4;
 const TRAIL_WIDTH = 2.0;
 const TRAIL_Z_OFFSET_M = 0.8;
 const EXCEEDED_SEP_COLOR = "#ef4444";
-const VISUAL_UPDATE_HZ = 15;
+const VISUAL_UPDATE_HZ = 12;
 const VISUAL_UPDATE_INTERVAL_MS = 1000 / VISUAL_UPDATE_HZ;
-const FOOTPRINT_VISUAL_SAMPLE_INTERVAL_MS = VISUAL_UPDATE_INTERVAL_MS;
+const FOOTPRINT_VISUAL_SAMPLE_INTERVAL_MS = Math.max(VISUAL_UPDATE_INTERVAL_MS, 220);
 
 const getAgentColors = () => {
   const style = getComputedStyle(document.documentElement);
@@ -260,6 +260,27 @@ const buildSweepCoveragePolygon = (prevCenter, nextCenter, widthMeters) => {
 };
 
 const buildFootprintGeometry = (entry) => {
+  const explicitCorners = Array.isArray(entry?.footprintCorners) ? entry.footprintCorners : null;
+  if (explicitCorners && explicitCorners.length >= 4) {
+    const ring = explicitCorners
+      .map((coord) => {
+        if (!Array.isArray(coord) || coord.length < 2) {
+          return null;
+        }
+        const lon = Number(coord[0]);
+        const lat = Number(coord[1]);
+        return Number.isFinite(lon) && Number.isFinite(lat) ? [lon, lat] : null;
+      })
+      .filter(Boolean);
+    if (ring.length >= 4) {
+      const first = ring[0];
+      const last = ring[ring.length - 1];
+      if (first[0] !== last[0] || first[1] !== last[1]) {
+        ring.push([...first]);
+      }
+      return ring;
+    }
+  }
   const target = entry?.filmingTarget;
   if (!target || !Number.isFinite(target.lat) || !Number.isFinite(target.lon)) {
     return null;
@@ -770,6 +791,7 @@ export const initVehicleMarkers = (map) => {
   let footprintTrailSource = null;
   const footprintHistory = new Map();
   const trailHistory = new Map();
+  const filmingViewSubscribers = new Set();
   let lastFootprintSampleMs = 0;
   let lastStep = null;
   let lastProjectionMatrix = null;
@@ -879,6 +901,70 @@ export const initVehicleMarkers = (map) => {
         el.style.display = "none";
       });
     }
+    filmingViewSubscribers.forEach((listener) => {
+      try {
+        listener(getFilmingViews());
+      } catch (error) {
+        console.warn("vehicle_markers filming view subscriber failed", error);
+      }
+    });
+  };
+
+  const getFilmingViews = () => {
+    return ["UAV1", "UAV2", "UAV3"].map((agent) => {
+      const entry = currentPositions[agent];
+      if (!entry) {
+        return {
+          agent,
+          status: "offline",
+          footprint: null,
+        };
+      }
+      const filming = entry.filmingTarget;
+      const footprint = buildFootprintGeometry(entry);
+      const separation = filming
+        ? groundDistanceMeters(
+            { lat: entry.lat, lon: entry.lon },
+            { lat: filming.lat, lon: filming.lon },
+          )
+        : null;
+      return {
+        agent,
+        status: footprint ? "active" : "idle",
+        lat: Number.isFinite(entry.lat) ? entry.lat : null,
+        lon: Number.isFinite(entry.lon) ? entry.lon : null,
+        alt: Number.isFinite(entry.alt) ? entry.alt : null,
+        speed: Number.isFinite(entry.speed) ? entry.speed : null,
+        heading: Number.isFinite(entry.heading) ? entry.heading : null,
+        filmingFov: Number.isFinite(entry.filmingFov) ? entry.filmingFov : null,
+        filmingMaxSep: Number.isFinite(entry.filmingMaxSep) ? entry.filmingMaxSep : null,
+        separation: Number.isFinite(separation) ? separation : null,
+        filmingTarget:
+          filming && Number.isFinite(filming.lat) && Number.isFinite(filming.lon)
+            ? {
+                lat: filming.lat,
+                lon: filming.lon,
+                alt: Number.isFinite(filming.alt) ? filming.alt : null,
+              }
+            : null,
+        footprint,
+      };
+    });
+  };
+
+  const subscribeFilmingViews = (listener) => {
+    if (typeof listener !== "function") {
+      return () => {};
+    }
+    filmingViewSubscribers.add(listener);
+    try {
+      listener(getFilmingViews());
+    } catch (error) {
+      console.warn("vehicle_markers filming view initial push failed", error);
+    }
+    return () => {
+      filmingViewSubscribers.delete(listener);
+    };
   };
 
   const recordFootprintHistory = (positions, now, force = false) => {
@@ -1530,5 +1616,11 @@ export const initVehicleMarkers = (map) => {
   const getPosition = (label) => currentPositions[label] || null;
   const getPositions = () => ({ ...currentPositions });
 
-  return { loadFromReference, getPosition, getPositions };
+  return {
+    loadFromReference,
+    getPosition,
+    getPositions,
+    getFilmingViews,
+    subscribeFilmingViews,
+  };
 };

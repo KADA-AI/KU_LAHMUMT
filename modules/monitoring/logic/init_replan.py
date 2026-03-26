@@ -8,6 +8,7 @@ from typing import Callable, Iterable
 from modules.common import db_paths
 from modules.mission_planning.MissionPlanner.data_def.id_allocator import (
     next_mission_plan_id,
+    reserve_mission_plan_ids,
 )
 
 DEFAULT_INPUT_MISSION_IDS = (107, 108)
@@ -79,6 +80,11 @@ def allocate_mission_plan_ids(
         return []
     if total <= 0:
         return []
+    if allocator is next_mission_plan_id:
+        try:
+            return [int(value) for value in reserve_mission_plan_ids(total)]
+        except Exception:
+            pass
     allocated: list[int] = []
     for _ in range(total):
         try:

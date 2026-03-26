@@ -16,9 +16,13 @@ from PyQt5.QtWidgets import QApplication, QTextEdit, QPlainTextEdit
 
 from modules.common import db_paths
 from modules.common.process_console import (
+    activate_process_log_session,
+    begin_process_log_session,
     creationflags_for_subprocess,
     emit_process_log,
     ensure_console,
+    flush_pending_process_logs,
+    get_process_log_session,
     install_process_file_logging,
     preferred_console_python,
     should_show_module_consoles,
@@ -48,6 +52,7 @@ def _qt_silent_handler(mode: QtMsgType, context, message: str):
 qInstallMessageHandler(_qt_silent_handler)
 
 ensure_console("KU Dashboard Console")
+begin_process_log_session(force_new=True)
 install_process_file_logging("dashboard")
 
 # -------------------------------------------------------------
@@ -68,6 +73,7 @@ def _bootstrap_paths():
     return root, common_dir, ds_dir
 
 PROJECT_ROOT, COMMON_DIR, DS_DIR = _bootstrap_paths()
+SCENARIO_ACTIVATION_STATE_PATH = PROJECT_ROOT / "temp" / "scenario_activation_state.json"
 
 
 hardened_base_ids = {
@@ -83,6 +89,55 @@ hardened_base_ids = {
         6: 600_000_000,
     },
 }
+
+
+def _read_scenario_activation_state() -> dict:
+    try:
+        with SCENARIO_ACTIVATION_STATE_PATH.open("r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        if isinstance(data, dict):
+            return dict(data)
+    except Exception:
+        pass
+    return {}
+
+
+def _write_scenario_activation_state(
+    *,
+    pending_new_scenario: bool,
+    db_root: str | None = None,
+    scenario_dir: str | None = None,
+    timestamp_ms: int | None = None,
+    iso: str | None = None,
+    process_log_session_id: str | None = None,
+) -> dict:
+    payload = {
+        "pending_new_scenario": bool(pending_new_scenario),
+        "db_root": str(db_root).strip() if db_root else None,
+        "scenario_dir": str(scenario_dir).strip() if scenario_dir else None,
+        "timestamp_ms": int(timestamp_ms) if timestamp_ms is not None else None,
+        "iso": str(iso).strip() if iso else None,
+        "process_log_session_id": str(process_log_session_id).strip() if process_log_session_id else None,
+        "updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+    }
+    try:
+        SCENARIO_ACTIVATION_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        SCENARIO_ACTIVATION_STATE_PATH.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+    return payload
+
+
+def _current_process_log_session_id() -> str | None:
+    try:
+        state = get_process_log_session()
+    except Exception:
+        return None
+    session_id = str((state or {}).get("session_id") or "").strip()
+    return session_id or None
 
 
 def _should_force_reset_ids() -> bool:
@@ -449,6 +504,29 @@ class DashboardOrchestrator(QObject):
 
         self._last_system_mode_code: int | None = None
         info = db_paths.get_info()
+        activation_state = _read_scenario_activation_state()
+        current_log_session_id = _current_process_log_session_id()
+        activation_session_id = str(activation_state.get("process_log_session_id") or "").strip()
+        pending_new_scenario = bool(activation_state.get("pending_new_scenario")) and bool(
+            current_log_session_id and activation_session_id and activation_session_id == current_log_session_id
+        )
+        stale_pending_new_scenario = bool(activation_state.get("pending_new_scenario")) and not pending_new_scenario
+        has_active_scenario = bool(info.get("source") == "scenario" and info.get("db_root"))
+        if has_active_scenario and not pending_new_scenario:
+            self._scenario_activated_once = True
+            _write_scenario_activation_state(
+                pending_new_scenario=False,
+                db_root=info.get("db_root"),
+                scenario_dir=info.get("scenario_dir"),
+                timestamp_ms=info.get("timestamp_ms"),
+                iso=info.get("iso"),
+                process_log_session_id=current_log_session_id,
+            )
+            try:
+                activate_process_log_session(db_root=info.get("db_root"))
+                flush_pending_process_logs(db_root=info.get("db_root"))
+            except Exception:
+                pass
         self._scenario_timestamp = info.get("timestamp_ms")
         try:
             db_root_init = info.get("db_root") or db_paths.get_active_db_root_str()
@@ -458,6 +536,16 @@ class DashboardOrchestrator(QObject):
             self.win.update_scenario_status_indicator(False, tooltip)
         except Exception:
             pass
+        if has_active_scenario and not pending_new_scenario:
+            try:
+                self._safe_log(f"[OPS] Reusing active scenario DB on startup @ {info.get('db_root')}")
+            except Exception:
+                pass
+        elif stale_pending_new_scenario and has_active_scenario:
+            try:
+                self._safe_log(f"[OPS] Ignoring stale new-scenario request from another dashboard session; reuse active DB @ {info.get('db_root')}")
+            except Exception:
+                pass
 
     def _log_to_role(self, role: str, text: str):
         """해당 role 모듈 로그에만 기록. 실패 시 글로벌 폴백."""
@@ -855,18 +943,48 @@ class DashboardOrchestrator(QObject):
     def _maybe_activate_scenario(self, timestamp: int | None) -> None:
         if self._last_system_mode_code == 1:
             return
-        if self._scenario_activated_once:
-            reuse_root = db_paths.get_active_db_root_str()
-            self._safe_log(f"[OPS] Standby re-entry - reuse existing DB @ {reuse_root}")
-            try:
-                self.win.update_scenario_status_indicator(False, f"재사용 경로: {reuse_root}")
-            except Exception:
-                pass
-            return
         if timestamp is None:
             self._safe_log("[OPS] Standby entry missing timestamp -> skip DB activation")
             try:
                 self.win.update_scenario_status_indicator(False, "타임스탬프 없음 -> 기존 경로 유지")
+            except Exception:
+                pass
+            return
+        activation_state = _read_scenario_activation_state()
+        current_log_session_id = _current_process_log_session_id()
+        activation_session_id = str(activation_state.get("process_log_session_id") or "").strip()
+        pending_new_scenario = bool(activation_state.get("pending_new_scenario")) and bool(
+            current_log_session_id and activation_session_id and activation_session_id == current_log_session_id
+        )
+        try:
+            current_info = db_paths.get_info()
+        except Exception:
+            current_info = {}
+        active_timestamp = None
+        try:
+            active_timestamp = int(
+                (current_info.get("timestamp_ms") if isinstance(current_info, dict) else None)
+                or self._scenario_timestamp
+            )
+        except Exception:
+            active_timestamp = None
+        active_db_root = (
+            (current_info.get("db_root") if isinstance(current_info, dict) else None)
+            or db_paths.get_active_db_root_str()
+        )
+        has_active_scenario = bool(
+            isinstance(current_info, dict)
+            and current_info.get("source") == "scenario"
+            and active_db_root
+        )
+        if has_active_scenario and not pending_new_scenario and active_timestamp == int(timestamp):
+            self._scenario_activated_once = True
+            self._scenario_timestamp = active_timestamp
+            self._safe_log(
+                f"[OPS] Standby re-entry (same timestamp={int(timestamp)}) - reuse existing DB @ {active_db_root}"
+            )
+            try:
+                self.win.update_scenario_status_indicator(False, f"재사용 경로: {active_db_root}")
             except Exception:
                 pass
             return
@@ -883,6 +1001,21 @@ class DashboardOrchestrator(QObject):
 
         self._scenario_timestamp = info.get("timestamp_ms")
         db_root = info.get("db_root")
+        _write_scenario_activation_state(
+            pending_new_scenario=False,
+            db_root=db_root,
+            scenario_dir=info.get("scenario_dir"),
+            timestamp_ms=info.get("timestamp_ms"),
+            iso=info.get("iso"),
+            process_log_session_id=current_log_session_id,
+        )
+        try:
+            activate_process_log_session(db_root=db_root)
+            flushed = flush_pending_process_logs(db_root=db_root)
+            if flushed:
+                self._safe_log(f"[OPS] Pre-standby module logs attached to new DB ({flushed} files)")
+        except Exception as exc:
+            self._safe_log(f"[WARN] Pending module log attach failed: {exc}")
         if db_root:
             try:
                 self.win.update_db_root(db_root)
@@ -952,6 +1085,14 @@ class DashboardOrchestrator(QObject):
             except Exception:
                 pass
 
+        try:
+            begin_process_log_session(force_new=True)
+        except Exception as exc:
+            try:
+                self._safe_log(f"[WARN] Process log session reset failed: {exc}")
+            except Exception:
+                pass
+
         self._scenario_activated_once = False
         self._scenario_timestamp = None
         try:
@@ -970,6 +1111,19 @@ class DashboardOrchestrator(QObject):
             self._safe_log(log_msg)
         except Exception:
             pass
+
+        try:
+            current_info = db_paths.get_info()
+        except Exception:
+            current_info = {}
+        _write_scenario_activation_state(
+            pending_new_scenario=True,
+            db_root=(current_info.get("db_root") if isinstance(current_info, dict) else None) or prev_root,
+            scenario_dir=current_info.get("scenario_dir") if isinstance(current_info, dict) else None,
+            timestamp_ms=current_info.get("timestamp_ms") if isinstance(current_info, dict) else None,
+            iso=current_info.get("iso") if isinstance(current_info, dict) else None,
+            process_log_session_id=_current_process_log_session_id(),
+        )
 
         try:
             self._set_mode_text_all("모듈 초기화 중")

@@ -16,10 +16,8 @@ from modules.monitoring.logic.mission_update import (
     load_db_json,
     parse_payload,
 )
+from modules.monitoring.logic.replan_runtime_settings import get_forced_command_settings
 
-
-HOLD_DELAY_SECONDS = 30.0
-HOLD_DELAY_REASON = "강제대기 후 30초 경과"
 
 REPLAN_REASON_BY_TYPE: dict[int, str] = {
     1: "강제대기로 인한 재계획",
@@ -42,6 +40,23 @@ def _coerce_int(value: object) -> int | None:
         return int(value)
     except Exception:
         return None
+
+
+def _forced_command_config() -> dict[str, Any]:
+    return get_forced_command_settings()
+
+
+def _hold_delay_seconds() -> float:
+    return float(_forced_command_config().get("hold_delay_seconds", 30.0))
+
+
+def _hold_delay_reason() -> str:
+    seconds = _hold_delay_seconds()
+    if abs(seconds - round(seconds)) < 1e-6:
+        seconds_text = f"{int(round(seconds))}초"
+    else:
+        seconds_text = f"{seconds:.1f}초"
+    return f"강제대기 후 {seconds_text} 경과"
 
 
 def _extract_forced_fields(body: dict[str, Any]) -> tuple[int | None, int | None, int | None, str | None]:
@@ -125,7 +140,6 @@ class ForcedCommandReplanCoordinator:
     """Handle 0802 MandatoryCommand inputs and emit ver2-style 0902 requests."""
 
     REPLAN_LEVEL = 1
-    SIGNATURE_DEDUP_SECONDS = 0.6
 
     def __init__(
         self,
@@ -195,15 +209,16 @@ class ForcedCommandReplanCoordinator:
 
         # mandatoryType=1 -> hold delay only (no immediate replan)
         if int(mandatory_type) == 1:
-            deadline = now_mono + float(HOLD_DELAY_SECONDS)
+            hold_delay_seconds = _hold_delay_seconds()
+            deadline = now_mono + hold_delay_seconds
             self._state.hold_state_by_aircraft[int(aircraft_id)] = HoldState(
                 aircraft_id=int(aircraft_id),
                 deadline_monotonic=deadline,
                 command_timestamp=ts,
             )
             logs.append(
-                "[0802] 강제대기 수신 -> 30초 유예 후 재계획 검토"
-                f" (aircraftID={aircraft_id})"
+                f"[0802] mandatory hold received -> delay {hold_delay_seconds:.1f}s before replan "
+                f"(aircraftID={aircraft_id})"
             )
             return [], logs
 
@@ -282,13 +297,13 @@ class ForcedCommandReplanCoordinator:
                     self._state.hold_state_by_aircraft.pop(int(aircraft_id), None)
                     continue
 
-            payload_0902 = self._build_replan_payload(
-                mandatory_type=1,
-                aircraft_id=int(aircraft_id),
-                command_timestamp=hold.command_timestamp,
-                current_mission_plan_id=current_mission_plan_id,
-                reason_override=HOLD_DELAY_REASON,
-            )
+                payload_0902 = self._build_replan_payload(
+                    mandatory_type=1,
+                    aircraft_id=int(aircraft_id),
+                    command_timestamp=hold.command_timestamp,
+                    current_mission_plan_id=current_mission_plan_id,
+                    reason_override=_hold_delay_reason(),
+                )
             if payload_0902:
                 dispatch.append(payload_0902)
 
@@ -308,9 +323,8 @@ class ForcedCommandReplanCoordinator:
         last = self._state.last_signature
         if last is None or last != signature:
             return False
-        return (now_mono - float(self._state.last_signature_monotonic)) < float(
-            self.SIGNATURE_DEDUP_SECONDS
-        )
+        dedup_seconds = float(_forced_command_config().get("signature_dedup_seconds", 0.6))
+        return (now_mono - float(self._state.last_signature_monotonic)) < dedup_seconds
 
     def _apply_availability_override(self, aircraft_id: int, mandatory_type: int) -> None:
         if mandatory_type in (1, 2):

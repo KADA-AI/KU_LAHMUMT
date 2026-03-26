@@ -5,11 +5,13 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable, Callable
 
 from modules.common import prior_replan_store
+from modules.common import prior_target_rediscovery_store
 from modules.monitoring.logic.init_replan import (
     allocate_mission_plan_ids,
     collect_input_mission_ids,
 )
 from modules.monitoring.logic.mission_update import parse_payload
+from modules.monitoring.logic.replan_runtime_settings import get_prior_mission_settings
 
 
 def _coerce_int(value: object) -> int | None:
@@ -191,6 +193,19 @@ class PriorMissionReplanCoordinator:
             coordinate_orientation_payload = (
                 {"coordinate": dict(coordinate)} if coordinate else {}
             )
+            rediscovery_arm = prior_target_rediscovery_store.arm_target_rediscovery(
+                prior_mission_id=prior_id,
+                mission_type=mission_type,
+                timestamp=now_ts,
+                target_id=target_id,
+                coordinate=coordinate,
+            )
+            if rediscovery_arm:
+                arm_target_label = f"targetID={target_id}" if target_id is not None else "coordinate-arm"
+                logs.append(
+                    f"[PRIOR] rediscovery arm set: priorMissionID={prior_id}, "
+                    f"missionType={mission_type}, {arm_target_label}"
+                )
 
             detail_payload = {
                 "sourceMissionPlanID": current_mission_plan_id,
@@ -258,7 +273,8 @@ class PriorMissionReplanCoordinator:
         logs: list[str] = []
         if system_mode not in (3, 4):
             return [], logs
-        if risk_score <= 0.5:
+        config = get_prior_mission_settings()
+        if risk_score <= float(config.get("dl_risk_threshold", 0.5)):
             return [], logs
 
         now_ts = int(self._now_ms())

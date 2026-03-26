@@ -1,0 +1,73 @@
+[
+  {
+    "timestamp": 827814935652,
+    "source": "MSM",
+    "inputMissionPackageID": 100,
+    "replanRequestTime": {
+      "replanRequestTimestamp": 827814935652
+    },
+    "replanLevel": 2,
+    "replanRequest": "무인기 3번 - 방사포(ID-7) 발견으로 인한 재계획",
+    "inputMissionIDList": [
+      {
+        "inputMissionID": 70000001
+      },
+      {
+        "inputMissionID": 70000002
+      },
+      {
+        "inputMissionID": 70000003
+      },
+      {
+        "inputMissionID": 70000004
+      }
+    ],
+    "pendingOptionList": [
+      {
+        "optionID": 2,
+        "optionName": "공격 특화",
+        "missionPlanID": 700000003
+      },
+      {
+        "optionID": 3,
+        "optionName": "공격 배제",
+        "missionPlanID": 700000004
+      }
+    ],
+    "replanDetail": {
+      "trigger": "0402",
+      "targetKey": "7-6",
+      "targetID": 7,
+      "watcherID": 6,
+      "targetType": 3,
+      "threat": 100.0,
+      "targetInFrame": true,
+      "coordinate": {
+        "latitude": 38.075687408447266,
+        "longitude": 127.27752685546875,
+        "altitude": 0
+      },
+      "preferredOptionCount": 2,
+      "snapshot": {
+        "targetID": 7,
+        "watcherID": 6,
+        "targetType": 3,
+        "coordinate": {
+          "latitude": 38.075687408447266,
+          "longitude": 127.27752685546875,
+          "altitude": 0
+        },
+        "isDestroyed": false,
+        "targetInFrame": true,
+        "threat": 100.0,
+        "isUsed": 0,
+        "isIgnored": 0,
+        "firstDetected": 827814911464,
+        "lastUpdated": 827814911464,
+        "sinceFirstDetectedMs": 0,
+        "key": "7-6"
+      }
+    },
+    "savedAt": "2026-03-26T04:35:35.662492+00:00"
+  }
+]

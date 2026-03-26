@@ -8,6 +8,7 @@ from typing import Any, Callable
 from modules.common import imaging_schedule_replan_store
 from modules.monitoring.logic.init_replan import allocate_mission_plan_ids, collect_input_mission_ids
 from modules.monitoring.logic.mission_update import load_db_json
+from modules.monitoring.logic.replan_runtime_settings import get_imaging_schedule_settings
 from modules.monitoring.logic.turn_radius_monitor import TRACKED_AIRCRAFT_IDS
 
 
@@ -19,9 +20,10 @@ REPLAN_REASON_SEQUENCE = (
 )
 OPTION_NAME = "비행/촬영"
 TRIGGER_TYPE = "imagingScheduleDeviation"
-TRIGGER_PROBABILITY = 0.20
-IMAGING_OPERATION_MODES = {1, 2, 3, 4, 5}
-IMAGING_PATTERN_TYPES = {3, 4, 5, 6, 7, 8, 9}
+
+
+def _imaging_schedule_config() -> dict[str, Any]:
+    return get_imaging_schedule_settings()
 
 
 def _coerce_int(value: object | None) -> int | None:
@@ -102,6 +104,8 @@ class ImagingScheduleReplanCoordinator:
             return [], logs
         if not isinstance(states, list):
             return [], logs
+        config = _imaging_schedule_config()
+        trigger_probability = float(config.get("trigger_probability", 0.20))
 
         suppressed = {int(value) for value in (suppressed_aircraft or set())}
         payloads: list[dict[str, Any]] = []
@@ -146,7 +150,7 @@ class ImagingScheduleReplanCoordinator:
                 continue
 
             roll = float(self._rng.random())
-            if roll >= float(TRIGGER_PROBABILITY):
+            if roll >= trigger_probability:
                 logs.append(
                     f"[0401] imaging-schedule temp trigger skipped "
                     f"(aircraftID={aircraft_id}, currentWP={current_waypoint_id}, roll={roll:.2f})"
@@ -224,7 +228,7 @@ class ImagingScheduleReplanCoordinator:
             "patternType": _coerce_int(artifacts.pattern_type),
             "sensorType": _coerce_int((artifacts.current_waypoint or {}).get("sensorType")),
             "operationMode": _coerce_int((artifacts.current_waypoint or {}).get("operationMode")),
-            "triggerProbability": float(TRIGGER_PROBABILITY),
+            "triggerProbability": float(_imaging_schedule_config().get("trigger_probability", 0.20)),
             "triggerRoll": float(roll),
             "selectedReplanReason": str(replan_reason),
             "timestamp": int(timestamp_ms),
@@ -263,14 +267,25 @@ class ImagingScheduleReplanCoordinator:
         return reasons[index]
 
     def _is_imaging_target(self, artifacts: SourceMissionArtifacts) -> bool:
+        config = _imaging_schedule_config()
+        operation_modes = {
+            int(value)
+            for value in (config.get("imaging_operation_modes") or [1, 2, 3, 4, 5])
+            if _coerce_int(value) is not None
+        }
+        pattern_types = {
+            int(value)
+            for value in (config.get("imaging_pattern_types") or [3, 4, 5, 6, 7, 8, 9])
+            if _coerce_int(value) is not None
+        }
         waypoint = dict(artifacts.current_waypoint or {})
         sensor_type = _coerce_int(waypoint.get("sensorType"))
         if sensor_type is not None and sensor_type > 0:
             return True
         operation_mode = _coerce_int(waypoint.get("operationMode"))
-        if operation_mode in IMAGING_OPERATION_MODES:
+        if operation_mode in operation_modes:
             return True
-        return _coerce_int(artifacts.pattern_type) in IMAGING_PATTERN_TYPES
+        return _coerce_int(artifacts.pattern_type) in pattern_types
 
     def _resolve_source_artifacts(
         self,

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from pathlib import Path
 from typing import Any, Iterable
@@ -34,6 +35,75 @@ def _coerce_bool(value: object) -> bool | None:
     if text in {"0", "false", "no", "n", "off"}:
         return False
     return None
+
+
+def _extract_line_width_m(mission_info: dict[str, Any]) -> float | None:
+    widths: list[float] = []
+    line_list = mission_info.get("lineList") or []
+    if not isinstance(line_list, list):
+        return None
+    for item in line_list:
+        if not isinstance(item, dict):
+            continue
+        width_m = _coerce_float(item.get("width") or item.get("Width"))
+        if width_m is None or width_m <= 0.0:
+            continue
+        widths.append(float(width_m))
+    if not widths:
+        return None
+    return max(widths)
+
+
+def lookup_fov_db_max_width_m(fov_deg: object | None) -> float | None:
+    fov_value = _coerce_float(fov_deg)
+    if fov_value is None or fov_value <= 0.0:
+        return None
+    try:
+        from modules.mission_planning.MissionPlanner.runtime_settings import load_fov_db_rows
+    except Exception:
+        return None
+
+    rows = load_fov_db_rows()
+    if not rows:
+        return None
+
+    fov_groups = sorted(
+        {
+            float(row.get("fov", 0.0) or 0.0)
+            for row in rows
+            if float(row.get("fov", 0.0) or 0.0) > 0.0
+        }
+    )
+    if not fov_groups:
+        return None
+
+    matched_fov = min(
+        fov_groups,
+        key=lambda candidate: (abs(float(candidate) - float(fov_value)), -float(candidate)),
+    )
+    widths = [
+        float(row.get("width", 0.0) or 0.0)
+        for row in rows
+        if abs(float(row.get("fov", 0.0) or 0.0) - float(matched_fov)) <= 1e-9
+        and float(row.get("width", 0.0) or 0.0) > 0.0
+    ]
+    if not widths:
+        return None
+    return max(widths)
+
+
+def compute_filming_quality_threshold_m(
+    sep_m: object,
+    width_m: object | None = None,
+) -> float | None:
+    sep_value = _coerce_float(sep_m)
+    if sep_value is None or sep_value <= 0.0:
+        return None
+    width_value = _coerce_float(width_m)
+    half_width_m = 0.0
+    if width_value is not None and width_value > 0.0:
+        half_width_m = float(width_value) * 0.5
+    return math.hypot(float(sep_value), float(half_width_m))
 
 
 def _derive_cumulative_etas(raw_etas: list[float]) -> tuple[list[float], bool]:
@@ -304,6 +374,67 @@ def extract_0401_agent_states(payload: object | None) -> tuple[int | None, list[
     def _extract_last_signal(item: dict[str, Any]) -> int | None:
         return _coerce_int(item.get("lastSignalTime") or item.get("LastSignalTime"))
 
+    def _extract_coordinate(*containers: object) -> dict[str, float] | None:
+        for container in containers:
+            if not isinstance(container, dict):
+                continue
+            coordinate = container.get("coordinate") or container.get("Coordinate") or {}
+            if not isinstance(coordinate, dict):
+                continue
+            lat = _coerce_float(coordinate.get("latitude") or coordinate.get("Latitude"))
+            lon = _coerce_float(coordinate.get("longitude") or coordinate.get("Longitude"))
+            alt = _coerce_float(coordinate.get("altitude") or coordinate.get("Altitude"))
+            if lat is None or lon is None:
+                continue
+            out: dict[str, float] = {
+                "latitude": float(lat),
+                "longitude": float(lon),
+            }
+            if alt is not None:
+                out["altitude"] = float(alt)
+            return out
+        return None
+
+    def _extract_sensor_info(*containers: object) -> dict[str, Any]:
+        for container in containers:
+            if not isinstance(container, dict):
+                continue
+            sensor_info = container.get("sensorInfo") or container.get("SensorInfo")
+            if isinstance(sensor_info, dict):
+                return dict(sensor_info)
+        return {}
+
+    def _extract_sensor_center_coordinate(*containers: object) -> dict[str, float] | None:
+        sensor_info = _extract_sensor_info(*containers)
+        if not sensor_info:
+            return None
+        center = sensor_info.get("centerCoordinate") or sensor_info.get("CenterCoordinate")
+        if not isinstance(center, dict):
+            return None
+        lat = _coerce_float(center.get("latitude") or center.get("Latitude"))
+        lon = _coerce_float(center.get("longitude") or center.get("Longitude"))
+        alt = _coerce_float(center.get("altitude") or center.get("Altitude"))
+        if lat is None or lon is None:
+            return None
+        out: dict[str, float] = {
+            "latitude": float(lat),
+            "longitude": float(lon),
+        }
+        if alt is not None:
+            out["altitude"] = float(alt)
+        return out
+
+    def _extract_sensor_fov_deg(*containers: object) -> float | None:
+        sensor_info = _extract_sensor_info(*containers)
+        if not sensor_info:
+            return None
+        return _coerce_float(
+            sensor_info.get("fov")
+            or sensor_info.get("Fov")
+            or sensor_info.get("fieldOfView")
+            or sensor_info.get("FieldOfView")
+        )
+
     def _extract_manned_datalink(item: dict[str, Any]) -> dict[int, bool | None]:
         manned_info = item.get("mannedInfo") or item.get("MannedInfo") or {}
         if not isinstance(manned_info, dict):
@@ -348,13 +479,18 @@ def extract_0401_agent_states(payload: object | None) -> tuple[int | None, list[
         return corners
 
     datalink_votes: dict[int, list[bool]] = {4: [], 5: [], 6: []}
+    datalink_connected_by_pair: dict[int, dict[int, bool]] = {4: {}, 5: {}, 6: {}}
     for item in raw_list:
         if not isinstance(item, dict):
+            continue
+        manned_aircraft_id = _coerce_int(item.get("aircraftID") or item.get("AircraftID"))
+        if manned_aircraft_id is None or not (1 <= int(manned_aircraft_id) <= 3):
             continue
         for aircraft_id, connected in _extract_manned_datalink(item).items():
             if connected is None:
                 continue
             datalink_votes.setdefault(int(aircraft_id), []).append(bool(connected))
+            datalink_connected_by_pair.setdefault(int(aircraft_id), {})[int(manned_aircraft_id)] = bool(connected)
 
     datalink_connected_by_uav: dict[int, bool | None] = {}
     for aircraft_id, votes in datalink_votes.items():
@@ -369,6 +505,7 @@ def extract_0401_agent_states(payload: object | None) -> tuple[int | None, list[
         unmanned_info = item.get("unmannedInfo") or item.get("UnmannedInfo") or {}
         flight_mode_info = item.get("flightMode") or item.get("FlightMode") or {}
         camera_mode = item.get("cameraMode") or item.get("CameraMode") or {}
+        sensor_info = _extract_sensor_info(unmanned_info, camera_mode, item)
         fuel_val = _extract_fuel(item, unmanned_info)
         fuel_warning = _extract_fuel_warning(unmanned_info, flight_mode_info, item)
         aircraft_id = _coerce_int(item.get("aircraftID") or item.get("AircraftID"))
@@ -384,11 +521,26 @@ def extract_0401_agent_states(payload: object | None) -> tuple[int | None, list[
                 "on_mission": _extract_on_mission(unmanned_info, flight_mode_info, item),
                 "flight_mode": _extract_flight_mode(unmanned_info, flight_mode_info, item),
                 "payload_health": _extract_payload_health(unmanned_info, flight_mode_info, item),
+                "coordinate": _extract_coordinate(item, unmanned_info),
+                "sensor_center_coordinate": _extract_sensor_center_coordinate(unmanned_info, camera_mode, item),
+                "sensor_fov_deg": _extract_sensor_fov_deg(unmanned_info, camera_mode, item),
+                "sensor_type": _coerce_int(sensor_info.get("sensorType") or sensor_info.get("SensorType")),
+                "sensor_operation_mode": _coerce_int(
+                    sensor_info.get("operationalMode")
+                    or sensor_info.get("OperationalMode")
+                    or sensor_info.get("operationMode")
+                    or sensor_info.get("OperationMode")
+                ),
                 "fuel_liters": fuel_val,
                 "fuel_warning": fuel_warning,
                 "datalink_connected": datalink_connected_by_uav.get(int(aircraft_id), None)
                 if aircraft_id is not None and aircraft_id >= 4
                 else None,
+                "datalink_connected_by_manned": (
+                    dict(datalink_connected_by_pair.get(int(aircraft_id), {}))
+                    if aircraft_id is not None and aircraft_id >= 4
+                    else {}
+                ),
                 "footprint_corners": _extract_footprint(item, unmanned_info, camera_mode),
             }
         )
@@ -567,6 +719,13 @@ def build_uav_mission_view(
             area_list = mission_info.get("areaList") or []
             mission_type = _coerce_int(mission_info.get("individualMissionType"))
             pattern_type = _coerce_int(mission_info.get("patternType"))
+            sep_m = _coerce_float(
+                mission_info.get("SEP")
+                or mission_info.get("sep")
+                or mission_info.get("sepM")
+            )
+            width_m = _extract_line_width_m(mission_info)
+            quality_threshold_m = None
             waypoint_ids: list[int] = []
             is_done = bool(mission.get("isDone"))
             raw_etas: list[float] = []
@@ -690,6 +849,9 @@ def build_uav_mission_view(
                     "sweep_point_count": int(sweep_point_count),
                     "individual_mission_type": mission_type,
                     "pattern_type": pattern_type,
+                    "sep_m": sep_m,
+                    "width_m": width_m,
+                    "quality_threshold_m": quality_threshold_m,
                     "line_list": list(line_list) if isinstance(line_list, list) else [],
                     "area_list": list(area_list) if isinstance(area_list, list) else [],
                 }
@@ -738,15 +900,43 @@ def collect_available_aircraft_ids(
         } - {None})
 
     package_id = extract_input_mission_package_id(payload)
-    if package_id is None:
+    if package_id is not None:
+        plan = load_db_json("InputMissionPlan", package_id, db_root=db_root)
+        available = plan.get("availableAircraftList") or []
+        resolved = sorted({
+            _coerce_int(item.get("aircraftID"))
+            for item in available
+            if isinstance(item, dict)
+        } - {None})
+        if resolved:
+            return resolved
+
+    if db_root is None:
+        base = db_paths.get_db_subpath("InputMissionPlan")
+    else:
+        base = Path(db_root) / "InputMissionPlan"
+
+    if not base.exists() or not base.is_dir():
         return []
-    plan = load_db_json("InputMissionPlan", package_id, db_root=db_root)
-    available = plan.get("availableAircraftList") or []
+
+    resolved_ids: set[int] = set()
+    for path in sorted(base.glob("*.json")):
+        try:
+            plan = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        available = plan.get("availableAircraftList") or []
+        for item in available:
+            if not isinstance(item, dict):
+                continue
+            aircraft_id = _coerce_int(item.get("aircraftID"))
+            if aircraft_id is not None:
+                resolved_ids.add(aircraft_id)
+
     return sorted({
-        _coerce_int(item.get("aircraftID"))
-        for item in available
-        if isinstance(item, dict)
-    } - {None})
+        int(aid)
+        for aid in resolved_ids
+    })
 
 
 def mark_individual_mission_done(

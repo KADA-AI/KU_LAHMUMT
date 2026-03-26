@@ -73,7 +73,7 @@ def _payload_with_uav_plan_mode(payload: Dict[str, Any], uav_plan_mode: Optional
     return base
 
 
-def _apply_runtime_params(d0303, search_speed_module, mp_config_module) -> tuple[float, float]:
+def _apply_runtime_params(d0303, d0304, search_speed_module, mp_config_module) -> tuple[float, float]:
     payload = load_runtime_settings()
     values = load_runtime_values(payload)
     flyover = load_runtime_flyover(payload)
@@ -90,15 +90,61 @@ def _apply_runtime_params(d0303, search_speed_module, mp_config_module) -> tuple
         except Exception:
             return default
 
-    sweep_sep = _get_float("default_sweep_separation_m", float(getattr(mp_config_module, "DEFAULT_SWEEP_SEPARATION_M", 600.0)))
+    sweep_sep = _get_float("default_sweep_separation_m", float(getattr(mp_config_module, "DEFAULT_SWEEP_SEPARATION_M", 1000.0)))
     search_weight = _get_float("search_speed_weight", float(getattr(mp_config_module, "SEARCH_SPEED_WEIGHT", 1.0)))
+    area_search_weight = _get_float("area_search_speed_weight", float(getattr(d0303, "AREA_SEARCH_SPEED_WEIGHT", 1.2)))
     db_fov_weight = _get_float("db_fov_weight", float(getattr(mp_config_module, "DB_FOV_WEIGHT", 1.0)))
     if db_fov_weight <= 0.0:
         db_fov_weight = 1.0
-    fov_deg = _get_float("fov_deg", float(getattr(d0303, "FOV_DEG", 2.4)))
+    line_fov_deg = _get_float(
+        "line_custom_fov_deg",
+        _get_float("fov_deg", float(getattr(d0303, "FOV_DEG", 2.4))),
+    )
+    area_custom_fov_deg = _get_float(
+        "area_custom_fov_deg",
+        float(line_fov_deg),
+    )
+    area_output_fov_scale = _get_float(
+        "area_output_fov_scale",
+        float(getattr(d0303, "AREA_OUTPUT_FOV_SCALE", 3.0)),
+    )
+    line_density_scale = _get_float(
+        "line_density_scale",
+        float(getattr(d0303, "LINE_SWEEP_DENSITY_SCALE", 1.18)),
+    )
+    area_density_scale = _get_float(
+        "area_density_scale",
+        float(getattr(d0303, "AREA_SWEEP_DENSITY_SCALE", 1.0)),
+    )
+    area_route_offset_scale = _get_float(
+        "area_route_offset_scale",
+        float(getattr(d0303, "AREA_ROUTE_OFFSET_SCALE", 0.5)),
+    )
+    uav_wp_interval_m = _get_float(
+        "uav_wp_interval_m",
+        float(getattr(d0303, "SWEEP_ROUTE_WP_SPACING_M", 2000.0)),
+    )
+    lah_wp_interval_m = _get_float(
+        "lah_wp_interval_m",
+        float(getattr(d0304, "WP_INTERVAL_M", 3000.0)),
+    )
+    dubins_turn_radius_m = _get_float(
+        "dubins_turn_radius_m",
+        float(getattr(d0303, "DUBINS_TURN_RADIUS_M", 450.0)),
+    )
     altitude = _get_int("altitude_m", int(getattr(d0303, "Altitude", 610)))
 
-    d0303.FOV_DEG = float(fov_deg)
+    d0303.FOV_DEG = float(line_fov_deg)
+    d0303.AREA_CUSTOM_FOV_DEG = float(area_custom_fov_deg)
+    d0303.AREA_OUTPUT_FOV_SCALE = float(area_output_fov_scale)
+    d0303.LINE_SWEEP_DENSITY_SCALE = float(line_density_scale)
+    d0303.AREA_SWEEP_DENSITY_SCALE = float(area_density_scale)
+    d0303.AREA_ROUTE_OFFSET_SCALE = float(area_route_offset_scale)
+    d0303.AREA_SEARCH_SPEED_WEIGHT = float(area_search_weight)
+    d0303.SWEEP_ROUTE_WP_SPACING_M = float(uav_wp_interval_m)
+    d0303.AREA_SWEEP_ROUTE_WP_SPACING_M = float(uav_wp_interval_m)
+    d0303.DUBINS_TURN_RADIUS_M = float(dubins_turn_radius_m)
+    d0304.WP_INTERVAL_M = float(lah_wp_interval_m)
     d0303.DB_FOV_WEIGHT = float(db_fov_weight)
     d0303.Altitude = int(round(altitude))
     d0303.SWEEP_ENTRY_OFFSET_M = _get_float("sweep_entry_offset_m", float(getattr(d0303, "SWEEP_ENTRY_OFFSET_M", 500.0)))
@@ -107,13 +153,13 @@ def _apply_runtime_params(d0303, search_speed_module, mp_config_module) -> tuple
     d0303.MIN_SWEEP_LEN_M = _get_float("min_sweep_len_m", float(getattr(d0303, "MIN_SWEEP_LEN_M", 3.0)))
     d0303.MIN_ROUTE_SPACING_M = _get_float("min_route_spacing_m", float(getattr(d0303, "MIN_ROUTE_SPACING_M", 200.0)))
     d0303.AREA_DUBINS_ENTRY_LINKS_ENABLED = bool(
-        values.get("area_dubins_entry_links_enabled", getattr(d0303, "AREA_DUBINS_ENTRY_LINKS_ENABLED", False))
+        values.get("area_dubins_entry_links_enabled", getattr(d0303, "AREA_DUBINS_ENTRY_LINKS_ENABLED", True))
     )
     d0303.DEFAULT_SEARCH_SPEED_MULTIPLIER = _get_float(
         "default_search_speed_multiplier",
         float(getattr(d0303, "DEFAULT_SEARCH_SPEED_MULTIPLIER", 16.0)),
     )
-    d0303.POINT_FOV_DEG = _get_float("point_fov_deg", float(getattr(d0303, "POINT_FOV_DEG", 66.638654)))
+    d0303.POINT_FOV_DEG = _get_float("point_fov_deg", float(getattr(d0303, "POINT_FOV_DEG", 31.2)))
     d0303.AREA_NADIR_FOV_DEG = _get_float("area_nadir_fov_deg", float(getattr(d0303, "AREA_NADIR_FOV_DEG", 31.2)))
     d0303.ENTRY_HOLD_FOV_DEG = _get_float("entry_hold_fov_deg", float(getattr(d0303, "ENTRY_HOLD_FOV_DEG", 10.0)))
     d0303.ENTRY_HOLD_GIMBAL_PITCH = _get_float(
@@ -130,7 +176,7 @@ def _apply_runtime_params(d0303, search_speed_module, mp_config_module) -> tuple
     d0303.LOITER_SPEED_MPS = _get_float("loiter_speed_mps", float(getattr(d0303, "LOITER_SPEED_MPS", 30.0)))
     d0303.SWEEP_GEOMETRY = d0303.SweepConfig(
         separation_m=float(sweep_sep),
-        fov_deg=float(fov_deg),
+        fov_deg=float(line_fov_deg),
     )
 
     if mp_config_module is not None:
@@ -140,13 +186,9 @@ def _apply_runtime_params(d0303, search_speed_module, mp_config_module) -> tuple
     if search_speed_module is not None:
         search_speed_module._CFG_WEIGHT = float(search_weight)
 
-    algo_map = {"dtatrim": "dtatrim", "algo2": "linear", "algo3": "algo3"}
-    algo_name = algo_map.get(str(payload.get("algo_key") or ""))
-    if algo_name:
-        d0303.set_route_planner(algo_name)
     d0303.set_flyover_options(
         entry_offset=bool(flyover.get("entry_offset", False)),
-        dubins_prefix=False,
+        dubins_prefix=bool(flyover.get("dubins_prefix", False)),
         all_wps=bool(flyover.get("all_wps", False)),
     )
     return _get_float("cruise_speed_mps", 40.0), _get_float("turn_step_deg", 15.0)
@@ -188,10 +230,10 @@ def build_0303_0304_from_0302_packages(
     d0303, d0304, search_speed, mp_config = _import_runtime_modules()
     runtime_payload = load_runtime_settings()
     uav_runtime_payload = _payload_with_uav_plan_mode(runtime_payload, uav_plan_mode)
-    cfg_cruise_speed, cfg_turn_step = _apply_runtime_params(d0303, search_speed, mp_config)
+    cfg_cruise_speed, cfg_turn_step = _apply_runtime_params(d0303, d0304, search_speed, mp_config)
     manned_plan_mode = str(get_runtime_str("manned_plan_mode", "normal", runtime_payload) or "normal").strip().lower()
     effective_uav_cruise = float(cruise_speed_mps) if cruise_speed_mps and float(cruise_speed_mps) > 0.0 else float(cfg_cruise_speed)
-    effective_lah_cruise = float(lah_cruise_speed_mps) if lah_cruise_speed_mps and float(lah_cruise_speed_mps) > 0.0 else 15.0
+    effective_lah_cruise = float(lah_cruise_speed_mps) if lah_cruise_speed_mps and float(lah_cruise_speed_mps) > 0.0 else 30.0
 
     uav_missions = _missions_from_0302_packages(packages, min_aircraft_id=4, max_aircraft_id=6)
     lah_missions = _missions_from_0302_packages(packages, min_aircraft_id=1, max_aircraft_id=3)
@@ -226,6 +268,12 @@ def build_0303_0304_from_0302_packages(
             flight_plans_0303 = _build_0303()
         if lah_missions:
             flight_plans_0304 = _build_0304()
+
+    if flight_plans_0303 and flight_plans_0304:
+        flight_plans_0304 = d0304.apply_uav_eta_follow_speed_plan(
+            list(flight_plans_0304),
+            list(flight_plans_0303),
+        )
 
     return list(flight_plans_0303), list(flight_plans_0304)
 

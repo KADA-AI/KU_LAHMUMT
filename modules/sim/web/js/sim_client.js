@@ -1,6 +1,7 @@
 import { logStatus } from "./status_log.js";
 
-const STATE_ENDPOINT = "/api/sim/state";
+const SIM_STATE_ENDPOINT = "/api/sim/state";
+const MONITOR_STATE_ENDPOINT = "/api/monitoring/state";
 const MISSION_ENDPOINT = "/api/sim/mission";
 const PLAY_ENDPOINT = "/api/sim/play";
 const PAUSE_ENDPOINT = "/api/sim/pause";
@@ -14,6 +15,10 @@ const FORCE_COMMAND_ENDPOINT = "/api/sim/force_command";
 const TARGET_ADD_ENDPOINT = "/api/sim/targets/add";
 const TARGET_CLEAR_ENDPOINT = "/api/sim/targets/clear";
 const INTEGRATION_RESET_ENDPOINT = "/api/integration/reset";
+const INTEGRATION_SETTINGS_ENDPOINT = "/api/integration/settings";
+const INTEGRATION_ACTIVATE_ENDPOINT = "/api/integration/activate";
+const SIM_POLL_INTERVAL_MS = 120;
+const MONITOR_POLL_INTERVAL_MS = 200;
 
 const fetchJson = async (url, options) => {
   const response = await fetch(url, options);
@@ -34,9 +39,97 @@ export const initSimClient = () => {
   let skipHistoryOnce = false;
   let catchUpMode = false;
   let forceCatchUp = false;
+  let mode = "sim";
+  let currentPollIntervalMs = SIM_POLL_INTERVAL_MS;
+  let missionSignature = null;
+  let lastFetchWarnAt = 0;
   const subscribers = new Set();
   const SPEED_RAMP_SEQUENCE = [10, 8, 6, 4, 2, 1];
   const SPEED_RAMP_INTERVAL_MS = 200;
+
+  const readCurrentWaypointId = (entry) => {
+    if (entry === null || entry === undefined) {
+      return null;
+    }
+    if (typeof entry === "object") {
+      return readCurrentWaypointId(
+        entry.waypointID ?? entry.WaypointID ?? entry.id ?? entry.ID ?? null,
+      );
+    }
+    const parsed = Number(entry);
+    return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
+  };
+
+  const deriveCurrentWaypoints = (state) => {
+    const result = {};
+    const direct = state?.currentWaypoints;
+    if (direct && typeof direct === "object" && !Array.isArray(direct)) {
+      Object.entries(direct).forEach(([agent, value]) => {
+        const wpId = readCurrentWaypointId(value);
+        if (Number.isFinite(wpId)) {
+          result[String(agent || "").toUpperCase()] = wpId;
+        }
+      });
+      return result;
+    }
+    const vehicles = state?.vehicles || {};
+    Object.entries(vehicles).forEach(([agent, entry]) => {
+      const wpId = readCurrentWaypointId(
+        entry?.currentWaypointID ??
+          entry?.CurrentWaypointID ??
+          entry?.unmannedInfo?.currentWaypointID ??
+          entry?.unmannedInfo?.CurrentWaypointID ??
+          null,
+      );
+      if (Number.isFinite(wpId)) {
+        result[String(agent || "").toUpperCase()] = wpId;
+      }
+    });
+    return result;
+  };
+
+  const updateMissionState = (state) => {
+    const currentWaypoints = deriveCurrentWaypoints(state);
+    if (typeof window.setMissionCurrentWaypoints === "function") {
+      window.setMissionCurrentWaypoints(currentWaypoints);
+    }
+    const mission = state?.mission;
+    const monitorMode = state?.mode === "monitor";
+    const currentSignature = state?.missionSignature || null;
+    if (!mission) {
+      if (monitorMode && state?.missionAvailable === false) {
+        missionSignature = null;
+        if (typeof window.missionPathLoader === "function") {
+          window.missionPathLoader({
+            ok: true,
+            features: [],
+            agents: {},
+            count: 0,
+            flightPaths: [],
+          });
+        }
+        if (typeof window.setMissionPlanReady === "function") {
+          window.setMissionPlanReady(false);
+        }
+      }
+      return;
+    }
+    if (typeof window.missionPathLoader !== "function") {
+      return;
+    }
+    const signature =
+      mission.signature ||
+      currentSignature ||
+      `${mission.missionPlanID ?? "none"}:${mission.source ?? "unknown"}:${mission.selectedTimestamp ?? 0}`;
+    if (signature === missionSignature) {
+      return;
+    }
+    missionSignature = signature;
+    window.missionPathLoader(mission);
+    if (typeof window.setMissionPlanReady === "function") {
+      window.setMissionPlanReady(Boolean(mission.ok && Array.isArray(mission.features) && mission.features.length));
+    }
+  };
 
   const resetQueueToState = (state, backtrack = 0) => {
     frameQueue = [];
@@ -94,6 +187,7 @@ export const initSimClient = () => {
         step: state.step,
       });
     }
+    updateMissionState(state);
   };
 
   const downsampleHistory = (history, speedFactor) => {
@@ -155,8 +249,29 @@ export const initSimClient = () => {
 
   const poll = async () => {
     try {
-      const query = Number.isFinite(lastStep) ? `?since=${lastStep}` : "";
-      const state = await fetchJson(`${STATE_ENDPOINT}${query}`, { method: "GET" });
+      const endpoint = mode === "monitor" ? MONITOR_STATE_ENDPOINT : SIM_STATE_ENDPOINT;
+      const query =
+        mode === "monitor"
+          ? `?missionSince=${encodeURIComponent(missionSignature || "")}`
+          : mode === "sim" && Number.isFinite(lastStep)
+            ? `?since=${lastStep}`
+            : "";
+      const state = await fetchJson(`${endpoint}${query}`, { method: "GET" });
+      if (mode === "monitor") {
+        frameQueue = [];
+        draining = false;
+        catchUpMode = false;
+        skipHistoryOnce = true;
+        lastState = state || null;
+        if (!suspendRender && state) {
+          updateMarkers(state);
+        }
+        if (Number.isFinite(state?.step)) {
+          lastStep = state.step;
+        }
+        notify();
+        return;
+      }
       if (catchUpMode) {
         const speed = Number(state?.latest?.speedFactor ?? state?.speedFactor);
         if (Number.isFinite(speed)) {
@@ -169,10 +284,35 @@ export const initSimClient = () => {
         return;
       }
       if (state && Array.isArray(state.history)) {
+        const speedValue = Number(state.latest?.speedFactor);
+        const latestOnly =
+          (Number.isFinite(speedValue) && speedValue >= 3) || state.history.length > 80;
+        if (latestOnly) {
+          const latest =
+            state.latest ||
+            (state.history.length ? state.history[state.history.length - 1] : null);
+          if (Number.isFinite(speedValue)) {
+            lastSpeedFactor = speedValue;
+          }
+          frameQueue = [];
+          draining = false;
+          catchUpMode = false;
+          skipHistoryOnce = true;
+          if (latest) {
+            lastState = latest;
+            if (!suspendRender) {
+              updateMarkers(latest);
+            }
+            if (Number.isFinite(latest?.step)) {
+              lastStep = latest.step;
+            }
+          }
+          notify();
+          return;
+        }
         if (skipHistoryOnce) {
-          const speed = Number(state.latest?.speedFactor);
-          if (Number.isFinite(speed)) {
-            lastSpeedFactor = speed;
+          if (Number.isFinite(speedValue)) {
+            lastSpeedFactor = speedValue;
           }
           const latest =
             state.latest ||
@@ -193,23 +333,22 @@ export const initSimClient = () => {
           return;
         }
         let shouldCatchUp = false;
-        const speed = Number(state.latest?.speedFactor);
-        if (Number.isFinite(speed)) {
-          if (lastSpeedFactor !== null && speed !== lastSpeedFactor) {
-            if (speed < lastSpeedFactor) {
+        if (Number.isFinite(speedValue)) {
+          if (lastSpeedFactor !== null && speedValue !== lastSpeedFactor) {
+            if (speedValue < lastSpeedFactor) {
               shouldCatchUp = true;
             } else {
               resetQueueToState(state.latest || state, 10);
             }
           }
-          lastSpeedFactor = speed;
+          lastSpeedFactor = speedValue;
         }
         if (forceCatchUp) {
           shouldCatchUp = true;
         }
         if (state.history.length) {
           if (!suspendRender) {
-            const historySpeed = Number.isFinite(speed) ? speed : lastSpeedFactor;
+            const historySpeed = Number.isFinite(speedValue) ? speedValue : lastSpeedFactor;
             const sampled = downsampleHistory(state.history, historySpeed);
             enqueueFrames(sampled.map((frame) => ({ ok: true, ...frame })));
           }
@@ -288,16 +427,24 @@ export const initSimClient = () => {
       }
       notify();
     } catch (err) {
-      logStatus("SIM state fetch failed", { level: "warn", ttlMs: 4000 });
+      const now = Date.now();
+      if ((now - lastFetchWarnAt) >= 2500) {
+        logStatus(mode === "monitor" ? "Monitoring state fetch failed" : "SIM state fetch failed", {
+          level: "warn",
+          ttlMs: 2500,
+        });
+        lastFetchWarnAt = now;
+      }
     }
   };
 
-  const startPolling = (intervalMs = 80) => {
+  const startPolling = (intervalMs = currentPollIntervalMs) => {
     if (pollTimer) {
       return;
     }
+    currentPollIntervalMs = Math.max(80, intervalMs);
     poll();
-    pollTimer = setInterval(poll, Math.max(80, intervalMs));
+    pollTimer = setInterval(poll, currentPollIntervalMs);
   };
 
   const stopPolling = () => {
@@ -306,6 +453,30 @@ export const initSimClient = () => {
       pollTimer = null;
     }
   };
+
+  const setMode = (nextMode) => {
+    const normalized = nextMode === "monitor" ? "monitor" : "sim";
+    if (mode === normalized) {
+      return mode;
+    }
+    mode = normalized;
+    currentPollIntervalMs =
+      mode === "monitor" ? MONITOR_POLL_INTERVAL_MS : SIM_POLL_INTERVAL_MS;
+    frameQueue = [];
+    draining = false;
+    catchUpMode = false;
+    forceCatchUp = false;
+    skipHistoryOnce = true;
+    lastStep = null;
+    missionSignature = null;
+    if (pollTimer) {
+      stopPolling();
+      startPolling(currentPollIntervalMs);
+    }
+    return mode;
+  };
+
+  const getMode = () => mode;
 
   if (typeof document !== "undefined") {
     document.addEventListener("visibilitychange", () => {
@@ -344,9 +515,13 @@ export const initSimClient = () => {
     }
   };
 
-  const play = async () => {
+  const play = async (payload) => {
     try {
-      const result = await fetchJson(PLAY_ENDPOINT, { method: "POST" });
+      const result = await fetchJson(PLAY_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload || {}),
+      });
       if (!result.ok) {
         throw new Error(result.error || "play failed");
       }
@@ -559,6 +734,37 @@ export const initSimClient = () => {
     }
   };
 
+  const getIntegrationSettings = async () => {
+    try {
+      return await fetchJson(INTEGRATION_SETTINGS_ENDPOINT, { method: "GET" });
+    } catch (err) {
+      logStatus(`nFusion settings load failed: ${err.message}`, { level: "error", ttlMs: 4000 });
+      return { ok: false, error: err.message };
+    }
+  };
+
+  const saveIntegrationSettings = async (settings) => {
+    try {
+      return await fetchJson(INTEGRATION_SETTINGS_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(settings || {}),
+      });
+    } catch (err) {
+      logStatus(`nFusion settings save failed: ${err.message}`, { level: "error", ttlMs: 4000 });
+      return { ok: false, error: err.message };
+    }
+  };
+
+  const ensureIntegrationReady = async () => {
+    try {
+      return await fetchJson(INTEGRATION_ACTIVATE_ENDPOINT, { method: "POST" });
+    } catch (err) {
+      logStatus(`nFusion activate failed: ${err.message}`, { level: "warn", ttlMs: 4000 });
+      return { ok: false, error: err.message };
+    }
+  };
+
   const subscribe = (cb) => {
     if (typeof cb !== "function") {
       return () => {};
@@ -570,6 +776,8 @@ export const initSimClient = () => {
   return {
     startPolling,
     stopPolling,
+    setMode,
+    getMode,
     setMission,
     play,
     pause,
@@ -583,6 +791,9 @@ export const initSimClient = () => {
     addTarget,
     clearTargets,
     resetIntegration,
+    getIntegrationSettings,
+    saveIntegrationSettings,
+    ensureIntegrationReady,
     subscribe,
     getState: () => lastState,
   };

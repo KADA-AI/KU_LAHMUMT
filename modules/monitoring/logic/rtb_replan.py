@@ -12,6 +12,7 @@ from modules.common.option_codes import (
 )
 from modules.monitoring.logic.init_replan import allocate_mission_plan_ids, collect_input_mission_ids
 from modules.monitoring.logic.mission_update import load_db_json
+from modules.monitoring.logic.replan_runtime_settings import get_rtb_settings
 
 
 def _coerce_int(value: object) -> int | None:
@@ -80,10 +81,7 @@ class RtbReplanState:
 
 class RtbReplanCoordinator:
     REPLAN_LEVEL = 1
-    RTB_FLIGHT_MODE = 5
-    ABNORMAL_HEALTH_VALUE = 2
-    SIGNAL_LOSS_GRACE_MS = 10_000
-    REPLAN_HOLD_MS = 5_000
+    HEALTH_UNAVAILABLE_TRIGGER = "abnormalHealthUnavailable"
     UAV_IDS = (4, 5, 6)
     OPTION_CODES: tuple[int, ...] = DEFAULT_OPTION_CODE_SEQUENCE
 
@@ -100,6 +98,10 @@ class RtbReplanCoordinator:
 
     def get_availability_overrides(self) -> dict[int, bool]:
         return dict(self._state.availability_overrides)
+
+    @staticmethod
+    def _config() -> dict[str, Any]:
+        return get_rtb_settings()
 
     def on_agent_states(
         self,
@@ -172,7 +174,7 @@ class RtbReplanCoordinator:
                 for aircraft_id in unique_aircraft:
                     self._state.pending_by_aircraft.pop(int(aircraft_id), None)
                 logs.append(
-                    f"[0401] RTB/abnormal-state detected but replan skipped: mode={system_mode} (need 3/4)"
+                    f"[0401] RTB/health-unavailable detected but replan skipped: mode={system_mode} (need 3/4)"
                 )
                 return [], logs
 
@@ -185,6 +187,31 @@ class RtbReplanCoordinator:
                 trigger_type = str(active_state.get("_rtb_trigger_type") or "unexpectedRTB")
                 cause = str(active_state.get("_rtb_cause") or "unknown")
                 reason = str(active_state.get("_rtb_reason") or "")
+                if self._is_immediate_trigger_type(trigger_type):
+                    payload = self._build_replan_payload(
+                        aircraft_id=int(aircraft_id),
+                        state=active_state,
+                        mission_ids=mission_ids,
+                        package_id=package_id,
+                        timestamp_ms=now_ts,
+                        trigger_type=trigger_type,
+                        reason=reason,
+                        cause=cause,
+                    )
+                    if payload is None:
+                        logs.append(
+                            "[0401] health-unavailable replan skipped: missionPlanID allocation failed "
+                            f"({_aircraft_display_label(aircraft_id)}, aircraftID={aircraft_id})"
+                        )
+                        continue
+                    self._state.triggered_aircraft.add(int(aircraft_id))
+                    self._state.pending_by_aircraft.pop(int(aircraft_id), None)
+                    payloads.append(payload)
+                    logs.append(
+                        "[0401] health-unavailable replan prepared "
+                        f"({_aircraft_display_label(aircraft_id)}, aircraftID={aircraft_id}, cause={cause})"
+                    )
+                    continue
                 pending = self._state.pending_by_aircraft.get(int(aircraft_id))
                 if (
                     pending is None
@@ -200,10 +227,10 @@ class RtbReplanCoordinator:
                     logs.append(
                         "[0401] RTB replan pending "
                         f"({_aircraft_display_label(aircraft_id)}, aircraftID={aircraft_id}, "
-                        f"trigger={trigger_type}, cause={cause}, hold={self.REPLAN_HOLD_MS/1000:.1f}s)"
+                        f"trigger={trigger_type}, cause={cause}, hold={int(self._config().get('replan_hold_ms', 5000)) / 1000.0:.1f}s)"
                     )
                     continue
-                if now_ts - int(pending.first_seen_ms) < int(self.REPLAN_HOLD_MS):
+                if now_ts - int(pending.first_seen_ms) < int(self._config().get("replan_hold_ms", 5000)):
                     continue
 
                 payload = self._build_replan_payload(
@@ -318,14 +345,15 @@ class RtbReplanCoordinator:
         *,
         timestamp_ms: int | None,
     ) -> str | None:
-        flight_mode = _coerce_int((state or {}).get("flight_mode"))
+        # 0401 payload/datalink faults only raise notices.
+        # health==2 is an immediate unavailable/replan signal and has priority.
+        _ = timestamp_ms
+        config = self._config()
         health = _coerce_int((state or {}).get("health"))
-        payload_health = _coerce_int((state or {}).get("payload_health"))
-        if self._has_signal_loss(state, timestamp_ms=timestamp_ms):
-            return "communicationLossRTB"
-        if health == self.ABNORMAL_HEALTH_VALUE or payload_health == self.ABNORMAL_HEALTH_VALUE:
-            return "abnormalHealthRTB"
-        if flight_mode == self.RTB_FLIGHT_MODE:
+        if health == int(config.get("abnormal_health_value", 2)):
+            return self.HEALTH_UNAVAILABLE_TRIGGER
+        flight_mode = _coerce_int((state or {}).get("flight_mode"))
+        if flight_mode == int(config.get("unexpected_rtb_flight_mode", 5)):
             return "unexpectedRTB"
         return None
 
@@ -337,15 +365,20 @@ class RtbReplanCoordinator:
         trigger_type: str | None,
         timestamp_ms: int | None,
     ) -> tuple[str, str]:
+        config = self._config()
         health = _coerce_int((state or {}).get("health"))
         payload_health = _coerce_int((state or {}).get("payload_health"))
         fuel_warning = _coerce_int((state or {}).get("fuel_warning"))
-        suffix = f"{_aircraft_display_label(aircraft_id)} RTB"
+        aircraft_label = _aircraft_display_label(aircraft_id)
+        suffix = f"{aircraft_label} RTB"
         signal_issue = self._has_signal_loss(state, timestamp_ms=timestamp_ms)
-        health_issue = health == self.ABNORMAL_HEALTH_VALUE
-        payload_issue = payload_health == self.ABNORMAL_HEALTH_VALUE
-        fuel_issue = fuel_warning is not None and int(fuel_warning) >= 2
+        abnormal_health_value = int(config.get("abnormal_health_value", 2))
+        health_issue = health == abnormal_health_value
+        payload_issue = payload_health == abnormal_health_value
+        fuel_issue = fuel_warning is not None and int(fuel_warning) >= int(config.get("fuel_warning_replan_level", 2))
 
+        if str(trigger_type or "").strip() == self.HEALTH_UNAVAILABLE_TRIGGER and health_issue:
+            return f"{aircraft_label} 기체 고장으로 인한 재계획", "health"
         if signal_issue:
             return f"통신 두절로 인한 {suffix}", "signal_loss"
         if health_issue:
@@ -364,8 +397,18 @@ class RtbReplanCoordinator:
         *,
         timestamp_ms: int | None,
     ) -> bool:
-        _ = timestamp_ms
-        return (state or {}).get("datalink_connected") is False
+        if (state or {}).get("datalink_connected") is False:
+            return True
+        current_ts = _coerce_int(timestamp_ms)
+        last_signal_ts = _coerce_int((state or {}).get("last_signal_time"))
+        if current_ts is None or last_signal_ts is None:
+            return False
+        grace_ms = int(self._config().get("signal_loss_grace_ms", 10000))
+        return (current_ts - last_signal_ts) >= grace_ms
+
+    @staticmethod
+    def _is_immediate_trigger_type(trigger_type: str | None) -> bool:
+        return str(trigger_type or "").strip() == RtbReplanCoordinator.HEALTH_UNAVAILABLE_TRIGGER
 
     def _clear_inactive_aircraft(self, active_aircraft: set[int]) -> None:
         tracked_ids = set(int(aid) for aid in self._state.availability_overrides.keys())

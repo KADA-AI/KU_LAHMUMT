@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import json
 import traceback
 from copy import deepcopy
 from pathlib import Path
@@ -25,8 +26,8 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from ..algo.split_runner import run_split_pipeline
-from ..algo.area_review import review_overflow_areas
+from ..algo.split_runner import assign_split_result_by_takeover_distance, run_split_pipeline
+from ..algo.area_review import review_assigned_areas_local, review_overflow_areas
 from ..assignment.allocator import resolve_uav_ids
 from ..io.export_0301 import build_0301_from_0302_packages, save_0301_plan
 from ..io.export_0302 import build_0302_packages_from_split_with_lah, save_0302_packages
@@ -46,9 +47,21 @@ from ..scheduling import (
 )
 from ..type_decider import apply_logic_type_decider
 try:
-    from ...runtime_settings import get_runtime_float, get_runtime_str
+    from ...runtime_settings import (
+        canonicalize_runtime_payload,
+        get_runtime_str,
+        get_runtime_area_review_max_segment_m,
+        load_runtime_settings,
+        settings_path as runtime_settings_path,
+    )
 except Exception:
-    from modules.mission_planning.MissionPlanner.runtime_settings import get_runtime_float, get_runtime_str  # type: ignore
+    from modules.mission_planning.MissionPlanner.runtime_settings import (  # type: ignore
+        canonicalize_runtime_payload,
+        get_runtime_str,
+        get_runtime_area_review_max_segment_m,
+        load_runtime_settings,
+        settings_path as runtime_settings_path,
+    )
 from modules.mission_planning.ui import MissionAlgoConfigTab
 
 
@@ -75,7 +88,43 @@ class MainWindow(QMainWindow):
         self._render_map()
 
     def _review_max_segment_m(self) -> float:
-        return float(get_runtime_float("enhanced_area_review_max_segment_m", 550.0))
+        return float(get_runtime_area_review_max_segment_m(300.0))
+
+    def _is_area_dubins_enabled(self) -> bool:
+        payload = load_runtime_settings()
+        values = payload.get("values") if isinstance(payload.get("values"), dict) else {}
+        return bool(values.get("area_dubins_entry_links_enabled", True))
+
+    def _set_area_dubins_enabled(self, enabled: bool) -> None:
+        payload = load_runtime_settings()
+        if not isinstance(payload, dict):
+            payload = {}
+        values = payload.get("values")
+        if not isinstance(values, dict):
+            values = {}
+            payload["values"] = values
+        values["area_dubins_entry_links_enabled"] = bool(enabled)
+        path = runtime_settings_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(canonicalize_runtime_payload(payload), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    def _refresh_area_dubins_button(self) -> None:
+        enabled = self._is_area_dubins_enabled()
+        self.btn_area_dubins.setChecked(enabled)
+        self.btn_area_dubins.setText(f"Area Dubins: {'ON' if enabled else 'OFF'}")
+        self.btn_area_dubins.setToolTip("개별 Area mission 사이 Dubins flyover link 삽입을 켜고 끕니다.")
+
+    def _toggle_area_dubins(self, checked: bool) -> None:
+        try:
+            self._set_area_dubins_enabled(bool(checked))
+            self._refresh_area_dubins_button()
+            self._log(f"[SETTINGS] area_dubins_entry_links_enabled={bool(checked)}")
+        except Exception as exc:
+            self._refresh_area_dubins_button()
+            QMessageBox.warning(self, "Area Dubins Toggle Failed", str(exc))
 
     def _build_ui(self) -> None:
         root = QWidget()
@@ -102,6 +151,12 @@ class MainWindow(QMainWindow):
         self.btn_algo_config.clicked.connect(self._open_algo_config_dialog)
         left_layout.addWidget(self.btn_algo_config)
 
+        self.btn_area_dubins = QPushButton()
+        self.btn_area_dubins.setCheckable(True)
+        self.btn_area_dubins.clicked.connect(self._toggle_area_dubins)
+        left_layout.addWidget(self.btn_area_dubins)
+        self._refresh_area_dubins_button()
+
         self.chk_auto_uav = QCheckBox("UAV count from 0201 (auto)")
         self.chk_auto_uav.setChecked(True)
         self.chk_auto_uav.toggled.connect(self._on_auto_uav_toggled)
@@ -116,6 +171,22 @@ class MainWindow(QMainWindow):
         self.btn_run_assignment = QPushButton("Run AnS")
         self.btn_run_assignment.clicked.connect(self._run_assignment_pipeline)
         left_layout.addWidget(self.btn_run_assignment)
+
+        flow_row = QWidget()
+        flow_row_layout = QHBoxLayout(flow_row)
+        flow_row_layout.setContentsMargins(0, 0, 0, 0)
+        flow_row_layout.setSpacing(6)
+        flow_row_layout.addWidget(QLabel("Flow:"))
+        self.rd_flow_initial = QRadioButton("Initial")
+        self.rd_flow_replan = QRadioButton("Replan")
+        self.rd_flow_initial.setChecked(True)
+        self.flow_mode_group = QButtonGroup(self)
+        self.flow_mode_group.addButton(self.rd_flow_initial)
+        self.flow_mode_group.addButton(self.rd_flow_replan)
+        flow_row_layout.addWidget(self.rd_flow_initial)
+        flow_row_layout.addWidget(self.rd_flow_replan)
+        flow_row_layout.addStretch(1)
+        left_layout.addWidget(flow_row)
 
         self.btn_divider = QPushButton("1) Run div")
         self.btn_divider.clicked.connect(self._run_divider)
@@ -337,6 +408,41 @@ class MainWindow(QMainWindow):
             return 5
         return 6
 
+    def _planning_flow_mode(self) -> str:
+        if getattr(self, "rd_flow_replan", None) is not None and self.rd_flow_replan.isChecked():
+            return "replan"
+        return "initial"
+
+    def _is_replan_mode(self) -> bool:
+        return self._planning_flow_mode() == "replan"
+
+    def _assignment_summary_text(self) -> str:
+        if self.split_result is None:
+            return "-"
+        counts: dict[int, int] = {}
+        for piece in self.split_result.pieces:
+            aid = int(piece.assigned_uav or 0)
+            if aid <= 0:
+                continue
+            counts[aid] = int(counts.get(aid, 0)) + 1
+        if not counts:
+            return "-"
+        return ", ".join(f"UAV{aid}={count}" for aid, count in sorted(counts.items()))
+
+    def _ensure_replan_assignment(self) -> None:
+        if self.split_result is None or self.mrpk_data is None:
+            return
+        if all(int(piece.assigned_uav or 0) > 0 for piece in self.split_result.pieces):
+            return
+        uav_ids = self._resolve_uav_ids_for_ui()
+        report = assign_split_result_by_takeover_distance(self.split_result, self.mrpk_data, uav_ids)
+        self._log(
+            "[REPLAN][ASSIGN] "
+            f"groups={int(report.get('groups', 0))} "
+            f"assigned={int(report.get('assignedPieces', 0))}/{int(report.get('pieceCount', 0))} "
+            f"{self._assignment_summary_text()}"
+        )
+
     def _run_divider(self) -> None:
         if self.cmpk_data is None:
             QMessageBox.warning(self, "Missing 0201", "Load 0201 first.")
@@ -347,11 +453,12 @@ class MainWindow(QMainWindow):
 
         try:
             uav_ids = self._resolve_uav_ids_for_ui()
+            use_replan_flow = self._is_replan_mode()
             result = run_split_pipeline(
                 self.cmpk_data,
                 self.mrpk_data,
                 uav_ids,
-                apply_assignment=False,
+                apply_assignment=use_replan_flow,
                 apply_scheduling=False,
             )
             self.split_result = result
@@ -359,7 +466,13 @@ class MainWindow(QMainWindow):
             self.flight_plans_0303 = []
             self.flight_plans_0304 = []
 
-            self._log(f"[DIVIDER] divide complete. uav_ids={result.uav_ids}, pieces={len(result.pieces)}")
+            self._log(
+                "[DIVIDER] "
+                f"flow={self._planning_flow_mode()} "
+                f"divide complete. uav_ids={result.uav_ids}, pieces={len(result.pieces)}"
+            )
+            if use_replan_flow:
+                self._log(f"[REPLAN][ASSIGN] preassigned after div: {self._assignment_summary_text()}")
             for d in result.directions:
                 if d.bearing_move_deg is not None and d.bearing_split_deg is not None:
                     area_tag = ""
@@ -416,7 +529,8 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            self._log("[PIPE] start AssignmentPipeline (1~7)")
+            use_replan_flow = self._is_replan_mode()
+            self._log(f"[PIPE] start AssignmentPipeline (1~7), flow={self._planning_flow_mode()}")
 
             # 1) Run div
             uav_ids = self._resolve_uav_ids_for_ui()
@@ -424,7 +538,7 @@ class MainWindow(QMainWindow):
                 self.cmpk_data,
                 self.mrpk_data,
                 uav_ids,
-                apply_assignment=False,
+                apply_assignment=use_replan_flow,
                 apply_scheduling=False,
             )
             self.split_result = result
@@ -432,6 +546,8 @@ class MainWindow(QMainWindow):
             self.flight_plans_0303 = []
             self.flight_plans_0304 = []
             self._log(f"[PIPE][1] divide complete. uav_ids={result.uav_ids}, pieces={len(result.pieces)}")
+            if use_replan_flow:
+                self._log(f"[PIPE][1][REPLAN] preassigned: {self._assignment_summary_text()}")
             QApplication.processEvents()
 
             # 2) Gen exp path
@@ -461,20 +577,37 @@ class MainWindow(QMainWindow):
             # 4) Review Area
             expected_paths = generate_expected_paths(self.split_result, self.mrpk_data)
             self.split_result.expected_paths = expected_paths
-            rr = review_overflow_areas(
-                self.split_result,
-                expected_paths,
-                max_segment_m=self._review_max_segment_m(),
-            )
-            line_paths = [r for r in expected_paths if str(r.get("source", "")).startswith("line_center_offset_dir")]
-            self.split_result.expected_paths = line_paths
-            self._log(
-                "[PIPE][4] "
-                f"maxSegment={self._review_max_segment_m():.1f}m "
-                f"review-area done. overflow={int(rr.get('overflowRows', 0))} "
-                f"targets={int(rr.get('targets', 0))} "
-                f"pieces={int(rr.get('oldPieceCount', 0))}->{int(rr.get('newPieceCount', 0))}"
-            )
+            if use_replan_flow:
+                self._ensure_replan_assignment()
+                rr = review_assigned_areas_local(
+                    self.split_result,
+                    self.mrpk_data,
+                    max_segment_m=self._review_max_segment_m(),
+                )
+                line_paths = [r for r in expected_paths if str(r.get("source", "")).startswith("line_center_offset_dir")]
+                self.split_result.expected_paths = line_paths
+                self._log(
+                    "[PIPE][4][REPLAN] "
+                    f"maxSegment={self._review_max_segment_m():.1f}m "
+                    f"localized={int(rr.get('localized', 0))} "
+                    f"targets={int(rr.get('targets', 0))} "
+                    f"pieces={int(rr.get('oldPieceCount', 0))}->{int(rr.get('newPieceCount', 0))}"
+                )
+            else:
+                rr = review_overflow_areas(
+                    self.split_result,
+                    expected_paths,
+                    max_segment_m=self._review_max_segment_m(),
+                )
+                line_paths = [r for r in expected_paths if str(r.get("source", "")).startswith("line_center_offset_dir")]
+                self.split_result.expected_paths = line_paths
+                self._log(
+                    "[PIPE][4] "
+                    f"maxSegment={self._review_max_segment_m():.1f}m "
+                    f"review-area done. overflow={int(rr.get('overflowRows', 0))} "
+                    f"targets={int(rr.get('targets', 0))} "
+                    f"pieces={int(rr.get('oldPieceCount', 0))}->{int(rr.get('newPieceCount', 0))}"
+                )
             QApplication.processEvents()
 
             # 5) Cal Exp Vel/Time
@@ -511,6 +644,7 @@ class MainWindow(QMainWindow):
                 self.split_result,
                 mrpk=self.mrpk_data,
                 uav_ids_override=uav_ids,
+                respect_piece_assignment=use_replan_flow,
             )
             self._base_schedule_for_insert = deepcopy(sched) if isinstance(sched, dict) else None
             self._log(
@@ -619,15 +753,16 @@ class MainWindow(QMainWindow):
             values = payload.get("values") if isinstance(payload, dict) else {}
             self._log(
                 "[SETTINGS] updated "
-                f"(preset={payload.get('preset_key')}, "
-                f"algo={payload.get('algo_key')}, "
-                f"sep={values.get('default_sweep_separation_m')}, "
+                f"(uavWp={values.get('uav_wp_interval_m')}, "
+                f"turnRadius={values.get('dubins_turn_radius_m')}, "
                 f"fov={values.get('fov_deg')}, "
                 f"autoFovDb={values.get('enhanced_auto_fov_from_db')})"
             )
+            self._refresh_area_dubins_button()
 
         lay.addWidget(MissionAlgoConfigTab(settings_path, on_apply=_on_apply, parent=dlg))
         dlg.exec_()
+        self._refresh_area_dubins_button()
 
     def _run_build_0301(self) -> None:
         if self.cmpk_data is None:
@@ -703,9 +838,10 @@ class MainWindow(QMainWindow):
 
     def _run_review_area(self) -> None:
         try:
-            area_mode = str(get_runtime_str("area_sweep_mode", "parallel") or "parallel").strip().lower()
+            area_mode = str(get_runtime_str("area_sweep_mode", "vertical") or "vertical").strip().lower()
         except Exception:
-            area_mode = "parallel"
+            area_mode = "vertical"
+        use_replan_flow = self._is_replan_mode()
         if area_mode in {"nadir", "directdown", "bf_nadir"}:
             self._log("[REVIEW] skipped: Nadir Mode does not use Review Area")
             return
@@ -716,7 +852,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Missing 0203", "Load 0203 first.")
             return
         area_pieces = [p for p in self.split_result.pieces if int(p.mission_type) in (2, 3, 6)]
-        if area_pieces:
+        if area_pieces and not use_replan_flow:
             has_type_decider = all(
                 isinstance(p.data, dict) and int((p.data or {}).get("patternType", 0) or 0) > 0
                 for p in area_pieces
@@ -732,45 +868,74 @@ class MainWindow(QMainWindow):
             expected_paths = generate_expected_paths(self.split_result, self.mrpk_data)
             self.split_result.expected_paths = expected_paths
             self._log_expected_paths(expected_paths, prefix="[EXP]")
-            overflow_rows = [
-                r
-                for r in expected_paths
-                if str(r.get("source", "")).startswith("area_")
-                and str(r.get("pathRole", "base")) == "base"
-                and float(r.get("sepM", 0.0) or 0.0) <= 1e-6
-            ]
-            self._log(f"[REVIEW] overflow_rows={len(overflow_rows)}")
+            if use_replan_flow:
+                self._ensure_replan_assignment()
+                report = review_assigned_areas_local(
+                    self.split_result,
+                    self.mrpk_data,
+                    max_segment_m=self._review_max_segment_m(),
+                )
+                self._log(
+                    "[REVIEW][REPLAN] "
+                    f"maxSegment={self._review_max_segment_m():.1f}m, "
+                    f"localized={int(report.get('localized', 0))}, "
+                    f"targets={int(report.get('targets', 0))}, "
+                    f"pieces={int(report.get('oldPieceCount', 0))}->{int(report.get('newPieceCount', 0))}"
+                )
+                for d in report.get("details", []):
+                    if not isinstance(d, dict):
+                        continue
+                    if not d.get("localized"):
+                        continue
+                    self._log(
+                        "[REVIEW][REPLAN] "
+                        f"M{int(d.get('parentOrder', 0))}-{int(d.get('pieceIndex', 0))} "
+                        f"UAV{int(d.get('assignedUav', 0))} "
+                        f"splitCount={int(d.get('splitCount', 1))} "
+                        f"span={float(d.get('projectedSpanM', 0.0)):.2f}m "
+                        f"seg={float(d.get('segmentLenM', 0.0)):.2f}m "
+                        f"axis={float(d.get('axisBearingDeg', 0.0)):.2f}"
+                    )
+            else:
+                overflow_rows = [
+                    r
+                    for r in expected_paths
+                    if str(r.get("source", "")).startswith("area_")
+                    and str(r.get("pathRole", "base")) == "base"
+                    and float(r.get("sepM", 0.0) or 0.0) <= 1e-6
+                ]
+                self._log(f"[REVIEW] overflow_rows={len(overflow_rows)}")
 
-            report = review_overflow_areas(
-                self.split_result,
-                expected_paths,
-                max_segment_m=self._review_max_segment_m(),
-            )
-            self._log(
-                "[REVIEW] "
-                f"maxSegment={self._review_max_segment_m():.1f}m, "
-                f"overflow_rows={int(report.get('overflowRows', 0))}, "
-                f"targets={int(report.get('targets', 0))}, "
-                f"pieces={int(report.get('oldPieceCount', 0))}->{int(report.get('newPieceCount', 0))}"
-            )
-            for d in report.get("details", []):
-                if not isinstance(d, dict) or not d.get("changed"):
-                    continue
+                report = review_overflow_areas(
+                    self.split_result,
+                    expected_paths,
+                    max_segment_m=self._review_max_segment_m(),
+                )
                 self._log(
                     "[REVIEW] "
-                    f"M{int(d.get('parentOrder', 0))}-{int(d.get('oldPieceIndex', d.get('pieceIndex', 0)))} "
-                    f"S{int(d.get('splitStage', 0))} "
-                    f"splitCount={int(d.get('splitCount', 1))} "
-                    f"seg={float(d.get('segmentLenM', 0.0)):.2f}m "
-                    f"axis={float(d.get('axisBearingDeg', 0.0)):.2f}"
+                    f"maxSegment={self._review_max_segment_m():.1f}m, "
+                    f"overflow_rows={int(report.get('overflowRows', 0))}, "
+                    f"targets={int(report.get('targets', 0))}, "
+                    f"pieces={int(report.get('oldPieceCount', 0))}->{int(report.get('newPieceCount', 0))}"
                 )
-            skipped = [
-                d
-                for d in report.get("details", [])
-                if isinstance(d, dict) and str(d.get("reason", "")) == "skip_patternType_not_6"
-            ]
-            if skipped:
-                self._log(f"[REVIEW] skipped(non-pattern6)={len(skipped)}")
+                for d in report.get("details", []):
+                    if not isinstance(d, dict) or not d.get("changed"):
+                        continue
+                    self._log(
+                        "[REVIEW] "
+                        f"M{int(d.get('parentOrder', 0))}-{int(d.get('oldPieceIndex', d.get('pieceIndex', 0)))} "
+                        f"S{int(d.get('splitStage', 0))} "
+                        f"splitCount={int(d.get('splitCount', 1))} "
+                        f"seg={float(d.get('segmentLenM', 0.0)):.2f}m "
+                        f"axis={float(d.get('axisBearingDeg', 0.0)):.2f}"
+                    )
+                skipped = [
+                    d
+                    for d in report.get("details", [])
+                    if isinstance(d, dict) and str(d.get("reason", "")) == "skip_patternType_not_6"
+                ]
+                if skipped:
+                    self._log(f"[REVIEW] skipped(non-pattern6)={len(skipped)}")
 
             # Do not regenerate area expected paths after review.
             # Keep only line expected paths from the original set.
@@ -878,6 +1043,8 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Missing 0203", "Load 0203 first.")
             return
         try:
+            if self._is_replan_mode():
+                self._ensure_replan_assignment()
             # Ensure velocity/time candidates exist for all current pieces.
             report = calculate_expected_velocity(
                 self.split_result,
@@ -893,6 +1060,7 @@ class MainWindow(QMainWindow):
                 self.split_result,
                 mrpk=self.mrpk_data,
                 uav_ids_override=uav_ids,
+                respect_piece_assignment=self._is_replan_mode(),
             )
             self._log(
                 "[SCH] "

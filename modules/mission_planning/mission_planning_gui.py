@@ -20,13 +20,13 @@ ensure_console(os.getenv("KU_CONSOLE_TITLE", "KU Mission Planning Console"))
 install_process_file_logging("mission_planning")
 
 try:
-    from .mission_planning_attack_helpers import (
+    from .pipelines.mission_planning_attack_helpers import (
         apply_attack_customizations,
         build_attack_context_from_replan_detail,
         compute_attack_waypoint,
         load_attack_context,
     )
-    from .mission_planning_gui_env import (
+    from .ui.mission_planning_gui_env import (
         _bootstrap_paths,
         _ensure_fusion_configs,
         _load_msglib_and_deps,
@@ -34,23 +34,30 @@ try:
         _sanitize_reason,
         _z4,
     )
-    from .mission_planning_pipeline_logging import PipelineLogManager
-    from .mission_plan_file_logger import MissionPlanFileLogger
-    from .json_io import write_json
-    from .ui import MissionAlgoConfigTab
+    from .runtime.mission_planning_pipeline_logging import PipelineLogManager
+    from .runtime.mission_plan_file_logger import MissionPlanFileLogger
+    from .runtime.json_io import write_json
+    from .ui import MissionAlgoConfigTab, MissionIdRelationshipTab
     from .MissionPlanner.runtime_settings import (
+        DEFAULT_AREA_SPLIT_MODE,
+        DEFAULT_AREA_SWEEP_MODE,
+        DEFAULT_UAV_PLAN_MODE,
+        canonicalize_runtime_payload,
+        get_runtime_prior_float,
+        get_runtime_prior_int,
+        get_runtime_prior_mission_profile,
         load_runtime_settings,
         runtime_override as runtime_settings_override,
         settings_path as runtime_settings_path,
     )
 except Exception:
-    from mission_planning_attack_helpers import (
+    from modules.mission_planning.pipelines.mission_planning_attack_helpers import (
         apply_attack_customizations,
         build_attack_context_from_replan_detail,
         compute_attack_waypoint,
         load_attack_context,
     )
-    from mission_planning_gui_env import (
+    from modules.mission_planning.ui.mission_planning_gui_env import (
         _bootstrap_paths,
         _ensure_fusion_configs,
         _load_msglib_and_deps,
@@ -58,11 +65,18 @@ except Exception:
         _sanitize_reason,
         _z4,
     )
-    from mission_planning_pipeline_logging import PipelineLogManager
-    from mission_plan_file_logger import MissionPlanFileLogger
-    from json_io import write_json
-    from modules.mission_planning.ui import MissionAlgoConfigTab
+    from modules.mission_planning.runtime.mission_planning_pipeline_logging import PipelineLogManager
+    from modules.mission_planning.runtime.mission_plan_file_logger import MissionPlanFileLogger
+    from modules.mission_planning.runtime.json_io import write_json
+    from modules.mission_planning.ui import MissionAlgoConfigTab, MissionIdRelationshipTab
     from modules.mission_planning.MissionPlanner.runtime_settings import (
+        DEFAULT_AREA_SPLIT_MODE,
+        DEFAULT_AREA_SWEEP_MODE,
+        DEFAULT_UAV_PLAN_MODE,
+        canonicalize_runtime_payload,
+        get_runtime_prior_float,
+        get_runtime_prior_int,
+        get_runtime_prior_mission_profile,
         load_runtime_settings,
         runtime_override as runtime_settings_override,
         settings_path as runtime_settings_path,
@@ -95,7 +109,7 @@ from PyQt5.QtGui import QKeySequence, QPainter, QColor, QFontMetrics, QFont
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QTabWidget, QShortcut,
     QWidget, QLabel, QHBoxLayout, QVBoxLayout, QSlider, QPushButton, QCheckBox,
-    QStyle, QStyleOptionSlider,
+    QStyle, QStyleOptionSlider, QDialog,
 )
 
 class ModeTickLabels(QWidget):
@@ -183,7 +197,9 @@ qInstallMessageHandler(_qt_silent_handler)
 from modules.common.status_reporter import send_status_ok
 from modules.common import db_paths
 from modules.common import imaging_schedule_replan_store
+from modules.common import next_collab_replan_store
 from modules.common import path_deviation_replan_store
+from modules.common.message_payload_dialog import JsonPayloadBatchDialog
 from modules.common.option_codes import (
     DEFAULT_OPTION_CODE_SEQUENCE,
     ensure_option_code_sequence,
@@ -192,7 +208,7 @@ from modules.common.option_codes import (
 )
 from receive_center import register_listener, unregister_listener   # ★ 0101 모드 수신 리스너
 try:
-    from .latest_input_cache import (
+    from .runtime.latest_input_cache import (
         reset_latest_inputs,
         update_from_payload as cache_update_from_payload,
         get_latest_package_id,
@@ -200,22 +216,26 @@ try:
         describe_latest_ids,
         resolve_path_from_cache,
     )
-    from .prior_mission_pipeline import run_prior_mission_pipeline, warm_prior_mission_pipeline
-    from .imaging_schedule_replan_pipeline import (
+    from .pipelines.prior_mission_pipeline_impl import run_prior_mission_pipeline, warm_prior_mission_pipeline
+    from .pipelines.imaging_schedule_replan_pipeline_impl import (
         run_imaging_schedule_replan_pipeline,
         warm_imaging_schedule_replan_pipeline,
     )
-    from .path_deviation_replan_pipeline import (
+    from .pipelines.path_deviation_replan_pipeline_impl import (
         run_path_deviation_replan_pipeline,
         warm_path_deviation_replan_pipeline,
     )
-    from .attack_plan_pipeline import (
+    from .pipelines.next_collab_replan_pipeline_impl import (
+        run_next_collab_replan_pipeline,
+        warm_next_collab_replan_pipeline,
+    )
+    from .pipelines.attack_plan_pipeline import (
         run_attack_exclusion_pipeline,
         run_attack_plan_pipeline,
         warm_attack_plan_pipeline,
     )
 except Exception:
-    from latest_input_cache import (
+    from modules.mission_planning.runtime.latest_input_cache import (
         reset_latest_inputs,
         update_from_payload as cache_update_from_payload,
         get_latest_package_id,
@@ -223,16 +243,23 @@ except Exception:
         describe_latest_ids,
         resolve_path_from_cache,
     )
-    from prior_mission_pipeline import run_prior_mission_pipeline, warm_prior_mission_pipeline
-    from imaging_schedule_replan_pipeline import (
+    from modules.mission_planning.pipelines.prior_mission_pipeline_impl import (
+        run_prior_mission_pipeline,
+        warm_prior_mission_pipeline,
+    )
+    from modules.mission_planning.pipelines.imaging_schedule_replan_pipeline_impl import (
         run_imaging_schedule_replan_pipeline,
         warm_imaging_schedule_replan_pipeline,
     )
-    from path_deviation_replan_pipeline import (
+    from modules.mission_planning.pipelines.path_deviation_replan_pipeline_impl import (
         run_path_deviation_replan_pipeline,
         warm_path_deviation_replan_pipeline,
     )
-    from attack_plan_pipeline import (
+    from modules.mission_planning.pipelines.next_collab_replan_pipeline_impl import (
+        run_next_collab_replan_pipeline,
+        warm_next_collab_replan_pipeline,
+    )
+    from modules.mission_planning.pipelines.attack_plan_pipeline import (
         run_attack_exclusion_pipeline,
         run_attack_plan_pipeline,
         warm_attack_plan_pipeline,
@@ -259,6 +286,12 @@ _PATH_DEVIATION_REASON_KEYWORDS = (
 _IMAGING_SCHEDULE_REASON_KEYWORDS = (
     "\ucd2c\uc601 \uc2a4\ucf00\uc904 \ubbf8\uc900\uc218",
 )
+_QUALITY_SPEED_REASON_KEYWORDS = (
+    "\ucd2c\uc601 \ud488\uc9c8 \uac1c\uc120",
+)
+_NEXT_COLLAB_REASON_KEYWORDS = (
+    "\uc870\uae30 \uc784\ubb34 \uc804\ud658",
+)
 
 
 def _is_path_deviation_reason_text(value: object | None) -> bool:
@@ -269,6 +302,56 @@ def _is_path_deviation_reason_text(value: object | None) -> bool:
 def _is_imaging_schedule_reason_text(value: object | None) -> bool:
     text = str(value or "")
     return any(keyword in text for keyword in _IMAGING_SCHEDULE_REASON_KEYWORDS)
+
+
+def _is_quality_speed_reason_text(value: object | None) -> bool:
+    text = str(value or "")
+    return any(keyword in text for keyword in _QUALITY_SPEED_REASON_KEYWORDS)
+
+
+def _is_quality_speed_trigger_type(value: object | None) -> bool:
+    return str(value or "").strip() == "qualityMonitorSep"
+
+
+def _plan_meta_has_quality_speed(meta_map: object | None) -> bool:
+    if not isinstance(meta_map, dict):
+        return False
+    for meta in meta_map.values():
+        if not isinstance(meta, dict):
+            continue
+        if _is_quality_speed_trigger_type(meta.get("triggerType")):
+            return True
+        detail = meta.get("replanDetail")
+        if isinstance(detail, dict) and _is_quality_speed_trigger_type(detail.get("triggerType")):
+            return True
+    return False
+
+
+def _is_next_collab_reason_text(value: object | None) -> bool:
+    text = str(value or "")
+    return any(keyword in text for keyword in _NEXT_COLLAB_REASON_KEYWORDS)
+
+
+def _sort_plan_delivery_entries(
+    plan_ids: object | None,
+    option_names: object | None,
+) -> tuple[list[int], list[str]]:
+    names = list(option_names or [])
+    entries: list[tuple[int, str, int]] = []
+    seen: set[int] = set()
+    for idx, raw_plan_id in enumerate(plan_ids or []):
+        try:
+            plan_id = int(raw_plan_id)
+        except Exception:
+            continue
+        if plan_id <= 0 or plan_id in seen:
+            continue
+        seen.add(plan_id)
+        raw_name = names[idx] if idx < len(names) else None
+        option_name = str(raw_name) if raw_name is not None else f"option{len(entries) + 1}"
+        entries.append((plan_id, option_name, idx))
+    entries.sort(key=lambda item: (item[0], item[2]))
+    return [item[0] for item in entries], [item[1] for item in entries]
 
 
 class MissionVisualizationTab(QWidget):
@@ -606,6 +689,7 @@ class MainWindow(QMainWindow):
     planning_metric_sig = pyqtSignal(dict)
     start_push_seq = pyqtSignal()       # 0301/0305/0901 순차 푸시 트리거
     visual_refresh = pyqtSignal()
+    id_tab_update_sig = pyqtSignal(object)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -645,6 +729,7 @@ class MainWindow(QMainWindow):
         self._hb_0102_interval_sec = 0.2  # 5Hz
         self._hb_0102_stop = threading.Event()
         self._hb_0102_thread: Optional[threading.Thread] = None
+        self._hb_0102_body_template: dict[str, Any] = {"source": "MMR", "status": 1}
         self._planning_timer_started_at: Optional[float] = None
         self._planning_timer_reason: str = "-"
         self._last_planning_elapsed_ms: Optional[float] = None
@@ -663,13 +748,9 @@ class MainWindow(QMainWindow):
         # ── 중앙 탭(AssignmentPlanningTab)
         tabs = QTabWidget()
         polish_tabs(tabs)
+        self._tabs = tabs
         self._tab = AssignmentPlanningTab(messenger=NodeMessenger)
         self._tab.set_replan_callback(self._handle_replan_received)
-
-        self._tab._build_overridden_body = lambda mid: (
-            {"Timestamp": _now_ms_since_2000(), "Status": 1, "Source": "MMR"}
-            if str(mid).strip() == "0102" else None
-        )
 
         self._install_power_gate_hooks()       # Power OFF 가드
         self._install_0301_override()          # 0301 전송 커스텀
@@ -679,6 +760,9 @@ class MainWindow(QMainWindow):
             on_apply=self._on_algo_settings_applied,
         )
         tabs.addTab(self._algo_tab, "알고리즘 설정")
+        self._id_tab = MissionIdRelationshipTab()
+        tabs.addTab(self._id_tab, "임무 관계도")
+        self._id_tab_index = tabs.indexOf(self._id_tab)
         self._log_tab = None
         self._visual_tab = None
         self._pipeline_logger = PipelineLogManager(
@@ -690,7 +774,9 @@ class MainWindow(QMainWindow):
         self._active_plan_log_run = None
         self._log_file_path: Optional[Path] = None
         self._init_gui_log_file_sink()
+        self.id_tab_update_sig.connect(self._apply_id_tab_update)
         self._on_algo_settings_applied()
+        self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
         QTimer.singleShot(0, lambda: self._schedule_planner_warmup("startup"))
 
         # ── 상단 모드 슬라이더
@@ -855,6 +941,7 @@ class MainWindow(QMainWindow):
         try:
             uav_cruise_speed, uav_turn_step, applied = self._apply_uav_params_from_store(
                 d0303,
+                d0304_module=d0304,
                 mp_config_module=mp_config,
                 search_speed_module=mp_search_speed,
                 default_cruise=uav_cruise_speed,
@@ -869,6 +956,7 @@ class MainWindow(QMainWindow):
             ("prior_pipeline", warm_prior_mission_pipeline),
             ("imaging_schedule_pipeline", warm_imaging_schedule_replan_pipeline),
             ("path_deviation_pipeline", warm_path_deviation_replan_pipeline),
+            ("next_collab_pipeline", warm_next_collab_replan_pipeline),
             ("attack_pipeline", warm_attack_plan_pipeline),
         ):
             try:
@@ -1190,6 +1278,35 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
+    def _normalize_0102_body_template(self, body: Optional[dict], *, status: Optional[int] = None) -> dict[str, Any]:
+        template = dict(body or {})
+        template.pop("Timestamp", None)
+        template.pop("timestamp", None)
+
+        source = template.get("source") or template.get("Source") or "MMR"
+        template["source"] = str(source)
+        template.pop("Source", None)
+
+        if status is None:
+            try:
+                status = int(template.get("status", template.get("Status", 1)))
+            except Exception:
+                status = 1
+        template["status"] = int(status)
+        template.pop("Status", None)
+        return template
+
+    def _set_0102_body_template(self, body: Optional[dict], *, status: Optional[int] = None) -> None:
+        self._hb_0102_body_template = self._normalize_0102_body_template(body, status=status)
+
+    def _build_0102_body(self, *, status: Optional[int] = None) -> dict[str, Any]:
+        body = self._normalize_0102_body_template(
+            getattr(self, "_hb_0102_body_template", None),
+            status=status,
+        )
+        body["timestamp"] = _now_ms_since_2000()
+        return body
+
     def _start_0102_heartbeat_worker_if_needed(self) -> None:
         th = getattr(self, "_hb_0102_thread", None)
         if th is not None and th.is_alive():
@@ -1242,11 +1359,7 @@ class MainWindow(QMainWindow):
                 next_due += interval
 
             try:
-                body = {
-                    "timestamp": _now_ms_since_2000(),
-                    "source": "MMR",
-                    "status": 1,
-                }
+                body = self._build_0102_body()
                 push_message("0102", NodeMessenger, body_dict=body)
                 self._self_check_sent = True
             except Exception as exc:
@@ -1296,7 +1409,39 @@ class MainWindow(QMainWindow):
                 code = ""
 
             if code == "0102":
-                self._ensure_0102(not bool(getattr(self, "_hb_0102_enabled", False)))
+                if bool(getattr(self, "_hb_0102_enabled", False)):
+                    self._ensure_0102(False)
+                    return
+
+                freq = None
+                try:
+                    freq = getattr(tab, "periodic_config", {}).get("0102")
+                except Exception:
+                    freq = None
+
+                body = None
+                edit_payload = getattr(tab, "edit_tx_payload", None)
+                build_payload = getattr(tab, "default_tx_payload", None)
+                if callable(build_payload):
+                    try:
+                        body = build_payload("0102")
+                    except Exception:
+                        body = None
+                if not isinstance(body, dict):
+                    body = self._build_0102_body()
+
+                if callable(edit_payload):
+                    try:
+                        body = edit_payload("0102", body, periodic_rate_hz=freq)
+                    except Exception as exc:
+                        self._append_log_line(f"[ERR] 0102 편집창 실패: {exc}")
+                        return
+                if body is None:
+                    self._append_log_line("[0102] 송신 취소")
+                    return
+
+                self._set_0102_body_template(body)
+                self._ensure_0102(True)
                 return
 
             if code == "0301":
@@ -1309,7 +1454,11 @@ class MainWindow(QMainWindow):
                 plan_ids = list(dict.fromkeys(plan_ids))
                 if not plan_ids:
                     return original_handler(row)
-                self._send_0301_batch(plan_ids)
+                payloads = self._edit_0301_delivery_payloads(plan_ids)
+                if not payloads:
+                    self._append_log_line("[0301] 송신 취소")
+                    return
+                self._send_0301_payloads(payloads)
                 return
 
             return original_handler(row)
@@ -1317,31 +1466,39 @@ class MainWindow(QMainWindow):
         tab._on_tx_button_clicked = _wrapped  # type: ignore
         self._tx_override_installed = True
 
-    def _push_single_0301(self, mission_plan_id: int):
+    def _normalize_0301_payload(self, body: Optional[dict], *, fallback_plan_id: Optional[int] = None) -> dict[str, Any]:
+        payload = dict(body or {})
+        payload["timestamp"] = int(payload.get("timestamp") or payload.get("Timestamp") or _now_ms_since_2000())
+        source = payload.get("source") or payload.get("Source") or "MMR"
+        payload["source"] = str(source)
+        payload.pop("Source", None)
+
+        plan_id = payload.get("missionPlanID", fallback_plan_id)
+        try:
+            payload["missionPlanID"] = int(plan_id)
+        except Exception:
+            payload["missionPlanID"] = 0
+        return payload
+
+    def _push_0301_payload(self, body: dict) -> bool:
         try:
             from push_center import push_message
         except Exception as exc:
             self._append_log_line(f"[ERR] 0301 push unavailable: {exc}")
-            return
+            return False
 
-        try:
-            mpid = int(mission_plan_id)
-        except Exception:
-            self._append_log_line(f"[WARN] 0301 skipped: invalid missionPlanID={mission_plan_id}")
-            return
-
-        body = {
-            "timestamp": _now_ms_since_2000(),
-            "source": "MMR",
-            "missionPlanID": mpid,
-        }
+        body = self._normalize_0301_payload(body)
+        mpid = body.get("missionPlanID", 0)
+        if int(mpid) <= 0:
+            self._append_log_line(f"[WARN] 0301 skipped: invalid missionPlanID={mpid}")
+            return False
 
         try:
             push_message("0301", NodeMessenger, body_dict=body)
             raw = json.dumps(body, ensure_ascii=False).encode("utf-8", "ignore")
         except Exception as exc:
             self._append_log_line(f"[ERR] 0301 push failed: {exc}")
-            return
+            return False
 
         try:
             self.log_sig.emit(f"[0301] missionPlanID={mpid} 전송")
@@ -1352,11 +1509,74 @@ class MainWindow(QMainWindow):
             self._tab.mark_sent(_z4("0301"), raw)
         except Exception:
             pass
+        return True
+
+    def _push_single_0301(self, mission_plan_id: int):
+        body = {
+            "timestamp": _now_ms_since_2000(),
+            "source": "MMR",
+            "missionPlanID": mission_plan_id,
+        }
+        self._push_0301_payload(body)
 
     def _send_0301_batch(self, plan_ids: list[int]):
         for pid in plan_ids:
             self._push_single_0301(pid)
         self._scheduled_0301_plan_ids = []
+
+    def _send_0301_payloads(self, payloads: list[dict]) -> None:
+        for payload in payloads:
+            self._push_0301_payload(payload)
+        self._scheduled_0301_plan_ids = []
+
+    def _edit_0301_delivery_payloads(self, plan_ids: list[int]) -> list[dict] | None:
+        unique_ids: list[int] = []
+        for plan_id in plan_ids:
+            try:
+                normalized = int(plan_id)
+            except Exception:
+                continue
+            if normalized > 0:
+                unique_ids.append(normalized)
+        unique_ids = list(dict.fromkeys(unique_ids))
+        if not unique_ids:
+            return None
+
+        tab = getattr(self, "_tab", None)
+        base_payloads = [
+            self._normalize_0301_payload(
+                {
+                    "timestamp": _now_ms_since_2000(),
+                    "source": "MMR",
+                    "missionPlanID": plan_id,
+                },
+                fallback_plan_id=plan_id,
+            )
+            for plan_id in unique_ids
+        ]
+
+        if len(base_payloads) == 1:
+            editor = getattr(tab, "edit_tx_payload", None)
+            if callable(editor):
+                payload = editor("0301", base_payloads[0], periodic_rate_hz=None)
+                if payload is None:
+                    return None
+                return [self._normalize_0301_payload(payload, fallback_plan_id=unique_ids[0])]
+            return base_payloads
+
+        dialog = JsonPayloadBatchDialog("0301", "임무 계획", base_payloads, parent=self)
+        if dialog.exec_() != QDialog.Accepted:
+            return None
+
+        edited_payloads = dialog.payloads or []
+        normalized_payloads: list[dict] = []
+        for index, payload in enumerate(edited_payloads):
+            fallback_plan_id = unique_ids[index] if index < len(unique_ids) else None
+            normalized = self._normalize_0301_payload(payload, fallback_plan_id=fallback_plan_id)
+            if int(normalized.get("missionPlanID", 0)) <= 0:
+                continue
+            normalized_payloads.append(normalized)
+        return normalized_payloads or None
 
     def _start_0102_stream(self, _retry: int = 0):
         """초기화 모드 직후 0.5s 뒤 0102를 5Hz로 자동 시작."""
@@ -1472,6 +1692,7 @@ class MainWindow(QMainWindow):
         self,
         d0303_module,
         *,
+        d0304_module=None,
         mp_config_module=None,
         search_speed_module=None,
         default_cruise: float = 40.0,
@@ -1511,15 +1732,63 @@ class MainWindow(QMainWindow):
             "search_speed_weight",
             float(getattr(mp_config_module, "SEARCH_SPEED_WEIGHT", 1.0)),
         )
+        area_search_weight = _get_float(
+            "area_search_speed_weight",
+            float(getattr(d0303_module, "AREA_SEARCH_SPEED_WEIGHT", 1.2)),
+        )
         db_fov_weight = _get_float(
             "db_fov_weight",
             float(getattr(mp_config_module, "DB_FOV_WEIGHT", 1.0)),
         )
         if db_fov_weight <= 0.0:
             db_fov_weight = 1.0
-        fov_deg = _get_float("fov_deg", float(getattr(d0303_module, "FOV_DEG", 0.0)))
+        line_fov_deg = _get_float(
+            "line_custom_fov_deg",
+            _get_float("fov_deg", float(getattr(d0303_module, "FOV_DEG", 0.0))),
+        )
+        area_custom_fov_deg = _get_float(
+            "area_custom_fov_deg",
+            float(line_fov_deg),
+        )
+        area_output_fov_scale = _get_float(
+            "area_output_fov_scale",
+            float(getattr(d0303_module, "AREA_OUTPUT_FOV_SCALE", 3.0)),
+        )
+        line_density_scale = _get_float(
+            "line_density_scale",
+            float(getattr(d0303_module, "LINE_SWEEP_DENSITY_SCALE", 1.18)),
+        )
+        area_density_scale = _get_float(
+            "area_density_scale",
+            float(getattr(d0303_module, "AREA_SWEEP_DENSITY_SCALE", 1.5)),
+        )
+        area_route_offset_scale = _get_float(
+            "area_route_offset_scale",
+            float(getattr(d0303_module, "AREA_ROUTE_OFFSET_SCALE", 0.5)),
+        )
+        uav_wp_interval_m = _get_float(
+            "uav_wp_interval_m",
+            float(getattr(d0303_module, "SWEEP_ROUTE_WP_SPACING_M", 2000.0)),
+        )
+        lah_wp_interval_m = _get_float(
+            "lah_wp_interval_m",
+            float(getattr(d0304_module, "WP_INTERVAL_M", 3000.0)) if d0304_module is not None else 3000.0,
+        )
+        dubins_turn_radius_m = _get_float(
+            "dubins_turn_radius_m",
+            float(getattr(d0303_module, "DUBINS_TURN_RADIUS_M", 450.0)),
+        )
         altitude = _get_int("altitude_m", int(getattr(d0303_module, "Altitude", 0)))
-        d0303_module.FOV_DEG = fov_deg
+        d0303_module.FOV_DEG = line_fov_deg
+        d0303_module.AREA_CUSTOM_FOV_DEG = area_custom_fov_deg
+        d0303_module.AREA_OUTPUT_FOV_SCALE = area_output_fov_scale
+        d0303_module.LINE_SWEEP_DENSITY_SCALE = line_density_scale
+        d0303_module.AREA_SWEEP_DENSITY_SCALE = area_density_scale
+        d0303_module.AREA_ROUTE_OFFSET_SCALE = area_route_offset_scale
+        d0303_module.AREA_SEARCH_SPEED_WEIGHT = area_search_weight
+        d0303_module.SWEEP_ROUTE_WP_SPACING_M = uav_wp_interval_m
+        d0303_module.AREA_SWEEP_ROUTE_WP_SPACING_M = uav_wp_interval_m
+        d0303_module.DUBINS_TURN_RADIUS_M = dubins_turn_radius_m
         d0303_module.DB_FOV_WEIGHT = float(db_fov_weight)
         d0303_module.Altitude = int(round(altitude))
         d0303_module.SWEEP_ENTRY_OFFSET_M = _get_float(
@@ -1540,7 +1809,7 @@ class MainWindow(QMainWindow):
         d0303_module.AREA_DUBINS_ENTRY_LINKS_ENABLED = bool(
             values.get(
                 "area_dubins_entry_links_enabled",
-                bool(getattr(d0303_module, "AREA_DUBINS_ENTRY_LINKS_ENABLED", False)),
+                bool(getattr(d0303_module, "AREA_DUBINS_ENTRY_LINKS_ENABLED", True)),
             )
         )
         d0303_module.DEFAULT_SEARCH_SPEED_MULTIPLIER = _get_float(
@@ -1578,61 +1847,37 @@ class MainWindow(QMainWindow):
         )
         d0303_module.SWEEP_GEOMETRY = d0303_module.SweepConfig(
             separation_m=sweep_sep,
-            fov_deg=fov_deg,
+            fov_deg=line_fov_deg,
         )
+        if d0304_module is not None:
+            d0304_module.WP_INTERVAL_M = float(lah_wp_interval_m)
 
         # Keep one authoritative settings file by backfilling missing keys
         # into modules/mission_planning/MissionPlanner/uav_params.json.
         resolved_values = {
-            "cruise_speed_mps": float(cruise_speed),
-            "turn_step_deg": float(turn_step),
-            "default_sweep_separation_m": float(sweep_sep),
-            "area_sweep_mode": str(values.get("area_sweep_mode", "parallel") or "parallel"),
-            "area_split_mode": str(values.get("area_split_mode", "two_stage") or "two_stage"),
-            "uav_plan_mode": str(values.get("uav_plan_mode", "normal") or "normal"),
             "search_speed_weight": float(search_weight),
-            "fov_deg": float(fov_deg),
-            "db_fov_weight": float(db_fov_weight),
-            "altitude_m": int(round(altitude)),
-            "sweep_entry_offset_m": float(d0303_module.SWEEP_ENTRY_OFFSET_M),
-            "sweep_merge_heading_deg": float(d0303_module.SWEEP_MERGE_HEADING_DEG),
+            "area_search_speed_weight": float(area_search_weight),
+            "fov_deg": float(line_fov_deg),
+            "line_custom_fov_deg": float(line_fov_deg),
+            "area_custom_fov_deg": float(area_custom_fov_deg),
+            "area_output_fov_scale": float(area_output_fov_scale),
+            "line_density_scale": float(line_density_scale),
+            "area_density_scale": float(area_density_scale),
+            "area_route_offset_scale": float(area_route_offset_scale),
+            "uav_wp_interval_m": float(uav_wp_interval_m),
+            "lah_wp_interval_m": float(lah_wp_interval_m),
+            "dubins_turn_radius_m": float(dubins_turn_radius_m),
             "sweep_line_interp_points": int(d0303_module.SWEEP_LINE_INTERP_POINTS),
-            "min_sweep_len_m": float(d0303_module.MIN_SWEEP_LEN_M),
-            "min_route_spacing_m": float(d0303_module.MIN_ROUTE_SPACING_M),
-            "area_dubins_entry_links_enabled": bool(d0303_module.AREA_DUBINS_ENTRY_LINKS_ENABLED),
-            "default_search_speed_multiplier": float(d0303_module.DEFAULT_SEARCH_SPEED_MULTIPLIER),
-            "point_fov_deg": float(d0303_module.POINT_FOV_DEG),
-            "area_nadir_fov_deg": float(d0303_module.AREA_NADIR_FOV_DEG),
-            "entry_hold_fov_deg": float(d0303_module.ENTRY_HOLD_FOV_DEG),
-            "entry_hold_gimbal_pitch": float(d0303_module.ENTRY_HOLD_GIMBAL_PITCH),
-            "entry_hold_gimbal_yaw": float(d0303_module.ENTRY_HOLD_GIMBAL_YAW),
-            "loiter_radius_m": float(d0303_module.LOITER_RADIUS_M),
-            "loiter_direction": int(d0303_module.LOITER_DIRECTION),
-            "loiter_time_s": float(d0303_module.LOITER_TIME_S),
-            "loiter_speed_mps": float(d0303_module.LOITER_SPEED_MPS),
-            "enhanced_area_review_enabled": bool(values.get("enhanced_area_review_enabled", True)),
-            "enhanced_area_review_max_segment_m": _get_float("enhanced_area_review_max_segment_m", 550.0),
-            "enhanced_auto_fov_from_db": (
-                False
-                if str(payload.get("preset_key") or "custom").strip().lower() == "custom"
-                else bool(values.get("enhanced_auto_fov_from_db", True))
-            ),
+            "enhanced_area_review_max_segment_m": _get_float("enhanced_area_review_max_segment_m", 300.0),
+            "enhanced_auto_fov_from_db": bool(values.get("enhanced_auto_fov_from_db", True)),
         }
-        algo_key = str(payload.get("algo_key") or "")
-        if algo_key not in ("dtatrim", "algo2", "algo3"):
-            algo_key = "dtatrim"
         flyover = payload.get("flyover")
         if not isinstance(flyover, dict):
             flyover = {}
-        preset_key = str(payload.get("preset_key") or "custom")
-        if preset_key not in ("bearing_par_sweep", "bearing_ver_sweep", "nadir_mode", "dubins_mode", "custom"):
-            preset_key = "custom"
-        normalized_payload = {
-            "preset_key": preset_key,
-            "algo_key": algo_key,
-            "values": resolved_values,
-            "flyover": flyover,
-        }
+        normalized_input = copy.deepcopy(payload) if isinstance(payload, dict) else {}
+        normalized_input["values"] = resolved_values
+        normalized_input["flyover"] = flyover
+        normalized_payload = canonicalize_runtime_payload(normalized_input)
         try:
             path = runtime_settings_path()
             path.write_text(json.dumps(normalized_payload, ensure_ascii=True, indent=2), encoding="utf-8")
@@ -1646,17 +1891,11 @@ class MainWindow(QMainWindow):
         if search_speed_module is not None:
             search_speed_module._CFG_WEIGHT = float(search_weight)
 
-        algo_map = {"dtatrim": "dtatrim", "algo2": "linear", "algo3": "algo3"}
-        algo_key = payload.get("algo_key")
-        algo_name = algo_map.get(str(algo_key))
-        if algo_name:
-            d0303_module.set_route_planner(algo_name)
-
         flyover = payload.get("flyover")
         if isinstance(flyover, dict):
             d0303_module.set_flyover_options(
                 entry_offset=bool(flyover.get("entry_offset", False)),
-                dubins_prefix=False,
+                dubins_prefix=bool(flyover.get("dubins_prefix", False)),
                 all_wps=bool(flyover.get("all_wps", False)),
             )
 
@@ -1665,13 +1904,14 @@ class MainWindow(QMainWindow):
     def _on_algo_settings_applied(self, payload: Optional[Dict[str, Any]] = None) -> None:
         try:
             _ensure_mission_planner_import_paths()
-            from data_def import d0303, search_speed
+            from data_def import d0303, d0304, search_speed
             try:
                 import config as mp_config
             except Exception:
                 mp_config = None
             cruise, turn_step, loaded = self._apply_uav_params_from_store(
                 d0303,
+                d0304_module=d0304,
                 mp_config_module=mp_config,
                 search_speed_module=search_speed,
             )
@@ -1679,10 +1919,9 @@ class MainWindow(QMainWindow):
                 self.log_sig.emit(
                     "[CONFIG] 알고리즘 설정 적용 "
                     f"(cruise={cruise:.1f}m/s, turn_step={turn_step:.1f}°, "
-                    f"preset={str((payload or {}).get('preset_key') or 'custom')}, "
-                    f"areaMode={str((payload or {}).get('values', {}).get('area_sweep_mode', 'parallel'))}, "
-                    f"areaSplit={str((payload or {}).get('values', {}).get('area_split_mode', 'two_stage'))}, "
-                    f"uavPlan={str((payload or {}).get('values', {}).get('uav_plan_mode', 'normal'))}, "
+                    f"areaMode={DEFAULT_AREA_SWEEP_MODE}, "
+                    f"areaSplit={DEFAULT_AREA_SPLIT_MODE}, "
+                    f"uavPlan={DEFAULT_UAV_PLAN_MODE}, "
                     f"autoFovDb={bool((payload or {}).get('values', {}).get('enhanced_auto_fov_from_db', True))})"
                 )
         except Exception as exc:
@@ -1740,9 +1979,6 @@ class MainWindow(QMainWindow):
         mrpk_id: Optional[int] = None,
         plan_state: Optional[str] = None,
     ) -> None:
-        tab = getattr(self, "_id_tab", None)
-        if tab is None:
-            return
         scope_payload = None
         if scope is not None:
             scope_payload = {
@@ -1751,15 +1987,50 @@ class MainWindow(QMainWindow):
                 "individual_packages": set(scope.get("individual_packages", set())),
                 "paths": set(scope.get("paths", set())),
             }
-        def _apply() -> None:
-            if scope_payload is not None:
-                tab.update_session_scope(scope_payload)
-            tab.update_input_status(
-                cmpk_id=cmpk_id,
-                mrpk_id=mrpk_id,
-                plan_state=plan_state,
-            )
-        QTimer.singleShot(0, _apply)
+        self.id_tab_update_sig.emit(
+            {
+                "scope": scope_payload,
+                "cmpk_id": cmpk_id,
+                "mrpk_id": mrpk_id,
+                "plan_state": plan_state,
+            }
+        )
+
+    def _apply_id_tab_update(self, payload: object) -> None:
+        tab = getattr(self, "_id_tab", None)
+        if tab is None:
+            return
+        data = payload if isinstance(payload, dict) else {}
+        scope_payload = data.get("scope")
+        cmpk_id = data.get("cmpk_id")
+        mrpk_id = data.get("mrpk_id")
+        plan_state = data.get("plan_state")
+        should_refresh = bool(
+            isinstance(scope_payload, dict)
+            and any(scope_payload.get(key) for key in ("plans", "individual_packages", "paths"))
+        )
+        should_reveal = bool(plan_state and "완료" in str(plan_state))
+        if should_refresh:
+            tab.refresh()
+        if isinstance(scope_payload, dict):
+            tab.update_session_scope(scope_payload)
+        tab.update_input_status(
+            cmpk_id=cmpk_id,
+            mrpk_id=mrpk_id,
+            plan_state=plan_state,
+        )
+        if should_reveal:
+            tabs = getattr(self, "_tabs", None)
+            if tabs is not None:
+                try:
+                    tabs.setCurrentWidget(tab)
+                except Exception:
+                    idx = getattr(self, "_id_tab_index", -1)
+                    if isinstance(idx, int) and idx >= 0:
+                        try:
+                            tabs.setCurrentIndex(idx)
+                        except Exception:
+                            pass
 
     def _set_plan_status(self, status: str) -> None:
         self._plan_status = status
@@ -1910,6 +2181,7 @@ class MainWindow(QMainWindow):
         plan_meta: dict,
         is_execution_mode: bool,
         force_direct: bool,
+        suppress_0702_fallback: bool,
     ) -> None:
         valid_plan_ids: list[int] = []
         for plan_id in plan_ids:
@@ -1931,6 +2203,7 @@ class MainWindow(QMainWindow):
             "plan_meta": dict(plan_meta or {}),
             "execution_mode": bool(is_execution_mode),
             "force_direct": bool(force_direct),
+            "suppress_0702_fallback": bool(suppress_0702_fallback),
             "ready_at": time.monotonic() + (grace_ms / 1000.0),
             "mode_ready": False,
         }
@@ -1987,6 +2260,11 @@ class MainWindow(QMainWindow):
         plan_meta = dict(pending.get("plan_meta") or {})
         is_execution_mode = bool(pending.get("execution_mode"))
         force_direct = bool(pending.get("force_direct"))
+        suppress_0702_fallback = bool(pending.get("suppress_0702_fallback"))
+        if _plan_meta_has_quality_speed(plan_meta):
+            force_direct = True
+            suppress_0702_fallback = True
+            option_names = []
 
         if is_execution_mode and not force_direct:
             self._append_log_line(f"[INFO] Post-0301 ready ({trigger}) -> sending 0901")
@@ -2001,7 +2279,7 @@ class MainWindow(QMainWindow):
         for idx, mpid in enumerate(valid_plan_ids):
             delay = idx * 200
             QTimer.singleShot(delay, lambda pid=mpid: self._push_0903(pid))
-            if force_direct:
+            if force_direct and not suppress_0702_fallback:
                 QTimer.singleShot(delay + 250, lambda pid=mpid: self._push_0702_auto_apply(pid))
         return True
 
@@ -2011,10 +2289,15 @@ class MainWindow(QMainWindow):
             return
         payload = self._pending_plan_push or {}
         force_direct = bool(payload.get("force_direct_update"))
+        suppress_0702_fallback = bool(payload.get("suppress_0702_fallback"))
         plan_ids = list(payload.get("plan_ids") or [])
         option_names = list(payload.get("option_names") or [])
         reason = _sanitize_reason(payload.get("reason"), "init-plan")
         plan_meta = payload.get("option_meta") or {}
+        if _is_quality_speed_reason_text(reason) or _plan_meta_has_quality_speed(plan_meta):
+            force_direct = True
+            suppress_0702_fallback = True
+            option_names = []
 
         is_execution_mode = False
         if not force_direct:
@@ -2025,7 +2308,10 @@ class MainWindow(QMainWindow):
             except Exception:
                 is_execution_mode = False
         else:
-            self._append_log_line("[INFO] Direct delivery -> skip 0901/0701, send 0301+0903 only")
+            if suppress_0702_fallback:
+                self._append_log_line("[INFO] Direct delivery -> skip 0901/0701, send 0301+0903 only")
+            else:
+                self._append_log_line("[INFO] Direct delivery -> skip 0901/0701, send 0301+0903(+0702 fallback)")
 
         if not plan_ids:
             self._append_log_line("[WARN] No missionPlanID to push (0301)")
@@ -2045,6 +2331,7 @@ class MainWindow(QMainWindow):
                 plan_meta=plan_meta,
                 is_execution_mode=is_execution_mode,
                 force_direct=force_direct,
+                suppress_0702_fallback=suppress_0702_fallback,
             )
 
         self._pending_plan_push = None
@@ -2070,6 +2357,30 @@ class MainWindow(QMainWindow):
             if target_row < 0:
                 self._append_log_line(f"[WARN] TX table has no entry for {code}")
                 return False
+
+            if str(code).strip() == "0301":
+                plan_ids: list[int] = []
+                for pid in self._scheduled_0301_plan_ids or []:
+                    try:
+                        plan_ids.append(int(pid))
+                    except Exception:
+                        continue
+                plan_ids = list(dict.fromkeys(plan_ids))
+                if plan_ids:
+                    self._send_0301_batch(plan_ids)
+                    self._append_log_line(f"[PUSH] {code} direct batch send")
+                    return True
+
+            try:
+                if hasattr(tab, "send_tx_row"):
+                    ok = bool(tab.send_tx_row(target_row, interactive=False))
+                    if ok:
+                        self._append_log_line(f"[PUSH] {code} direct handler invoked")
+                    else:
+                        self._append_log_line(f"[WARN] {code} direct handler returned false")
+                    return ok
+            except Exception:
+                pass
 
             try:
                 btn = tbl.cellWidget(target_row, 3)
@@ -2386,14 +2697,28 @@ class MainWindow(QMainWindow):
     def _push_0901_options(self, plan_ids, option_names, plan_meta=None):
         """Push option info request using supplied plan IDs."""
         try:
+            active_ctx = dict(getattr(self, "_active_plan_context", {}) or {})
+        except Exception:
+            active_ctx = {}
+        active_detail = active_ctx.get("replan_detail") if isinstance(active_ctx, dict) else None
+        if (
+            _plan_meta_has_quality_speed(plan_meta)
+            or _is_quality_speed_reason_text(active_ctx.get("reason") if isinstance(active_ctx, dict) else None)
+            or (
+                isinstance(active_detail, dict)
+                and _is_quality_speed_trigger_type(active_detail.get("triggerType"))
+            )
+        ):
+            self.log_sig.emit("[QUALITY] 0901 blocked: quality improvement replan must not create options")
+            return
+        try:
             from push_center import push_message
         except Exception as e:
             self.log_sig.emit(f"[ERR] 0901 push unavailable: {e}")
             return
         try:
             ts = _now_ms_since_2000()
-            plan_list = list(plan_ids or [])
-            name_list = list(option_names or [])
+            plan_list, name_list = _sort_plan_delivery_entries(plan_ids, option_names)
             meta_map = dict(plan_meta or {})
             valid_entries: list[tuple[int, int]] = []
             defaults = list(DEFAULT_OPTION_CODE_SEQUENCE) or [1]
@@ -2569,7 +2894,10 @@ class MainWindow(QMainWindow):
         except Exception:
             body = {}
         if not body:
-            body = {"timestamp": _now_ms_since_2000(), "source": "MMR", "status": int(status)}
+            body = self._build_0102_body(status=int(status))
+        else:
+            body = self._normalize_0102_body_template(body, status=int(status))
+            body["timestamp"] = _now_ms_since_2000()
 
         try:
             push_message("0102", NodeMessenger, body_dict=body)
@@ -2643,8 +2971,16 @@ class MainWindow(QMainWindow):
     def _parse_replan_payload(self, raw: bytes | None):
         if not raw:
             return None
+        if isinstance(raw, dict):
+            return dict(raw)
+        if isinstance(raw, str):
+            text = raw
+        else:
+            try:
+                text = raw.decode("utf-8", "ignore")
+            except Exception:
+                return None
         try:
-            text = raw.decode("utf-8", "ignore")
             m = re.search(r"{.*}", text, flags=re.S)
             if not m: return None
             return json.loads(m.group(0))
@@ -2714,6 +3050,11 @@ class MainWindow(QMainWindow):
             return
         staged = self._staged_plan_context if isinstance(getattr(self, '_staged_plan_context', {}), dict) else {}
 
+        detail_payload = payload.get("replanDetail")
+        detail_trigger = ""
+        if isinstance(detail_payload, dict):
+            detail_trigger = str(detail_payload.get("triggerType") or "").strip()
+
         # 0902에서 옵션/계획 ID 추출
         plan_ids: list[int] = []
         option_names: list[str] = []
@@ -2726,6 +3067,23 @@ class MainWindow(QMainWindow):
             name = item.get("optionName")
             if name:
                 option_names.append(str(name))
+        if not plan_ids:
+            for item in payload.get("missionPlanIDList") or []:
+                if isinstance(item, dict):
+                    value = item.get("missionPlanID")
+                else:
+                    value = item
+                try:
+                    plan_ids.append(int(value))
+                except Exception:
+                    continue
+        if not plan_ids and isinstance(detail_payload, dict):
+            try:
+                detail_plan_id = int(detail_payload.get("missionPlanID"))
+            except Exception:
+                detail_plan_id = None
+            if detail_plan_id is not None and detail_plan_id > 0:
+                plan_ids.append(int(detail_plan_id))
 
         # (필요시) 입력 미션 ID
         mission_ids: list[int] = []
@@ -2746,13 +3104,16 @@ class MainWindow(QMainWindow):
         if mission_ids:
             ctx["mission_ids"] = mission_ids
         ctx["reason"] = reason
-        detail_payload = payload.get("replanDetail")
         if detail_payload is not None:
             ctx["replan_detail"] = detail_payload
         try:
             ctx["replan_level"] = int(payload.get("replanLevel", ctx.get("replan_level", 1)))
         except Exception:
             ctx["replan_level"] = ctx.get("replan_level", 1)
+        if _is_quality_speed_trigger_type(detail_trigger) or _is_quality_speed_reason_text(reason):
+            ctx["option_names"] = []
+            ctx["force_direct_update"] = True
+            ctx["suppress_0702_fallback"] = True
         for field_name in ("inputMissionPackageID", "missionReferencePackageID"):
             if payload.get(field_name) is None:
                 continue
@@ -3200,6 +3561,34 @@ class MainWindow(QMainWindow):
                     return
                 ctx = _filter_context_by_indices(ctx, keep_indices)
 
+            next_collab_handled, next_collab_summary = self._try_run_next_collab_replan_pipeline(
+                ctx,
+                reason,
+                session_id=session_id,
+            )
+            if next_collab_handled:
+                if next_collab_summary:
+                    summary_info = {"mode": "nextCollaborativeMission", **next_collab_summary}
+                    plan_log_status = "success"
+                    plan_log_summary.update(summary_info or {})
+                    if plan_log:
+                        plan_log.set_plan_ids(
+                            next_collab_summary.get("plan_ids")
+                            or next_collab_summary.get("planIds")
+                            or ctx.get("plan_ids")
+                            or []
+                        )
+                        plan_log.update_summary(summary_info)
+                        _record_step("next_collab_pipeline", "success", detail=summary_info)
+                    success = True
+                else:
+                    _record_issue(
+                        "next_collab_pipeline_failed",
+                        "Next collaborative mission replan request could not be materialized.",
+                    )
+                    _notify_failure_once("next_collab_pipeline_failed")
+                return
+
             imaging_schedule_handled, imaging_schedule_summary = self._try_run_imaging_schedule_replan_pipeline(
                 ctx,
                 reason,
@@ -3207,7 +3596,9 @@ class MainWindow(QMainWindow):
             )
             if imaging_schedule_handled:
                 if imaging_schedule_summary:
-                    summary_info = {"mode": "imagingSchedule", **imaging_schedule_summary}
+                    trigger_type = str(imaging_schedule_summary.get("trigger_type") or "")
+                    mode_name = "qualityMonitorSep" if trigger_type == "qualityMonitorSep" else "imagingSchedule"
+                    summary_info = {"mode": mode_name, **imaging_schedule_summary}
                     plan_log_status = "success"
                     plan_log_summary.update(summary_info or {})
                     if plan_log:
@@ -3284,6 +3675,7 @@ class MainWindow(QMainWindow):
             from modules.mission_planning.MissionPlanner.data_def.id_allocator import (
                 next_path_id,
                 reserve_imp_ids,
+                reserve_mission_plan_ids,
                 reserve_path_ids,
             )
 
@@ -3463,8 +3855,18 @@ class MainWindow(QMainWindow):
                     flight_entry["pathID"] = path_id
                     flight_entry["aircraftID"] = aircraft_id
 
+                prior_profile = get_runtime_prior_mission_profile(
+                    default_turn_radius_m=400.0,
+                    default_fov_deg=5.0,
+                )
+                target_speed = float(get_runtime_prior_float("target_speed_mps", 30.0))
+                loiter_seconds = (
+                    int(get_runtime_prior_int("tracking_loiter_seconds", 300))
+                    if mission_type == 2
+                    else int(get_runtime_prior_int("default_loiter_seconds", 50))
+                )
                 filming_property = {
-                    "fieldOfView": 15,
+                    "fieldOfView": float(prior_profile.get("fov_deg", 5.0) or 5.0),
                     "sensorType": 1,
                     "operationMode": 3 if mission_type == 2 else 1,
                 }
@@ -3493,17 +3895,17 @@ class MainWindow(QMainWindow):
                         "longitude": lon,
                         "altitude": int(round(alt)),
                     },
-                    "speed": 35.0,
+                    "speed": target_speed,
                     "eta": 300,
                     "ecf": 0.0,
                     "nextWaypointID": 0,
                     "waypointPassType": 2,
                     "filmingProperty": filming_property,
                     "loiterProperty": {
-                        "radius": 400,
+                        "radius": float(prior_profile.get("turn_radius_m", 400.0) or 400.0),
                         "direction": 1,
-                        "time": 300,
-                        "speed": 3,
+                        "time": loiter_seconds,
+                        "speed": target_speed,
                     },
                 }
 
@@ -3714,6 +4116,22 @@ class MainWindow(QMainWindow):
                 coord_list = detail.get("coordinateList")
                 return isinstance(coord_list, list) and len(coord_list) == 1
 
+            def _infer_input_mission_type(detail: Any) -> int | None:
+                if not isinstance(detail, dict):
+                    return None
+                if detail.get("lineList"):
+                    return 1
+                if detail.get("areaList"):
+                    return 2
+                return None
+
+            def _inferred_type_label(mtype: int | None) -> str:
+                if int(mtype or 0) == 1:
+                    return "line"
+                if int(mtype or 0) == 2:
+                    return "area"
+                return "unknown"
+
             self.log_sig.emit("[CHECK] 0201/0203 필수 데이터 확인 시작")
             mission_list = _require_list(cmpk_data or {}, "inputMissionList", "0201 inputMissionList")
             aircraft_list = _require_list(cmpk_data or {}, "availableAircraftList", "0201 availableAircraftList")
@@ -3787,7 +4205,8 @@ class MainWindow(QMainWindow):
             missing_detail: list[Any] = []
             missing_shape: list[Any] = []
             unknown_type: list[Any] = []
-            type_zero: list[Any] = []
+            type_zero_invalid: list[Any] = []
+            type_zero_autofix: list[str] = []
             line_only_violation: list[Any] = []
             skipped_single_point_coordinate_only: list[Any] = []
             for mission in mission_list:
@@ -3797,6 +4216,8 @@ class MainWindow(QMainWindow):
                 mid = mission.get("inputMissionID")
                 if mid is None:
                     missing_id.append("?")
+                if bool(mission.get("isDone")):
+                    continue
                 detail = mission.get("missionDetail")
                 if not isinstance(detail, dict):
                     missing_detail.append(mid)
@@ -3810,7 +4231,13 @@ class MainWindow(QMainWindow):
                 except Exception:
                     mtype = None
                 if mtype == 0 or mtype is None:
-                    type_zero.append(mid)
+                    inferred_type = _infer_input_mission_type(detail)
+                    if inferred_type is not None:
+                        type_zero_autofix.append(
+                            f"{mid}({_inferred_type_label(inferred_type)})"
+                        )
+                    else:
+                        type_zero_invalid.append(mid)
                     continue
                 if mtype in (1, 7):
                     if not detail.get("lineList"):
@@ -3829,13 +4256,15 @@ class MainWindow(QMainWindow):
             if mission_list:
                 self.log_sig.emit(
                     "[CHECK] 0201 임무: total={total} missingID={mid} missingDetail={md} "
-                    "missingShape={ms} unknownType={ut} typeZero={tz} lineOnlyViolation={lv} skippedSinglePoint={sp}".format(
+                    "missingShape={ms} unknownType={ut} typeZeroAuto={tza} typeZeroInvalid={tzi} "
+                    "lineOnlyViolation={lv} skippedSinglePoint={sp}".format(
                         total=len(mission_list),
                         mid=len(missing_id),
                         md=len(missing_detail),
                         ms=len(missing_shape),
                         ut=len(unknown_type),
-                        tz=len(type_zero),
+                        tza=len(type_zero_autofix),
+                        tzi=len(type_zero_invalid),
                         lv=len(line_only_violation),
                         sp=len(skipped_single_point_coordinate_only),
                     )
@@ -3845,15 +4274,23 @@ class MainWindow(QMainWindow):
                         "[INFO] 0201 single-point coordinate-only 임무는 무시합니다: "
                         f"{_summarize_ids(skipped_single_point_coordinate_only)}"
                     )
-                if missing_id or missing_detail or missing_shape or unknown_type or type_zero or line_only_violation:
+                if (
+                    missing_id
+                    or missing_detail
+                    or missing_shape
+                    or unknown_type
+                    or type_zero_invalid
+                    or line_only_violation
+                ):
                     self.log_sig.emit(
                         "[DETAIL] 0201 문제 샘플: missingID={mid} missingDetail={md} "
-                        "missingShape={ms} unknownType={ut} typeZero={tz} lineOnlyViolation={lv}".format(
+                        "missingShape={ms} unknownType={ut} typeZeroAuto={tza} typeZeroInvalid={tzi} lineOnlyViolation={lv}".format(
                             mid=_summarize_ids(missing_id),
                             md=_summarize_ids(missing_detail),
                             ms=_summarize_ids(missing_shape),
                             ut=_summarize_ids(unknown_type),
-                            tz=_summarize_ids(type_zero),
+                            tza=_summarize_ids(type_zero_autofix),
+                            tzi=_summarize_ids(type_zero_invalid),
                             lv=_summarize_ids(line_only_violation),
                         )
                     )
@@ -3892,6 +4329,15 @@ class MainWindow(QMainWindow):
             else:
                 self.log_sig.emit("[WARN] 0203 flightAreaList 비어있음 (선택 항목)")
 
+            if type_zero_autofix:
+                notice = (
+                    "0201 임무 type 이상 경고: "
+                    + ", ".join(type_zero_autofix[:5])
+                    + " -> 도형 기준 자동보정"
+                )
+                self.log_sig.emit("[WARN] " + notice)
+                self._push_0001_notice(notice)
+
             if validation_errors:
                 notice_parts: list[str] = []
                 reason_labels = {
@@ -3925,14 +4371,21 @@ class MainWindow(QMainWindow):
                         reason_text = ",".join(sorted(reasons))
                         chunks.append(f"{key_text}({reason_text})")
                     notice_parts.append("항목: " + " / ".join(chunks))
-                if missing_id or missing_detail or missing_shape or unknown_type or type_zero or line_only_violation:
+                if (
+                    missing_id
+                    or missing_detail
+                    or missing_shape
+                    or unknown_type
+                    or type_zero_invalid
+                    or line_only_violation
+                ):
                     notice_parts.append(
-                        "0201 임무오류(ID누락={mid},상세누락={md},도형누락={ms},타입미정={ut},타입0={tz},lineOnly위반={lv})".format(
+                        "0201 임무오류(ID누락={mid},상세누락={md},도형누락={ms},타입미정={ut},타입0미보정={tz},lineOnly위반={lv})".format(
                             mid=len(missing_id),
                             md=len(missing_detail),
                             ms=len(missing_shape),
                             ut=len(unknown_type),
-                            tz=len(type_zero),
+                            tz=len(type_zero_invalid),
                             lv=len(line_only_violation),
                         )
                     )
@@ -4007,17 +4460,13 @@ class MainWindow(QMainWindow):
                     mtype = mission.get("inputMissionType")
                     if not isinstance(mtype, int) or mtype == 0:
                         detail = mission.get("missionDetail") or {}
-                        if detail.get("lineList"):
-                            mission["inputMissionType"] = 1
-                            mtype = 1
-                            converted_ids.append(f"{mid_raw}->1")
-                        elif detail.get("areaList"):
-                            mission["inputMissionType"] = 2
-                            mtype = 2
-                            converted_ids.append(f"{mid_raw}->2")
-                        else:
+                        inferred_type = _infer_input_mission_type(detail)
+                        if inferred_type is None:
                             removed_ids.append(str(mid_raw))
                             continue
+                        mission["inputMissionType"] = inferred_type
+                        mtype = inferred_type
+                        converted_ids.append(f"{mid_raw}->{inferred_type}")
 
                     if mtype in (1, 7):
                         detail = mission.get("missionDetail") or {}
@@ -4072,17 +4521,13 @@ class MainWindow(QMainWindow):
                     mtype = mission.get("inputMissionType")
                     if not isinstance(mtype, int) or mtype == 0:
                         detail = mission.get("missionDetail") or {}
-                        if detail.get("lineList"):
-                            mission["inputMissionType"] = 1
-                            mtype = 1
-                            converted_ids.append(f"{mid_raw}->1")
-                        elif detail.get("areaList"):
-                            mission["inputMissionType"] = 2
-                            mtype = 2
-                            converted_ids.append(f"{mid_raw}->2")
-                        else:
+                        inferred_type = _infer_input_mission_type(detail)
+                        if inferred_type is None:
                             removed_ids.append(str(mid_raw))
                             continue
+                        mission["inputMissionType"] = inferred_type
+                        mtype = inferred_type
+                        converted_ids.append(f"{mid_raw}->{inferred_type}")
                     if mtype in (1, 7):
                         detail = mission.get("missionDetail") or {}
                         for entry in detail.get("lineList") or []:
@@ -4248,16 +4693,28 @@ class MainWindow(QMainWindow):
                 return results
 
             used_plan_ids: set[int] = _scan_existing_ids(dir_mp)
-            next_plan_id_seed = max(used_plan_ids) + 1 if used_plan_ids else 700000000
 
             def _allocate_plan_id(preferred: int | None) -> int:
-                nonlocal next_plan_id_seed
-                while next_plan_id_seed in used_plan_ids:
-                    next_plan_id_seed += 1
-                assigned = next_plan_id_seed
-                used_plan_ids.add(assigned)
-                next_plan_id_seed += 1
-                return assigned
+                if preferred is not None:
+                    try:
+                        preferred_id = int(preferred)
+                    except Exception:
+                        preferred_id = None
+                    if preferred_id is not None and preferred_id > 0 and preferred_id not in used_plan_ids:
+                        used_plan_ids.add(preferred_id)
+                        return preferred_id
+                while True:
+                    reserved_plan_ids = reserve_mission_plan_ids(1)
+                    if not reserved_plan_ids:
+                        raise RuntimeError("missionPlanID allocation failed")
+                    try:
+                        assigned = int(reserved_plan_ids[0])
+                    except Exception as exc:
+                        raise RuntimeError("missionPlanID allocation returned invalid value") from exc
+                    if assigned in used_plan_ids:
+                        continue
+                    used_plan_ids.add(assigned)
+                    return assigned
 
             def _allocate_imp_id_map(plan_json: Dict[str, Any]) -> Dict[int, int]:
                 allocated: Dict[int, int] = {}
@@ -4317,36 +4774,9 @@ class MainWindow(QMainWindow):
             base_runtime_payload = load_runtime_settings()
 
             def _variant_runtime_override_payload(option_label: str) -> Optional[Dict[str, Any]]:
-                label = str(option_label or "").strip().replace(" ", "")
-                preset_key = ""
-                area_mode = ""
-                all_wps: Optional[bool] = None
-                if label in {"정찰시간균형", "정찰/시간균형"}:
-                    preset_key = "bearing_par_sweep"
-                    area_mode = "parallel"
-                    all_wps = True
-                elif label in {"정찰특화"}:
-                    preset_key = "nadir_mode"
-                    area_mode = "nadir"
-                elif label in {"최소시간"}:
-                    preset_key = "bearing_ver_sweep"
-                    area_mode = "vertical"
-                if not preset_key:
-                    return None
+                _ = option_label
                 payload = copy.deepcopy(base_runtime_payload) if isinstance(base_runtime_payload, dict) else {}
-                values = payload.get("values")
-                if not isinstance(values, dict):
-                    values = {}
-                    payload["values"] = values
-                flyover = payload.get("flyover")
-                if not isinstance(flyover, dict):
-                    flyover = {}
-                    payload["flyover"] = flyover
-                payload["preset_key"] = preset_key
-                values["area_sweep_mode"] = area_mode
-                if all_wps is not None:
-                    flyover["all_wps"] = bool(all_wps)
-                return payload
+                return payload or None
 
             general_parallel_replan = (
                 plan_count > 1
@@ -4463,7 +4893,7 @@ class MainWindow(QMainWindow):
                         start = time.perf_counter()
                         plans = d0304.build_lah_flight_plans_fixed(
                             manned,
-                            cruise_speed=15.0,
+                            cruise_speed=30.0,
                             manned_plan_mode=manned_plan_mode,
                             wp_alloc=wp_alloc,
                         )
@@ -4513,6 +4943,20 @@ class MainWindow(QMainWindow):
                             if manned:
                                 parts.append(f"0304={elapsed_0304_ms:.1f} ms")
                             self.log_sig.emit("[INFO] FlightPath build time (sequential): " + ", ".join(parts))
+
+                    if flight_plans_0303 and flight_plans_0304:
+                        try:
+                            flight_plans_0304 = d0304.apply_uav_eta_follow_speed_plan(
+                                list(flight_plans_0304),
+                                list(flight_plans_0303),
+                            )
+                            self.log_sig.emit(
+                                f"[INFO] Applied LAH-UAV ETA follow speed plan (variant={variant_no})"
+                            )
+                        except Exception as exc:
+                            self.log_sig.emit(
+                                f"[WARN] Failed to apply LAH-UAV ETA follow speed plan (variant={variant_no}): {exc}"
+                            )
 
                     for fp in (flight_plans_0303 or []) + (flight_plans_0304 or []):
                         pid_val = fp.get("pathID")
@@ -4904,7 +5348,7 @@ class MainWindow(QMainWindow):
                 runtime_payload = _variant_runtime_override_payload(option_label)
                 if runtime_payload:
                     self.log_sig.emit(
-                        f"[variant {variant_no}] 일반 재계획 모드 적용: preset={runtime_payload.get('preset_key')}"
+                        f"[variant {variant_no}] 일반 재계획 모드 적용"
                     )
 
                 with runtime_settings_override(runtime_payload):
@@ -4998,7 +5442,7 @@ class MainWindow(QMainWindow):
                     start = time.perf_counter()
                     plans = d0304.build_lah_flight_plans_fixed(
                         manned,
-                        cruise_speed=15.0,
+                        cruise_speed=30.0,
                         manned_plan_mode=manned_plan_mode,
                         wp_alloc=wp_alloc,
                     )
@@ -5051,6 +5495,20 @@ class MainWindow(QMainWindow):
                             parts.append(f"0304={elapsed_0304_ms:.1f} ms")
                         self.log_sig.emit(
                             "[INFO] FlightPath build time (sequential): " + ", ".join(parts)
+                        )
+
+                if flight_plans_0303 and flight_plans_0304:
+                    try:
+                        flight_plans_0304 = d0304.apply_uav_eta_follow_speed_plan(
+                            list(flight_plans_0304),
+                            list(flight_plans_0303),
+                        )
+                        self.log_sig.emit(
+                            f"[INFO] Applied LAH-UAV ETA follow speed plan (variant={variant_no})"
+                        )
+                    except Exception as exc:
+                        self.log_sig.emit(
+                            f"[WARN] Failed to apply LAH-UAV ETA follow speed plan (variant={variant_no}): {exc}"
                         )
 
                 custom_t0 = None
@@ -5261,6 +5719,15 @@ class MainWindow(QMainWindow):
             self._last_mission_plan_ids = generated_plan_ids
             self._last_mission_plan_id = generated_plan_ids[0] if generated_plan_ids else None
             self.visual_refresh.emit()
+            quality_speed_delivery = (
+                _is_quality_speed_reason_text(reason)
+                or _plan_meta_has_quality_speed(plan_meta_map)
+                or _is_quality_speed_trigger_type(
+                    ((ctx.get("replan_detail") or {}) if isinstance(ctx.get("replan_detail"), dict) else {}).get("triggerType")
+                )
+            )
+            if quality_speed_delivery:
+                option_codes_out = []
             ctx['plan_ids'] = generated_plan_ids
             ctx['option_names'] = option_codes_out
             ctx["_option_meta"] = dict(plan_meta_map)
@@ -5294,12 +5761,16 @@ class MainWindow(QMainWindow):
 
             # 강제 전송 여부는 옵션/재계획 레벨(4)에 따라 결정
             force_direct_update = bool(ctx.get("force_direct_update"))
+            suppress_0702_fallback = bool(ctx.get("suppress_0702_fallback"))
             try:
                 replan_level_val = int(ctx.get("replan_level", 0))
             except Exception:
                 replan_level_val = 0
             if replan_level_val == 4:
                 force_direct_update = True
+            if quality_speed_delivery:
+                force_direct_update = True
+                suppress_0702_fallback = True
 
 
             self._schedule_plan_delivery(
@@ -5308,6 +5779,7 @@ class MainWindow(QMainWindow):
                 reason,
                 plan_meta_map,
                 force_direct_update=force_direct_update,
+                suppress_0702_fallback=suppress_0702_fallback,
             )
             summary_info = {
                 "mode": "legacy",
@@ -5668,6 +6140,161 @@ class MainWindow(QMainWindow):
             )
         return summary
 
+    def _try_run_next_collab_replan_pipeline(
+        self,
+        ctx: Dict[str, Any],
+        reason: str,
+        *,
+        session_id: Optional[str] = None,
+    ) -> tuple[bool, Optional[Dict[str, Any]]]:
+        return self._try_run_next_collab_replan_pipeline_impl(
+            ctx,
+            reason,
+            session_id=session_id,
+        )
+
+    def _try_run_next_collab_replan_pipeline_impl(
+        self,
+        ctx: Dict[str, Any],
+        reason: str,
+        *,
+        session_id: Optional[str] = None,
+    ) -> tuple[bool, Optional[Dict[str, Any]]]:
+        try:
+            replan_level = int(ctx.get("replan_level", ctx.get("replanLevel", 0)))
+        except Exception:
+            replan_level = 0
+        detail = ctx.get("replan_detail")
+        plan_ids = list(ctx.get("plan_ids") or [])
+        reason_text = str(reason or ctx.get("reason") or "").strip()
+        store_detail = self._load_next_collab_detail_from_store(plan_ids)
+        is_reason_match = _is_next_collab_reason_text(reason_text)
+        detail_trigger = ""
+        if isinstance(detail, dict):
+            detail_trigger = str(detail.get("triggerType") or "").strip()
+        if replan_level != 3:
+            return False, None
+        if not (detail_trigger == "nextCollaborativeMission" or is_reason_match or store_detail):
+            return False, None
+        if not isinstance(detail, dict) or not detail:
+            detail = dict(store_detail or {})
+            ctx["replan_detail"] = detail
+        elif isinstance(store_detail, dict) and store_detail:
+            merged_detail = dict(store_detail)
+            merged_detail.update(detail)
+            detail = merged_detail
+            ctx["replan_detail"] = detail
+        if isinstance(detail, dict):
+            detail_trigger = str(detail.get("triggerType") or detail_trigger or "").strip()
+
+        self._log_next_collab_event(
+            "mission_receive",
+            {
+                "reason": reason_text,
+                "replanLevel": replan_level,
+                "planIDs": plan_ids,
+                "detailTriggerType": detail_trigger or None,
+                "storeDetailLoaded": bool(store_detail),
+                "detailKeys": sorted(detail.keys()) if isinstance(detail, dict) else [],
+            },
+        )
+
+        self.log_sig.emit("[NEXTCOLLAB] Level-3 next collaborative mission request detected. Using dedicated pipeline.")
+        result = run_next_collab_replan_pipeline(
+            ctx,
+            detail,
+            reason,
+            log=lambda msg: self.log_sig.emit(msg),
+        )
+        if not result:
+            self.log_sig.emit("[NEXTCOLLAB] Dedicated next collaborative mission pipeline failed.")
+            if session_id:
+                self._pipeline_logger.log_event(
+                    session_id,
+                    "error",
+                    "Next collaborative mission pipeline failed",
+                )
+            self._log_next_collab_event(
+                "mission_pipeline_failed",
+                {
+                    "reason": reason_text,
+                    "planIDs": plan_ids,
+                    "detailKeys": sorted(detail.keys()) if isinstance(detail, dict) else [],
+                },
+            )
+            return True, None
+
+        generated_plan_ids = result.plan_ids
+        option_names = result.option_names
+        plan_meta_map = result.plan_meta_map
+
+        ctx["plan_ids"] = generated_plan_ids
+        ctx["option_names"] = option_names
+        ctx["_option_meta"] = dict(plan_meta_map)
+        ctx["inputMissionPackageID"] = int(result.new_input_package_id)
+        ctx["force_direct_update"] = True
+        ctx["suppress_0702_fallback"] = True
+
+        self._active_plan_context = ctx
+        self._last_mission_plan_ids = generated_plan_ids
+        self._last_mission_plan_id = generated_plan_ids[0] if generated_plan_ids else None
+        self.visual_refresh.emit()
+
+        self._deliver_next_collab_direct_now(
+            generated_plan_ids,
+            reason,
+            option_names=option_names,
+            option_meta=plan_meta_map,
+        )
+
+        def _to_optional_int(value: Any) -> Optional[int]:
+            if value is None:
+                return None
+            try:
+                iv = int(value)
+            except Exception:
+                return None
+            return iv if iv > 0 else None
+
+        input_pkg_id_int = _to_optional_int(result.new_input_package_id)
+        ref_pkg_id_int = _to_optional_int(ctx.get("missionReferencePackageID"))
+
+        if input_pkg_id_int is not None:
+            self._session_scope["packages"].add(input_pkg_id_int)
+        self._session_scope["plans"].update(int(pid) for pid in generated_plan_ids if pid is not None)
+        self._session_scope["individual_packages"].update(
+            int(val) for val in result.generated_imp_ids if val is not None
+        )
+        self._session_scope["paths"].update(
+            int(val) for val in result.generated_path_ids if val is not None
+        )
+
+        self._plan_status = "임무계획 완료"
+        self._submit_id_tab_update(
+            scope=self._session_scope,
+            cmpk_id=input_pkg_id_int,
+            mrpk_id=ref_pkg_id_int,
+            plan_state=self._plan_status,
+        )
+
+        summary = {
+            "plan_ids": list(generated_plan_ids),
+            "option_names": list(option_names),
+            "inputMissionPackageID": int(result.new_input_package_id),
+            "log_path": str(result.log_path),
+        }
+        self.log_sig.emit(
+            f"[NEXTCOLLAB] Next collaborative mission pipeline complete (planIds={generated_plan_ids}, log={result.log_path})"
+        )
+        if session_id:
+            self._pipeline_logger.log_event(
+                session_id,
+                "info",
+                "Next collaborative mission pipeline complete",
+                detail=summary,
+            )
+        return True, summary
+
     def _try_run_path_deviation_replan_pipeline(
         self,
         ctx: Dict[str, Any],
@@ -5697,12 +6324,18 @@ class MainWindow(QMainWindow):
         reason_text = str(reason or ctx.get("reason") or "").strip()
         store_detail = self._load_imaging_schedule_detail_from_store(plan_ids)
         is_reason_match = _is_imaging_schedule_reason_text(reason_text)
+        is_quality_reason_match = _is_quality_speed_reason_text(reason_text)
         detail_trigger = ""
         if isinstance(detail, dict):
             detail_trigger = str(detail.get("triggerType") or "").strip()
         if replan_level != 3:
             return False, None
-        if not (detail_trigger == "imagingScheduleDeviation" or is_reason_match or store_detail):
+        if not (
+            detail_trigger in {"imagingScheduleDeviation", "qualityMonitorSep"}
+            or is_reason_match
+            or is_quality_reason_match
+            or store_detail
+        ):
             return False, None
         if not isinstance(detail, dict) or not detail:
             detail = dict(store_detail or {})
@@ -5725,7 +6358,10 @@ class MainWindow(QMainWindow):
             },
         )
 
-        self.log_sig.emit("[IMGSCH] Level-3 imaging schedule request detected. Using dedicated pipeline.")
+        is_quality_mode = _is_quality_speed_trigger_type(detail_trigger) or is_quality_reason_match
+        trigger_label = "QUALITY" if is_quality_mode else "IMGSCH"
+        mode_label = "quality speed" if is_quality_mode else "imaging schedule"
+        self.log_sig.emit(f"[{trigger_label}] Level-3 {mode_label} request detected. Using dedicated pipeline.")
         result = run_imaging_schedule_replan_pipeline(
             ctx,
             detail,
@@ -5733,12 +6369,12 @@ class MainWindow(QMainWindow):
             log=lambda msg: self.log_sig.emit(msg),
         )
         if not result:
-            self.log_sig.emit("[IMGSCH] Dedicated imaging-schedule pipeline failed.")
+            self.log_sig.emit(f"[{trigger_label}] Dedicated {mode_label} pipeline failed.")
             if session_id:
                 self._pipeline_logger.log_event(
                     session_id,
                     "error",
-                    "Imaging-schedule pipeline failed",
+                    f"{mode_label.title()} pipeline failed",
                 )
             self._log_imaging_schedule_event(
                 "mission_pipeline_failed",
@@ -5768,6 +6404,7 @@ class MainWindow(QMainWindow):
             reason,
             option_names=option_names,
             option_meta=plan_meta_map,
+            suppress_0702_fallback=bool(is_quality_mode),
         )
 
         def _to_optional_int(value: Any) -> Optional[int]:
@@ -5806,15 +6443,21 @@ class MainWindow(QMainWindow):
             "log_path": str(result.log_path),
             "replaced_waypoint_id": int(result.replaced_waypoint_id),
             "new_waypoint_id": int(result.new_waypoint_id),
+            "trigger_type": str(getattr(result, "trigger_type", detail_trigger or "")),
+            "removed_waypoint_id": getattr(result, "removed_waypoint_id", None),
+            "anchor_waypoint_id": getattr(result, "anchor_waypoint_id", None),
+            "search_speed_scale": getattr(result, "search_speed_scale", None),
+            "speed_adjustment_direction": getattr(result, "speed_adjustment_direction", None),
+            "trimmed_sweep_points": int(getattr(result, "trimmed_sweep_points", 0) or 0),
         }
         self.log_sig.emit(
-            f"[IMGSCH] Imaging-schedule pipeline complete (planIds={generated_plan_ids}, log={result.log_path})"
+            f"[{trigger_label}] {mode_label.title()} pipeline complete (planIds={generated_plan_ids}, log={result.log_path})"
         )
         if session_id:
             self._pipeline_logger.log_event(
                 session_id,
                 "info",
-                "Imaging-schedule pipeline complete",
+                f"{mode_label.title()} pipeline complete",
                 detail=summary,
             )
         return True, summary
@@ -5982,6 +6625,7 @@ class MainWindow(QMainWindow):
         *,
         option_names: Optional[List[str]] = None,
         option_meta: Optional[Dict[int, Dict[str, Any]]] = None,
+        suppress_0702_fallback: bool = False,
     ) -> None:
         valid_ids: List[int] = []
         for value in plan_ids or []:
@@ -6004,6 +6648,57 @@ class MainWindow(QMainWindow):
             reason,
             dict(option_meta or {}),
             force_direct_update=True,
+            suppress_0702_fallback=bool(suppress_0702_fallback),
+        )
+
+    @staticmethod
+    def _load_next_collab_detail_from_store(plan_ids: List[int]) -> Optional[Dict[str, Any]]:
+        for value in plan_ids or []:
+            try:
+                plan_id = int(value)
+            except Exception:
+                continue
+            payload = next_collab_replan_store.load_detail(plan_id)
+            if payload:
+                return payload
+        return None
+
+    def _log_next_collab_event(self, stage: str, payload: Dict[str, Any]) -> None:
+        try:
+            next_collab_replan_store.save_event(stage, payload)
+        except Exception:
+            pass
+
+    def _deliver_next_collab_direct_now(
+        self,
+        plan_ids: List[int],
+        reason: str,
+        *,
+        option_names: Optional[List[str]] = None,
+        option_meta: Optional[Dict[int, Dict[str, Any]]] = None,
+    ) -> None:
+        valid_ids: List[int] = []
+        for value in plan_ids or []:
+            try:
+                pid = int(value)
+            except Exception:
+                continue
+            if pid > 0 and pid not in valid_ids:
+                valid_ids.append(pid)
+        if not valid_ids:
+            self.log_sig.emit("[NEXTCOLLAB][DELIVERY] skipped: no valid missionPlanID")
+            return
+
+        self.log_sig.emit(
+            f"[NEXTCOLLAB][DELIVERY] direct push start (planIds={', '.join(str(v) for v in valid_ids)})"
+        )
+        self._schedule_plan_delivery(
+            valid_ids,
+            list(option_names or []),
+            reason,
+            dict(option_meta or {}),
+            force_direct_update=True,
+            suppress_0702_fallback=True,
         )
 
     @staticmethod
@@ -6079,7 +6774,7 @@ class MainWindow(QMainWindow):
             f"[PRIOR][DELIVERY] direct push start (planIds={', '.join(str(v) for v in valid_ids)})"
         )
         # GUI 전송 경로(0301 버튼 경유 + 0903 순차 푸시)를 그대로 사용한다.
-        # force_direct_update=True 이면 0901/0701을 건너뛰고 0903(+0702 fallback)만 송신한다.
+        # suppress_0702_fallback=False 이므로 기본적으로 0903 뒤에 0702 fallback도 함께 송신한다.
         self._schedule_plan_delivery(
             valid_ids,
             list(option_names or []),
@@ -6106,12 +6801,18 @@ class MainWindow(QMainWindow):
         option_meta=None,
         *,
         force_direct_update: bool = False,
+        suppress_0702_fallback: bool = False,
     ):
         safe_reason = _sanitize_reason(reason, "init-plan")
+        is_quality_speed_delivery = _is_quality_speed_reason_text(safe_reason) or _plan_meta_has_quality_speed(option_meta)
+        if is_quality_speed_delivery:
+            force_direct_update = True
+            suppress_0702_fallback = True
         new_plan_ids = [pid for pid in (plan_ids or []) if pid is not None]
-        new_option_names = list(option_names or [])
-        while len(new_option_names) < len(new_plan_ids):
-            new_option_names.append(f"option{len(new_option_names) + 1}")
+        new_option_names = [] if is_quality_speed_delivery else list(option_names or [])
+        if not is_quality_speed_delivery:
+            while len(new_option_names) < len(new_plan_ids):
+                new_option_names.append(f"option{len(new_option_names) + 1}")
 
         # Prior/force-direct 흐름은 옵션 생성(0901) 병합 없이 최신 플랜만 전달
         if force_direct_update:
@@ -6146,6 +6847,8 @@ class MainWindow(QMainWindow):
                     pass
             self._attack_delivery_buffer.clear()
 
+        new_plan_ids, new_option_names = _sort_plan_delivery_entries(new_plan_ids, new_option_names)
+
         if self._pending_plan_push:
             pending = self._pending_plan_push
             merged_ids = list(pending.get("plan_ids") or [])
@@ -6166,10 +6869,12 @@ class MainWindow(QMainWindow):
                     merged_names.append(f"option{len(merged_names) + 1}")
 
             merged_meta.update(dict(option_meta or {}))
+            merged_ids, merged_names = _sort_plan_delivery_entries(merged_ids, merged_names)
             pending["plan_ids"] = merged_ids
             pending["option_names"] = merged_names
             pending["option_meta"] = merged_meta
             pending["force_direct_update"] = pending.get("force_direct_update") or bool(force_direct_update)
+            pending["suppress_0702_fallback"] = pending.get("suppress_0702_fallback") or bool(suppress_0702_fallback)
             self._pending_plan_push = pending
             summary = ", ".join(str(pid) for pid in merged_ids) or "-"
             self.log_sig.emit(f"[STEP 4] 0301 push merged (planIds={summary})")
@@ -6181,6 +6886,7 @@ class MainWindow(QMainWindow):
             "reason": safe_reason,
             "option_meta": dict(option_meta or {}),
             "force_direct_update": bool(force_direct_update),
+            "suppress_0702_fallback": bool(suppress_0702_fallback),
         }
         try:
             self._scheduled_0301_plan_ids = [int(pid) for pid in new_plan_ids if pid is not None]

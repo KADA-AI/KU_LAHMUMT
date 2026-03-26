@@ -1,0 +1,25 @@
+
+[2026-03-16 22:58:10] process-log attached: mission_planning
+[LOG] Mission planning log started: C:\Users\LAHMUMT_2\Desktop\DSS_KU\temp\database\DSS_Internal\mission_planning_gui_20260316T135810_635411Z.log
+[0101] 모드 수신 리스너 등록 완료
+[0102] NodeMessenger 초기화 대기 중 ? 자동 송신 보류
+[BUS ERR] NodeMessenger 초기화 실패: DomainParticipant QoS error: Multiple NICs found with the address 192.168.100.. ()
+   at Nex1.Middleware.DiscoveryModule.CreateIPAddresses()
+   at Nex1.Middleware.DiscoveryModule..ctor(Int32 discoveryPort, DomainParticipant dp, DomainParticipantQos qos)
+   at Nex1.Middleware.DomainParticipant..ctor(Int32 domainID, String name, DomainParticipantQos qos)
+   at nFusion.Nodes.Core.NodeMessengerCore..ctor(Int32 domain, DomainParticipantQos qos, String name, String[] hashTags, Boolean useDirectCall)
+   at nFusion.Nodes.Core.NodeMessenger.Initialize(String name, String[] hashTags)
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+[ERR] send_status_ok failed: Object reference not set to an instance of an object.
+   at nFusion.Nodes.Core.NodeMessenger.Push[T](T data, String target)
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+[WARM] Mission planner runtime ready (algo_settings)
+
+[2026-03-16 22:58:19] process-log attached: mission_planning
+[LOG] Mission planning log started: C:\Users\LAHMUMT_2\Desktop\DSS_KU\temp\database\DSS_Internal\mission_planning_gui_20260316T135819_666059Z.log
+[0101] 모드 수신 리스너 등록 완료
+[0102] NodeMessenger 초기화 대기 중 ? 자동 송신 보류
+[BUS] NodeMessenger 초기화 완료
+[WARM] Mission planner runtime ready (algo_settings)

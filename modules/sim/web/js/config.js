@@ -29,6 +29,7 @@ export const getConfig = (body = document.body) => ({
     tileUrl: body.dataset.demUrl,
     tileSize: parseNumber(body.dataset.demTileSize, 256),
     maxZoom: parseNumber(body.dataset.demMaxZoom, 12),
+    bounds: parseJson(body.dataset.demBounds, null),
     encoding: body.dataset.demEncoding || "terrarium",
     exaggeration: parseNumber(body.dataset.demExaggeration, 1.0),
     pitchThreshold: parseNumber(body.dataset.demPitchThreshold, 2),

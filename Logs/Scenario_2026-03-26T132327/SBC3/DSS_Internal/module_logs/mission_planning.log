@@ -1,0 +1,1272 @@
+
+[2026-03-26 13:23:11] process-log attached: mission_planning
+[LOG] Mission planning log started: C:\Users\LAHMUMT_2\Desktop\DSS_KU\Logs\Scenario_2026-03-26T131952\SBC3\DSS_Internal\mission_planning_gui_20260326T042311_586925Z.log
+[0101] 모드 수신 리스너 등록 완료
+[0102] NodeMessenger 초기화 대기 중 ? 자동 송신 보류
+[BUS] NodeMessenger 초기화 완료
+[WARM] Mission planner runtime ready (algo_settings)
+
+[2026-03-26 13:23:27] process-log attached: mission_planning
+[MODE] 슬라이더 변경 → 대기모드
+[0101/POLL] 모드 동기화 code=1
+[MODE] 슬라이더 변경 → 초기 임무 계획
+[0101/POLL] 모드 동기화 code=2
+[AUTO] 0902 received (planIds=700000001)
+[AUTO] replan pipeline scheduled after 0.1s delay
+[0305] status=1, reason=초기임무재계획 전송
+[STEP 0] Replan pipeline start (reason=초기임무재계획)
+[INFO] UAV params loaded (cruise=40.00, turn_step=15.0)
+[INFO] Latest input snapshot → 0201:ID=-,ts=-,src=-, 0203:ID=-,ts=-,src=-
+[INFO] Fallback 0201 file selected: 100.json
+[INFO] Fallback 0203 file selected: 0.json
+[CHECK] 0201/0203 필수 데이터 확인 시작
+[OK] 0201 inputMissionList 확인됨 (count=4) → 진행
+[OK] 0201 availableAircraftList 확인됨 (count=6) → 진행
+[OK] 0201 inputMissionPackageType=1 확인
+[OK] 0201 mainSensor=1 확인
+[CHECK] 0201 기체 수=6 (UAV=3, LAH=3)
+[CHECK] 0201 임무: total=4 missingID=0 missingDetail=0 missingShape=0 unknownType=0 typeZeroAuto=0 typeZeroInvalid=0 lineOnlyViolation=0
+[OK] 0203 takeOverInfoList 확인됨 (count=3) → 진행
+[OK] 0203 handOverInfoList 확인됨 (count=3) → 진행
+[OK] 0203 flightAreaList 확인됨 (count=1) → 진행
+[CHECK] 0203 flightAreaList count=1
+[variant 1] 일반 재계획 모드 적용
+[STEP 1.1] Divide & Pattern start
+[variant 1] [ENHANCED][1] split start: uavs=[4, 5, 6]
+[variant 1] [ENHANCED][1] split done: pieces=12
+[variant 1] [ENHANCED][2] type-decider done: profile=6 changed=12/12
+[variant 1] [ENHANCED][3] expected-path done: count=12
+[variant 1] [ENHANCED][4] area-review done: overflow=3 targets=3 pieces=12->21
+[variant 1] [ENHANCED][5] expected-velocity done: pieces=21 dbRows=391
+[variant 1] [ENHANCED][6] 0302 export done: files=6
+[variant 1] [ENHANCED] total=37.9 ms
+[TIME] divide_and_pattern (variant=1): 38.0 ms
+[OK] IMP generated: 6 file(s) (variant=1)
+[TIME] build_0301+load (variant=1): 10.6 ms
+[OK] MissionPlan built: MissionPlan_1774499011069.json (variant=1)
+[TIME] collect_missions (variant=1): 2.4 ms, count=27
+[TIME] pathID_mapping (variant=1): 39.5 ms
+[INFO] pathID mapping done for 0302/0303/0304 (variant=1)
+[INFO] FlightPath build mode: parallel (variant=1)
+[SWEEP][LINE] separation=540.00m, fov=10.00°, spacing=103.94m (~10 strips/1km)
+[SWEEP][AREA-DB] missionID=900000002 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA] separation=2290.00m, fov=3.60°, spacing=131.94m (~8 strips/1km)
+[SWEEP][AREA-DB] missionID=900000003 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000007 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000008 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000012 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000013 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[INFO] FlightPath build time (parallel): 0303=516.8 ms, 0304=316.3 ms, wall=517.8 ms
+[INFO] Applied LAH-UAV ETA follow speed plan (variant=1)
+[OK] FlightPath counts (variant=1): 0303=15 / 0304=12
+[TIME] build_0302 (variant=1): 8.2 ms, packages=6
+[TIME] write_0302 (variant=1): 8.1 ms, files=6
+[TIME] write_FlightPath (variant=1): 39.8 ms, files=27
+[TIME] write_0301 (variant=1): 0.8 ms
+[OK] Stored variant 1: MissionPlanID=700000001, IMP=6, FlightPath=27
+[TIME] variant_total (variant=1): 671.2 ms
+[INFO] Option mapping #1: planID=700000001, optionCode=1(시스템 추천)
+[OK] Stored mission data: MissionPlan=1, IndividualMission=6, FlightPath=27
+[STEP 4] 0301 push queued (planIds=700000001)
+[0301] missionPlanID=700000001 전송
+[PUSH] 0301 direct batch send
+[INFO] Post-0301 apply queued (grace=1800ms, timeout=3000ms, plans=1)
+[0305] status=2, reason=초기임무재계획, elapsed=0.90s 전송
+[INFO] Post-0301 ready (timeout) -> sending 0903
+[0903] request sent (missionPlanID=700000001)
+
+[2026-03-26 13:33:35] process-log attached: mission_planning
+[LOG] Mission planning log started: C:\Users\LAHMUMT_2\Desktop\DSS_KU\Logs\Scenario_2026-03-26T132327\SBC3\DSS_Internal\mission_planning_gui_20260326T043335_486263Z.log
+[0101] 모드 수신 리스너 등록 완료
+[0102] NodeMessenger 초기화 대기 중 ? 자동 송신 보류
+[BUS] NodeMessenger 초기화 완료
+[WARM] Mission planner runtime ready (algo_settings)
+[MODE] 슬라이더 변경 → 대기모드
+[0101/POLL] 모드 동기화 code=1
+[AUTO] 0902 received (planIds=700000002)
+[AUTO] replan pipeline scheduled after 0.1s delay
+[MODE] 슬라이더 변경 → 초기 임무 계획
+[0101/POLL] 모드 동기화 code=2
+[0305] status=1, reason=초기임무재계획 전송
+[STEP 0] Replan pipeline start (reason=초기임무재계획)
+[INFO] UAV params loaded (cruise=40.00, turn_step=15.0)
+[INFO] Latest input snapshot → 0201:ID=-,ts=-,src=-, 0203:ID=-,ts=-,src=-
+[INFO] Fallback 0201 file selected: 100.json
+[INFO] Fallback 0203 file selected: 0.json
+[CHECK] 0201/0203 필수 데이터 확인 시작
+[OK] 0201 inputMissionList 확인됨 (count=4) → 진행
+[OK] 0201 availableAircraftList 확인됨 (count=6) → 진행
+[OK] 0201 inputMissionPackageType=1 확인
+[OK] 0201 mainSensor=1 확인
+[CHECK] 0201 기체 수=6 (UAV=3, LAH=3)
+[CHECK] 0201 임무: total=4 missingID=0 missingDetail=0 missingShape=0 unknownType=0 typeZeroAuto=0 typeZeroInvalid=0 lineOnlyViolation=0
+[OK] 0203 takeOverInfoList 확인됨 (count=3) → 진행
+[OK] 0203 handOverInfoList 확인됨 (count=3) → 진행
+[OK] 0203 flightAreaList 확인됨 (count=1) → 진행
+[CHECK] 0203 flightAreaList count=1
+[variant 1] 일반 재계획 모드 적용
+[STEP 1.1] Divide & Pattern start
+[variant 1] [ENHANCED][1] split start: uavs=[4, 5, 6]
+[variant 1] [ENHANCED][1] split done: pieces=12
+[variant 1] [ENHANCED][2] type-decider done: profile=6 changed=12/12
+[variant 1] [ENHANCED][3] expected-path done: count=12
+[variant 1] [ENHANCED][4] area-review done: overflow=3 targets=3 pieces=12->21
+[variant 1] [ENHANCED][5] expected-velocity done: pieces=21 dbRows=391
+[variant 1] [ENHANCED][6] 0302 export done: files=6
+[variant 1] [ENHANCED] total=39.6 ms
+[TIME] divide_and_pattern (variant=1): 39.7 ms
+[OK] IMP generated: 6 file(s) (variant=1)
+[TIME] build_0301+load (variant=1): 10.3 ms
+[OK] MissionPlan built: MissionPlan_1774499639756.json (variant=1)
+[TIME] collect_missions (variant=1): 1.7 ms, count=27
+[TIME] pathID_mapping (variant=1): 60.5 ms
+[INFO] pathID mapping done for 0302/0303/0304 (variant=1)
+[INFO] FlightPath build mode: parallel (variant=1)
+[SWEEP][LINE] separation=540.00m, fov=10.00°, spacing=103.94m (~10 strips/1km)
+[SWEEP][AREA-DB] missionID=900000002 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA] separation=2290.00m, fov=3.60°, spacing=131.94m (~8 strips/1km)
+[SWEEP][AREA-DB] missionID=900000003 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000007 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000008 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000012 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000013 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[INFO] FlightPath build time (parallel): 0303=583.9 ms, 0304=327.8 ms, wall=584.9 ms
+[INFO] Applied LAH-UAV ETA follow speed plan (variant=1)
+[OK] FlightPath counts (variant=1): 0303=15 / 0304=12
+[TIME] build_0302 (variant=1): 30.8 ms, packages=6
+[TIME] write_0302 (variant=1): 4.5 ms, files=6
+[TIME] write_FlightPath (variant=1): 26.6 ms, files=27
+[TIME] write_0301 (variant=1): 0.8 ms
+[OK] Stored variant 1: MissionPlanID=700000002, IMP=6, FlightPath=27
+[TIME] variant_total (variant=1): 770.3 ms
+[INFO] Option mapping #1: planID=700000002, optionCode=1(시스템 추천)
+[OK] Stored mission data: MissionPlan=1, IndividualMission=6, FlightPath=27
+[STEP 4] 0301 push queued (planIds=700000002)
+[0301] missionPlanID=700000002 전송
+[PUSH] 0301 direct batch send
+[INFO] Post-0301 apply queued (grace=1800ms, timeout=3000ms, plans=1)
+[0305] status=2, reason=초기임무재계획, elapsed=0.99s 전송
+[INFO] Post-0301 ready (timeout) -> sending 0903
+[0903] request sent (missionPlanID=700000002)
+[MODE] 슬라이더 변경 → 임무 수행
+[0101/POLL] 모드 동기화 code=3
+[AUTO] 0902 received (planIds=700000003, 700000004)
+[AUTO] replan pipeline scheduled after 0.1s delay
+[0305] status=1, reason=무인기 3번 - 방사포(ID-7) 발견으로 인한 재계획 전송
+[STEP 0] Replan pipeline start (reason=무인기 3번 - 방사포(ID-7) 발견으로 인한 재계획)
+[ATTACK] 공격 특화 재계획 요청 감지 → 전용 파이프라인 실행
+[ATTACK] STEP1 Selected manned aircraft: aircraft 2 (fuel=14.89305591583252, coord=(38.06238555908203, 127.27002716064453, alt=754))
+[ATTACK] STEP2 UAV tracking summary: watcher 6?’target 7
+[ATTACK] STEP2.5 Using 0402 target override: target=7 watcher=6
+[ATTACK] STEP3 Attack plan completed: lat=38.064361, lon=127.261161, alt=608m
+[ATTACK] [ATTACK][ETA] Tracking ETA computed (dist=806.7m, speed=24.1m/s, +30s) -> 64s
+[ATTACK] [ATTACK] Using requested missionPlanID 700000003 (sourcePlanID=700000002)
+[ATTACK] [PRIOR] Falling back to first mission for aircraft 2 (current waypoint not found in plan).
+[ATTACK] [ATTACK][LAH] Inferred current waypoint from position -> 182.
+[ATTACK] [ATTACK][LAH] isDone/currentWP mismatch; using currentWP split (isDonePrefix=0, currentIdx=1).
+[ATTACK] [ATTACK][LAH] Dropped current waypoint from resume path (currentWP=182, nextWP=183).
+[ATTACK] [ATTACK][LAH] Dropped completed missions, inserted attack, and reattached 3 follow-up mission(s).
+[ATTACK] [ATTACK][LAH] Generated attack/resume missions -> IMP:800000013.json PATHS:200000009.json/200000010.json (followUps=3)
+[ATTACK] [ATTACK][UAV] Resume trimmed by currentWP (lastRemovedWP=292).
+[ATTACK] [ATTACK][UAV] Added replan anchor waypoint to done path (anchorWP=348).
+[ATTACK] [ATTACK][UAV] Resume searchSpeed scaled (factor=1.30, waypoints=7).
+[ATTACK] [ATTACK][UAV] Preserved done segment, inserted tracking, and reattached 4 follow-up mission(s).
+[ATTACK] [ATTACK][UAV] Generated tracking/resume missions -> IMP:800000014.json PATHS:600000012.json/600000013.json (followUps=4)
+[ATTACK] [ATTACK][UAV] Tracking assignment state saved (aircraft=6, sourcePlan=700000002, attackPlan=700000003).
+[ATTACK] [PRIOR] Falling back to first mission for aircraft 1 (current waypoint not found in plan).
+[ATTACK] [ATTACK][LAH] Inferred current waypoint from position -> 164.
+[ATTACK] [ATTACK][LAH] isDone/currentWP mismatch; using currentWP split (isDonePrefix=0, currentIdx=1).
+[ATTACK] [ATTACK][LAH] Dropped current waypoint from resume path (currentWP=164, nextWP=165).
+[ATTACK] [ATTACK][LAH] Dropped completed missions, inserted hold, and reattached 3 follow-up mission(s).
+[ATTACK] [ATTACK][LAH] Generated hold/resume missions -> IMP:800000015.json PATHS:100000009.json/100000010.json (followUps=3)
+[ATTACK] [PRIOR] Falling back to first mission for aircraft 3 (current waypoint not found in plan).
+[ATTACK] [ATTACK][LAH] Inferred current waypoint from position -> 200.
+[ATTACK] [ATTACK][LAH] isDone/currentWP mismatch; using currentWP split (isDonePrefix=0, currentIdx=1).
+[ATTACK] [ATTACK][LAH] Dropped current waypoint from resume path (currentWP=200, nextWP=201).
+[ATTACK] [ATTACK][LAH] Dropped completed missions, inserted hold, and reattached 3 follow-up mission(s).
+[ATTACK] [ATTACK][LAH] Generated hold/resume missions -> IMP:800000016.json PATHS:300000009.json/300000010.json (followUps=3)
+[ATTACK] [ATTACK][UAV] Resume trimmed by currentWP (lastRemovedWP=220).
+[ATTACK] [ATTACK][UAV] Added replan anchor waypoint to done path (anchorWP=426).
+[ATTACK] [ATTACK][UAV] Resume sweep trim applied (cutPoints=6, rawCutPoints=105, doneSweepPoints=99, pathID=400000006).
+[ATTACK] [ATTACK][UAV] Resume searchSpeed scaled (factor=1.30, waypoints=7).
+[ATTACK] [ATTACK][UAV] Preserved prior mission as done, inserted resume, and reattached 4 follow-up mission(s).
+[ATTACK] [ATTACK][UAV] Generated resume-only mission -> IMP:800000017.json PATH:400000012.json (followUps=4)
+[ATTACK] [ATTACK][UAV] Resume trimmed by currentWP (lastRemovedWP=256).
+[ATTACK] [ATTACK][UAV] Added replan anchor waypoint to done path (anchorWP=464).
+[ATTACK] [ATTACK][UAV] Resume sweep trim applied (cutPoints=5, rawCutPoints=104, doneSweepPoints=99, pathID=500000006).
+[ATTACK] [ATTACK][UAV] Resume searchSpeed scaled (factor=1.30, waypoints=7).
+[ATTACK] [ATTACK][UAV] Preserved prior mission as done, inserted resume, and reattached 4 follow-up mission(s).
+[ATTACK] [ATTACK][UAV] Generated resume-only mission -> IMP:800000018.json PATH:500000012.json (followUps=4)
+[ATTACK] [ATTACK][PLAN] MissionPlan saved -> 700000003.json (planID=700000003)
+[ATTACK] 분석 로그 저장: C:\Users\LAHMUMT_2\Desktop\DSS_KU\Logs\Scenario_2026-03-26T132327\SBC3\DSS_Internal\log_attack_algorithm_20260326T043538_563145.json
+[ATTACK] mark target used: key=7-6, targetID=7
+[ATTACK-EXCLUDE] ATTACK-EXCLUDE using requested missionPlanID 700000004 (sourcePlanID=700000002)
+[ATTACK] 공격 임무 계획 완료 (planIds=700000003)
+[INFO] UAV params loaded (cruise=40.00, turn_step=15.0)
+[INFO] Latest input snapshot → 0201:ID=-,ts=-,src=-, 0203:ID=-,ts=-,src=-
+[INFO] Fallback 0201 file selected: 100.json
+[INFO] Fallback 0203 file selected: 0.json
+[CHECK] 0201/0203 필수 데이터 확인 시작
+[OK] 0201 inputMissionList 확인됨 (count=4) → 진행
+[OK] 0201 availableAircraftList 확인됨 (count=6) → 진행
+[OK] 0201 inputMissionPackageType=1 확인
+[OK] 0201 mainSensor=1 확인
+[CHECK] 0201 기체 수=6 (UAV=3, LAH=3)
+[CHECK] 0201 임무: total=4 missingID=0 missingDetail=0 missingShape=0 unknownType=0 typeZeroAuto=0 typeZeroInvalid=0 lineOnlyViolation=0
+[OK] 0203 takeOverInfoList 확인됨 (count=3) → 진행
+[OK] 0203 handOverInfoList 확인됨 (count=3) → 진행
+[OK] 0203 flightAreaList 확인됨 (count=1) → 진행
+[CHECK] 0203 flightAreaList count=1
+[variant 1] 공격 배제 전용 재개 파이프라인 적용
+[ATTACK-EXCLUDE] [PRIOR][UAV] Resume trimmed by currentWP (lastRemovedWP=220).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Added replan anchor waypoint to done path (anchorWP=527).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Resume sweep trim applied (cutPoints=8, rawCutPoints=107, doneSweepPoints=99, pathID=400000006).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Resume searchSpeed scaled (factor=1.30, waypoints=7).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Generated done/resume mission -> aircraft=4 IMP:800000019.json PATHS:400000017.json/400000018.json
+[ATTACK-EXCLUDE] [PRIOR][UAV] Resume trimmed by currentWP (lastRemovedWP=256).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Added replan anchor waypoint to done path (anchorWP=565).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Resume sweep trim applied (cutPoints=6, rawCutPoints=105, doneSweepPoints=99, pathID=500000006).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Resume searchSpeed scaled (factor=1.30, waypoints=7).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Generated done/resume mission -> aircraft=5 IMP:800000020.json PATHS:500000017.json/500000018.json
+[ATTACK-EXCLUDE] [PRIOR][UAV] Resume trimmed by currentWP (lastRemovedWP=292).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Added replan anchor waypoint to done path (anchorWP=603).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Resume sweep trim applied (cutPoints=1, rawCutPoints=100, doneSweepPoints=99, pathID=600000006).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Resume searchSpeed scaled (factor=1.30, waypoints=7).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Generated done/resume mission -> aircraft=6 IMP:800000021.json PATHS:600000018.json/600000019.json
+[ATTACK-EXCLUDE] 공격 배제 MissionPlan 저장 -> 700000004.json (planID=700000004)
+[OK] 공격 배제 variant 저장: MissionPlanID=700000004 (elapsed=985.5 ms)
+[INFO] Option mapping #1: planID=700000004, optionCode=3(공격배제)
+[OK] Stored mission data: MissionPlan=1, IndividualMission=0, FlightPath=0
+[STEP 4] 0301 push queued (planIds=700000003, 700000004)
+[0301] missionPlanID=700000003 전송
+[0301] missionPlanID=700000004 전송
+[PUSH] 0301 direct batch send
+[INFO] Post-0301 apply queued (grace=2050ms, timeout=3250ms, plans=2)
+[0305] status=2, reason=무인기 3번 - 방사포(ID-7) 발견으로 인한 재계획, elapsed=3.89s 전송
+[INFO] Post-0301 ready (timeout) -> sending 0901
+[0901] option request sent (count=2, codes=2(공격특화), 3(공격배제))
+[CONFIG] 알고리즘 설정 적용 (cruise=40.0m/s, turn_step=15.0°, areaMode=vertical, areaSplit=single_stage, uavPlan=dub_path, autoFovDb=True)
+[CONFIG] 알고리즘 설정 적용 (cruise=40.0m/s, turn_step=15.0°, areaMode=vertical, areaSplit=single_stage, uavPlan=dub_path, autoFovDb=True)
+
+[2026-03-26 13:44:37] process-log attached: mission_planning
+[LOG] Mission planning log started: C:\Users\LAHMUMT_2\Desktop\DSS_KU\Logs\Scenario_2026-03-26T132327\SBC3\DSS_Internal\mission_planning_gui_20260326T044436_841536Z.log
+[0101] 모드 수신 리스너 등록 완료
+[0102] NodeMessenger 초기화 대기 중 ? 자동 송신 보류
+[ERR] send_status_ok failed: Object reference not set to an instance of an object.
+   at nFusion.Nodes.Core.NodeMessenger.Push[T](T data, String target)
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+[BUS] NodeMessenger 초기화 완료
+[WARM] Mission planner runtime ready (algo_settings)
+[MODE] 슬라이더 변경 → 대기모드
+[0101/POLL] 모드 동기화 code=1
+[AUTO] 0902 received (planIds=700000005)
+[AUTO] replan pipeline scheduled after 0.1s delay
+[MODE] 슬라이더 변경 → 초기 임무 계획
+[0101/POLL] 모드 동기화 code=2
+[0305] status=1, reason=초기임무재계획 전송
+[STEP 0] Replan pipeline start (reason=초기임무재계획)
+[INFO] UAV params loaded (cruise=40.00, turn_step=15.0)
+[INFO] Latest input snapshot → 0201:ID=-,ts=-,src=-, 0203:ID=-,ts=-,src=-
+[INFO] Fallback 0201 file selected: 100.json
+[INFO] Fallback 0203 file selected: 0.json
+[CHECK] 0201/0203 필수 데이터 확인 시작
+[OK] 0201 inputMissionList 확인됨 (count=4) → 진행
+[OK] 0201 availableAircraftList 확인됨 (count=6) → 진행
+[OK] 0201 inputMissionPackageType=1 확인
+[OK] 0201 mainSensor=1 확인
+[CHECK] 0201 기체 수=6 (UAV=3, LAH=3)
+[CHECK] 0201 임무: total=4 missingID=0 missingDetail=0 missingShape=0 unknownType=0 typeZeroAuto=0 typeZeroInvalid=0 lineOnlyViolation=0
+[OK] 0203 takeOverInfoList 확인됨 (count=3) → 진행
+[OK] 0203 handOverInfoList 확인됨 (count=3) → 진행
+[OK] 0203 flightAreaList 확인됨 (count=1) → 진행
+[CHECK] 0203 flightAreaList count=1
+[variant 1] 일반 재계획 모드 적용
+[STEP 1.1] Divide & Pattern start
+[variant 1] [ENHANCED][1] split start: uavs=[4, 5, 6]
+[variant 1] [ENHANCED][1] split done: pieces=12
+[variant 1] [ENHANCED][2] type-decider done: profile=6 changed=12/12
+[variant 1] [ENHANCED][3] expected-path done: count=12
+[variant 1] [ENHANCED][4] area-review done: overflow=3 targets=3 pieces=12->21
+[variant 1] [ENHANCED][5] expected-velocity done: pieces=21 dbRows=391
+[variant 1] [ENHANCED][6] 0302 export done: files=6
+[variant 1] [ENHANCED] total=47.5 ms
+[TIME] divide_and_pattern (variant=1): 47.7 ms
+[OK] IMP generated: 6 file(s) (variant=1)
+[TIME] build_0301+load (variant=1): 10.8 ms
+[OK] MissionPlan built: MissionPlan_1774500290281.json (variant=1)
+[TIME] collect_missions (variant=1): 2.5 ms, count=27
+[TIME] pathID_mapping (variant=1): 70.6 ms
+[INFO] pathID mapping done for 0302/0303/0304 (variant=1)
+[INFO] FlightPath build mode: parallel (variant=1)
+[SWEEP][LINE] separation=540.00m, fov=10.00°, spacing=103.94m (~10 strips/1km)
+[SWEEP][AREA-DB] missionID=900000002 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA] separation=2290.00m, fov=3.60°, spacing=131.94m (~8 strips/1km)
+[SWEEP][AREA-DB] missionID=900000003 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000007 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000008 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000012 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000013 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[INFO] FlightPath build time (parallel): 0303=492.6 ms, 0304=272.9 ms, wall=493.5 ms
+[INFO] Applied LAH-UAV ETA follow speed plan (variant=1)
+[OK] FlightPath counts (variant=1): 0303=15 / 0304=12
+[TIME] build_0302 (variant=1): 39.6 ms, packages=6
+[TIME] write_0302 (variant=1): 6.8 ms, files=6
+[TIME] write_FlightPath (variant=1): 28.3 ms, files=27
+[TIME] write_0301 (variant=1): 0.9 ms
+[OK] Stored variant 1: MissionPlanID=700000005, IMP=6, FlightPath=27
+[TIME] variant_total (variant=1): 711.8 ms
+[INFO] Option mapping #1: planID=700000005, optionCode=1(시스템 추천)
+[OK] Stored mission data: MissionPlan=1, IndividualMission=6, FlightPath=27
+[STEP 4] 0301 push queued (planIds=700000005)
+[0301] missionPlanID=700000005 전송
+[PUSH] 0301 direct batch send
+[INFO] Post-0301 apply queued (grace=1800ms, timeout=3000ms, plans=1)
+[0305] status=2, reason=초기임무재계획, elapsed=1.00s 전송
+[INFO] Post-0301 ready (timeout) -> sending 0903
+[0903] request sent (missionPlanID=700000005)
+
+[2026-03-26 13:57:44] process-log attached: mission_planning
+[LOG] Mission planning log started: C:\Users\LAHMUMT_2\Desktop\DSS_KU\Logs\Scenario_2026-03-26T132327\SBC3\DSS_Internal\mission_planning_gui_20260326T045744_220035Z.log
+[0101] 모드 수신 리스너 등록 완료
+[0102] NodeMessenger 초기화 대기 중 ? 자동 송신 보류
+[BUS] NodeMessenger 초기화 완료
+[WARM] Mission planner runtime ready (algo_settings)
+[0m
+[2026-03-26 14:08:42] process-log attached: mission_planning
+[LOG] Mission planning log started: C:\Users\LAHMUMT_2\Desktop\DSS_KU\Logs\Scenario_2026-03-26T132327\SBC3\DSS_Internal\mission_planning_gui_20260326T050841_880756Z.log
+[0101] 모드 수신 리스너 등록 완료
+[BUS] NodeMessenger 초기화 완료
+[WARM] Mission planner runtime ready (algo_settings)
+[MODE] 슬라이더 변경 → 대기모드
+[0101/POLL] 모드 동기화 code=1
+[MODE] 슬라이더 변경 → 초기 임무 계획
+[0101/POLL] 모드 동기화 code=2
+[AUTO] 0902 received (planIds=700000006)
+[AUTO] replan pipeline scheduled after 0.1s delay
+[0305] status=1, reason=초기임무재계획 전송
+[STEP 0] Replan pipeline start (reason=초기임무재계획)
+[INFO] UAV params loaded (cruise=40.00, turn_step=15.0)
+[INFO] Latest input snapshot → 0201:ID=-,ts=-,src=-, 0203:ID=-,ts=-,src=-
+[INFO] Fallback 0201 file selected: 100.json
+[INFO] Fallback 0203 file selected: 0.json
+[CHECK] 0201/0203 필수 데이터 확인 시작
+[OK] 0201 inputMissionList 확인됨 (count=4) → 진행
+[OK] 0201 availableAircraftList 확인됨 (count=6) → 진행
+[OK] 0201 inputMissionPackageType=1 확인
+[OK] 0201 mainSensor=1 확인
+[CHECK] 0201 기체 수=6 (UAV=3, LAH=3)
+[CHECK] 0201 임무: total=4 missingID=0 missingDetail=0 missingShape=0 unknownType=0 typeZeroAuto=0 typeZeroInvalid=0 lineOnlyViolation=0
+[OK] 0203 takeOverInfoList 확인됨 (count=3) → 진행
+[OK] 0203 handOverInfoList 확인됨 (count=3) → 진행
+[OK] 0203 flightAreaList 확인됨 (count=1) → 진행
+[CHECK] 0203 flightAreaList count=1
+[variant 1] 일반 재계획 모드 적용
+[STEP 1.1] Divide & Pattern start
+[variant 1] [ENHANCED][1] split start: uavs=[4, 5, 6]
+[variant 1] [ENHANCED][1] split done: pieces=12
+[variant 1] [ENHANCED][2] type-decider done: profile=6 changed=12/12
+[variant 1] [ENHANCED][3] expected-path done: count=12
+[variant 1] [ENHANCED][4] area-review done: overflow=3 targets=3 pieces=12->21
+[variant 1] [ENHANCED][5] expected-velocity done: pieces=21 dbRows=391
+[variant 1] [ENHANCED][6] 0302 export done: files=6
+[variant 1] [ENHANCED] total=44.6 ms
+[TIME] divide_and_pattern (variant=1): 44.7 ms
+[OK] IMP generated: 6 file(s) (variant=1)
+[TIME] build_0301+load (variant=1): 10.7 ms
+[OK] MissionPlan built: MissionPlan_1774501741261.json (variant=1)
+[TIME] collect_missions (variant=1): 2.2 ms, count=27
+[TIME] pathID_mapping (variant=1): 67.2 ms
+[INFO] pathID mapping done for 0302/0303/0304 (variant=1)
+[INFO] FlightPath build mode: parallel (variant=1)
+[SWEEP][LINE] separation=540.00m, fov=10.00°, spacing=103.94m (~10 strips/1km)
+[SWEEP][AREA-DB] missionID=900000002 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA] separation=2290.00m, fov=3.60°, spacing=131.94m (~8 strips/1km)
+[SWEEP][AREA-DB] missionID=900000003 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000007 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000008 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000012 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000013 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[INFO] FlightPath build time (parallel): 0303=534.0 ms, 0304=467.3 ms, wall=534.9 ms
+[INFO] Applied LAH-UAV ETA follow speed plan (variant=1)
+[OK] FlightPath counts (variant=1): 0303=15 / 0304=12
+[TIME] build_0302 (variant=1): 41.5 ms, packages=6
+[TIME] write_0302 (variant=1): 5.9 ms, files=6
+[TIME] write_FlightPath (variant=1): 30.8 ms, files=27
+[TIME] write_0301 (variant=1): 0.9 ms
+[OK] Stored variant 1: MissionPlanID=700000006, IMP=6, FlightPath=27
+[TIME] variant_total (variant=1): 748.4 ms
+[INFO] Option mapping #1: planID=700000006, optionCode=1(시스템 추천)
+[OK] Stored mission data: MissionPlan=1, IndividualMission=6, FlightPath=27
+[STEP 4] 0301 push queued (planIds=700000006)
+[0301] missionPlanID=700000006 전송
+[PUSH] 0301 direct batch send
+[INFO] Post-0301 apply queued (grace=1800ms, timeout=3000ms, plans=1)
+[0305] status=2, reason=초기임무재계획, elapsed=1.02s 전송
+[INFO] Post-0301 ready (timeout) -> sending 0903
+[0903] request sent (missionPlanID=700000006)
+
+[2026-03-26 14:46:37] process-log attached: mission_planning
+[LOG] Mission planning log started: C:\Users\LAHMUMT_2\Desktop\DSS_KU\Logs\Scenario_2026-03-26T132327\SBC3\DSS_Internal\mission_planning_gui_20260326T054637_504029Z.log
+[0101] 모드 수신 리스너 등록 완료
+[0102] NodeMessenger 초기화 대기 중 ? 자동 송신 보류
+[BUS] NodeMessenger 초기화 완료
+[WARM] Mission planner runtime ready (algo_settings)
+
+[2026-03-26 14:46:47] process-log attached: mission_planning
+[LOG] Mission planning log started: C:\Users\LAHMUMT_2\Desktop\DSS_KU\Logs\Scenario_2026-03-26T132327\SBC3\DSS_Internal\mission_planning_gui_20260326T054646_788892Z.log
+[0101] 모드 수신 리스너 등록 완료
+[0102] NodeMessenger 초기화 대기 중 ? 자동 송신 보류
+[BUS] NodeMessenger 초기화 완료
+[WARM] Mission planner runtime ready (algo_settings)
+[MODE] 슬라이더 변경 → 대기모드
+[0101/POLL] 모드 동기화 code=1
+[AUTO] 0902 received (planIds=700000007)
+[AUTO] replan pipeline scheduled after 0.1s delay
+[MODE] 슬라이더 변경 → 초기 임무 계획
+[0101/POLL] 모드 동기화 code=2
+[0305] status=1, reason=초기임무재계획 전송
+[STEP 0] Replan pipeline start (reason=초기임무재계획)
+[INFO] UAV params loaded (cruise=40.00, turn_step=15.0)
+[INFO] Latest input snapshot → 0201:ID=-,ts=-,src=-, 0203:ID=-,ts=-,src=-
+[INFO] Fallback 0201 file selected: 100.json
+[INFO] Fallback 0203 file selected: 0.json
+[CHECK] 0201/0203 필수 데이터 확인 시작
+[OK] 0201 inputMissionList 확인됨 (count=4) → 진행
+[OK] 0201 availableAircraftList 확인됨 (count=6) → 진행
+[OK] 0201 inputMissionPackageType=1 확인
+[OK] 0201 mainSensor=1 확인
+[CHECK] 0201 기체 수=6 (UAV=3, LAH=3)
+[CHECK] 0201 임무: total=4 missingID=0 missingDetail=0 missingShape=0 unknownType=0 typeZeroAuto=0 typeZeroInvalid=0 lineOnlyViolation=0
+[OK] 0203 takeOverInfoList 확인됨 (count=3) → 진행
+[OK] 0203 handOverInfoList 확인됨 (count=3) → 진행
+[OK] 0203 flightAreaList 확인됨 (count=1) → 진행
+[CHECK] 0203 flightAreaList count=1
+[variant 1] 일반 재계획 모드 적용
+[STEP 1.1] Divide & Pattern start
+[variant 1] [ENHANCED][1] split start: uavs=[4, 5, 6]
+[variant 1] [ENHANCED][1] split done: pieces=12
+[variant 1] [ENHANCED][2] type-decider done: profile=6 changed=12/12
+[variant 1] [ENHANCED][3] expected-path done: count=12
+[variant 1] [ENHANCED][4] area-review done: overflow=3 targets=3 pieces=12->21
+[variant 1] [ENHANCED][5] expected-velocity done: pieces=21 dbRows=391
+[variant 1] [ENHANCED][6] 0302 export done: files=6
+[variant 1] [ENHANCED] total=59.8 ms
+[TIME] divide_and_pattern (variant=1): 60.1 ms
+[OK] IMP generated: 6 file(s) (variant=1)
+[TIME] build_0301+load (variant=1): 12.9 ms
+[OK] MissionPlan built: MissionPlan_1774504096517.json (variant=1)
+[TIME] collect_missions (variant=1): 4.5 ms, count=27
+[TIME] pathID_mapping (variant=1): 77.9 ms
+[INFO] pathID mapping done for 0302/0303/0304 (variant=1)
+[INFO] FlightPath build mode: parallel (variant=1)
+[SWEEP][LINE] separation=540.00m, fov=10.00°, spacing=103.94m (~10 strips/1km)
+[SWEEP][AREA-DB] missionID=900000002 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA] separation=2290.00m, fov=3.60°, spacing=131.94m (~8 strips/1km)
+[SWEEP][AREA-DB] missionID=900000003 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000007 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000008 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000012 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000013 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[INFO] FlightPath build time (parallel): 0303=861.4 ms, 0304=802.0 ms, wall=863.2 ms
+[INFO] Applied LAH-UAV ETA follow speed plan (variant=1)
+[OK] FlightPath counts (variant=1): 0303=15 / 0304=12
+[TIME] build_0302 (variant=1): 43.8 ms, packages=6
+[TIME] write_0302 (variant=1): 8.6 ms, files=6
+[TIME] write_FlightPath (variant=1): 52.0 ms, files=27
+[TIME] write_0301 (variant=1): 1.5 ms
+[OK] Stored variant 1: MissionPlanID=700000007, IMP=6, FlightPath=27
+[TIME] variant_total (variant=1): 1141.7 ms
+[INFO] Option mapping #1: planID=700000007, optionCode=1(시스템 추천)
+[OK] Stored mission data: MissionPlan=1, IndividualMission=6, FlightPath=27
+[STEP 4] 0301 push queued (planIds=700000007)
+[0301] missionPlanID=700000007 전송
+[PUSH] 0301 direct batch send
+[INFO] Post-0301 apply queued (grace=1800ms, timeout=3000ms, plans=1)
+[0305] status=2, reason=초기임무재계획, elapsed=1.43s 전송
+[INFO] Post-0301 ready (timeout) -> sending 0903
+[0903] request sent (missionPlanID=700000007)
+[MODE] 슬라이더 변경 → 임무 수행
+[0101/POLL] 모드 동기화 code=3
+[AUTO] 0902 received (planIds=700000008)
+[AUTO] replan pipeline scheduled after 0.1s delay
+[0305] status=1, reason=선행임무 : 좌표지정 전송
+[STEP 0] Replan pipeline start (reason=선행임무 : 좌표지정)
+[PRIOR] Level-4 prior mission request detected. Using dedicated pipeline.
+[PRIOR] detail keys: ['missionType', 'priorMissionID', 'rawEntry', 'sourceMissionPlanID', 'targetCoordinate', 'targetID', 'targetOrientation', 'timestamp']
+[PRIOR][STEP1] Loaded 0401 snapshot with 3 unmanned entries (saved_at=2026-03-26T05:50:03.835411+00:00).
+[PRIOR][STEP1] UAV 4: currentWP=1030, coord=(38.075779, 127.269226, alt=770.0)
+[PRIOR][STEP1] UAV 5: currentWP=1071, coord=(38.075417, 127.273117, alt=761.0)
+[PRIOR][STEP1] UAV 6: currentWP=1112, coord=(38.074913, 127.277245, alt=784.0)
+[PRIOR][STEP2] Target coordinate (0202) → (38.081593, 127.281288, alt=1000.0)
+[PRIOR][STEP3] Nearest UAV 6 selected based on 0401 snapshot (currentWP=1112, distance≈822.7 m).
+[PRIOR][STEP4] Reserved new waypoint ID 1151 for UAV 6 (currentWP=1112, distance≈822.7 m).
+[PRIOR] Allocated IDs -> plan:700000008 imp:800000040 path(done/prior/resume):600000039/600000040/600000041 indiv(prior/resume):900000182/900000183 wp(approach/target):1150/1151
+[PRIOR][UAV] Resume trimmed by currentWP (lastRemovedWP=1111).
+[PRIOR][UAV] Added replan anchor waypoint to done path (anchorWP=1152).
+[PRIOR][UAV] Resume sweep trim applied (cutPoints=10, rawCutPoints=121, doneSweepPoints=111, pathID=600000034).
+[PRIOR][UAV] Resume searchSpeed scaled (factor=1.30, waypoints=8).
+[PRIOR][STEP3] Approach waypoint adjusted: 822.7m -> 450m ahead.
+[PRIOR][UAV] Resume trimmed by currentWP (lastRemovedWP=1029).
+[PRIOR][UAV] Added replan anchor waypoint to done path (anchorWP=1166).
+[PRIOR][UAV] Resume sweep trim applied (cutPoints=15, rawCutPoints=126, doneSweepPoints=111, pathID=400000033).
+[PRIOR][UAV] Resume searchSpeed scaled (factor=1.30, waypoints=8).
+[PRIOR][UAV] Generated done/resume mission -> aircraft=4 IMP:800000041.json PATHS:400000038.json/400000039.json
+[PRIOR][UAV] Resume trimmed by currentWP (lastRemovedWP=1070).
+[PRIOR][UAV] Added replan anchor waypoint to done path (anchorWP=1180).
+[PRIOR][UAV] Resume sweep trim applied (cutPoints=13, rawCutPoints=124, doneSweepPoints=111, pathID=500000033).
+[PRIOR][UAV] Resume searchSpeed scaled (factor=1.30, waypoints=8).
+[PRIOR][UAV] Generated done/resume mission -> aircraft=5 IMP:800000042.json PATHS:500000038.json/500000039.json
+[PRIOR] Stored new artifacts -> plan:700000008.json, imp:800000040.json, fp:600000039.json/600000040.json/600000041.json
+[PRIOR] Log captured -> C:\Users\LAHMUMT_2\Desktop\DSS_KU\Logs\Scenario_2026-03-26T132327\SBC3\DSS_Internal\PriorMission_2_827819404167.json
+[PRIOR][DELIVERY] direct push start (planIds=700000008)
+[STEP 4] 0301 push queued (planIds=700000008)
+[INFO] Direct delivery -> skip 0901/0701, send 0301+0903(+0702 fallback)
+[0301] missionPlanID=700000008 전송
+[PUSH] 0301 direct batch send
+[INFO] Post-0301 apply queued (grace=1800ms, timeout=3000ms, plans=1)
+[PRIOR] Prior mission pipeline complete (planIds=[700000008], log=C:\Users\LAHMUMT_2\Desktop\DSS_KU\Logs\Scenario_2026-03-26T132327\SBC3\DSS_Internal\PriorMission_2_827819404167.json)
+[0305] status=2, reason=선행임무 : 좌표지정, elapsed=1.29s 전송
+[INFO] Post-0301 ready (timeout) -> sending 0903
+[0903] request sent (missionPlanID=700000008)
+[0702][AUTO] ignore=2 sent (missionPlanID=700000008)
+[AUTO] 0902 received (planIds=700000009, 700000010)
+[AUTO] replan pipeline scheduled after 0.1s delay
+[0305] status=1, reason=무인기 2번 - 장갑차(ID-8) 발견으로 인한 재계획 전송
+[STEP 0] Replan pipeline start (reason=무인기 2번 - 장갑차(ID-8) 발견으로 인한 재계획)
+[ATTACK] 공격 특화 재계획 요청 감지 → 전용 파이프라인 실행
+[ATTACK] STEP1 Selected manned aircraft: aircraft 3 (fuel=14.733426094055176, coord=(38.08802795410156, 127.26995086669922, alt=766))
+[ATTACK] STEP2 UAV tracking summary: watcher 5?’target 8, watcher 4?’target 7, watcher 6?’target 7, watcher 6?’target unknown-1, watcher 2?’target 7, watcher 2?’target 1
+[ATTACK] STEP2.5 Using 0402 target override: target=8 watcher=5
+[ATTACK] STEP3 Attack plan completed: lat=38.095949, lon=127.258673, alt=431m
+[ATTACK] [ATTACK][ETA] Tracking ETA computed (dist=1322.9m, speed=23.1m/s, +30s) -> 87s
+[ATTACK] [ATTACK] Using requested missionPlanID 700000009 (sourcePlanID=700000008)
+[ATTACK] [PRIOR] Falling back to first mission for aircraft 3 (current waypoint not found in plan).
+[ATTACK] [ATTACK][LAH] Inferred current waypoint from position -> 1011.
+[ATTACK] [ATTACK][LAH] isDone/currentWP mismatch; using currentWP split (isDonePrefix=0, currentIdx=3).
+[ATTACK] [ATTACK][LAH] Dropped current waypoint from resume path (currentWP=1011, nextWP=1012).
+[ATTACK] [ATTACK][LAH] Dropped completed missions, inserted attack, and reattached 3 follow-up mission(s).
+[ATTACK] [ATTACK][LAH] Generated attack/resume missions -> IMP:800000043.json PATHS:300000026.json/300000027.json (followUps=3)
+[ATTACK] [ATTACK][UAV] Resume trimmed by currentWP (lastRemovedWP=1190).
+[ATTACK] [ATTACK][UAV] Added replan anchor waypoint to done path (anchorWP=1217).
+[ATTACK] [ATTACK][UAV] Resume searchSpeed scaled (factor=1.30, waypoints=3).
+[ATTACK] [ATTACK][UAV] Preserved done segment, inserted tracking, and reattached 4 follow-up mission(s).
+[ATTACK] [ATTACK][UAV] Generated tracking/resume missions -> IMP:800000044.json PATHS:500000041.json/500000042.json (followUps=4)
+[ATTACK] [ATTACK][UAV] Tracking assignment state saved (aircraft=5, sourcePlan=700000008, attackPlan=700000009).
+[ATTACK] [PRIOR] Falling back to first mission for aircraft 1 (current waypoint not found in plan).
+[ATTACK] [ATTACK][LAH] Inferred current waypoint from position -> 975.
+[ATTACK] [ATTACK][LAH] isDone/currentWP mismatch; using currentWP split (isDonePrefix=0, currentIdx=3).
+[ATTACK] [ATTACK][LAH] Dropped current waypoint from resume path (currentWP=975, nextWP=976).
+[ATTACK] [ATTACK][LAH] Dropped completed missions, inserted hold, and reattached 3 follow-up mission(s).
+[ATTACK] [ATTACK][LAH] Generated hold/resume missions -> IMP:800000045.json PATHS:100000026.json/100000027.json (followUps=3)
+[ATTACK] [PRIOR] Falling back to first mission for aircraft 2 (current waypoint not found in plan).
+[ATTACK] [ATTACK][LAH] Inferred current waypoint from position -> 993.
+[ATTACK] [ATTACK][LAH] isDone/currentWP mismatch; using currentWP split (isDonePrefix=0, currentIdx=3).
+[ATTACK] [ATTACK][LAH] Dropped current waypoint from resume path (currentWP=993, nextWP=994).
+[ATTACK] [ATTACK][LAH] Dropped completed missions, inserted hold, and reattached 3 follow-up mission(s).
+[ATTACK] [ATTACK][LAH] Generated hold/resume missions -> IMP:800000046.json PATHS:200000026.json/200000027.json (followUps=3)
+[ATTACK] [ATTACK][UAV] isDone/currentWP mismatch; using currentWP split (isDonePrefix=8, currentIdx=5).
+[ATTACK] [ATTACK][UAV] Resume trimmed by currentWP (lastRemovedWP=1176).
+[ATTACK] [ATTACK][UAV] Added replan anchor waypoint to done path (anchorWP=1296).
+[ATTACK] [ATTACK][UAV] Resume searchSpeed scaled (factor=1.30, waypoints=3).
+[ATTACK] [ATTACK][UAV] Preserved prior mission as done, inserted resume, and reattached 4 follow-up mission(s).
+[ATTACK] [ATTACK][UAV] Generated resume-only mission -> IMP:800000047.json PATH:400000041.json (followUps=4)
+[ATTACK] [ATTACK][UAV] isDone/currentWP mismatch; using currentWP split (isDonePrefix=1, currentIdx=0).
+[ATTACK] [ATTACK][UAV] Resume sweep trim applied (cutPoints=5, rawCutPoints=5, doneSweepPoints=0, pathID=600000041).
+[ATTACK] [ATTACK][UAV] Resume searchSpeed scaled (factor=1.30, waypoints=8).
+[ATTACK] [ATTACK][UAV] Preserved prior mission as done, inserted resume, and reattached 4 follow-up mission(s).
+[ATTACK] [ATTACK][UAV] Generated resume-only mission -> IMP:800000048.json PATH:600000043.json (followUps=4)
+[ATTACK] [ATTACK][PLAN] MissionPlan saved -> 700000009.json (planID=700000009)
+[ATTACK] 분석 로그 저장: C:\Users\LAHMUMT_2\Desktop\DSS_KU\Logs\Scenario_2026-03-26T132327\SBC3\DSS_Internal\log_attack_algorithm_20260326T055148_840073.json
+[ATTACK] mark target used: key=8-5, targetID=8
+[ATTACK-EXCLUDE] ATTACK-EXCLUDE using requested missionPlanID 700000010 (sourcePlanID=700000008)
+[ATTACK] 공격 임무 계획 완료 (planIds=700000009)
+[INFO] UAV params loaded (cruise=40.00, turn_step=15.0)
+[INFO] Latest input snapshot → 0201:ID=-,ts=-,src=-, 0203:ID=-,ts=-,src=-
+[INFO] Fallback 0201 file selected: 100.json
+[INFO] Fallback 0203 file selected: 0.json
+[CHECK] 0201/0203 필수 데이터 확인 시작
+[OK] 0201 inputMissionList 확인됨 (count=4) → 진행
+[OK] 0201 availableAircraftList 확인됨 (count=6) → 진행
+[OK] 0201 inputMissionPackageType=1 확인
+[OK] 0201 mainSensor=1 확인
+[CHECK] 0201 기체 수=6 (UAV=3, LAH=3)
+[CHECK] 0201 임무: total=4 missingID=0 missingDetail=0 missingShape=0 unknownType=0 typeZeroAuto=0 typeZeroInvalid=0 lineOnlyViolation=0
+[OK] 0203 takeOverInfoList 확인됨 (count=3) → 진행
+[OK] 0203 handOverInfoList 확인됨 (count=3) → 진행
+[OK] 0203 flightAreaList 확인됨 (count=1) → 진행
+[CHECK] 0203 flightAreaList count=1
+[variant 1] 공격 배제 전용 재개 파이프라인 적용
+[ATTACK-EXCLUDE] [PRIOR][UAV] Resume trimmed by currentWP (lastRemovedWP=1176).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Added replan anchor waypoint to done path (anchorWP=1402).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Resume searchSpeed scaled (factor=1.30, waypoints=3).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Generated done/resume mission -> aircraft=4 IMP:800000049.json PATHS:400000046.json/400000047.json
+[ATTACK-EXCLUDE] [PRIOR][UAV] Resume trimmed by currentWP (lastRemovedWP=1190).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Added replan anchor waypoint to done path (anchorWP=1441).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Resume searchSpeed scaled (factor=1.30, waypoints=3).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Generated done/resume mission -> aircraft=5 IMP:800000050.json PATHS:500000047.json/500000048.json
+[ATTACK-EXCLUDE] [PRIOR][UAV] Resume trimmed by currentWP (lastRemovedWP=1158).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Added replan anchor waypoint to done path (anchorWP=1481).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Resume searchSpeed scaled (factor=1.30, waypoints=7).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Generated done/resume mission -> aircraft=6 IMP:800000051.json PATHS:600000048.json/600000049.json
+[ATTACK-EXCLUDE] 공격 배제 MissionPlan 저장 -> 700000010.json (planID=700000010)
+[OK] 공격 배제 variant 저장: MissionPlanID=700000010 (elapsed=2198.8 ms)
+[INFO] Option mapping #1: planID=700000010, optionCode=3(공격배제)
+[OK] Stored mission data: MissionPlan=1, IndividualMission=0, FlightPath=0
+[STEP 4] 0301 push queued (planIds=700000009, 700000010)
+[0301] missionPlanID=700000009 전송
+[0301] missionPlanID=700000010 전송
+[PUSH] 0301 direct batch send
+[INFO] Post-0301 apply queued (grace=2050ms, timeout=3250ms, plans=2)
+[0305] status=2, reason=무인기 2번 - 장갑차(ID-8) 발견으로 인한 재계획, elapsed=8.44s 전송
+[INFO] Post-0301 ready (timeout) -> sending 0901
+[0901] option request sent (count=2, codes=2(공격특화), 3(공격배제))
+[AUTO] 0902 received (planIds=700000011)
+[AUTO] replan pipeline scheduled after 0.1s delay
+[0305] status=1, reason=무인기 2번 경로 미추종으로 인한 재계획 전송
+[STEP 0] Replan pipeline start (reason=무인기 2번 경로 미추종으로 인한 재계획)
+[PATHDEV] Level-3 path deviation request detected. Using dedicated pipeline.
+[PATHDEV] stored path-deviation artifacts -> plan:700000011.json, imp:800000052.json, fp:500000053.json (4.4 ms)
+[PATHDEV] log captured -> C:\Users\LAHMUMT_2\Desktop\DSS_KU\Logs\Scenario_2026-03-26T132327\SBC3\DSS_Internal\PathDeviation_5_827819677449.json
+[PATHDEV][DELIVERY] direct push start (planIds=700000011)
+[STEP 4] 0301 push queued (planIds=700000011)
+[INFO] Direct delivery -> skip 0901/0701, send 0301+0903(+0702 fallback)
+[0301] missionPlanID=700000011 전송
+[PUSH] 0301 direct batch send
+[INFO] Post-0301 apply queued (grace=1800ms, timeout=3000ms, plans=1)
+[PATHDEV] Path-deviation pipeline complete (planIds=[700000011], log=C:\Users\LAHMUMT_2\Desktop\DSS_KU\Logs\Scenario_2026-03-26T132327\SBC3\DSS_Internal\PathDeviation_5_827819677449.json)
+[0305] status=2, reason=무인기 2번 경로 미추종으로 인한 재계획, elapsed=0.28s 전송
+[INFO] Post-0301 ready (timeout) -> sending 0903
+[0903] request sent (missionPlanID=700000011)
+[0702][AUTO] ignore=2 sent (missionPlanID=700000011)
+
+[2026-03-26 15:06:17] process-log attached: mission_planning
+[LOG] Mission planning log started: C:\Users\LAHMUMT_2\Desktop\DSS_KU\Logs\Scenario_2026-03-26T132327\SBC3\DSS_Internal\mission_planning_gui_20260326T060617_621411Z.log
+[0101] 모드 수신 리스너 등록 완료
+[0102] NodeMessenger 초기화 대기 중 ? 자동 송신 보류
+[BUS] NodeMessenger 초기화 완료
+[WARM] Mission planner runtime ready (algo_settings)
+[MODE] 슬라이더 변경 → 대기모드
+[0101/POLL] 모드 동기화 code=1
+[MODE] 슬라이더 변경 → 초기 임무 계획
+[0101/POLL] 모드 동기화 code=2
+[AUTO] 0902 received (planIds=700000012)
+[AUTO] replan pipeline scheduled after 0.1s delay
+[0305] status=1, reason=초기임무재계획 전송
+[STEP 0] Replan pipeline start (reason=초기임무재계획)
+[INFO] UAV params loaded (cruise=40.00, turn_step=15.0)
+[INFO] Latest input snapshot → 0201:ID=-,ts=-,src=-, 0203:ID=-,ts=-,src=-
+[INFO] Fallback 0201 file selected: 100.json
+[INFO] Fallback 0203 file selected: 0.json
+[CHECK] 0201/0203 필수 데이터 확인 시작
+[OK] 0201 inputMissionList 확인됨 (count=4) → 진행
+[OK] 0201 availableAircraftList 확인됨 (count=6) → 진행
+[OK] 0201 inputMissionPackageType=1 확인
+[OK] 0201 mainSensor=1 확인
+[CHECK] 0201 기체 수=6 (UAV=3, LAH=3)
+[CHECK] 0201 임무: total=4 missingID=0 missingDetail=0 missingShape=0 unknownType=0 typeZeroAuto=0 typeZeroInvalid=0 lineOnlyViolation=0
+[OK] 0203 takeOverInfoList 확인됨 (count=3) → 진행
+[OK] 0203 handOverInfoList 확인됨 (count=3) → 진행
+[OK] 0203 flightAreaList 확인됨 (count=1) → 진행
+[CHECK] 0203 flightAreaList count=1
+[variant 1] 일반 재계획 모드 적용
+[STEP 1.1] Divide & Pattern start
+[variant 1] [ENHANCED][1] split start: uavs=[4, 5, 6]
+[variant 1] [ENHANCED][1] split done: pieces=12
+[variant 1] [ENHANCED][2] type-decider done: profile=6 changed=12/12
+[variant 1] [ENHANCED][3] expected-path done: count=12
+[variant 1] [ENHANCED][4] area-review done: overflow=3 targets=3 pieces=12->21
+[variant 1] [ENHANCED][5] expected-velocity done: pieces=21 dbRows=391
+[variant 1] [ENHANCED][6] 0302 export done: files=6
+[variant 1] [ENHANCED] total=48.2 ms
+[TIME] divide_and_pattern (variant=1): 48.3 ms
+[OK] IMP generated: 6 file(s) (variant=1)
+[TIME] build_0301+load (variant=1): 10.8 ms
+[OK] MissionPlan built: MissionPlan_1774505193202.json (variant=1)
+[TIME] collect_missions (variant=1): 2.2 ms, count=27
+[TIME] pathID_mapping (variant=1): 67.6 ms
+[INFO] pathID mapping done for 0302/0303/0304 (variant=1)
+[INFO] FlightPath build mode: parallel (variant=1)
+[SWEEP][LINE] separation=540.00m, fov=10.00°, spacing=103.94m (~10 strips/1km)
+[SWEEP][AREA-DB] missionID=900000002 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA] separation=2290.00m, fov=3.60°, spacing=131.94m (~8 strips/1km)
+[SWEEP][AREA-DB] missionID=900000003 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000007 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000008 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000012 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000013 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[INFO] FlightPath build time (parallel): 0303=544.9 ms, 0304=495.3 ms, wall=545.7 ms
+[INFO] Applied LAH-UAV ETA follow speed plan (variant=1)
+[OK] FlightPath counts (variant=1): 0303=15 / 0304=12
+[TIME] build_0302 (variant=1): 46.7 ms, packages=6
+[TIME] write_0302 (variant=1): 5.9 ms, files=6
+[TIME] write_FlightPath (variant=1): 33.8 ms, files=27
+[TIME] write_0301 (variant=1): 1.2 ms
+[OK] Stored variant 1: MissionPlanID=700000012, IMP=6, FlightPath=27
+[TIME] variant_total (variant=1): 771.6 ms
+[INFO] Option mapping #1: planID=700000012, optionCode=1(시스템 추천)
+[OK] Stored mission data: MissionPlan=1, IndividualMission=6, FlightPath=27
+[STEP 4] 0301 push queued (planIds=700000012)
+[0301] missionPlanID=700000012 전송
+[PUSH] 0301 direct batch send
+[INFO] Post-0301 apply queued (grace=1800ms, timeout=3000ms, plans=1)
+[0305] status=2, reason=초기임무재계획, elapsed=1.07s 전송
+[INFO] Post-0301 ready (timeout) -> sending 0903
+[0903] request sent (missionPlanID=700000012)
+
+[2026-03-26 15:22:26] process-log attached: mission_planning
+[LOG] Mission planning log started: C:\Users\LAHMUMT_2\Desktop\DSS_KU\Logs\Scenario_2026-03-26T132327\SBC3\DSS_Internal\mission_planning_gui_20260326T062225_786687Z.log
+[0101] 모드 수신 리스너 등록 완료
+[0102] NodeMessenger 초기화 대기 중 ? 자동 송신 보류
+[BUS] NodeMessenger 초기화 완료
+[WARM] Mission planner runtime ready (algo_settings)
+[MODE] 슬라이더 변경 → 대기모드
+[0101/POLL] 모드 동기화 code=1
+[MODE] 슬라이더 변경 → 초기 임무 계획
+[0101/POLL] 모드 동기화 code=2
+[AUTO] 0902 received (planIds=700000013)
+[AUTO] replan pipeline scheduled after 0.1s delay
+[0305] status=1, reason=초기임무재계획 전송
+[STEP 0] Replan pipeline start (reason=초기임무재계획)
+[INFO] UAV params loaded (cruise=40.00, turn_step=15.0)
+[INFO] Latest input snapshot → 0201:ID=-,ts=-,src=-, 0203:ID=-,ts=-,src=-
+[INFO] Fallback 0201 file selected: 100.json
+[INFO] Fallback 0203 file selected: 0.json
+[CHECK] 0201/0203 필수 데이터 확인 시작
+[OK] 0201 inputMissionList 확인됨 (count=4) → 진행
+[OK] 0201 availableAircraftList 확인됨 (count=6) → 진행
+[OK] 0201 inputMissionPackageType=1 확인
+[OK] 0201 mainSensor=1 확인
+[CHECK] 0201 기체 수=6 (UAV=3, LAH=3)
+[CHECK] 0201 임무: total=4 missingID=0 missingDetail=0 missingShape=0 unknownType=0 typeZeroAuto=0 typeZeroInvalid=0 lineOnlyViolation=0
+[OK] 0203 takeOverInfoList 확인됨 (count=3) → 진행
+[OK] 0203 handOverInfoList 확인됨 (count=3) → 진행
+[OK] 0203 flightAreaList 확인됨 (count=1) → 진행
+[CHECK] 0203 flightAreaList count=1
+[variant 1] 일반 재계획 모드 적용
+[STEP 1.1] Divide & Pattern start
+[variant 1] [ENHANCED][1] split start: uavs=[4, 5, 6]
+[variant 1] [ENHANCED][1] split done: pieces=12
+[variant 1] [ENHANCED][2] type-decider done: profile=6 changed=12/12
+[variant 1] [ENHANCED][3] expected-path done: count=12
+[variant 1] [ENHANCED][4] area-review done: overflow=3 targets=3 pieces=12->21
+[variant 1] [ENHANCED][5] expected-velocity done: pieces=21 dbRows=391
+[variant 1] [ENHANCED][6] 0302 export done: files=6
+[variant 1] [ENHANCED] total=40.1 ms
+[TIME] divide_and_pattern (variant=1): 40.3 ms
+[OK] IMP generated: 6 file(s) (variant=1)
+[TIME] build_0301+load (variant=1): 10.6 ms
+[OK] MissionPlan built: MissionPlan_1774506157966.json (variant=1)
+[TIME] collect_missions (variant=1): 2.0 ms, count=27
+[TIME] pathID_mapping (variant=1): 66.0 ms
+[INFO] pathID mapping done for 0302/0303/0304 (variant=1)
+[INFO] FlightPath build mode: parallel (variant=1)
+[SWEEP][LINE] separation=540.00m, fov=10.00°, spacing=103.94m (~10 strips/1km)
+[SWEEP][AREA-DB] missionID=900000002 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA] separation=2290.00m, fov=3.60°, spacing=131.94m (~8 strips/1km)
+[SWEEP][AREA-DB] missionID=900000003 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000007 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000008 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000012 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000013 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[INFO] FlightPath build time (parallel): 0303=621.1 ms, 0304=555.2 ms, wall=622.5 ms
+[INFO] Applied LAH-UAV ETA follow speed plan (variant=1)
+[OK] FlightPath counts (variant=1): 0303=15 / 0304=12
+[TIME] build_0302 (variant=1): 44.0 ms, packages=6
+[TIME] write_0302 (variant=1): 7.7 ms, files=6
+[TIME] write_FlightPath (variant=1): 32.2 ms, files=27
+[TIME] write_0301 (variant=1): 0.8 ms
+[OK] Stored variant 1: MissionPlanID=700000013, IMP=6, FlightPath=27
+[TIME] variant_total (variant=1): 838.3 ms
+[INFO] Option mapping #1: planID=700000013, optionCode=1(시스템 추천)
+[OK] Stored mission data: MissionPlan=1, IndividualMission=6, FlightPath=27
+[STEP 4] 0301 push queued (planIds=700000013)
+[0301] missionPlanID=700000013 전송
+[PUSH] 0301 direct batch send
+[INFO] Post-0301 apply queued (grace=1800ms, timeout=3000ms, plans=1)
+[0305] status=2, reason=초기임무재계획, elapsed=1.17s 전송
+[INFO] Post-0301 ready (timeout) -> sending 0903
+[0903] request sent (missionPlanID=700000013)
+
+[2026-03-26 15:49:11] process-log attached: mission_planning
+[LOG] Mission planning log started: C:\Users\LAHMUMT_2\Desktop\DSS_KU\Logs\Scenario_2026-03-26T132327\SBC3\DSS_Internal\mission_planning_gui_20260326T064911_379370Z.log
+[0101] 모드 수신 리스너 등록 완료
+[0102] NodeMessenger 초기화 대기 중 ? 자동 송신 보류
+[BUS] NodeMessenger 초기화 완료
+[WARM] Mission planner runtime ready (algo_settings)
+[MODE] 슬라이더 변경 → 대기모드
+[0101/POLL] 모드 동기화 code=1
+[AUTO] 0902 received (planIds=700000014)
+[AUTO] replan pipeline scheduled after 0.1s delay
+[0305] status=1, reason=초기임무재계획 전송
+[MODE] 슬라이더 변경 → 초기 임무 계획
+[0101/POLL] 모드 동기화 code=2
+[STEP 0] Replan pipeline start (reason=초기임무재계획)
+[INFO] UAV params loaded (cruise=40.00, turn_step=15.0)
+[INFO] Latest input snapshot → 0201:ID=-,ts=-,src=-, 0203:ID=-,ts=-,src=-
+[INFO] Fallback 0201 file selected: 100.json
+[INFO] Fallback 0203 file selected: 0.json
+[CHECK] 0201/0203 필수 데이터 확인 시작
+[OK] 0201 inputMissionList 확인됨 (count=4) → 진행
+[OK] 0201 availableAircraftList 확인됨 (count=6) → 진행
+[OK] 0201 inputMissionPackageType=1 확인
+[OK] 0201 mainSensor=1 확인
+[CHECK] 0201 기체 수=6 (UAV=3, LAH=3)
+[CHECK] 0201 임무: total=4 missingID=0 missingDetail=0 missingShape=0 unknownType=0 typeZeroAuto=0 typeZeroInvalid=0 lineOnlyViolation=0
+[OK] 0203 takeOverInfoList 확인됨 (count=3) → 진행
+[OK] 0203 handOverInfoList 확인됨 (count=3) → 진행
+[OK] 0203 flightAreaList 확인됨 (count=1) → 진행
+[CHECK] 0203 flightAreaList count=1
+[variant 1] 일반 재계획 모드 적용
+[STEP 1.1] Divide & Pattern start
+[variant 1] [ENHANCED][1] split start: uavs=[4, 5, 6]
+[variant 1] [ENHANCED][1] split done: pieces=12
+[variant 1] [ENHANCED][2] type-decider done: profile=6 changed=12/12
+[variant 1] [ENHANCED][3] expected-path done: count=12
+[variant 1] [ENHANCED][4] area-review done: overflow=3 targets=3 pieces=12->21
+[variant 1] [ENHANCED][5] expected-velocity done: pieces=21 dbRows=391
+[variant 1] [ENHANCED][6] 0302 export done: files=6
+[variant 1] [ENHANCED] total=40.3 ms
+[TIME] divide_and_pattern (variant=1): 40.4 ms
+[OK] IMP generated: 6 file(s) (variant=1)
+[TIME] build_0301+load (variant=1): 10.7 ms
+[OK] MissionPlan built: MissionPlan_1774507764352.json (variant=1)
+[TIME] collect_missions (variant=1): 2.1 ms, count=27
+[TIME] pathID_mapping (variant=1): 72.3 ms
+[INFO] pathID mapping done for 0302/0303/0304 (variant=1)
+[INFO] FlightPath build mode: parallel (variant=1)
+[SWEEP][LINE] separation=540.00m, fov=10.00°, spacing=103.94m (~10 strips/1km)
+[SWEEP][AREA-DB] missionID=900000002 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA] separation=2290.00m, fov=3.60°, spacing=131.94m (~8 strips/1km)
+[SWEEP][AREA-DB] missionID=900000003 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000007 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000008 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000012 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000013 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[INFO] FlightPath build time (parallel): 0303=598.4 ms, 0304=537.0 ms, wall=600.2 ms
+[INFO] Applied LAH-UAV ETA follow speed plan (variant=1)
+[OK] FlightPath counts (variant=1): 0303=15 / 0304=12
+[TIME] build_0302 (variant=1): 38.9 ms, packages=6
+[TIME] write_0302 (variant=1): 5.2 ms, files=6
+[TIME] write_FlightPath (variant=1): 34.8 ms, files=27
+[TIME] write_0301 (variant=1): 1.2 ms
+[OK] Stored variant 1: MissionPlanID=700000014, IMP=6, FlightPath=27
+[TIME] variant_total (variant=1): 816.9 ms
+[INFO] Option mapping #1: planID=700000014, optionCode=1(시스템 추천)
+[OK] Stored mission data: MissionPlan=1, IndividualMission=6, FlightPath=27
+[STEP 4] 0301 push queued (planIds=700000014)
+[0301] missionPlanID=700000014 전송
+[PUSH] 0301 direct batch send
+[INFO] Post-0301 apply queued (grace=1800ms, timeout=3000ms, plans=1)
+[0305] status=2, reason=초기임무재계획, elapsed=1.20s 전송
+[INFO] Post-0301 ready (timeout) -> sending 0903
+[0903] request sent (missionPlanID=700000014)
+[0m
+[2026-03-26 15:51:40] process-log attached: mission_planning
+[LOG] Mission planning log started: C:\Users\LAHMUMT_2\Desktop\DSS_KU\Logs\Scenario_2026-03-26T132327\SBC3\DSS_Internal\mission_planning_gui_20260326T065139_899941Z.log
+[0101] 모드 수신 리스너 등록 완료
+[0102] NodeMessenger 초기화 대기 중 ? 자동 송신 보류
+[BUS] NodeMessenger 초기화 완료
+[WARM] Mission planner runtime ready (algo_settings)
+
+[2026-03-26 15:54:38] process-log attached: mission_planning
+[LOG] Mission planning log started: C:\Users\LAHMUMT_2\Desktop\DSS_KU\Logs\Scenario_2026-03-26T132327\SBC3\DSS_Internal\mission_planning_gui_20260326T065438_334329Z.log
+[0101] 모드 수신 리스너 등록 완료
+[0102] NodeMessenger 초기화 대기 중 ? 자동 송신 보류
+[BUS] NodeMessenger 초기화 완료
+[WARM] Mission planner runtime ready (algo_settings)
+[MODE] 슬라이더 변경 → 대기모드
+[0101/POLL] 모드 동기화 code=1
+[MODE] 슬라이더 변경 → 초기 임무 계획
+[0101/POLL] 모드 동기화 code=2
+[AUTO] 0902 received (planIds=700000015)
+[AUTO] replan pipeline scheduled after 0.1s delay
+[0305] status=1, reason=초기임무재계획 전송
+[STEP 0] Replan pipeline start (reason=초기임무재계획)
+[INFO] UAV params loaded (cruise=40.00, turn_step=15.0)
+[INFO] Latest input snapshot → 0201:ID=-,ts=-,src=-, 0203:ID=-,ts=-,src=-
+[INFO] Fallback 0201 file selected: 100.json
+[INFO] Fallback 0203 file selected: 0.json
+[CHECK] 0201/0203 필수 데이터 확인 시작
+[OK] 0201 inputMissionList 확인됨 (count=4) → 진행
+[OK] 0201 availableAircraftList 확인됨 (count=6) → 진행
+[OK] 0201 inputMissionPackageType=1 확인
+[OK] 0201 mainSensor=1 확인
+[CHECK] 0201 기체 수=6 (UAV=3, LAH=3)
+[CHECK] 0201 임무: total=4 missingID=0 missingDetail=0 missingShape=0 unknownType=0 typeZeroAuto=0 typeZeroInvalid=0 lineOnlyViolation=0
+[OK] 0203 takeOverInfoList 확인됨 (count=3) → 진행
+[OK] 0203 handOverInfoList 확인됨 (count=3) → 진행
+[OK] 0203 flightAreaList 확인됨 (count=1) → 진행
+[CHECK] 0203 flightAreaList count=1
+[variant 1] 일반 재계획 모드 적용
+[STEP 1.1] Divide & Pattern start
+[variant 1] [ENHANCED][1] split start: uavs=[4, 5, 6]
+[variant 1] [ENHANCED][1] split done: pieces=12
+[variant 1] [ENHANCED][2] type-decider done: profile=6 changed=12/12
+[variant 1] [ENHANCED][3] expected-path done: count=12
+[variant 1] [ENHANCED][4] area-review done: overflow=3 targets=3 pieces=12->21
+[variant 1] [ENHANCED][5] expected-velocity done: pieces=21 dbRows=391
+[variant 1] [ENHANCED][6] 0302 export done: files=6
+[variant 1] [ENHANCED] total=38.5 ms
+[TIME] divide_and_pattern (variant=1): 38.7 ms
+[OK] IMP generated: 6 file(s) (variant=1)
+[TIME] build_0301+load (variant=1): 9.4 ms
+[OK] MissionPlan built: MissionPlan_1774508088053.json (variant=1)
+[TIME] collect_missions (variant=1): 2.0 ms, count=27
+[TIME] pathID_mapping (variant=1): 65.8 ms
+[INFO] pathID mapping done for 0302/0303/0304 (variant=1)
+[INFO] FlightPath build mode: parallel (variant=1)
+[SWEEP][LINE] separation=540.00m, fov=10.00°, spacing=103.94m (~10 strips/1km)
+[SWEEP][AREA-DB] missionID=900000002 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA] separation=2290.00m, fov=3.60°, spacing=131.94m (~8 strips/1km)
+[SWEEP][AREA-DB] missionID=900000003 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000007 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000008 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000012 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000013 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[INFO] FlightPath build time (parallel): 0303=603.4 ms, 0304=528.5 ms, wall=604.8 ms
+[INFO] Applied LAH-UAV ETA follow speed plan (variant=1)
+[OK] FlightPath counts (variant=1): 0303=15 / 0304=12
+[TIME] build_0302 (variant=1): 42.6 ms, packages=6
+[TIME] write_0302 (variant=1): 6.9 ms, files=6
+[TIME] write_FlightPath (variant=1): 36.4 ms, files=27
+[TIME] write_0301 (variant=1): 1.0 ms
+[OK] Stored variant 1: MissionPlanID=700000015, IMP=6, FlightPath=27
+[TIME] variant_total (variant=1): 819.3 ms
+[INFO] Option mapping #1: planID=700000015, optionCode=1(시스템 추천)
+[OK] Stored mission data: MissionPlan=1, IndividualMission=6, FlightPath=27
+[STEP 4] 0301 push queued (planIds=700000015)
+[0301] missionPlanID=700000015 전송
+[PUSH] 0301 direct batch send
+[INFO] Post-0301 apply queued (grace=1800ms, timeout=3000ms, plans=1)
+[0305] status=2, reason=초기임무재계획, elapsed=1.10s 전송
+[INFO] Post-0301 ready (timeout) -> sending 0903
+[0903] request sent (missionPlanID=700000015)
+
+[2026-03-26 16:03:41] process-log attached: mission_planning
+[LOG] Mission planning log started: C:\Users\LAHMUMT_2\Desktop\DSS_KU\Logs\Scenario_2026-03-26T132327\SBC3\DSS_Internal\mission_planning_gui_20260326T070340_968766Z.log
+[0101] 모드 수신 리스너 등록 완료
+[0102] NodeMessenger 초기화 대기 중 ? 자동 송신 보류
+[ERR] send_status_ok failed: Object reference not set to an instance of an object.
+   at nFusion.Nodes.Core.NodeMessenger.Push[T](T data, String target)
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+[BUS] NodeMessenger 초기화 완료
+[WARM] Mission planner runtime ready (algo_settings)
+[MODE] 슬라이더 변경 → 대기모드
+[0101/POLL] 모드 동기화 code=1
+[AUTO] 0902 received (planIds=700000016)
+[AUTO] replan pipeline scheduled after 0.1s delay
+[0305] status=1, reason=초기임무재계획 전송
+[STEP 0] Replan pipeline start (reason=초기임무재계획)
+[INFO] UAV params loaded (cruise=40.00, turn_step=15.0)
+[INFO] Latest input snapshot → 0201:ID=-,ts=-,src=-, 0203:ID=-,ts=-,src=-
+[INFO] Fallback 0201 file selected: 100.json
+[INFO] Fallback 0203 file selected: 0.json
+[CHECK] 0201/0203 필수 데이터 확인 시작
+[OK] 0201 inputMissionList 확인됨 (count=4) → 진행
+[OK] 0201 availableAircraftList 확인됨 (count=6) → 진행
+[OK] 0201 inputMissionPackageType=1 확인
+[OK] 0201 mainSensor=1 확인
+[CHECK] 0201 기체 수=6 (UAV=3, LAH=3)
+[CHECK] 0201 임무: total=4 missingID=0 missingDetail=0 missingShape=0 unknownType=0 typeZeroAuto=0 typeZeroInvalid=0 lineOnlyViolation=0
+[OK] 0203 takeOverInfoList 확인됨 (count=3) → 진행
+[OK] 0203 handOverInfoList 확인됨 (count=3) → 진행
+[OK] 0203 flightAreaList 확인됨 (count=1) → 진행
+[CHECK] 0203 flightAreaList count=1
+[variant 1] 일반 재계획 모드 적용
+[STEP 1.1] Divide & Pattern start
+[variant 1] [ENHANCED][1] split start: uavs=[4, 5, 6]
+[MODE] 슬라이더 변경 → 초기 임무 계획
+[0101/POLL] 모드 동기화 code=2
+[variant 1] [ENHANCED][1] split done: pieces=12
+[variant 1] [ENHANCED][2] type-decider done: profile=6 changed=12/12
+[variant 1] [ENHANCED][3] expected-path done: count=12
+[variant 1] [ENHANCED][4] area-review done: overflow=3 targets=3 pieces=12->21
+[variant 1] [ENHANCED][5] expected-velocity done: pieces=21 dbRows=391
+[variant 1] [ENHANCED][6] 0302 export done: files=6
+[variant 1] [ENHANCED] total=70.0 ms
+[TIME] divide_and_pattern (variant=1): 70.2 ms
+[OK] IMP generated: 6 file(s) (variant=1)
+[TIME] build_0301+load (variant=1): 11.7 ms
+[OK] MissionPlan built: MissionPlan_1774508630324.json (variant=1)
+[TIME] collect_missions (variant=1): 3.0 ms, count=27
+[TIME] pathID_mapping (variant=1): 68.6 ms
+[INFO] pathID mapping done for 0302/0303/0304 (variant=1)
+[INFO] FlightPath build mode: parallel (variant=1)
+[SWEEP][LINE] separation=540.00m, fov=10.00°, spacing=103.94m (~10 strips/1km)
+[SWEEP][AREA-DB] missionID=900000002 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA] separation=2290.00m, fov=3.60°, spacing=131.94m (~8 strips/1km)
+[SWEEP][AREA-DB] missionID=900000003 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000007 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000008 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000012 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000013 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[INFO] FlightPath build time (parallel): 0303=953.4 ms, 0304=840.7 ms, wall=954.9 ms
+[INFO] Applied LAH-UAV ETA follow speed plan (variant=1)
+[OK] FlightPath counts (variant=1): 0303=15 / 0304=12
+[TIME] build_0302 (variant=1): 34.4 ms, packages=6
+[TIME] write_0302 (variant=1): 7.2 ms, files=6
+[TIME] write_FlightPath (variant=1): 48.3 ms, files=27
+[TIME] write_0301 (variant=1): 1.3 ms
+[OK] Stored variant 1: MissionPlanID=700000016, IMP=6, FlightPath=27
+[TIME] variant_total (variant=1): 1214.6 ms
+[INFO] Option mapping #1: planID=700000016, optionCode=1(시스템 추천)
+[OK] Stored mission data: MissionPlan=1, IndividualMission=6, FlightPath=27
+[STEP 4] 0301 push queued (planIds=700000016)
+[0301] missionPlanID=700000016 전송
+[PUSH] 0301 direct batch send
+[INFO] Post-0301 apply queued (grace=1800ms, timeout=3000ms, plans=1)
+[0305] status=2, reason=초기임무재계획, elapsed=1.60s 전송
+[INFO] Post-0301 ready (timeout) -> sending 0903
+[0903] request sent (missionPlanID=700000016)
+
+[2026-03-26 16:11:05] process-log attached: mission_planning
+[LOG] Mission planning log started: C:\Users\LAHMUMT_2\Desktop\DSS_KU\Logs\Scenario_2026-03-26T132327\SBC3\DSS_Internal\mission_planning_gui_20260326T071105_513894Z.log
+[0101] 모드 수신 리스너 등록 완료
+[0102] NodeMessenger 초기화 대기 중 ? 자동 송신 보류
+[ERR] send_status_ok failed: Object reference not set to an instance of an object.
+   at nFusion.Nodes.Core.NodeMessenger.Push[T](T data, String target)
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+[BUS] NodeMessenger 초기화 완료
+[WARM] Mission planner runtime ready (algo_settings)
+[MODE] 슬라이더 변경 → 대기모드
+[0101/POLL] 모드 동기화 code=1
+[AUTO] 0902 received (planIds=700000017)
+[AUTO] replan pipeline scheduled after 0.1s delay
+[MODE] 슬라이더 변경 → 초기 임무 계획
+[0101/POLL] 모드 동기화 code=2
+[0305] status=1, reason=초기임무재계획 전송
+[STEP 0] Replan pipeline start (reason=초기임무재계획)
+[INFO] UAV params loaded (cruise=40.00, turn_step=15.0)
+[INFO] Latest input snapshot → 0201:ID=-,ts=-,src=-, 0203:ID=-,ts=-,src=-
+[INFO] Fallback 0201 file selected: 100.json
+[INFO] Fallback 0203 file selected: 0.json
+[CHECK] 0201/0203 필수 데이터 확인 시작
+[OK] 0201 inputMissionList 확인됨 (count=4) → 진행
+[OK] 0201 availableAircraftList 확인됨 (count=6) → 진행
+[OK] 0201 inputMissionPackageType=1 확인
+[OK] 0201 mainSensor=1 확인
+[CHECK] 0201 기체 수=6 (UAV=3, LAH=3)
+[CHECK] 0201 임무: total=4 missingID=0 missingDetail=0 missingShape=0 unknownType=0 typeZeroAuto=0 typeZeroInvalid=0 lineOnlyViolation=0
+[OK] 0203 takeOverInfoList 확인됨 (count=3) → 진행
+[OK] 0203 handOverInfoList 확인됨 (count=3) → 진행
+[OK] 0203 flightAreaList 확인됨 (count=1) → 진행
+[CHECK] 0203 flightAreaList count=1
+[variant 1] 일반 재계획 모드 적용
+[STEP 1.1] Divide & Pattern start
+[variant 1] [ENHANCED][1] split start: uavs=[4, 5, 6]
+[variant 1] [ENHANCED][1] split done: pieces=12
+[variant 1] [ENHANCED][2] type-decider done: profile=6 changed=12/12
+[variant 1] [ENHANCED][3] expected-path done: count=12
+[variant 1] [ENHANCED][4] area-review done: overflow=3 targets=3 pieces=12->21
+[variant 1] [ENHANCED][5] expected-velocity done: pieces=21 dbRows=391
+[variant 1] [ENHANCED][6] 0302 export done: files=6
+[variant 1] [ENHANCED] total=68.1 ms
+[TIME] divide_and_pattern (variant=1): 68.3 ms
+[OK] IMP generated: 6 file(s) (variant=1)
+[TIME] build_0301+load (variant=1): 11.1 ms
+[OK] MissionPlan built: MissionPlan_1774509072880.json (variant=1)
+[TIME] collect_missions (variant=1): 2.7 ms, count=27
+[TIME] pathID_mapping (variant=1): 65.9 ms
+[INFO] pathID mapping done for 0302/0303/0304 (variant=1)
+[INFO] FlightPath build mode: parallel (variant=1)
+[SWEEP][LINE] separation=540.00m, fov=10.00°, spacing=103.94m (~10 strips/1km)
+[SWEEP][AREA-DB] missionID=900000002 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA] separation=2290.00m, fov=3.60°, spacing=131.94m (~8 strips/1km)
+[SWEEP][AREA-DB] missionID=900000003 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000007 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000008 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000012 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000013 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[INFO] FlightPath build time (parallel): 0303=988.5 ms, 0304=870.4 ms, wall=990.1 ms
+[INFO] Applied LAH-UAV ETA follow speed plan (variant=1)
+[OK] FlightPath counts (variant=1): 0303=15 / 0304=12
+[TIME] build_0302 (variant=1): 38.0 ms, packages=6
+[TIME] write_0302 (variant=1): 8.7 ms, files=6
+[TIME] write_FlightPath (variant=1): 54.3 ms, files=27
+[TIME] write_0301 (variant=1): 1.3 ms
+[OK] Stored variant 1: MissionPlanID=700000017, IMP=6, FlightPath=27
+[TIME] variant_total (variant=1): 1255.1 ms
+[INFO] Option mapping #1: planID=700000017, optionCode=1(시스템 추천)
+[OK] Stored mission data: MissionPlan=1, IndividualMission=6, FlightPath=27
+[STEP 4] 0301 push queued (planIds=700000017)
+[0301] missionPlanID=700000017 전송
+[PUSH] 0301 direct batch send
+[INFO] Post-0301 apply queued (grace=1800ms, timeout=3000ms, plans=1)
+[0305] status=2, reason=초기임무재계획, elapsed=1.60s 전송
+[INFO] Post-0301 ready (timeout) -> sending 0903
+[0903] request sent (missionPlanID=700000017)
+
+[2026-03-26 16:13:14] process-log attached: mission_planning
+[LOG] Mission planning log started: C:\Users\LAHMUMT_2\Desktop\DSS_KU\Logs\Scenario_2026-03-26T132327\SBC3\DSS_Internal\mission_planning_gui_20260326T071313_888063Z.log
+[0101] 모드 수신 리스너 등록 완료
+[0102] NodeMessenger 초기화 대기 중 ? 자동 송신 보류
+[ERR] send_status_ok failed: Object reference not set to an instance of an object.
+   at nFusion.Nodes.Core.NodeMessenger.Push[T](T data, String target)
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+[BUS] NodeMessenger 초기화 완료
+[WARM] Mission planner runtime ready (algo_settings)
+[MODE] 슬라이더 변경 → 대기모드
+[0101/POLL] 모드 동기화 code=1
+[MODE] 슬라이더 변경 → 초기 임무 계획
+[0101/POLL] 모드 동기화 code=2
+[AUTO] 0902 received (planIds=700000018)
+[AUTO] replan pipeline scheduled after 0.1s delay
+[0305] status=1, reason=초기임무재계획 전송
+[STEP 0] Replan pipeline start (reason=초기임무재계획)
+[INFO] UAV params loaded (cruise=40.00, turn_step=15.0)
+[INFO] Latest input snapshot → 0201:ID=-,ts=-,src=-, 0203:ID=-,ts=-,src=-
+[INFO] Fallback 0201 file selected: 100.json
+[INFO] Fallback 0203 file selected: 0.json
+[CHECK] 0201/0203 필수 데이터 확인 시작
+[OK] 0201 inputMissionList 확인됨 (count=4) → 진행
+[OK] 0201 availableAircraftList 확인됨 (count=6) → 진행
+[OK] 0201 inputMissionPackageType=1 확인
+[OK] 0201 mainSensor=1 확인
+[CHECK] 0201 기체 수=6 (UAV=3, LAH=3)
+[CHECK] 0201 임무: total=4 missingID=0 missingDetail=0 missingShape=0 unknownType=0 typeZeroAuto=0 typeZeroInvalid=0 lineOnlyViolation=0
+[OK] 0203 takeOverInfoList 확인됨 (count=3) → 진행
+[OK] 0203 handOverInfoList 확인됨 (count=3) → 진행
+[OK] 0203 flightAreaList 확인됨 (count=1) → 진행
+[CHECK] 0203 flightAreaList count=1
+[variant 1] 일반 재계획 모드 적용
+[STEP 1.1] Divide & Pattern start
+[variant 1] [ENHANCED][1] split start: uavs=[4, 5, 6]
+[variant 1] [ENHANCED][1] split done: pieces=12
+[variant 1] [ENHANCED][2] type-decider done: profile=6 changed=12/12
+[variant 1] [ENHANCED][3] expected-path done: count=12
+[variant 1] [ENHANCED][4] area-review done: overflow=3 targets=3 pieces=12->21
+[variant 1] [ENHANCED][5] expected-velocity done: pieces=21 dbRows=391
+[variant 1] [ENHANCED][6] 0302 export done: files=6
+[variant 1] [ENHANCED] total=39.2 ms
+[TIME] divide_and_pattern (variant=1): 39.3 ms
+[OK] IMP generated: 6 file(s) (variant=1)
+[TIME] build_0301+load (variant=1): 10.8 ms
+[OK] MissionPlan built: MissionPlan_1774509201349.json (variant=1)
+[TIME] collect_missions (variant=1): 1.9 ms, count=27
+[TIME] pathID_mapping (variant=1): 61.8 ms
+[INFO] pathID mapping done for 0302/0303/0304 (variant=1)
+[INFO] FlightPath build mode: parallel (variant=1)
+[SWEEP][LINE] separation=540.00m, fov=10.00°, spacing=103.94m (~10 strips/1km)
+[SWEEP][AREA-DB] missionID=900000002 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA] separation=2290.00m, fov=3.60°, spacing=131.94m (~8 strips/1km)
+[SWEEP][AREA-DB] missionID=900000003 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000007 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000008 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000012 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000013 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[INFO] FlightPath build time (parallel): 0303=596.5 ms, 0304=520.4 ms, wall=597.4 ms
+[INFO] Applied LAH-UAV ETA follow speed plan (variant=1)
+[OK] FlightPath counts (variant=1): 0303=15 / 0304=12
+[TIME] build_0302 (variant=1): 35.2 ms, packages=6
+[TIME] write_0302 (variant=1): 4.9 ms, files=6
+[TIME] write_FlightPath (variant=1): 29.9 ms, files=27
+[TIME] write_0301 (variant=1): 2.5 ms
+[OK] Stored variant 1: MissionPlanID=700000018, IMP=6, FlightPath=27
+[TIME] variant_total (variant=1): 795.0 ms
+[INFO] Option mapping #1: planID=700000018, optionCode=1(시스템 추천)
+[OK] Stored mission data: MissionPlan=1, IndividualMission=6, FlightPath=27
+[STEP 4] 0301 push queued (planIds=700000018)
+[0301] missionPlanID=700000018 전송
+[PUSH] 0301 direct batch send
+[INFO] Post-0301 apply queued (grace=1800ms, timeout=3000ms, plans=1)
+[0305] status=2, reason=초기임무재계획, elapsed=1.15s 전송
+[INFO] Post-0301 ready (timeout) -> sending 0903
+[0903] request sent (missionPlanID=700000018)
+
+[2026-03-26 16:20:49] process-log attached: mission_planning
+[LOG] Mission planning log started: C:\Users\LAHMUMT_2\Desktop\DSS_KU\Logs\Scenario_2026-03-26T132327\SBC3\DSS_Internal\mission_planning_gui_20260326T072048_756668Z.log
+[0101] 모드 수신 리스너 등록 완료
+[0102] NodeMessenger 초기화 대기 중 ? 자동 송신 보류
+[BUS] NodeMessenger 초기화 완료
+[WARM] Mission planner runtime ready (algo_settings)
+[MODE] 슬라이더 변경 → 대기모드
+[0101/POLL] 모드 동기화 code=1
+[MODE] 슬라이더 변경 → 초기 임무 계획
+[0101/POLL] 모드 동기화 code=2
+[AUTO] 0902 received (planIds=700000019)
+[AUTO] replan pipeline scheduled after 0.1s delay
+[0305] status=1, reason=초기임무재계획 전송
+[STEP 0] Replan pipeline start (reason=초기임무재계획)
+[INFO] UAV params loaded (cruise=40.00, turn_step=15.0)
+[INFO] Latest input snapshot → 0201:ID=-,ts=-,src=-, 0203:ID=-,ts=-,src=-
+[INFO] Fallback 0201 file selected: 100.json
+[INFO] Fallback 0203 file selected: 0.json
+[CHECK] 0201/0203 필수 데이터 확인 시작
+[OK] 0201 inputMissionList 확인됨 (count=4) → 진행
+[OK] 0201 availableAircraftList 확인됨 (count=6) → 진행
+[OK] 0201 inputMissionPackageType=1 확인
+[OK] 0201 mainSensor=1 확인
+[CHECK] 0201 기체 수=6 (UAV=3, LAH=3)
+[CHECK] 0201 임무: total=4 missingID=0 missingDetail=0 missingShape=0 unknownType=0 typeZeroAuto=0 typeZeroInvalid=0 lineOnlyViolation=0
+[OK] 0203 takeOverInfoList 확인됨 (count=3) → 진행
+[OK] 0203 handOverInfoList 확인됨 (count=3) → 진행
+[OK] 0203 flightAreaList 확인됨 (count=1) → 진행
+[CHECK] 0203 flightAreaList count=1
+[variant 1] 일반 재계획 모드 적용
+[STEP 1.1] Divide & Pattern start
+[variant 1] [ENHANCED][1] split start: uavs=[4, 5, 6]
+[variant 1] [ENHANCED][1] split done: pieces=12
+[variant 1] [ENHANCED][2] type-decider done: profile=6 changed=12/12
+[variant 1] [ENHANCED][3] expected-path done: count=12
+[variant 1] [ENHANCED][4] area-review done: overflow=3 targets=3 pieces=12->21
+[variant 1] [ENHANCED][5] expected-velocity done: pieces=21 dbRows=391
+[variant 1] [ENHANCED][6] 0302 export done: files=6
+[variant 1] [ENHANCED] total=48.2 ms
+[TIME] divide_and_pattern (variant=1): 48.4 ms
+[OK] IMP generated: 6 file(s) (variant=1)
+[TIME] build_0301+load (variant=1): 12.3 ms
+[OK] MissionPlan built: MissionPlan_1774509656066.json (variant=1)
+[TIME] collect_missions (variant=1): 1.8 ms, count=27
+[TIME] pathID_mapping (variant=1): 68.9 ms
+[INFO] pathID mapping done for 0302/0303/0304 (variant=1)
+[INFO] FlightPath build mode: parallel (variant=1)
+[SWEEP][LINE] separation=540.00m, fov=10.00°, spacing=103.94m (~10 strips/1km)
+[SWEEP][AREA-DB] missionID=900000002 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA] separation=2290.00m, fov=3.60°, spacing=131.94m (~8 strips/1km)
+[SWEEP][AREA-DB] missionID=900000003 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000007 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000008 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000012 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[SWEEP][AREA-DB] missionID=900000013 widthRef=1211.61m dbWidth=1211.61m fov=3.60 sep=2290.00
+[INFO] FlightPath build time (parallel): 0303=634.5 ms, 0304=552.8 ms, wall=635.5 ms
+[INFO] Applied LAH-UAV ETA follow speed plan (variant=1)
+[OK] FlightPath counts (variant=1): 0303=15 / 0304=12
+[TIME] build_0302 (variant=1): 35.4 ms, packages=6
+[TIME] write_0302 (variant=1): 6.0 ms, files=6
+[TIME] write_FlightPath (variant=1): 32.1 ms, files=27
+[TIME] write_0301 (variant=1): 1.1 ms
+[OK] Stored variant 1: MissionPlanID=700000019, IMP=6, FlightPath=27
+[TIME] variant_total (variant=1): 853.3 ms
+[INFO] Option mapping #1: planID=700000019, optionCode=1(시스템 추천)
+[OK] Stored mission data: MissionPlan=1, IndividualMission=6, FlightPath=27
+[STEP 4] 0301 push queued (planIds=700000019)
+[0301] missionPlanID=700000019 전송
+[PUSH] 0301 direct batch send
+[INFO] Post-0301 apply queued (grace=1800ms, timeout=3000ms, plans=1)
+[0305] status=2, reason=초기임무재계획, elapsed=1.24s 전송
+[INFO] Post-0301 ready (timeout) -> sending 0903
+[0903] request sent (missionPlanID=700000019)
+
+[2026-03-26 16:27:22] process-log attached: mission_planning
+[LOG] Mission planning log started: C:\Users\LAHMUMT_2\Desktop\DSS_KU\Logs\Scenario_2026-03-26T132327\SBC3\DSS_Internal\mission_planning_gui_20260326T072722_172827Z.log
+[0101] 모드 수신 리스너 등록 완료
+[0102] NodeMessenger 초기화 대기 중 ? 자동 송신 보류
+[BUS] NodeMessenger 초기화 완료
+[WARM] Mission planner runtime ready (algo_settings)
+[MODE] 슬라이더 변경 → 대기모드
+[0101/POLL] 모드 동기화 code=1
+
+[2026-03-26 16:30:16] process-log attached: mission_planning
+[LOG] Mission planning log started: C:\Users\LAHMUMT_2\Desktop\DSS_KU\Logs\Scenario_2026-03-26T132327\SBC3\DSS_Internal\mission_planning_gui_20260326T073016_463938Z.log
+[0101] 모드 수신 리스너 등록 완료
+[0102] NodeMessenger 초기화 대기 중 ? 자동 송신 보류
+[ERR] send_status_ok failed: Object reference not set to an instance of an object.
+   at nFusion.Nodes.Core.NodeMessenger.Push[T](T data, String target)
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+[BUS] NodeMessenger 초기화 완료
+[WARM] Mission planner runtime ready (algo_settings)

@@ -85,8 +85,8 @@ class ModuleWithLog(Card):
         self.table_tx = self._make_table_2cols()
 
         for table in (self.table_rx, self.table_tx):
-            table.setMinimumHeight(220)
-            table.setMaximumHeight(320)
+            table.setMinimumHeight(188)
+            table.setMaximumHeight(272)
             table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         row_tables.addWidget(self.table_rx, 1)

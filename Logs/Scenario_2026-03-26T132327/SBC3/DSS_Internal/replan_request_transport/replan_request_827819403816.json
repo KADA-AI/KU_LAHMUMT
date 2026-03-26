@@ -1,0 +1,70 @@
+[
+  {
+    "timestamp": 827819403816,
+    "source": "MSM",
+    "replanRequestTime": {
+      "replanRequestTimestamp": 827819403816
+    },
+    "replanLevel": 4,
+    "replanRequest": "선행임무 : 좌표지정",
+    "inputMissionIDList": [
+      {
+        "inputMissionID": 70000001
+      },
+      {
+        "inputMissionID": 70000002
+      },
+      {
+        "inputMissionID": 70000003
+      },
+      {
+        "inputMissionID": 70000004
+      }
+    ],
+    "priorMissionList": [
+      {
+        "priorMissionID": 2,
+        "missionType": 1,
+        "coordinateOrientation": {
+          "coordinate": {
+            "latitude": 38.08159255981445,
+            "longitude": 127.28128814697266,
+            "altitude": 1000.0
+          }
+        }
+      }
+    ],
+    "pendingOptionList": [
+      {
+        "optionID": 1,
+        "optionName": "선행임무 반영",
+        "missionPlanID": 700000008
+      }
+    ],
+    "replanDetail": {
+      "sourceMissionPlanID": 700000007,
+      "priorMissionID": 2,
+      "missionType": 1,
+      "targetCoordinate": {
+        "latitude": 38.08159255981445,
+        "longitude": 127.28128814697266,
+        "altitude": 1000.0
+      },
+      "targetOrientation": {},
+      "targetID": null,
+      "timestamp": 827819403816,
+      "rawEntry": {
+        "priorMissionID": 2,
+        "missionType": 1,
+        "coordinateOrientation": {
+          "coordinate": {
+            "latitude": 38.08159255981445,
+            "longitude": 127.28128814697266,
+            "altitude": 1000
+          }
+        }
+      }
+    },
+    "savedAt": "2026-03-26T05:50:03.825408+00:00"
+  }
+]

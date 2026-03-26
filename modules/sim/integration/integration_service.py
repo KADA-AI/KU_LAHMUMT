@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import socket
 import threading
 import time
 from collections import deque
@@ -17,6 +18,12 @@ from modules.sim.config import SIM_0401_IDLE_HZ
 
 
 _EPOCH_2000 = datetime(2000, 1, 1, tzinfo=timezone.utc)
+_DEFAULT_MIDDLEWARE_SETTINGS = {
+    "Name": "AVS1",
+    "NetworkAddress": "203",
+    "LocalDomain": 10,
+    "ExternalDomain": 100,
+}
 
 
 def _now_ms_2000() -> int:
@@ -148,6 +155,67 @@ def _load_message_ids() -> tuple[list[str], list[str]]:
         return default_tx, default_rx
 
 
+def _coerce_middleware_settings(payload: Any) -> tuple[Optional[dict[str, Any]], Optional[str]]:
+    source = payload
+    if isinstance(payload, dict) and isinstance(payload.get("Middleware"), dict):
+        source = payload.get("Middleware")
+    if not isinstance(source, dict):
+        source = {}
+
+    name = str(source.get("Name") or _DEFAULT_MIDDLEWARE_SETTINGS["Name"]).strip()
+    network = str(source.get("NetworkAddress") or _DEFAULT_MIDDLEWARE_SETTINGS["NetworkAddress"]).strip()
+    try:
+        local_domain = int(source.get("LocalDomain", _DEFAULT_MIDDLEWARE_SETTINGS["LocalDomain"]))
+    except Exception:
+        return None, "LocalDomain must be an integer"
+    try:
+        external_domain = int(source.get("ExternalDomain", _DEFAULT_MIDDLEWARE_SETTINGS["ExternalDomain"]))
+    except Exception:
+        return None, "ExternalDomain must be an integer"
+
+    if not name:
+        return None, "Name is required"
+    if not network:
+        return None, "NetworkAddress is required"
+
+    return {
+        "Name": name,
+        "NetworkAddress": network,
+        "LocalDomain": local_domain,
+        "ExternalDomain": external_domain,
+    }, None
+
+
+def _collect_local_ipv4_addresses() -> list[str]:
+    found: set[str] = {"127.0.0.1"}
+    try:
+        hostname = socket.gethostname()
+        _, _, addrs = socket.gethostbyname_ex(hostname)
+        for addr in addrs:
+            if addr:
+                found.add(str(addr))
+    except Exception:
+        pass
+
+    sock = None
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.connect(("8.8.8.8", 80))
+        local_ip = sock.getsockname()[0]
+        if local_ip:
+            found.add(str(local_ip))
+    except Exception:
+        pass
+    finally:
+        if sock is not None:
+            try:
+                sock.close()
+            except Exception:
+                pass
+
+    return sorted(found)
+
+
 def _resolve_message_name(msg_id: str) -> str:
     msg_id = str(msg_id).zfill(4)
     try:
@@ -218,13 +286,104 @@ class IntegrationService:
         self._periodic_senders: Dict[str, _PeriodicSender] = {}
 
         self._messenger = None
-
         self._init_bus()
 
+    def _project_root(self) -> Path:
+        return Path(__file__).resolve().parents[3]
+
+    def _settings_candidates(self, root: Path) -> list[Path]:
+        return [
+            root / "nFusionSettings.json",
+            root / "modules" / "common" / "nFusionSettings.json",
+            root / "FusionSettings.json",
+            root / "modules" / "common" / "FusionSettings.json",
+            root / "nFusion" / "FusionSettings.json",
+        ]
+
+    def _settings_path(self, root: Path) -> Path:
+        for candidate in self._settings_candidates(root):
+            if candidate.exists():
+                return candidate
+        return root / "nFusionSettings.json"
+
+    def _read_middleware_settings(self) -> dict[str, Any]:
+        root = self._project_root()
+        cfg_path = self._settings_path(root)
+        try:
+            raw = json.loads(cfg_path.read_text(encoding="utf-8"))
+        except Exception:
+            raw = {}
+        settings, _error = _coerce_middleware_settings(raw)
+        if settings is None:
+            return dict(_DEFAULT_MIDDLEWARE_SETTINGS)
+        return settings
+
+    def get_settings(self) -> dict:
+        with self._lock:
+            active = bool(self.enabled and self._messenger is not None)
+            return {
+                "ok": True,
+                "settings": self._read_middleware_settings(),
+                "localAddresses": _collect_local_ipv4_addresses(),
+                "active": active,
+                "restartRequired": active,
+                "note": (
+                    "nFusion is already active. Network changes are saved, but they fully apply after restarting sim_main."
+                    if active
+                    else "Saved values will be used when nFusion activates on Play or Monitoring."
+                ),
+            }
+
+    def update_settings(self, payload: Any) -> dict:
+        settings, error = _coerce_middleware_settings(payload)
+        if settings is None:
+            return {"ok": False, "error": error or "Invalid middleware settings"}
+
+        root = self._project_root()
+        cfg_json = json.dumps({"Middleware": settings}, ensure_ascii=False, separators=(",", ":"))
+        targets = sorted({path.resolve() for path in root.rglob("nFusionSettings.json")})
+        if not targets:
+            targets = [self._settings_path(root).resolve()]
+
+        updated_paths: list[str] = []
+        for cfg_path in targets:
+            try:
+                cfg_path.parent.mkdir(parents=True, exist_ok=True)
+                cfg_path.write_text(cfg_json, encoding="utf-8")
+                updated_paths.append(str(cfg_path))
+            except Exception as exc:
+                return {"ok": False, "error": f"Failed to update {cfg_path.name}: {exc}"}
+
+        active = bool(self.enabled and self._messenger is not None)
+        return {
+            "ok": True,
+            "settings": settings,
+            "updatedPaths": updated_paths,
+            "localAddresses": _collect_local_ipv4_addresses(),
+            "active": active,
+            "restartRequired": active,
+            "note": (
+                "nFusion is already active. Network changes are saved, but they fully apply after restarting sim_main."
+                if active
+                else "Saved. These values will be applied when nFusion activates."
+            ),
+        }
+
+    def ensure_ready(self) -> bool:
+        if self.enabled and self._messenger is not None:
+            return True
+        with self._lock:
+            if self.enabled and self._messenger is not None:
+                return True
+            self._init_bus()
+            return bool(self.enabled and self._messenger is not None)
+
     def _init_bus(self) -> None:
+        if self.enabled and self._messenger is not None:
+            return
         try:
             os.environ.setdefault("KU_ROLE", "integration")
-            root = Path(__file__).resolve().parents[3]
+            root = self._project_root()
             self._ensure_fusion_configs(root)
             self._load_msglib_and_deps(root)
             from modules.common.dll_files.nFusionImports import FusionNodeIoc, NodeMessenger  # pylint: disable=import-error
@@ -250,13 +409,7 @@ class IntegrationService:
             register_listener(mid, self._on_receive)
 
     def _ensure_fusion_configs(self, root: Path) -> None:
-        candidates = [
-            root / "nFusionSettings.json",
-            root / "modules" / "common" / "nFusionSettings.json",
-            root / "FusionSettings.json",
-            root / "modules" / "common" / "FusionSettings.json",
-            root / "nFusion" / "FusionSettings.json",
-        ]
+        candidates = self._settings_candidates(root)
         src = next((p for p in candidates if p.exists()), None)
         if src is None:
             raise FileNotFoundError("nFusionSettings.json missing")
@@ -329,7 +482,7 @@ class IntegrationService:
         return (len(recent) - 1) / span
 
     def _send_once(self, msg_id: str, body: Optional[dict] = None) -> dict:
-        if not self.enabled or self._messenger is None:
+        if (not self.enabled or self._messenger is None) and not self.ensure_ready():
             return {"ok": False, "error": self.error or "Messenger not ready"}
         msg_id = str(msg_id).zfill(4)
         try:
@@ -352,7 +505,7 @@ class IntegrationService:
         if not msg_id:
             return {"ok": False, "error": "msgId required"}
         msg_id = str(msg_id).zfill(4)
-        if not self.enabled or self._messenger is None:
+        if (not self.enabled or self._messenger is None) and not self.ensure_ready():
             return {"ok": False, "error": self.error or "Messenger not ready"}
         freq = self.periodic_config.get(msg_id)
         if not freq:

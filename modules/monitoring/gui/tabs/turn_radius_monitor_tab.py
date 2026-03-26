@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 
 from PyQt5.QtCore import QPoint, QPointF, QRectF, Qt, QTimer
-from PyQt5.QtGui import QColor, QFont, QPainter, QPen, QPolygonF
+from PyQt5.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen, QPolygonF
 from PyQt5.QtWidgets import (
     QCheckBox,
     QFrame,
@@ -16,6 +16,7 @@ from PyQt5.QtWidgets import (
 )
 
 from modules.monitoring.logic.turn_radius_monitor import AircraftTurnView, TurnRadiusMonitorStore
+from modules.monitoring.logic.replan_runtime_settings import get_path_deviation_settings
 
 
 DEFAULT_HALF_RANGE_M = 500.0
@@ -62,24 +63,65 @@ def _format_waypoint_id(value: int | None) -> str:
     return str(int(value))
 
 
+def _format_waypoint_pass_type(value: int | None) -> str:
+    try:
+        pass_type = int(value) if value is not None else 0
+    except Exception:
+        pass_type = 0
+    if pass_type == 1:
+        return "Fly By"
+    if pass_type == 2:
+        return "Loiter"
+    if pass_type == 3:
+        return "Fly Over"
+    if pass_type <= 0:
+        return "-"
+    return f"Type {pass_type}"
+
+
+def _format_current_waypoint(value: int | None, waypoint_pass_type: int | None) -> str:
+    waypoint_text = _format_waypoint_id(value)
+    pass_type_text = _format_waypoint_pass_type(waypoint_pass_type)
+    if waypoint_text == "-":
+        return "-"
+    if pass_type_text == "-":
+        return waypoint_text
+    return f"{waypoint_text} / {pass_type_text}"
+
+
+def _waypoint_pass_type_palette(value: int | None) -> tuple[QColor, QColor, QColor]:
+    try:
+        pass_type = int(value) if value is not None else 0
+    except Exception:
+        pass_type = 0
+    if pass_type == 1:
+        return QColor("#0f766e"), QColor(20, 184, 166, 66), QColor("#115e59")
+    if pass_type == 2:
+        return QColor("#7c3aed"), QColor(167, 139, 250, 66), QColor("#5b21b6")
+    if pass_type == 3:
+        return QColor("#c2410c"), QColor(251, 146, 60, 72), QColor("#9a3412")
+    return QColor("#2563eb"), QColor(96, 165, 250, 66), QColor("#1d4ed8")
+
+
 def _format_spiral_score(view: AircraftTurnView) -> str:
     if view.spiral_state == "warning":
-        return "Warning"
+        return "경고"
     if view.spiral_state == "watch":
-        return "Watch"
+        return "주의"
     if view.current_waypoint_is_loiter:
         return "Loiter WP"
-    return "Normal"
+    return "정상"
 
 
 def _turn_status_text(view: AircraftTurnView) -> str:
+    stale_timeout_s = float(get_path_deviation_settings().get("stale_timeout_s", 5.0))
     if not view.has_data:
-        return "No data"
-    if view.age_s is not None and view.age_s > 5.0:
-        return "Stale"
+        return "데이터 없음"
+    if view.age_s is not None and view.age_s > stale_timeout_s:
+        return "수신 지연"
     if not view.is_turning or view.turn_sign == 0:
-        return "Straight"
-    return "Left turn" if view.turn_sign > 0 else "Right turn"
+        return "직선 비행"
+    return "좌선회" if view.turn_sign > 0 else "우선회"
 
 
 def _nice_grid_step_m(half_range_m: float) -> float:
@@ -132,6 +174,7 @@ class TurnRadiusMonitorCanvas(QWidget):
             actual_points=[],
             ideal_points=[],
             position_m=None,
+            position_coordinate=None,
             heading_rad=None,
             raw_heading_deg=None,
             speed_mps=None,
@@ -142,11 +185,15 @@ class TurnRadiusMonitorCanvas(QWidget):
             turn_circle_center_m=None,
             turn_circle_radius_m=None,
             current_waypoint_id=None,
+            current_waypoint_pass_type=None,
+            on_mission=None,
             current_waypoint_position_m=None,
             alternate_waypoint_id=None,
             alternate_waypoint_position_m=None,
             alternate_waypoint_coordinate=None,
             alternate_waypoint_eta_s=None,
+            predicted_entry_coordinate=None,
+            predicted_entry_eta_s=None,
             current_waypoint_is_loiter=False,
             spiral_state="none",
             spiral_score=None,
@@ -258,7 +305,7 @@ class TurnRadiusMonitorCanvas(QWidget):
         top_world = center_m[1] + self._half_range_m
 
         painter.save()
-        painter.setPen(QPen(QColor("#31425b"), 1))
+        painter.setPen(QPen(QColor("#dbe5ef"), 1))
         x_m = math.floor(left_world / step_m) * step_m
         while x_m <= right_world + 0.1:
             x_px = draw_rect.center().x() + ((x_m - center_m[0]) * ppm)
@@ -270,7 +317,7 @@ class TurnRadiusMonitorCanvas(QWidget):
             painter.drawLine(QPointF(draw_rect.left(), y_px), QPointF(draw_rect.right(), y_px))
             y_m += step_m
 
-        painter.setPen(QPen(QColor("#8da0be"), 2))
+        painter.setPen(QPen(QColor("#94a3b8"), 2))
         x0 = draw_rect.center().x() + ((0.0 - center_m[0]) * ppm)
         y0 = draw_rect.center().y() - ((0.0 - center_m[1]) * ppm)
         painter.drawLine(QPointF(x0, draw_rect.top()), QPointF(x0, draw_rect.bottom()))
@@ -306,11 +353,42 @@ class TurnRadiusMonitorCanvas(QWidget):
         ppm = self._pixels_per_meter()
         center = self._world_to_screen(view.turn_circle_center_m)
         painter.save()
-        pen = QPen(QColor("#67e8f9"), 2)
+        pen = QPen(QColor("#f97316"), 2)
         pen.setStyle(Qt.DashLine)
         painter.setPen(pen)
         painter.setBrush(Qt.NoBrush)
         painter.drawEllipse(center, view.turn_circle_radius_m * ppm, view.turn_circle_radius_m * ppm)
+        painter.restore()
+
+    def _draw_waypoint_badge(
+        self,
+        painter: QPainter,
+        *,
+        anchor: QPointF,
+        text: str,
+        border: QColor,
+        fill: QColor,
+        text_color: QColor,
+    ) -> None:
+        font = QFont("Malgun Gothic", 9)
+        metrics = QFontMetrics(font)
+        text_width = max(56, metrics.horizontalAdvance(text))
+        badge_rect = QRectF(anchor.x() + 12.0, anchor.y() - 34.0, text_width + 18.0, 24.0)
+        badge_fill = QColor(fill)
+        badge_fill.setAlpha(max(190, fill.alpha()))
+
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setFont(font)
+        painter.setPen(QPen(border, 1))
+        painter.setBrush(badge_fill)
+        painter.drawRoundedRect(badge_rect, 8.0, 8.0)
+        painter.setPen(text_color)
+        painter.drawText(
+            badge_rect.adjusted(9.0, 0.0, -9.0, 0.0),
+            Qt.AlignVCenter | Qt.AlignLeft,
+            text,
+        )
         painter.restore()
 
     def _draw_current_waypoint(self, painter: QPainter) -> None:
@@ -318,14 +396,15 @@ class TurnRadiusMonitorCanvas(QWidget):
         if view.current_waypoint_position_m is None:
             return
         point = self._world_to_screen(view.current_waypoint_position_m)
-        color = QColor("#f472b6")
-        fill = QColor(244, 114, 182, 70)
+        color, fill, text_color = _waypoint_pass_type_palette(view.current_waypoint_pass_type)
         if view.spiral_state == "watch":
             color = QColor("#f59e0b")
             fill = QColor(245, 158, 11, 85)
+            text_color = QColor("#92400e")
         elif view.spiral_state == "warning":
             color = QColor("#ef4444")
             fill = QColor(239, 68, 68, 90)
+            text_color = QColor("#991b1b")
         painter.save()
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setPen(QPen(color, 2))
@@ -333,9 +412,18 @@ class TurnRadiusMonitorCanvas(QWidget):
         painter.drawEllipse(point, 7.0, 7.0)
         painter.drawLine(QPointF(point.x() - 10.0, point.y()), QPointF(point.x() + 10.0, point.y()))
         painter.drawLine(QPointF(point.x(), point.y() - 10.0), QPointF(point.x(), point.y() + 10.0))
-        painter.setFont(QFont("Consolas", 9))
-        painter.drawText(QPointF(point.x() + 12.0, point.y() - 10.0), f"WP {view.current_waypoint_id}")
         painter.restore()
+        waypoint_text = f"WP {view.current_waypoint_id if view.current_waypoint_id is not None else '?'}"
+        pass_type_text = _format_waypoint_pass_type(view.current_waypoint_pass_type)
+        badge_text = waypoint_text if pass_type_text == "-" else f"{waypoint_text}  {pass_type_text}"
+        self._draw_waypoint_badge(
+            painter,
+            anchor=point,
+            text=badge_text,
+            border=color,
+            fill=fill,
+            text_color=text_color,
+        )
 
     def _draw_alternate_waypoint(self, painter: QPainter) -> None:
         view = self._view
@@ -344,8 +432,8 @@ class TurnRadiusMonitorCanvas(QWidget):
         point = self._world_to_screen(view.alternate_waypoint_position_m)
         painter.save()
         painter.setRenderHint(QPainter.Antialiasing, True)
-        color = QColor("#fde047")
-        fill = QColor(253, 224, 71, 90)
+        color = QColor("#ca8a04")
+        fill = QColor(250, 204, 21, 88)
         painter.setPen(QPen(color, 2))
         painter.setBrush(fill)
         diamond = QPolygonF(
@@ -358,10 +446,10 @@ class TurnRadiusMonitorCanvas(QWidget):
         )
         painter.drawPolygon(diamond)
         if view.current_waypoint_position_m is not None:
-            painter.setPen(QPen(QColor("#fde047"), 1, Qt.DashLine))
+            painter.setPen(QPen(QColor("#ca8a04"), 1, Qt.DashLine))
             painter.drawLine(point, self._world_to_screen(view.current_waypoint_position_m))
-        painter.setPen(QColor("#fef3c7"))
-        painter.setFont(QFont("Consolas", 9))
+        painter.setPen(QColor("#854d0e"))
+        painter.setFont(QFont("Malgun Gothic", 9))
         eta_text = ""
         if view.alternate_waypoint_eta_s is not None:
             eta_text = f" (+{view.alternate_waypoint_eta_s:.0f}s)"
@@ -393,10 +481,10 @@ class TurnRadiusMonitorCanvas(QWidget):
 
         painter.save()
         painter.setRenderHint(QPainter.Antialiasing, True)
-        painter.setPen(QPen(QColor("#dbeafe"), 2))
+        painter.setPen(QPen(QColor("#eff6ff"), 2))
         painter.setBrush(QColor("#2563eb"))
         painter.drawPolygon(QPolygonF([tip, left, right]))
-        painter.setPen(QPen(QColor("#7dd3fc"), 2))
+        painter.setPen(QPen(QColor("#38bdf8"), 2))
         painter.drawLine(center, QPointF(center.x() + (ux * 120.0), center.y() + (uy * 120.0)))
         painter.restore()
 
@@ -407,7 +495,7 @@ class TurnRadiusMonitorCanvas(QWidget):
         length_px = length_m * ppm
 
         painter.save()
-        painter.setPen(QPen(QColor("#cbd5e1"), 2))
+        painter.setPen(QPen(QColor("#64748b"), 2))
         x0 = draw_rect.left() + 18.0
         y0 = draw_rect.bottom() - 18.0
         painter.drawLine(QPointF(x0, y0), QPointF(x0 + length_px, y0))
@@ -419,86 +507,143 @@ class TurnRadiusMonitorCanvas(QWidget):
 
     def _draw_hud(self, painter: QPainter) -> None:
         draw_rect = self._draw_rect()
-        hud_rect = QRectF(draw_rect.left() + 14.0, draw_rect.top() + 14.0, 320.0, 146.0)
+        hud_rect = QRectF(draw_rect.left() + 14.0, draw_rect.top() + 14.0, 404.0, 158.0)
 
         painter.save()
         painter.setRenderHint(QPainter.Antialiasing, True)
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor(15, 23, 42, 215))
+        painter.setPen(QPen(QColor("#d7e2ee"), 1))
+        painter.setBrush(QColor(255, 255, 255, 240))
         painter.drawRoundedRect(hud_rect, 12.0, 12.0)
 
-        painter.setPen(QColor("#e2e8f0"))
-        painter.setFont(QFont("Consolas", 10))
-        lines = [
-            "Wheel      : zoom in / out",
-            "Drag       : pan (follow off)",
-            "DoubleTap  : recenter aircraft",
-            f"View       : +/- {int(self._half_range_m)} m",
+        label_font = QFont("Malgun Gothic", 9)
+        value_font = QFont("Malgun Gothic", 9)
+        row_height = 24.0
+        label_x = hud_rect.left() + 16.0
+        colon_x = hud_rect.left() + 104.0
+        value_x = hud_rect.left() + 118.0
+        rows = [
+            ("Wheel", "확대 / 축소"),
+            ("Drag", "화면 이동 (follow off)"),
+            ("DoubleClick", "기체 중심 복귀"),
+            ("View", f"+/- {int(self._half_range_m)} m"),
         ]
-        for index, line in enumerate(lines):
-            painter.drawText(QPointF(hud_rect.left() + 14.0, hud_rect.top() + 24.0 + (index * 24.0)), line)
+        for index, (label, value) in enumerate(rows):
+            y = hud_rect.top() + 18.0 + (index * row_height)
+            row_rect = QRectF(hud_rect.left() + 12.0, y, hud_rect.width() - 24.0, 18.0)
+            painter.setFont(label_font)
+            painter.setPen(QColor("#0f172a"))
+            painter.drawText(
+                QRectF(label_x, row_rect.top(), colon_x - label_x - 8.0, row_rect.height()),
+                Qt.AlignLeft | Qt.AlignVCenter,
+                label,
+            )
+            painter.setPen(QColor("#64748b"))
+            painter.drawText(
+                QRectF(colon_x, row_rect.top(), 10.0, row_rect.height()),
+                Qt.AlignCenter,
+                ":",
+            )
+            painter.setFont(value_font)
+            painter.setPen(QColor("#334155"))
+            painter.drawText(
+                QRectF(value_x, row_rect.top(), hud_rect.right() - value_x - 14.0, row_rect.height()),
+                Qt.AlignLeft | Qt.AlignVCenter,
+                value,
+            )
 
-        painter.setPen(QPen(QColor("#22c55e"), 3))
-        painter.drawLine(QPointF(hud_rect.left() + 18.0, hud_rect.bottom() - 46.0), QPointF(hud_rect.left() + 58.0, hud_rect.bottom() - 46.0))
-        painter.setPen(QColor("#cbd5e1"))
-        painter.drawText(QPointF(hud_rect.left() + 68.0, hud_rect.bottom() - 41.0), "Actual trail")
+        legend_font = QFont("Malgun Gothic", 9)
+        left_marker_x = hud_rect.left() + 20.0
+        left_text_x = hud_rect.left() + 70.0
+        right_marker_x = hud_rect.left() + 210.0
+        right_text_x = hud_rect.left() + 232.0
+        legend_row_1 = hud_rect.bottom() - 44.0
+        legend_row_2 = hud_rect.bottom() - 21.0
 
-        painter.setPen(QPen(QColor("#f59e0b"), 3, Qt.DashLine))
-        painter.drawLine(QPointF(hud_rect.left() + 18.0, hud_rect.bottom() - 28.0), QPointF(hud_rect.left() + 58.0, hud_rect.bottom() - 28.0))
-        painter.setPen(QColor("#cbd5e1"))
-        painter.drawText(QPointF(hud_rect.left() + 68.0, hud_rect.bottom() - 23.0), "Ideal turn track")
+        painter.setFont(legend_font)
+        painter.setPen(QPen(QColor("#0f766e"), 3))
+        painter.drawLine(QPointF(left_marker_x, legend_row_1), QPointF(left_marker_x + 40.0, legend_row_1))
+        painter.setPen(QColor("#334155"))
+        painter.drawText(
+            QRectF(left_text_x, legend_row_1 - 10.0, 108.0, 18.0),
+            Qt.AlignLeft | Qt.AlignVCenter,
+            "실제 경로",
+        )
 
-        wp_color = QColor("#f472b6")
+        painter.setPen(QPen(QColor("#f97316"), 3, Qt.DashLine))
+        painter.drawLine(QPointF(left_marker_x, legend_row_2), QPointF(left_marker_x + 40.0, legend_row_2))
+        painter.setPen(QColor("#334155"))
+        painter.drawText(
+            QRectF(left_text_x, legend_row_2 - 10.0, 118.0, 18.0),
+            Qt.AlignLeft | Qt.AlignVCenter,
+            "기준 선회경로",
+        )
+
+        wp_color, _wp_fill, _wp_text = _waypoint_pass_type_palette(self._view.current_waypoint_pass_type)
         if self._view.spiral_state == "watch":
             wp_color = QColor("#f59e0b")
         elif self._view.spiral_state == "warning":
             wp_color = QColor("#ef4444")
-        painter.setPen(QPen(wp_color, 3))
-        painter.drawLine(QPointF(hud_rect.left() + 166.0, hud_rect.bottom() - 28.0), QPointF(hud_rect.left() + 206.0, hud_rect.bottom() - 28.0))
-        painter.setPen(QColor("#cbd5e1"))
-        painter.drawText(QPointF(hud_rect.left() + 214.0, hud_rect.bottom() - 23.0), "Current WP")
+        painter.setPen(QPen(wp_color, 2))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawEllipse(QPointF(right_marker_x, legend_row_1), 4.0, 4.0)
+        painter.drawLine(QPointF(right_marker_x - 8.0, legend_row_1), QPointF(right_marker_x + 8.0, legend_row_1))
+        painter.drawLine(QPointF(right_marker_x, legend_row_1 - 8.0), QPointF(right_marker_x, legend_row_1 + 8.0))
+        painter.setPen(QColor("#334155"))
+        current_wp_label = "현재 WP"
+        current_wp_type = _format_waypoint_pass_type(self._view.current_waypoint_pass_type)
+        if current_wp_type != "-":
+            current_wp_label += f" ({current_wp_type})"
+        painter.drawText(
+            QRectF(right_text_x, legend_row_1 - 10.0, hud_rect.right() - right_text_x - 12.0, 18.0),
+            Qt.AlignLeft | Qt.AlignVCenter,
+            current_wp_label,
+        )
 
-        painter.setPen(QPen(QColor("#fde047"), 2))
+        painter.setPen(QPen(QColor("#ca8a04"), 2))
         diamond = QPolygonF(
             [
-                QPointF(hud_rect.left() + 186.0, hud_rect.bottom() - 8.0),
-                QPointF(hud_rect.left() + 194.0, hud_rect.bottom() - 16.0),
-                QPointF(hud_rect.left() + 202.0, hud_rect.bottom() - 8.0),
-                QPointF(hud_rect.left() + 194.0, hud_rect.bottom()),
+                QPointF(right_marker_x, legend_row_2 - 8.0),
+                QPointF(right_marker_x + 8.0, legend_row_2),
+                QPointF(right_marker_x, legend_row_2 + 8.0),
+                QPointF(right_marker_x - 8.0, legend_row_2),
             ]
         )
-        painter.setBrush(QColor(253, 224, 71, 90))
+        painter.setBrush(QColor(250, 204, 21, 88))
         painter.drawPolygon(diamond)
-        painter.setPen(QColor("#cbd5e1"))
-        painter.drawText(QPointF(hud_rect.left() + 214.0, hud_rect.bottom() - 5.0), "Alt WP candidate")
+        painter.setPen(QColor("#334155"))
+        painter.drawText(
+            QRectF(right_text_x, legend_row_2 - 10.0, hud_rect.right() - right_text_x - 12.0, 18.0),
+            Qt.AlignLeft | Qt.AlignVCenter,
+            "대체 WP 후보",
+        )
         painter.restore()
 
     def paintEvent(self, event) -> None:  # type: ignore[override]
         super().paintEvent(event)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
-        painter.fillRect(self.rect(), QColor("#020617"))
+        painter.fillRect(self.rect(), QColor("#f4f7fb"))
 
         draw_rect = self._draw_rect()
-        painter.fillRect(draw_rect, QColor("#0b1730"))
-        painter.setPen(QPen(QColor("#475569"), 2))
+        painter.fillRect(draw_rect, QColor("#ffffff"))
+        painter.setPen(QPen(QColor("#d7e2ee"), 2))
         painter.drawRect(draw_rect)
 
         self._draw_grid(painter)
-        self._draw_path(painter, self._view.ideal_points, "#f59e0b", 2, dashed=True)
+        self._draw_path(painter, self._view.ideal_points, "#f97316", 2, dashed=True)
         self._draw_turn_circle(painter)
         self._draw_current_waypoint(painter)
         self._draw_alternate_waypoint(painter)
-        self._draw_path(painter, self._view.actual_points, "#22c55e", 3)
+        self._draw_path(painter, self._view.actual_points, "#0f766e", 3)
         self._draw_aircraft(painter)
         self._draw_scale(painter)
         self._draw_hud(painter)
 
         if not self._view.has_data:
             painter.save()
-            painter.setPen(QColor("#cbd5e1"))
+            painter.setPen(QColor("#64748b"))
             painter.setFont(QFont("Malgun Gothic", 13))
-            painter.drawText(draw_rect, Qt.AlignCenter, "0401 UAV data not available")
+            painter.drawText(draw_rect, Qt.AlignCenter, "0401 경로추종 데이터 없음")
             painter.restore()
 
 
@@ -510,34 +655,34 @@ class TurnRadiusMonitorTab(QWidget):
         self._ui_updates_enabled = True
         self._refresh_scheduled = False
 
-        self._title = QLabel("0401 Turn Radius Monitor")
+        self._title = QLabel("0401 경로추종 모니터링")
         self._title.setObjectName("turnRadiusPageTitle")
         self._subtitle = QLabel(
-            "0401 raw data drives UAV position, heading, actual trail, and ideal speed-based turn radius overlay."
+            "0401 원시 데이터를 기준으로 기체 위치, heading, 실제 경로, 기준 선회 반경을 함께 확인합니다."
         )
         self._subtitle.setObjectName("turnRadiusPageSubtitle")
         self._subtitle.setWordWrap(True)
 
         self._uav_buttons: dict[int, QPushButton] = {}
-        self._status_card = MetricCard("Status")
-        self._speed_card = MetricCard("Speed")
-        self._heading_card = MetricCard("Heading")
-        self._turn_rate_card = MetricCard("Turn Trend")
-        self._ideal_radius_card = MetricCard("Ideal Radius")
-        self._actual_radius_card = MetricCard("Actual Radius")
-        self._error_card = MetricCard("Radius Error")
-        self._current_wp_card = MetricCard("Current WP")
-        self._wp_orbit_card = MetricCard("WP Orbit Risk")
-        self._age_card = MetricCard("Last Update")
+        self._status_card = MetricCard("상태")
+        self._speed_card = MetricCard("속도")
+        self._heading_card = MetricCard("헤딩")
+        self._turn_rate_card = MetricCard("선회율")
+        self._ideal_radius_card = MetricCard("기준 반경")
+        self._actual_radius_card = MetricCard("실제 반경")
+        self._error_card = MetricCard("반경 오차")
+        self._current_wp_card = MetricCard("현재 WP")
+        self._wp_orbit_card = MetricCard("WP 선회위험")
+        self._age_card = MetricCard("마지막 수신")
         self._warning_banner = QLabel("")
         self._warning_banner.setObjectName("turnRadiusWarningBanner")
         self._warning_banner.setVisible(False)
 
-        self._follow_checkbox = QCheckBox("Aircraft Center Follow")
+        self._follow_checkbox = QCheckBox("기체 중심 따라가기")
         self._follow_checkbox.setChecked(True)
-        self._reset_button = QPushButton("Reset View")
+        self._reset_button = QPushButton("화면 초기화")
         self._canvas = TurnRadiusMonitorCanvas()
-        self._summary = QLabel("UAV1 / 0401 / actual vs ideal turn tracking")
+        self._summary = QLabel("UAV1 / 0401 / 경로추종 상태")
         self._summary.setObjectName("turnRadiusSummary")
 
         self._build_ui()
@@ -593,76 +738,88 @@ class TurnRadiusMonitorTab(QWidget):
         self.setStyleSheet(
             """
             QWidget {
-                background: #020617;
-                color: #e2e8f0;
+                background: #f4f7fb;
+                color: #0f172a;
             }
             QLabel#turnRadiusPageTitle {
                 font-size: 24px;
                 font-weight: 700;
-                color: #f8fafc;
+                color: #0f172a;
             }
             QLabel#turnRadiusPageSubtitle {
                 font-size: 13px;
-                color: #94a3b8;
+                color: #334155;
+                padding: 2px 0 4px 2px;
             }
             QLabel#turnRadiusSummary {
                 font-size: 13px;
-                color: #cbd5e1;
-                padding: 4px 0 2px 2px;
+                color: #334155;
+                background: #ffffff;
+                border: 1px solid #d7e2ee;
+                border-radius: 10px;
+                padding: 6px 10px;
             }
             QLabel#turnRadiusWarningBanner {
                 border-radius: 10px;
                 padding: 10px 14px;
                 font-size: 13px;
                 font-weight: 700;
-                color: #fff7ed;
-                background: #7c2d12;
+                color: #9a3412;
+                background: #ffedd5;
+                border: 1px solid #fdba74;
             }
             QFrame#turnRadiusMetricCard {
-                background: #111827;
-                border: 1px solid #334155;
+                background: #ffffff;
+                border: 1px solid #d7e2ee;
                 border-radius: 14px;
             }
             QLabel#turnRadiusMetricTitle {
                 font-size: 11px;
-                color: #94a3b8;
+                font-weight: 600;
+                color: #475569;
+                background: #f8fafc;
+                border-radius: 8px;
+                padding: 2px 8px;
             }
             QLabel#turnRadiusMetricValue {
                 font-size: 16px;
                 font-weight: 700;
-                color: #f8fafc;
+                color: #111827;
             }
             QPushButton {
-                background: #1d4ed8;
-                color: #eff6ff;
-                border: none;
+                background: #e2e8f0;
+                color: #0f172a;
+                border: 1px solid #cbd5e1;
                 border-radius: 10px;
                 padding: 10px 16px;
                 font-size: 13px;
                 font-weight: 600;
             }
             QPushButton:hover {
-                background: #2563eb;
+                background: #cbd5e1;
             }
             QPushButton:checked {
-                background: #0f766e;
+                background: #1d4ed8;
+                color: #ffffff;
+                border: 1px solid #1d4ed8;
             }
             QCheckBox {
-                color: #cbd5e1;
+                color: #1f2937;
                 spacing: 8px;
                 font-size: 13px;
+                font-weight: 600;
             }
             QCheckBox::indicator {
                 width: 16px;
                 height: 16px;
             }
             QCheckBox::indicator:unchecked {
-                border: 1px solid #64748b;
-                background: #0f172a;
+                border: 1px solid #94a3b8;
+                background: #ffffff;
             }
             QCheckBox::indicator:checked {
-                border: 1px solid #0f766e;
-                background: #14b8a6;
+                border: 1px solid #1d4ed8;
+                background: #60a5fa;
             }
             """
         )
@@ -717,7 +874,9 @@ class TurnRadiusMonitorTab(QWidget):
         self._turn_rate_card.set_value(_format_turn_rate(view.turn_rate_dps))
         self._ideal_radius_card.set_value(_format_meters(view.ideal_radius_m))
         self._actual_radius_card.set_value(_format_meters(view.actual_radius_m))
-        self._current_wp_card.set_value(_format_waypoint_id(view.current_waypoint_id))
+        self._current_wp_card.set_value(
+            _format_current_waypoint(view.current_waypoint_id, view.current_waypoint_pass_type)
+        )
         self._wp_orbit_card.set_value(_format_spiral_score(view))
         self._age_card.set_value(_format_age(view.age_s))
 
@@ -726,11 +885,11 @@ class TurnRadiusMonitorTab(QWidget):
             radius_error = f"{(view.actual_radius_m - view.ideal_radius_m):+.0f} m"
         self._error_card.set_value(radius_error)
 
-        summary = f"{view.label} / 0401 / {_turn_status_text(view)}"
+        summary = f"{view.label} / 0401 경로추종 / {_turn_status_text(view)}"
         if view.current_waypoint_id is not None:
-            summary += f" / wp={view.current_waypoint_id}"
+            summary += f" / wp={_format_current_waypoint(view.current_waypoint_id, view.current_waypoint_pass_type)}"
         if view.spiral_state != "none":
-            summary += f" / orbit={view.spiral_state}"
+            summary += f" / orbit={_format_spiral_score(view)}"
         if view.alternate_waypoint_id is not None:
             summary += f" / alt_wp={view.alternate_waypoint_id}"
         if view.position_m is not None:
@@ -741,18 +900,18 @@ class TurnRadiusMonitorTab(QWidget):
         if view.spiral_state == "warning":
             angle_text = f"{view.spiral_angle_deg:.0f} deg" if view.spiral_angle_deg is not None else "-"
             self._warning_banner.setStyleSheet(
-                "QLabel#turnRadiusWarningBanner { background: #7f1d1d; color: #fee2e2; border: 1px solid #ef4444; border-radius: 10px; padding: 10px 14px; font-size: 13px; font-weight: 700; }"
+                "QLabel#turnRadiusWarningBanner { background: #fee2e2; color: #991b1b; border: 1px solid #ef4444; border-radius: 10px; padding: 10px 14px; font-size: 13px; font-weight: 700; }"
             )
-            message = f"Current WP orbit warning: same WP is being orbited with weak radial progress ({angle_text})."
+            message = f"현재 WP 선회 경고 ({angle_text})"
             if view.alternate_waypoint_id is not None:
                 eta_text = f"{view.alternate_waypoint_eta_s:.0f}s" if view.alternate_waypoint_eta_s is not None else "-"
-                message += f" Alt WP {view.alternate_waypoint_id} projected on predicted circle (+{eta_text})."
+                message += f" / 대체 WP {view.alternate_waypoint_id} (+{eta_text})"
             self._warning_banner.setText(message)
         elif view.spiral_state == "watch":
             angle_text = f"{view.spiral_angle_deg:.0f} deg" if view.spiral_angle_deg is not None else "-"
             self._warning_banner.setStyleSheet(
-                "QLabel#turnRadiusWarningBanner { background: #78350f; color: #fef3c7; border: 1px solid #f59e0b; border-radius: 10px; padding: 10px 14px; font-size: 13px; font-weight: 700; }"
+                "QLabel#turnRadiusWarningBanner { background: #fef3c7; color: #92400e; border: 1px solid #f59e0b; border-radius: 10px; padding: 10px 14px; font-size: 13px; font-weight: 700; }"
             )
             self._warning_banner.setText(
-                f"Current WP orbit watch: possible circling around WP with accumulated bearing {angle_text}."
+                f"현재 WP 선회 주의 ({angle_text})"
             )

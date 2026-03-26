@@ -402,6 +402,13 @@ class MainWindow(QMainWindow):
                 self._append_log_line("[CTRL] TX 테이블에 0102 행이 없음"); return False
             running = "0102" in getattr(tab, "periodic_timers", {})
             if (on and not running) or ((not on) and running):
+                try:
+                    if hasattr(tab, "send_tx_row"):
+                        ok = bool(tab.send_tx_row(target_row, interactive=False))
+                        self._append_log_line(f"[CTRL] 0102 direct handler → {'ON' if on else 'OFF'} 요청")
+                        return ok
+                except Exception:
+                    pass
                 # (A) 버튼 click()
                 try:
                     btn = tbl.cellWidget(target_row, 3)

@@ -11,10 +11,16 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from modules.common import db_paths, agent_status_snapshot, prior_replan_store
 from modules.mission_planning._paths import mission_planner_data_def_root
+from modules.mission_planning.MissionPlanner.runtime_settings import (
+    get_runtime_prior_float,
+    get_runtime_prior_int,
+    get_runtime_prior_mission_profile,
+)
 from modules.mission_planning.runtime.json_io import write_json
 from modules.mission_planning.pipelines.mission_path_trim import (
     count_sweep_points_in_waypoints,
     load_sweep_progress,
+    reassign_unique_waypoint_ids_inplace,
     scale_line_search_speed,
     sweep_cut_points,
     trim_waypoints_by_sweep_points,
@@ -24,12 +30,7 @@ import importlib.util
 from types import ModuleType
 
 _EPOCH_2000_MS = 946_684_800_000
-_PRIOR_TRACKING_LOITER_SECONDS = 300
-_PRIOR_DEFAULT_LOITER_SECONDS = 50
-_PRIOR_APPROACH_BASE_OFFSET_M = 250.0  # was 100m
-_PRIOR_APPROACH_FAR_OFFSET_M = 450.0   # was 300m
 _RTB_FLIGHT_MODE = 5
-_RESUME_SEARCH_SPEED_SCALE = 1.3
 _ID_ALLOCATOR_MOD: Optional[ModuleType] = None
 _MISSION_HELPERS_MOD: Optional[ModuleType] = None
 
@@ -70,6 +71,10 @@ def _reserve_path_ids(aircraft_id: int, count: int) -> List[int]:
 
 def _next_waypoint_id() -> int:
     return _load_id_allocator().next_waypoint_id()
+
+
+def _reserve_waypoint_block(count: int) -> int:
+    return int(_load_id_allocator().reserve_waypoint_block(count))
 
 
 def _load_mission_helpers_module() -> Optional[ModuleType]:
@@ -653,6 +658,18 @@ def run_prior_mission_pipeline(
         resume_fp_data["aircraftID"] = aircraft_id
         resume_fp_data["individualMissionID"] = resume_individual_id
 
+        prior_approach_base_offset_m = get_runtime_prior_float("approach_base_offset_m", 250.0)
+        prior_approach_far_offset_m = get_runtime_prior_float("approach_far_offset_m", 450.0)
+        prior_far_trigger_distance_m = get_runtime_prior_float("approach_far_trigger_distance_m", 400.0)
+        prior_orientation_offset_m = get_runtime_prior_float("orientation_offset_m", 100.0)
+        prior_approach_speed = get_runtime_prior_float("approach_speed_mps", 40.0)
+        prior_target_speed = get_runtime_prior_float("target_speed_mps", 30.0)
+        prior_loiter_seconds = (
+            get_runtime_prior_int("tracking_loiter_seconds", 300)
+            if mission_type == 2
+            else get_runtime_prior_int("default_loiter_seconds", 50)
+        )
+
         agent_coord = None
         if (
             selected_agent_summary.latitude is not None
@@ -667,7 +684,7 @@ def run_prior_mission_pipeline(
             approach_coord = _project_coordinate(
                 agent_coord,
                 selected_agent_summary.heading,
-                _PRIOR_APPROACH_BASE_OFFSET_M,
+                prior_approach_base_offset_m,
             )
             if approach_coord is None:
                 try:
@@ -680,7 +697,7 @@ def run_prior_mission_pipeline(
                     approach_coord = _project_coordinate(
                         agent_coord,
                         bearing,
-                        _PRIOR_APPROACH_BASE_OFFSET_M,
+                        prior_approach_base_offset_m,
                     )
                 except Exception:
                     approach_coord = None
@@ -714,7 +731,10 @@ def run_prior_mission_pipeline(
         use_single_tracking_wp = True
         if mission_type == 2:
             emit("[PRIOR][STEP3] missionType=2 target tracking -> using single auto-tracking waypoint.")
-        elif isinstance(agent_to_target_distance, (int, float)) and agent_to_target_distance > 400:
+        elif (
+            isinstance(agent_to_target_distance, (int, float))
+            and agent_to_target_distance > float(prior_far_trigger_distance_m)
+        ):
             try:
                 bearing = _bearing_between(
                     agent_coord["latitude"],
@@ -725,14 +745,14 @@ def run_prior_mission_pipeline(
                 approach_override = _project_coordinate(
                     agent_coord,
                     bearing,
-                    _PRIOR_APPROACH_FAR_OFFSET_M,
+                    prior_approach_far_offset_m,
                 )
                 if approach_override:
                     approach_override["altitude"] = approach_alt
                     approach_coord = approach_override
                     emit(
                         "[PRIOR][STEP3] Approach waypoint adjusted: "
-                        f"{agent_to_target_distance:.1f}m -> {_PRIOR_APPROACH_FAR_OFFSET_M:.0f}m ahead."
+                        f"{agent_to_target_distance:.1f}m -> {prior_approach_far_offset_m:.0f}m ahead."
                     )
             except Exception:
                 pass
@@ -765,7 +785,7 @@ def run_prior_mission_pipeline(
                 target_coord["latitude"],
                 target_coord["longitude"],
             ),
-            100.0,
+            prior_orientation_offset_m,
         ) or dict(target_coord)
         orientation_altitude = _orientation_altitude(
             orientation_coord.get("latitude"),
@@ -779,11 +799,15 @@ def run_prior_mission_pipeline(
             or 700
         )
 
-        approach_speed = 40.0
-        target_speed = 30.0
-        loiter_seconds = (
-            _PRIOR_TRACKING_LOITER_SECONDS if mission_type == 2 else _PRIOR_DEFAULT_LOITER_SECONDS
+        approach_speed = float(prior_approach_speed)
+        target_speed = float(prior_target_speed)
+        loiter_seconds = int(prior_loiter_seconds)
+        prior_profile = get_runtime_prior_mission_profile(
+            default_turn_radius_m=400.0,
+            default_fov_deg=5.0,
         )
+        prior_fov_deg = float(prior_profile.get("fov_deg", 5.0) or 5.0)
+        prior_turn_radius_m = float(prior_profile.get("turn_radius_m", 400.0) or 400.0)
         distance_m = None
         if use_single_tracking_wp and isinstance(agent_to_target_distance, (int, float)):
             distance_m = float(agent_to_target_distance)
@@ -823,7 +847,7 @@ def run_prior_mission_pipeline(
             "nextWaypointID": prior_target_wp_id,
             "waypointPassType": 1,
             "filmingProperty": {
-                "fieldOfView": 10.0,
+                "fieldOfView": prior_fov_deg,
                 "sensorType": 1,
                 "operationMode": 1,
                 "coordinateOrientation": {
@@ -851,7 +875,7 @@ def run_prior_mission_pipeline(
             "nextWaypointID": 0,
             "waypointPassType": 2,
             "filmingProperty": {
-                "fieldOfView": 5.0,
+                "fieldOfView": prior_fov_deg,
                 "sensorType": 1,
                 "operationMode": 3 if mission_type == 2 else 1,
                 "coordinateOrientation": {
@@ -867,7 +891,7 @@ def run_prior_mission_pipeline(
                 },
             },
             "loiterProperty": {
-                "radius": 400,
+                "radius": prior_turn_radius_m,
                 "direction": 1,
                 "time": loiter_seconds,
                 "speed": 30,
@@ -1321,6 +1345,12 @@ def _inject_prior_waypoint(
         altitude = inherited_altitude
     if altitude is None:
         altitude = 700
+    prior_profile = get_runtime_prior_mission_profile(
+        default_turn_radius_m=400.0,
+        default_fov_deg=5.0,
+    )
+    prior_fov_deg = float(prior_profile.get("fov_deg", 5.0) or 5.0)
+    prior_turn_radius_m = float(prior_profile.get("turn_radius_m", 400.0) or 400.0)
 
     inserted_wp = {
         "waypointID": new_waypoint_id,
@@ -1329,13 +1359,13 @@ def _inject_prior_waypoint(
             "longitude": target_coord["longitude"],
             "altitude": altitude,
         },
-        "speed": 30.0,
+        "speed": get_runtime_prior_float("target_speed_mps", 30.0),
         "eta": 700,
         "ecf": 0.0,
         "nextWaypointID": current_waypoint_id,
         "waypointPassType": 2,
         "filmingProperty": {
-            "fieldOfView": 5.0,
+            "fieldOfView": prior_fov_deg,
             "sensorType": 1,
             "operationMode": 1,
             "coordinateOrientation": {
@@ -1349,10 +1379,10 @@ def _inject_prior_waypoint(
                 },
         },
         "loiterProperty": {
-            "radius": 400,
+            "radius": prior_turn_radius_m,
             "direction": 1,
-            "time": 100,
-            "speed": 30,
+            "time": get_runtime_prior_int("reinsert_loiter_seconds", 100),
+            "speed": get_runtime_prior_float("target_speed_mps", 30.0),
         },
     }
 
@@ -1483,6 +1513,13 @@ def _apply_resume_path_trimming(
     done_sweep_points = count_sweep_points_in_waypoints(done_waypoints)
 
     # Append replan anchor waypoint to done path to preserve visualization continuity.
+    prior_anchor_fov_deg = float(
+        get_runtime_prior_mission_profile(
+            default_turn_radius_m=400.0,
+            default_fov_deg=5.0,
+        ).get("fov_deg", 5.0)
+        or 5.0
+    )
     if done_waypoints and resume_waypoints and isinstance(current_coord, dict):
         anchor_lat = _to_float(current_coord.get("latitude"))
         anchor_lon = _to_float(current_coord.get("longitude"))
@@ -1538,7 +1575,7 @@ def _apply_resume_path_trimming(
                         anchor_wp["filmingProperty"] = anchor_fp
                     else:
                         anchor_wp["filmingProperty"] = {
-                            "fieldOfView": 10.0,
+                            "fieldOfView": prior_anchor_fov_deg,
                             "sensorType": 1,
                             "operationMode": 1,
                             "coordinateOrientation": {
@@ -1585,19 +1622,20 @@ def _apply_resume_path_trimming(
             wp["isDone"] = False
 
     if done_waypoints:
-        relink_waypoints(done_waypoints)
+        reassign_unique_waypoint_ids_inplace(done_waypoints)
     if resume_waypoints:
         _apply_resume_capture_buffer(
             resume_waypoints,
             emit=emit,
         )
-        scaled = scale_line_search_speed(resume_waypoints, _RESUME_SEARCH_SPEED_SCALE)
+        resume_speed_scale = get_runtime_prior_float("resume_search_speed_scale", 1.3)
+        scaled = scale_line_search_speed(resume_waypoints, resume_speed_scale)
         if scaled > 0:
             emit(
                 f"[PRIOR][UAV] Resume searchSpeed scaled "
-                f"(factor={_RESUME_SEARCH_SPEED_SCALE:.2f}, waypoints={scaled})."
+                f"(factor={resume_speed_scale:.2f}, waypoints={scaled})."
             )
-        relink_waypoints(resume_waypoints)
+        reassign_unique_waypoint_ids_inplace(resume_waypoints)
     resume_fp_data["waypointList"] = resume_waypoints
     return done_waypoints, resume_waypoints, removed_wp_id
 
@@ -1669,13 +1707,11 @@ def _clone_follow_up_replan_artifacts(
             if not isinstance(waypoints, list):
                 continue
             copied_waypoints = deepcopy(waypoints)
-            for wp in copied_waypoints:
-                if not isinstance(wp, dict):
-                    continue
-                wp["waypointID"] = _next_waypoint_id()
+            copied_wp_dicts = [wp for wp in copied_waypoints if isinstance(wp, dict)]
+            for wp in copied_wp_dicts:
                 wp["isDone"] = False
             if copied_waypoints:
-                relink_waypoints(copied_waypoints)
+                reassign_unique_waypoint_ids_inplace(copied_waypoints)
             fp_copy[key] = copied_waypoints
 
         dest = db_paths.get_db_subpath("FlightPath", f"{int(path_id)}.json")

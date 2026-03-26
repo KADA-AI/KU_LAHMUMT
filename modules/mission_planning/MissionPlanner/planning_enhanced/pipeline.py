@@ -7,19 +7,25 @@ from typing import Any, Callable, Dict, List, Optional, Set
 
 from modules.common import db_paths
 try:
-    from ..runtime_settings import load_runtime_settings, get_runtime_bool, get_runtime_float
+    from ..runtime_settings import (
+        load_runtime_settings,
+        get_runtime_bool,
+        get_runtime_float,
+        get_runtime_area_review_max_segment_m,
+    )
 except Exception:
     from modules.mission_planning.MissionPlanner.runtime_settings import (  # type: ignore
         load_runtime_settings,
         get_runtime_bool,
         get_runtime_float,
+        get_runtime_area_review_max_segment_m,
     )
 
 from .assignment import resolve_uav_ids
 from .algo import run_split_pipeline, review_overflow_areas
 from .io import build_0302_packages_from_split_with_lah, save_0302_packages
 from .pathing import calculate_expected_velocity, generate_expected_paths
-from .type_decider import PROFILE_DEFAULT, PROFILE_MIN_TIME, PROFILE_RECON, apply_logic_type_decider
+from .type_decider import PROFILE_DEFAULT, apply_logic_type_decider
 
 
 def _to_int(value: Any, default: int = 0) -> int:
@@ -50,7 +56,7 @@ def _load_vehicle_status_available(cmpk_path: str | Path | None = None) -> Optio
     except Exception:
         return None
     raw = payload.get("available")
-    if not isinstance(raw, list) or not raw:
+    if not isinstance(raw, list):
         return None
     available: Set[int] = set()
     for item in raw:
@@ -58,7 +64,7 @@ def _load_vehicle_status_available(cmpk_path: str | Path | None = None) -> Optio
             available.add(int(item))
         except Exception:
             continue
-    return available or None
+    return available
 
 
 def _extract_aircraft_id(entry: Any) -> Optional[int]:
@@ -111,9 +117,9 @@ def _settings_float(payload: Dict[str, Any], key: str, default: float) -> float:
 
 def _settings_area_mode(payload: Dict[str, Any]) -> str:
     try:
-        raw = str((payload.get("values") or {}).get("area_sweep_mode", "parallel") or "parallel").strip().lower()
+        raw = str((payload.get("values") or {}).get("area_sweep_mode", "vertical") or "vertical").strip().lower()
     except Exception:
-        raw = "parallel"
+        raw = "vertical"
     if raw in {"vertical", "ver", "perpendicular", "orthogonal"}:
         return "vertical"
     if raw in {"nadir", "directdown", "bf_nadir"}:
@@ -122,11 +128,7 @@ def _settings_area_mode(payload: Dict[str, Any]) -> str:
 
 
 def _profile_code_from_option(option_code: Optional[int]) -> int:
-    code = _to_int(option_code, 0)
-    if code == 4:
-        return PROFILE_RECON
-    if code == 5:
-        return PROFILE_MIN_TIME
+    _ = option_code
     return PROFILE_DEFAULT
 
 
@@ -220,7 +222,7 @@ def run_enhanced_divide_and_pattern(
 
     runtime_cfg = _load_runtime_settings()
     review_enabled = _settings_bool(runtime_cfg, "enhanced_area_review_enabled", True)
-    review_max_segment_m = _settings_float(runtime_cfg, "enhanced_area_review_max_segment_m", 550.0)
+    review_max_segment_m = get_runtime_area_review_max_segment_m(3000.0, runtime_cfg)
     if _settings_area_mode(runtime_cfg) == "nadir":
         review_enabled = False
     if review_enabled:

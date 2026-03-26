@@ -2,12 +2,174 @@
 from __future__ import annotations
 
 import atexit
+import json
 import os
 import queue
 import sys
 import threading
 from datetime import datetime
 from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROCESS_LOG_STATE_PATH = PROJECT_ROOT / "temp" / "process_log_session.json"
+PENDING_PROCESS_LOG_ROOT = PROJECT_ROOT / "temp" / "process_log_pending"
+ENV_PROCESS_LOG_SESSION_ID = "KU_PROCESS_LOG_SESSION_ID"
+ENV_PROCESS_LOG_PHASE = "KU_PROCESS_LOG_PHASE"
+_PROCESS_LOG_STATE_LOCK = threading.Lock()
+
+
+def _normalize_process_log_phase(value: str | None) -> str:
+    raw = str(value or "").strip().lower()
+    if raw == "active":
+        return "active"
+    return "pending"
+
+
+def _default_process_log_session_id() -> str:
+    return f"{datetime.now().strftime('%Y%m%dT%H%M%S_%f')}_{os.getpid()}"
+
+
+def _set_process_log_env(*, session_id: str | None, phase: str) -> None:
+    if session_id:
+        os.environ[ENV_PROCESS_LOG_SESSION_ID] = str(session_id)
+    else:
+        os.environ.pop(ENV_PROCESS_LOG_SESSION_ID, None)
+    os.environ[ENV_PROCESS_LOG_PHASE] = _normalize_process_log_phase(phase)
+
+
+def _read_process_log_state_unlocked() -> dict:
+    data: dict = {}
+    try:
+        with PROCESS_LOG_STATE_PATH.open("r", encoding="utf-8") as fh:
+            loaded = json.load(fh)
+        if isinstance(loaded, dict):
+            data = dict(loaded)
+    except Exception:
+        data = {}
+    session_id = str(
+        data.get("session_id")
+        or os.getenv(ENV_PROCESS_LOG_SESSION_ID)
+        or ""
+    ).strip()
+    if session_id:
+        data["session_id"] = session_id
+    phase = _normalize_process_log_phase(data.get("phase") or os.getenv(ENV_PROCESS_LOG_PHASE))
+    data["phase"] = phase
+    return data
+
+
+def _write_process_log_state_unlocked(data: dict) -> dict:
+    payload = dict(data)
+    payload["session_id"] = str(payload.get("session_id") or _default_process_log_session_id()).strip()
+    payload["phase"] = _normalize_process_log_phase(payload.get("phase"))
+    payload["updated_at"] = datetime.now().isoformat(timespec="seconds")
+    PROCESS_LOG_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with PROCESS_LOG_STATE_PATH.open("w", encoding="utf-8") as fh:
+        json.dump(payload, fh, ensure_ascii=False, indent=2, sort_keys=True)
+    _set_process_log_env(session_id=payload["session_id"], phase=payload["phase"])
+    return payload
+
+
+def begin_process_log_session(*, session_id: str | None = None, force_new: bool = True) -> dict:
+    with _PROCESS_LOG_STATE_LOCK:
+        current = _read_process_log_state_unlocked()
+        current_id = str(current.get("session_id") or "").strip()
+        target_id = str(session_id or "").strip()
+        if not target_id:
+            target_id = _default_process_log_session_id() if force_new or not current_id else current_id
+        payload = {
+            "session_id": target_id,
+            "phase": "pending",
+            "owner_pid": os.getpid(),
+            "pending_flushed": False,
+        }
+        return _write_process_log_state_unlocked(payload)
+
+
+def activate_process_log_session(*, db_root: str | os.PathLike | None = None) -> dict:
+    with _PROCESS_LOG_STATE_LOCK:
+        current = _read_process_log_state_unlocked()
+        payload = {
+            **current,
+            "session_id": str(current.get("session_id") or _default_process_log_session_id()).strip(),
+            "phase": "active",
+            "owner_pid": os.getpid(),
+        }
+        if db_root:
+            payload["db_root"] = str(db_root)
+        return _write_process_log_state_unlocked(payload)
+
+
+def get_process_log_session() -> dict:
+    with _PROCESS_LOG_STATE_LOCK:
+        current = _read_process_log_state_unlocked()
+        session_id = str(current.get("session_id") or "").strip()
+        if session_id:
+            _set_process_log_env(session_id=session_id, phase=current.get("phase") or "pending")
+        return current
+
+
+def _pending_process_log_path(module_name: str, session_id: str | None) -> Path:
+    safe_session = str(session_id or "default").strip() or "default"
+    return PENDING_PROCESS_LOG_ROOT / safe_session / f"{module_name}.log"
+
+
+def flush_pending_process_logs(*, db_root: str | os.PathLike | None = None) -> int:
+    state = get_process_log_session()
+    session_id = str(state.get("session_id") or "").strip()
+    if not session_id:
+        return 0
+    pending_dir = _pending_process_log_path("module", session_id).parent
+    if not pending_dir.exists():
+        return 0
+    target_root = Path(str(db_root)).resolve() if db_root else None
+    if target_root is None:
+        try:
+            from modules.common import db_paths
+
+            target_root = Path(db_paths.get_active_db_root())
+        except Exception:
+            return 0
+    dest_dir = target_root / "DSS_Internal" / "module_logs"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    copied = 0
+    for src in sorted(pending_dir.glob("*.log")):
+        try:
+            text = src.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            continue
+        if not text:
+            continue
+        try:
+            with (dest_dir / src.name).open("a", encoding="utf-8", buffering=1, errors="replace") as fh:
+                fh.write(text)
+            copied += 1
+        except Exception:
+            continue
+    with _PROCESS_LOG_STATE_LOCK:
+        current = _read_process_log_state_unlocked()
+        if str(current.get("session_id") or "").strip() == session_id:
+            current["pending_flushed"] = True
+            current["pending_flush_count"] = copied
+            _write_process_log_state_unlocked(current)
+    return copied
+
+
+def get_process_log_path(module_name: str) -> Path:
+    state = get_process_log_session()
+    session_id = str(state.get("session_id") or "").strip()
+    if state.get("phase") != "active":
+        return _pending_process_log_path(module_name, session_id)
+    state_db_root = str(state.get("db_root") or "").strip()
+    if state_db_root:
+        return Path(state_db_root) / "DSS_Internal" / "module_logs" / f"{module_name}.log"
+    try:
+        from modules.common import db_paths
+
+        return db_paths.get_db_subpath("DSS_Internal", "module_logs", f"{module_name}.log")
+    except Exception:
+        root = Path(os.getenv("KU_MISSION_DB_ROOT") or Path.cwd())
+        return root / "DSS_Internal" / "module_logs" / f"{module_name}.log"
 
 
 def env_flag(name: str, default: bool = False) -> bool:
@@ -136,13 +298,7 @@ class _AsyncProcessFileSink:
             pass
 
     def _resolve_path(self) -> Path:
-        try:
-            from modules.common import db_paths
-
-            return db_paths.get_db_subpath("DSS_Internal", "module_logs", f"{self.module_name}.log")
-        except Exception:
-            root = Path(os.getenv("KU_MISSION_DB_ROOT") or Path.cwd())
-            return root / "DSS_Internal" / "module_logs" / f"{self.module_name}.log"
+        return get_process_log_path(self.module_name)
 
     def _ensure_handle(self) -> None:
         path = self._resolve_path()

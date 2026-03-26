@@ -13,6 +13,7 @@ from modules.common.option_codes import (
 )
 from modules.monitoring.logic.init_replan import allocate_mission_plan_ids
 from modules.monitoring.logic.mission_update import parse_payload
+from modules.monitoring.logic.replan_runtime_settings import get_input_refresh_settings
 
 
 def _coerce_int(value: object) -> int | None:
@@ -98,7 +99,6 @@ class InputRefreshReplanCoordinator:
 
     # Use the same option codes as other 0902 flows.
     OPTION_CODES: tuple[int, ...] = DEFAULT_OPTION_CODE_SEQUENCE
-    DUPLICATE_WINDOW_MS = 400
     REPLAN_REASON = "협업기저임무 재입력에 대한 재계획"
     REPLAN_LEVEL = 3
 
@@ -120,6 +120,7 @@ class InputRefreshReplanCoordinator:
         blocked: bool,
     ) -> tuple[dict[str, Any] | None, list[str]]:
         logs: list[str] = []
+        config = get_input_refresh_settings()
         if blocked:
             return None, logs
         if system_mode not in (3, 4):
@@ -144,7 +145,8 @@ class InputRefreshReplanCoordinator:
             and current_signature == self._state.last_dispatched_signature
         ):
             last_ms = self._state.last_dispatched_ms
-            if last_ms is not None and (now_ms - last_ms) < int(self.DUPLICATE_WINDOW_MS):
+            duplicate_window_ms = int(config.get("duplicate_window_ms", 400))
+            if last_ms is not None and (now_ms - last_ms) < duplicate_window_ms:
                 return None, logs
 
         replan_payload = self._build_replan_payload(package_id, input_ids)

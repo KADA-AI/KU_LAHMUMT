@@ -10,6 +10,7 @@ import re
 import time
 import traceback
 from pathlib import Path
+from typing import Callable
 
 os.environ["KU_ROLE"] = "monitoring"
 
@@ -142,7 +143,12 @@ from modules.common import db_paths
 from modules.common import agent_status_snapshot
 from modules.common.fusion_files import copy_file_with_retry
 from modules.monitoring.gui.tabs.mission_schedule_tab import MissionScheduleTab
-from modules.monitoring.gui.tabs.monitoring_visualization_tab import MonitoringVisualizationTab
+from modules.monitoring.gui.tabs.quality_monitor_tab import QualityMonitorTab
+from modules.monitoring.gui.tabs.replan_management_tab import ReplanManagementTab
+from modules.monitoring.gui.tabs.monitoring_visualization_tab import (
+    MonitoringVisualizationTab,
+    RealtimeRiskPredictionTab,
+)
 from modules.monitoring.gui.tabs.turn_radius_monitor_tab import TurnRadiusMonitorTab
 from modules.monitoring.logic.init_replan import (
     allocate_mission_plan_ids,
@@ -164,9 +170,17 @@ from modules.monitoring.logic.collab_reexecute import CollabReexecuteCoordinator
 from modules.monitoring.logic.fuel_warning import FuelWarningCoordinator
 from modules.monitoring.logic.forced_command_replan import ForcedCommandReplanCoordinator
 from modules.monitoring.logic.imaging_schedule_replan import ImagingScheduleReplanCoordinator
+from modules.monitoring.logic.next_collab_replan import NextCollabMissionReplanCoordinator
+from modules.monitoring.logic.quality_speed_replan import QualitySpeedReplanCoordinator
 from modules.monitoring.logic.input_refresh_replan import InputRefreshReplanCoordinator
 from modules.monitoring.logic.path_deviation_replan import PathDeviationReplanCoordinator
 from modules.monitoring.logic.prior_mission_replan import PriorMissionReplanCoordinator
+from modules.monitoring.logic.replan_runtime_settings import (
+    get_dl_risk_settings,
+    get_input_refresh_settings,
+    get_replan_toggle,
+    update_replan_toggle,
+)
 from modules.monitoring.logic.rtb_replan import RtbReplanCoordinator
 from modules.monitoring.logic.target_detection_replan import TargetDetectionCoordinator
 from modules.monitoring.logic.target_info import mark_targets_as_ignored
@@ -290,13 +304,14 @@ class MainWindow(QMainWindow):
         self._last_0501_send_monotonic = 0.0
         self._last_0501_watchdog_state = "init"
         self._current_mission_plan_id: int | None = None
-        self._sent_notice_keys: set[tuple[int | None, str]] = set()
+        self._active_0401_notice_keys: set[tuple[int, str]] = set()
         self._sent_0502_plans: set[int] = set()
         self._replan_option_meta_by_plan_id: dict[int, dict[str, object]] = {}
         self._availability_base_ids: set[int] = set()
         self._forced_availability_override: dict[int, bool] = {}
         self._rtb_availability_override: dict[int, bool] = {}
         self._availability_seen: bool = False
+        self._last_0201_type_warning_key: tuple[tuple[str, ...], tuple[str, ...]] | None = None
         self._dl_enabled = False
         self._dl_visual_enabled = False
         self._dl_debug = False
@@ -309,9 +324,18 @@ class MainWindow(QMainWindow):
         self._dl_replan_last_ts = 0.0
         self._dl_timer = None
         self._dl_lock = threading.Lock()
-        self._path_deviation_trigger_enabled = False
-        self._schedule_replan_trigger_enabled = False
-        self._fuel_threshold_logic_enabled = False
+        self._input_refresh_replan_enabled = get_replan_toggle("input_refresh", True)
+        self._prior_mission_replan_enabled = get_replan_toggle("prior_mission", True)
+        self._target_detection_replan_enabled = get_replan_toggle("target_detection", True)
+        self._forced_command_replan_enabled = get_replan_toggle("forced_command", True)
+        self._rtb_replan_enabled = get_replan_toggle("rtb", True)
+        self._path_deviation_trigger_enabled = get_replan_toggle("path_deviation", True)
+        self._schedule_replan_trigger_enabled = get_replan_toggle("imaging_schedule", False)
+        self._next_collab_replan_trigger_enabled = get_replan_toggle("next_collab", False)
+        self._fuel_threshold_logic_enabled = get_replan_toggle("fuel_threshold", False)
+        self._quality_monitor_enabled = get_replan_toggle("quality_monitor", True)
+        self._quality_speed_replan_enabled = get_replan_toggle("quality_speed", False)
+        self._dl_replan_user_enabled = get_replan_toggle("dl_risk", False)
         self._init_0501_watchdog()
 
         tabs = QTabWidget()
@@ -328,8 +352,37 @@ class MainWindow(QMainWindow):
         self._schedule_tab.set_path_trigger_enabled(self._path_deviation_trigger_enabled)
         self._schedule_tab.set_schedule_trigger_toggle_callback(self._on_schedule_replan_trigger_toggled)
         self._schedule_tab.set_schedule_trigger_enabled(self._schedule_replan_trigger_enabled)
+        self._schedule_tab.set_next_collab_trigger_toggle_callback(self._on_next_collab_replan_trigger_toggled)
+        self._schedule_tab.set_next_collab_trigger_enabled(self._next_collab_replan_trigger_enabled)
         self._schedule_tab.set_fuel_threshold_toggle_callback(self._on_fuel_threshold_logic_toggled)
         self._schedule_tab.set_fuel_threshold_enabled(self._fuel_threshold_logic_enabled)
+        self._dl_risk_tab = RealtimeRiskPredictionTab()
+        self._replan_management_tab = ReplanManagementTab()
+        self._replan_management_tab.set_log_callback(self._append_log_line)
+        self._quality_tab = QualityMonitorTab()
+        self._quality_tab.set_log_callback(self._append_log_line)
+        self._quality_tab.set_monitor_toggle_callback(self._on_quality_monitor_toggled)
+        self._quality_tab.set_replan_toggle_callback(self._on_quality_speed_replan_toggled)
+        self._quality_tab.set_monitor_enabled(self._quality_monitor_enabled)
+        self._quality_tab.set_replan_enabled(self._quality_speed_replan_enabled)
+        self._replan_management_tab.set_all_toggle_callbacks(self._build_replan_management_toggle_callbacks())
+        self._replan_management_tab.set_all_toggle_states(
+            {
+                "input_refresh": self._input_refresh_replan_enabled,
+                "prior_mission": self._prior_mission_replan_enabled,
+                "dl_risk": self._dl_replan_user_enabled,
+                "target_detection": self._target_detection_replan_enabled,
+                "forced_command": self._forced_command_replan_enabled,
+                "rtb": self._rtb_replan_enabled,
+                "path_deviation": self._path_deviation_trigger_enabled,
+                "quality_monitor": self._quality_monitor_enabled,
+                "quality_speed": self._quality_speed_replan_enabled,
+                "imaging_schedule": self._schedule_replan_trigger_enabled,
+                "next_collab": self._next_collab_replan_trigger_enabled,
+                "fuel_threshold": self._fuel_threshold_logic_enabled,
+            },
+            emit=False,
+        )
         self._reexecute_coord = CollabReexecuteCoordinator(
             now_fn=_now_ms_since_2000,
             logger=self._append_log_line,
@@ -360,14 +413,25 @@ class MainWindow(QMainWindow):
             now_fn=_now_ms_since_2000,
             logger=self._append_log_line,
         )
+        self._next_collab_replan_coord = NextCollabMissionReplanCoordinator(
+            now_fn=_now_ms_since_2000,
+            logger=self._append_log_line,
+        )
         self._imaging_schedule_coord = ImagingScheduleReplanCoordinator(
             now_fn=_now_ms_since_2000,
             logger=self._append_log_line,
         )
+        self._quality_speed_coord = QualitySpeedReplanCoordinator(
+            now_fn=_now_ms_since_2000,
+            logger=self._append_log_line,
+        )
+        self._replan_management_tab_index = tabs.addTab(self._replan_management_tab, "임무 재계획 관리")
         self._viz_tab_index = tabs.addTab(self._viz_tab, "모니터링 시각화")
+        self._dl_risk_tab_index = tabs.addTab(self._dl_risk_tab, "실시간 위험도 예측")
         self._schedule_tab_index = tabs.addTab(self._schedule_tab, "스케줄 모니터")
+        self._quality_tab_index = tabs.addTab(self._quality_tab, "촬영품질")
         self._turn_radius_tab = TurnRadiusMonitorTab()
-        self._turn_radius_tab_index = tabs.addTab(self._turn_radius_tab, "0401 선회 모니터")
+        self._turn_radius_tab_index = tabs.addTab(self._turn_radius_tab, "경로추종 모니터링")
         tabs.currentChanged.connect(self._on_tab_changed)
         self._on_tab_changed(tabs.currentIndex())
 
@@ -455,18 +519,90 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
+    def _persist_replan_toggle(self, key: str, enabled: bool) -> None:
+        try:
+            update_replan_toggle(str(key), bool(enabled))
+        except Exception as exc:
+            self._append_log_line(f"[REPLANCFG] toggle persist failed ({key}): {exc}")
+
+    def _sync_replan_management_toggle(self, key: str, enabled: bool) -> None:
+        tab = getattr(self, "_replan_management_tab", None)
+        if tab is None or not hasattr(tab, "set_toggle_state"):
+            return
+        try:
+            tab.set_toggle_state(str(key), bool(enabled), emit=False)
+        except Exception:
+            pass
+
+    def _build_replan_management_toggle_callbacks(self) -> dict[str, Callable[[bool, dict[str, Any]], None]]:
+        return {
+            "input_refresh": lambda enabled, _state: self._on_input_refresh_replan_toggled(enabled),
+            "prior_mission": lambda enabled, _state: self._on_prior_mission_replan_toggled(enabled),
+            "dl_risk": lambda enabled, _state: self._on_dl_risk_replan_toggled(enabled),
+            "target_detection": lambda enabled, _state: self._on_target_detection_replan_toggled(enabled),
+            "forced_command": lambda enabled, _state: self._on_forced_command_replan_toggled(enabled),
+            "rtb": lambda enabled, _state: self._on_rtb_replan_toggled(enabled),
+            "path_deviation": lambda enabled, _state: self._on_path_deviation_trigger_toggled(enabled),
+            "quality_monitor": lambda enabled, _state: self._on_quality_monitor_toggled(enabled),
+            "quality_speed": lambda enabled, _state: self._on_quality_speed_replan_toggled(enabled),
+            "imaging_schedule": lambda enabled, _state: self._on_schedule_replan_trigger_toggled(enabled),
+            "next_collab": lambda enabled, _state: self._on_next_collab_replan_trigger_toggled(enabled),
+            "fuel_threshold": lambda enabled, _state: self._on_fuel_threshold_logic_toggled(enabled),
+        }
+
     def _on_path_deviation_trigger_toggled(self, enabled: bool) -> None:
         self._path_deviation_trigger_enabled = bool(enabled)
+        self._sync_replan_management_toggle("path_deviation", self._path_deviation_trigger_enabled)
+        schedule_tab = getattr(self, "_schedule_tab", None)
+        if schedule_tab is not None and hasattr(schedule_tab, "set_path_trigger_enabled"):
+            try:
+                if bool(schedule_tab._path_trigger_enabled) != self._path_deviation_trigger_enabled:  # type: ignore[attr-defined]
+                    schedule_tab.set_path_trigger_enabled(self._path_deviation_trigger_enabled)
+            except Exception:
+                pass
+        self._persist_replan_toggle("path_deviation", self._path_deviation_trigger_enabled)
         state_text = "ON" if self._path_deviation_trigger_enabled else "OFF"
         self._append_log_line(f"[PATHDEV] monitoring trigger toggled -> {state_text}")
 
     def _on_schedule_replan_trigger_toggled(self, enabled: bool) -> None:
         self._schedule_replan_trigger_enabled = bool(enabled)
+        self._sync_replan_management_toggle("imaging_schedule", self._schedule_replan_trigger_enabled)
+        schedule_tab = getattr(self, "_schedule_tab", None)
+        if schedule_tab is not None and hasattr(schedule_tab, "set_schedule_trigger_enabled"):
+            try:
+                if bool(schedule_tab._schedule_trigger_enabled) != self._schedule_replan_trigger_enabled:  # type: ignore[attr-defined]
+                    schedule_tab.set_schedule_trigger_enabled(self._schedule_replan_trigger_enabled)
+            except Exception:
+                pass
+        self._persist_replan_toggle("imaging_schedule", self._schedule_replan_trigger_enabled)
         state_text = "ON" if self._schedule_replan_trigger_enabled else "OFF"
         self._append_log_line(f"[SCHED] monitoring trigger toggled -> {state_text}")
 
+    def _on_next_collab_replan_trigger_toggled(self, enabled: bool) -> None:
+        self._next_collab_replan_trigger_enabled = bool(enabled)
+        self._sync_replan_management_toggle("next_collab", self._next_collab_replan_trigger_enabled)
+        schedule_tab = getattr(self, "_schedule_tab", None)
+        if schedule_tab is not None and hasattr(schedule_tab, "set_next_collab_trigger_enabled"):
+            try:
+                if bool(schedule_tab._next_collab_trigger_enabled) != self._next_collab_replan_trigger_enabled:  # type: ignore[attr-defined]
+                    schedule_tab.set_next_collab_trigger_enabled(self._next_collab_replan_trigger_enabled)
+            except Exception:
+                pass
+        self._persist_replan_toggle("next_collab", self._next_collab_replan_trigger_enabled)
+        state_text = "ON" if self._next_collab_replan_trigger_enabled else "OFF"
+        self._append_log_line(f"[NEXTCOLLAB] monitoring trigger toggled -> {state_text}")
+
     def _on_fuel_threshold_logic_toggled(self, enabled: bool) -> None:
         self._fuel_threshold_logic_enabled = bool(enabled)
+        self._sync_replan_management_toggle("fuel_threshold", self._fuel_threshold_logic_enabled)
+        schedule_tab = getattr(self, "_schedule_tab", None)
+        if schedule_tab is not None and hasattr(schedule_tab, "set_fuel_threshold_enabled"):
+            try:
+                if bool(schedule_tab._fuel_threshold_enabled) != self._fuel_threshold_logic_enabled:  # type: ignore[attr-defined]
+                    schedule_tab.set_fuel_threshold_enabled(self._fuel_threshold_logic_enabled)
+            except Exception:
+                pass
+        self._persist_replan_toggle("fuel_threshold", self._fuel_threshold_logic_enabled)
         fuel_coord = getattr(self, "_fuel_coord", None)
         if fuel_coord is not None and hasattr(fuel_coord, "set_threshold_logic_enabled"):
             try:
@@ -477,12 +613,96 @@ class MainWindow(QMainWindow):
         mode_text = "10/20% threshold + 0401" if self._fuel_threshold_logic_enabled else "0401 fuelWarning only"
         self._append_log_line(f"[FUEL] threshold auto-judge toggled -> {state_text} ({mode_text})")
 
+    def _on_quality_monitor_toggled(self, enabled: bool) -> None:
+        self._quality_monitor_enabled = bool(enabled)
+        self._sync_replan_management_toggle("quality_monitor", self._quality_monitor_enabled)
+        quality_tab = getattr(self, "_quality_tab", None)
+        if quality_tab is not None and hasattr(quality_tab, "set_monitor_enabled"):
+            try:
+                if bool(quality_tab.is_monitor_enabled()) != self._quality_monitor_enabled:
+                    quality_tab.set_monitor_enabled(self._quality_monitor_enabled)
+            except Exception:
+                pass
+        self._persist_replan_toggle("quality_monitor", self._quality_monitor_enabled)
+        state_text = "ON" if self._quality_monitor_enabled else "OFF"
+        self._append_log_line(f"[QUALITY] monitoring trigger toggled -> {state_text}")
+
+    def _on_quality_speed_replan_toggled(self, enabled: bool) -> None:
+        self._quality_speed_replan_enabled = bool(enabled)
+        self._sync_replan_management_toggle("quality_speed", self._quality_speed_replan_enabled)
+        quality_tab = getattr(self, "_quality_tab", None)
+        if quality_tab is not None and hasattr(quality_tab, "set_replan_enabled"):
+            try:
+                if bool(quality_tab.is_replan_enabled()) != self._quality_speed_replan_enabled:
+                    quality_tab.set_replan_enabled(self._quality_speed_replan_enabled)
+            except Exception:
+                pass
+        self._persist_replan_toggle("quality_speed", self._quality_speed_replan_enabled)
+        state_text = "ON" if self._quality_speed_replan_enabled else "OFF"
+        self._append_log_line(f"[QUALITY] speed replan trigger toggled -> {state_text}")
+
+    def _on_input_refresh_replan_toggled(self, enabled: bool) -> None:
+        self._input_refresh_replan_enabled = bool(enabled)
+        self._sync_replan_management_toggle("input_refresh", self._input_refresh_replan_enabled)
+        self._persist_replan_toggle("input_refresh", self._input_refresh_replan_enabled)
+        state_text = "ON" if self._input_refresh_replan_enabled else "OFF"
+        self._append_log_line(f"[REINPUT] monitoring trigger toggled -> {state_text}")
+
+    def _on_prior_mission_replan_toggled(self, enabled: bool) -> None:
+        self._prior_mission_replan_enabled = bool(enabled)
+        self._sync_replan_management_toggle("prior_mission", self._prior_mission_replan_enabled)
+        self._persist_replan_toggle("prior_mission", self._prior_mission_replan_enabled)
+        state_text = "ON" if self._prior_mission_replan_enabled else "OFF"
+        self._append_log_line(f"[PRIOR] monitoring trigger toggled -> {state_text}")
+
+    def _on_target_detection_replan_toggled(self, enabled: bool) -> None:
+        self._target_detection_replan_enabled = bool(enabled)
+        self._sync_replan_management_toggle("target_detection", self._target_detection_replan_enabled)
+        self._persist_replan_toggle("target_detection", self._target_detection_replan_enabled)
+        state_text = "ON" if self._target_detection_replan_enabled else "OFF"
+        self._append_log_line(f"[0402] target detection trigger toggled -> {state_text}")
+
+    def _on_forced_command_replan_toggled(self, enabled: bool) -> None:
+        self._forced_command_replan_enabled = bool(enabled)
+        self._sync_replan_management_toggle("forced_command", self._forced_command_replan_enabled)
+        self._persist_replan_toggle("forced_command", self._forced_command_replan_enabled)
+        if not self._forced_command_replan_enabled:
+            self._forced_availability_override = {}
+            try:
+                self._apply_forced_availability(stage="0802-toggle")
+            except Exception:
+                pass
+        state_text = "ON" if self._forced_command_replan_enabled else "OFF"
+        self._append_log_line(f"[0802] forced-command trigger toggled -> {state_text}")
+
+    def _on_rtb_replan_toggled(self, enabled: bool) -> None:
+        self._rtb_replan_enabled = bool(enabled)
+        self._sync_replan_management_toggle("rtb", self._rtb_replan_enabled)
+        self._persist_replan_toggle("rtb", self._rtb_replan_enabled)
+        if not self._rtb_replan_enabled:
+            self._rtb_availability_override = {}
+            try:
+                self._apply_forced_availability(stage="rtb-toggle")
+            except Exception:
+                pass
+        state_text = "ON" if self._rtb_replan_enabled else "OFF"
+        self._append_log_line(f"[RTB] monitoring trigger toggled -> {state_text}")
+
+    def _on_dl_risk_replan_toggled(self, enabled: bool) -> None:
+        self._dl_replan_user_enabled = bool(enabled)
+        self._sync_replan_management_toggle("dl_risk", self._dl_replan_user_enabled)
+        self._persist_replan_toggle("dl_risk", self._dl_replan_user_enabled)
+        self._dl_replan_enabled = bool(self._dl_enabled and self._dl_replan_user_enabled)
+        self._update_dl_visual_panel(replan_enabled=self._dl_replan_enabled)
+        state_text = "ON" if self._dl_replan_enabled else "OFF"
+        self._append_log_line(f"[DL] risk replan trigger toggled -> {state_text}")
+
     def _update_dl_visual_panel(self, **kwargs) -> None:
-        viz = getattr(self, "_viz_tab", None)
-        if viz is None or not hasattr(viz, "update_dl_panel"):
+        tab = getattr(self, "_dl_risk_tab", None)
+        if tab is None or not hasattr(tab, "update_dl_panel"):
             return
         try:
-            viz.update_dl_panel(**kwargs)
+            tab.update_dl_panel(**kwargs)
         except Exception:
             pass
 
@@ -497,11 +717,12 @@ class MainWindow(QMainWindow):
             or self._dl_visual_enabled
         )
         self._dl_debug = self._env_true("MSM_DNN_DEBUG")
-        self._dl_replan_enabled = (
-            self._dl_enabled
-            and self._env_true("MSM_DNN_REPLAN_ENABLE")
-            and not self._env_true("MSM_DNN_REPLAN_DISABLE")
-        )
+        if not hasattr(self, "_dl_replan_user_enabled"):
+            self._dl_replan_user_enabled = get_replan_toggle(
+                "dl_risk",
+                self._env_true("MSM_DNN_REPLAN_ENABLE") and not self._env_true("MSM_DNN_REPLAN_DISABLE"),
+            )
+        self._dl_replan_enabled = bool(self._dl_enabled and self._dl_replan_user_enabled)
         self._update_dl_visual_panel(
             status="DISABLED",
             enabled=self._dl_enabled,
@@ -639,7 +860,7 @@ class MainWindow(QMainWindow):
             return
 
         now = time.time()
-        cooldown = float(os.getenv("MSM_DNN_REPLAN_COOLDOWN_SEC", "10"))
+        cooldown = float(get_dl_risk_settings().get("cooldown_sec", 10.0))
         if self._dl_replan_last_ts and (now - self._dl_replan_last_ts) < cooldown:
             if self._dl_debug:
                 elapsed = now - self._dl_replan_last_ts
@@ -761,6 +982,12 @@ class MainWindow(QMainWindow):
         try:
             if viz is not None and hasattr(viz, "set_ui_updates_enabled"):
                 viz.set_ui_updates_enabled(index == getattr(self, "_viz_tab_index", -1))
+            dl_tab = getattr(self, "_dl_risk_tab", None)
+            if dl_tab is not None and hasattr(dl_tab, "set_ui_updates_enabled"):
+                dl_tab.set_ui_updates_enabled(index == getattr(self, "_dl_risk_tab_index", -1))
+            quality_tab = getattr(self, "_quality_tab", None)
+            if quality_tab is not None and hasattr(quality_tab, "set_ui_updates_enabled"):
+                quality_tab.set_ui_updates_enabled(index == getattr(self, "_quality_tab_index", -1))
             turn_tab = getattr(self, "_turn_radius_tab", None)
             if turn_tab is not None and hasattr(turn_tab, "set_ui_updates_enabled"):
                 turn_tab.set_ui_updates_enabled(index == getattr(self, "_turn_radius_tab_index", -1))
@@ -1030,6 +1257,8 @@ class MainWindow(QMainWindow):
             self._append_log_line("[0102] TX table row not found")
             return False
         try:
+            if hasattr(tab, "send_tx_row"):
+                return bool(tab.send_tx_row(row, interactive=False))
             tab._on_tx_button_clicked(row)
             return True
         except Exception as exc:
@@ -1074,6 +1303,7 @@ class MainWindow(QMainWindow):
         if tab is None or not hasattr(tab, "send_replan_request"):
             self._append_log_line("[0902] auto send hook missing")
             return
+        self._seed_initial_availability_from_input_plan()
         mission_ids = collect_input_mission_ids()
         if not mission_ids:
             self._append_log_line("[0902] inputMissionID list empty; abort")
@@ -1092,6 +1322,19 @@ class MainWindow(QMainWindow):
             self._append_log_line("[0902] auto replan request sent (init plan mode)")
         else:
             self._append_log_line("[0902] auto replan request failed")
+
+    def _seed_initial_availability_from_input_plan(self) -> None:
+        available_ids = collect_available_aircraft_ids(None)
+        if not available_ids:
+            self._append_log_line("[STATUS] init availability seed skipped: InputMissionPlan aircraft list empty")
+            return
+        self._availability_base_ids = {int(aid) for aid in available_ids if int(aid) > 0}
+        self._forced_availability_override = {}
+        self._rtb_availability_override = {}
+        self._availability_seen = True
+        self._apply_forced_availability(stage="0201")
+        summary = ", ".join(str(aid) for aid in sorted(self._availability_base_ids))
+        self._append_log_line(f"[STATUS] init availability seeded from InputMissionPlan: [{summary}]")
 
     def _find_tx_row(self, msg_id: str) -> int:
         tab = getattr(self, "_tab", None)
@@ -1326,37 +1569,144 @@ class MainWindow(QMainWindow):
                 else {},
                 "timestamp": payload.get("timestamp"),
             }
+        if not plan_ids:
+            for item in payload.get("missionPlanIDList") or []:
+                if isinstance(item, dict):
+                    value = item.get("missionPlanID")
+                else:
+                    value = item
+                try:
+                    plan_id = int(value)
+                except Exception:
+                    continue
+                plan_ids.append(plan_id)
+                self._replan_option_meta_by_plan_id[plan_id] = {
+                    "optionName": "",
+                    "replanLevel": payload.get("replanLevel"),
+                    "replanRequest": payload.get("replanRequest") or payload.get("replanReason"),
+                    "replanDetail": dict(payload.get("replanDetail") or {})
+                    if isinstance(payload.get("replanDetail"), dict)
+                    else {},
+                    "timestamp": payload.get("timestamp"),
+                }
         plan_summary = ", ".join(str(pid) for pid in plan_ids) if plan_ids else "-"
         self._append_log_line(
             f"[0902] replan request sent (level={level}, reason={reason}, planIds={plan_summary})"
         )
 
-    def _maybe_send_rtb_notice(self, payload: dict) -> None:
-        detail = payload.get("replanDetail")
-        if not isinstance(detail, dict):
-            return
-        if str(detail.get("trigger") or "").strip() != "0401":
-            return
-        if str(detail.get("rtbCause") or "").strip().lower() != "payload":
-            return
+    @staticmethod
+    def _format_aircraft_notice_prefix(aircraft_id: int | None) -> str:
         try:
-            aircraft_id = int(detail.get("aircraftID"))
+            aid = int(aircraft_id) if aircraft_id is not None else 0
         except Exception:
-            aircraft_id = None
-        notice_key = (aircraft_id, "payload_rtb")
-        if notice_key in self._sent_notice_keys:
-            return
-        if aircraft_id is not None and 4 <= aircraft_id <= 6:
-            aircraft_label = f"무인기 {aircraft_id - 3}번"
-        elif aircraft_id is not None and 1 <= aircraft_id <= 3:
-            aircraft_label = f"유인기 {aircraft_id}번"
-        elif aircraft_id is not None:
-            aircraft_label = f"항공기 {aircraft_id}번"
+            aid = 0
+        if 1 <= aid <= 3:
+            return f"유인기 {aid}번"
+        if 4 <= aid <= 6:
+            return f"무인기 {aid - 3}번"
+        if aid > 0:
+            return f"항공기 {aid}번"
+        return "미상 항공기"
+
+    def _format_datalink_notice_text(
+        self,
+        *,
+        manned_aircraft_id: int | None,
+        unmanned_aircraft_id: int | None,
+    ) -> str:
+        try:
+            manned_id = int(manned_aircraft_id) if manned_aircraft_id is not None else 0
+        except Exception:
+            manned_id = 0
+        try:
+            unmanned_id = int(unmanned_aircraft_id) if unmanned_aircraft_id is not None else 0
+        except Exception:
+            unmanned_id = 0
+        if 1 <= manned_id <= 3:
+            manned_label = f"유인기 {manned_id}"
         else:
-            aircraft_label = "해당 항공기"
-        notice_text = f"{aircraft_label} 임무장비 고장으로 재계획 요청"
-        self._send_0001_notice(notice_text)
-        self._sent_notice_keys.add(notice_key)
+            manned_label = self._format_aircraft_notice_prefix(manned_aircraft_id)
+        if 4 <= unmanned_id <= 6:
+            unmanned_label = f"무인기 {unmanned_id - 3}"
+        else:
+            unmanned_label = self._format_aircraft_notice_prefix(unmanned_aircraft_id)
+        return f"{manned_label} - {unmanned_label} 통신두절"
+
+    def _sync_0401_fault_notices(
+        self,
+        agent_states: list[dict[str, object]] | None,
+    ) -> None:
+        active_keys: set[tuple[int, str]] = set()
+        for state in agent_states or []:
+            if not isinstance(state, dict):
+                continue
+            try:
+                aircraft_id = int(state.get("aircraft_id"))
+            except Exception:
+                continue
+            if aircraft_id < 4 or aircraft_id > 6:
+                continue
+            if not self._is_aircraft_in_current_plan(aircraft_id):
+                continue
+
+            try:
+                health = int(state.get("health")) if state.get("health") is not None else None
+            except Exception:
+                health = None
+            try:
+                payload_health = (
+                    int(state.get("payload_health"))
+                    if state.get("payload_health") is not None
+                    else None
+                )
+            except Exception:
+                payload_health = None
+
+            if health == 2:
+                notice_key = (aircraft_id, "aircraft_fault")
+                active_keys.add(notice_key)
+                if notice_key not in self._active_0401_notice_keys:
+                    self._send_0001_notice(
+                        f"{self._format_aircraft_notice_prefix(aircraft_id)} 고장"
+                    )
+            elif payload_health == 2:
+                notice_key = (aircraft_id, "payload_fault")
+                active_keys.add(notice_key)
+                if notice_key not in self._active_0401_notice_keys:
+                    self._send_0001_notice(
+                        f"{self._format_aircraft_notice_prefix(aircraft_id)} 임무장비 고장"
+                    )
+
+            pair_statuses = state.get("datalink_connected_by_manned")
+            pair_notice_sent = False
+            if isinstance(pair_statuses, dict):
+                for raw_manned_id, connected in sorted(pair_statuses.items()):
+                    try:
+                        manned_aircraft_id = int(raw_manned_id)
+                    except Exception:
+                        continue
+                    if connected is not False:
+                        continue
+                    notice_key = (aircraft_id, f"communication_loss_{manned_aircraft_id}")
+                    active_keys.add(notice_key)
+                    if notice_key not in self._active_0401_notice_keys:
+                        self._send_0001_notice(
+                            self._format_datalink_notice_text(
+                                manned_aircraft_id=manned_aircraft_id,
+                                unmanned_aircraft_id=aircraft_id,
+                            )
+                        )
+                    pair_notice_sent = True
+
+            if not pair_notice_sent and state.get("datalink_connected") is False:
+                notice_key = (aircraft_id, "communication_loss")
+                active_keys.add(notice_key)
+                if notice_key not in self._active_0401_notice_keys:
+                    self._send_0001_notice(
+                        f"{self._format_aircraft_notice_prefix(aircraft_id)} 통신두절"
+                    )
+
+        self._active_0401_notice_keys = active_keys
 
     def _plan_option_meta(self, mission_plan_id: int) -> dict[str, object] | None:
         meta = self._replan_option_meta_by_plan_id.get(int(mission_plan_id))
@@ -1474,6 +1824,31 @@ class MainWindow(QMainWindow):
             else:
                 effective.discard(aid_int)
         return effective
+
+    def _bootstrap_availability_from_agent_states(
+        self,
+        agent_states: list[dict[str, object]] | None,
+    ) -> None:
+        if self._availability_base_ids:
+            return
+        derived = {
+            int(aid)
+            for aid in (collect_available_aircraft_ids(None) or [])
+            if int(aid) > 0
+        }
+        for state in agent_states or []:
+            if not isinstance(state, dict):
+                continue
+            try:
+                aircraft_id = int(state.get("aircraft_id"))
+            except Exception:
+                continue
+            if aircraft_id <= 0:
+                continue
+            derived.add(aircraft_id)
+        if not derived:
+            return
+        self._availability_base_ids = set(derived)
 
     def _availability_state_for(self, aircraft_id: int) -> bool | None:
         """Return True/False when availability is known; None when unknown."""
@@ -1712,6 +2087,14 @@ class MainWindow(QMainWindow):
     def _install_0401_listener(self) -> None:
         def _rx_0401(_msg_id: str, payload: object | None):
             try:
+                raw_latest = self._unwrap_payload(payload)
+                if raw_latest:
+                    last_raw = getattr(self, "_last_0401_raw", None)
+                    if last_raw is not None and raw_latest == last_raw:
+                        return
+                    self._last_0401_raw = raw_latest
+                    self._on_rx_0401(raw_latest)
+                    return
                 self._on_rx_0401(payload)
             except Exception:
                 pass
@@ -1772,6 +2155,14 @@ class MainWindow(QMainWindow):
     def _install_0803_listener(self) -> None:
         def _rx_0803(_msg_id: str, payload: object | None):
             try:
+                raw_latest = self._unwrap_payload(payload)
+                if raw_latest:
+                    last_raw = getattr(self, "_last_0803_raw", None)
+                    if last_raw is not None and raw_latest == last_raw:
+                        return
+                    self._last_0803_raw = raw_latest
+                    self._on_rx_0803(raw_latest)
+                    return
                 self._on_rx_0803(payload)
             except Exception:
                 pass
@@ -1786,7 +2177,7 @@ class MainWindow(QMainWindow):
         ts, mpid, source, _body = extract_0903_info(payload)
         if mpid != self._current_mission_plan_id:
             self._current_mission_plan_id = mpid
-            self._sent_notice_keys.clear()
+            self._active_0401_notice_keys.clear()
         if mpid is None:
             return
         viz = getattr(self, "_viz_tab", None)
@@ -1801,6 +2192,18 @@ class MainWindow(QMainWindow):
         try:
             if schedule_tab is not None and hasattr(schedule_tab, "update_0903"):
                 schedule_tab.update_0903(timestamp_ms=ts, mission_plan_id=mpid, source=source)
+        except Exception:
+            pass
+        quality_tab = getattr(self, "_quality_tab", None)
+        try:
+            if quality_tab is not None and hasattr(quality_tab, "update_0903"):
+                quality_tab.update_0903(timestamp_ms=ts, mission_plan_id=mpid, source=source)
+        except Exception:
+            pass
+        try:
+            quality_speed_coord = getattr(self, "_quality_speed_coord", None)
+            if quality_speed_coord is not None and hasattr(quality_speed_coord, "apply_mission_plan_decision"):
+                quality_speed_coord.apply_mission_plan_decision(mpid)
         except Exception:
             pass
 
@@ -1922,7 +2325,7 @@ class MainWindow(QMainWindow):
 
         if plan_id != self._current_mission_plan_id:
             self._current_mission_plan_id = plan_id
-            self._sent_notice_keys.clear()
+            self._active_0401_notice_keys.clear()
 
         suffix = " (pending resolved)" if pending_resolved else ""
         src_text = f", source={source}" if source else ""
@@ -1957,16 +2360,124 @@ class MainWindow(QMainWindow):
                     schedule_tab.update_0903(timestamp_ms=timestamp_ms, mission_plan_id=plan_id, source=source)
             except Exception as exc:
                 self._append_log_line(f"[0702] schedule tab apply failed: {exc}")
+        quality_tab = getattr(self, "_quality_tab", None)
+        if quality_tab is not None:
+            try:
+                if hasattr(quality_tab, "apply_mission_plan_decision"):
+                    quality_tab.apply_mission_plan_decision(mission_plan_id=plan_id)
+                elif hasattr(quality_tab, "update_0903"):
+                    quality_tab.update_0903(timestamp_ms=timestamp_ms, mission_plan_id=plan_id, source=source)
+            except Exception as exc:
+                self._append_log_line(f"[0702] quality tab apply failed: {exc}")
+        try:
+            quality_speed_coord = getattr(self, "_quality_speed_coord", None)
+            if quality_speed_coord is not None and hasattr(quality_speed_coord, "apply_mission_plan_decision"):
+                quality_speed_coord.apply_mission_plan_decision(plan_id)
+        except Exception as exc:
+            self._append_log_line(f"[0702] quality-speed coord apply failed: {exc}")
 
         self._last_0702_key = decision_key
         self._clear_pending_0702()
         return True
 
+    @staticmethod
+    def _infer_input_mission_type(detail: object) -> int | None:
+        if not isinstance(detail, dict):
+            return None
+        if detail.get("lineList"):
+            return 1
+        if detail.get("areaList"):
+            return 2
+        return None
+
+    @staticmethod
+    def _format_0201_type_zero_id(mission_id: object, inferred_type: int | None) -> str:
+        mid_text = str(mission_id) if mission_id is not None else "?"
+        if int(inferred_type or 0) == 1:
+            return f"{mid_text}(line)"
+        if int(inferred_type or 0) == 2:
+            return f"{mid_text}(area)"
+        return mid_text
+
+    @staticmethod
+    def _summarize_notice_ids(values: list[str], limit: int = 5) -> str:
+        if not values:
+            return "-"
+        summary = ", ".join(values[:limit])
+        remain = len(values) - limit
+        if remain > 0:
+            summary += f" 외 {remain}건"
+        return summary
+
+    def _warn_0201_type_zero(self, payload: object | None) -> None:
+        raw_body = parse_payload(payload)
+        if not raw_body:
+            raw_body = parse_payload(self._unwrap_payload(payload))
+        if not isinstance(raw_body, dict):
+            return
+        mission_list = raw_body.get("inputMissionList")
+        if not isinstance(mission_list, list):
+            return
+
+        auto_fixed_ids: list[str] = []
+        invalid_ids: list[str] = []
+        for mission in mission_list:
+            if not isinstance(mission, dict):
+                continue
+            if bool(mission.get("isDone")):
+                continue
+            mtype_raw = mission.get("inputMissionType")
+            try:
+                mission_type = int(mtype_raw)
+            except Exception:
+                mission_type = None
+            if mission_type not in (None, 0):
+                continue
+            mission_id = mission.get("inputMissionID")
+            inferred_type = self._infer_input_mission_type(mission.get("missionDetail"))
+            if inferred_type is not None:
+                auto_fixed_ids.append(
+                    self._format_0201_type_zero_id(mission_id, inferred_type)
+                )
+            else:
+                invalid_ids.append(str(mission_id) if mission_id is not None else "?")
+
+        warning_key = (tuple(auto_fixed_ids), tuple(invalid_ids))
+        if not auto_fixed_ids and not invalid_ids:
+            self._last_0201_type_warning_key = None
+            return
+        if warning_key == getattr(self, "_last_0201_type_warning_key", None):
+            return
+        self._last_0201_type_warning_key = warning_key
+
+        if auto_fixed_ids:
+            notice = (
+                "0201 임무 type 이상 경고: "
+                + self._summarize_notice_ids(auto_fixed_ids)
+                + " -> 임무계획은 계속 진행하며 도형 기준 자동보정"
+            )
+            self._append_log_line("[WARN] " + notice)
+            self._send_0001_notice(notice)
+
+        if invalid_ids:
+            notice = (
+                "0201 임무 type 경고: "
+                + self._summarize_notice_ids(invalid_ids)
+                + " -> 임무계획은 계속 진행하되 후속 검증 필요"
+            )
+            self._append_log_line("[WARN] " + notice)
+            self._send_0001_notice(notice)
+
     def _on_rx_0201(self, payload: object | None, *, is_new_arrival: bool = True) -> None:
+        try:
+            self._warn_0201_type_zero(payload)
+        except Exception as exc:
+            self._append_log_line(f"[WARN] 0201 type warning check failed: {exc}")
         available_ids = collect_available_aircraft_ids(payload)
-        self._availability_base_ids = {int(aid) for aid in available_ids or []}
-        self._availability_seen = True
-        self._apply_forced_availability(stage="0201")
+        if available_ids:
+            self._availability_base_ids = {int(aid) for aid in available_ids or []}
+            self._availability_seen = True
+            self._apply_forced_availability(stage="0201")
         reexecute_active = False
         try:
             coord = getattr(self, "_reexecute_coord", None)
@@ -1993,7 +2504,13 @@ class MainWindow(QMainWindow):
             refresh_coord = getattr(self, "_input_refresh_coord", None)
             if refresh_coord is None:
                 return
-            if reexecute_active:
+            input_refresh_cfg = get_input_refresh_settings()
+            block_when_reexecute_active = bool(input_refresh_cfg.get("block_when_reexecute_active", True))
+            refresh_blocked = bool(reexecute_active and block_when_reexecute_active)
+            if not self._input_refresh_replan_enabled:
+                self._append_log_line("[REINPUT] monitoring trigger OFF -> skip 0902 replan on 0201")
+                return
+            if refresh_blocked:
                 self._append_log_line("[REINPUT] skipped: reexecute-wait mode is active")
             elif self._system_mode_code not in (3, 4):
                 self._append_log_line(
@@ -2002,7 +2519,7 @@ class MainWindow(QMainWindow):
             replan_payload, logs = refresh_coord.on_input_plan(
                 payload,
                 system_mode=self._system_mode_code,
-                blocked=reexecute_active,
+                blocked=refresh_blocked,
             )
             for line in logs:
                 self._append_log_line(line)
@@ -2015,6 +2532,9 @@ class MainWindow(QMainWindow):
         try:
             coord = getattr(self, "_prior_mission_coord", None)
             if coord is None:
+                return
+            if not self._prior_mission_replan_enabled:
+                self._append_log_line("[PRIOR] monitoring trigger OFF -> skip 0902 replan on 0202")
                 return
             if self._system_mode_code not in (3, 4):
                 self._append_log_line(
@@ -2055,6 +2575,14 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         ts, states = extract_0401_agent_states(payload)
+        try:
+            self._bootstrap_availability_from_agent_states(states)
+        except Exception:
+            pass
+        try:
+            self._sync_0401_fault_notices(states)
+        except Exception as exc:
+            self._append_log_line(f"[0001] 0401 abnormal notice update failed: {exc}")
         fuel_state_map: dict[int, str] = {}
         try:
             fuel_coord = getattr(self, "_fuel_coord", None)
@@ -2071,6 +2599,7 @@ class MainWindow(QMainWindow):
             self._append_log_line(f"[0504] fuel warning update failed: {exc}")
         viz = getattr(self, "_viz_tab", None)
         schedule_tab = getattr(self, "_schedule_tab", None)
+        quality_tab = getattr(self, "_quality_tab", None)
         try:
             if viz is not None and hasattr(viz, "update_agent_status"):
                 viz.update_agent_status(
@@ -2089,6 +2618,15 @@ class MainWindow(QMainWindow):
                 )
         except Exception:
             pass
+        try:
+            if quality_tab is not None and hasattr(quality_tab, "update_agent_status"):
+                quality_tab.update_agent_status(
+                    timestamp_ms=ts,
+                    agent_states=states,
+                    fuel_state_map=fuel_state_map,
+                )
+        except Exception:
+            pass
         if viz is None or not hasattr(viz, "update_agent_status"):
             return
         try:
@@ -2099,7 +2637,7 @@ class MainWindow(QMainWindow):
             pass
         try:
             rtb_coord = getattr(self, "_rtb_replan_coord", None)
-            if rtb_coord is not None:
+            if rtb_coord is not None and self._rtb_replan_enabled:
                 forced_coord = getattr(self, "_forced_command_coord", None)
                 suppressed_aircraft = ()
                 if forced_coord is not None and hasattr(forced_coord, "get_rtb_suppressed_aircraft"):
@@ -2118,10 +2656,11 @@ class MainWindow(QMainWindow):
                 for line in logs:
                     self._append_log_line(line)
                 self._rtb_availability_override = rtb_coord.get_availability_overrides()
+                if self._rtb_availability_override:
+                    self._apply_forced_availability(stage="0401")
                 for body in replan_payloads:
                     if isinstance(body, dict):
                         self._send_0902(body)
-                        self._maybe_send_rtb_notice(body)
         except Exception as exc:
             self._append_log_line(f"[0902] rtb-on-0401 error: {exc}")
         path_dev_suppressed_aircraft: set[int] = set()
@@ -2154,6 +2693,35 @@ class MainWindow(QMainWindow):
                         self._send_0902(body)
         except Exception as exc:
             self._append_log_line(f"[0902] path-deviation-on-0401 error: {exc}")
+        quality_suppressed_aircraft: set[int] = set(path_dev_suppressed_aircraft)
+        try:
+            quality_coord = getattr(self, "_quality_speed_coord", None)
+            quality_monitor_enabled = bool(self._quality_monitor_enabled)
+            quality_replan_enabled = bool(self._quality_speed_replan_enabled)
+            if quality_coord is not None:
+                replan_payloads, logs = quality_coord.on_agent_states(
+                    states,
+                    enabled=(quality_monitor_enabled and quality_replan_enabled),
+                    system_mode=self._system_mode_code,
+                    current_mission_plan_id=self._current_mission_plan_id,
+                    aircraft_filter=self._is_aircraft_in_current_plan,
+                    suppressed_aircraft=quality_suppressed_aircraft,
+                )
+                for line in logs:
+                    self._append_log_line(line)
+                for body in replan_payloads:
+                    if isinstance(body, dict):
+                        detail = body.get("replanDetail")
+                        if isinstance(detail, dict):
+                            try:
+                                aid = int(detail.get("aircraftID"))
+                            except Exception:
+                                aid = None
+                            if aid is not None and aid > 0:
+                                quality_suppressed_aircraft.add(aid)
+                        self._send_0902(body)
+        except Exception as exc:
+            self._append_log_line(f"[0902] quality-speed-on-0401 error: {exc}")
         try:
             imaging_coord = getattr(self, "_imaging_schedule_coord", None)
             if imaging_coord is not None:
@@ -2163,7 +2731,7 @@ class MainWindow(QMainWindow):
                     system_mode=self._system_mode_code,
                     current_mission_plan_id=self._current_mission_plan_id,
                     aircraft_filter=self._is_aircraft_in_current_plan,
-                    suppressed_aircraft=path_dev_suppressed_aircraft,
+                    suppressed_aircraft=quality_suppressed_aircraft,
                 )
                 for line in logs:
                     self._append_log_line(line)
@@ -2182,6 +2750,9 @@ class MainWindow(QMainWindow):
         try:
             coord = getattr(self, "_target_detection_coord", None)
             if coord is None:
+                return
+            if not self._target_detection_replan_enabled:
+                self._append_log_line("[0402] monitoring trigger OFF -> skip 0902 replan on 0402")
                 return
             replan_payloads, logs = coord.on_situation_awareness(
                 payload,
@@ -2261,6 +2832,9 @@ class MainWindow(QMainWindow):
                     pass
             if coord is None:
                 return
+            if not self._forced_command_replan_enabled:
+                self._append_log_line("[0802] monitoring trigger OFF -> skip forced-command replan handling")
+                return
             replan_payloads, logs = coord.on_forced_command(
                 payload,
                 system_mode=self._system_mode_code,
@@ -2287,6 +2861,37 @@ class MainWindow(QMainWindow):
                     self._append_log_line(line)
         except Exception as exc:
             self._append_log_line(f"[0902] reexecute-on-0803 error: {exc}")
+
+        next_collab_trigger_enabled = bool(getattr(self, "_next_collab_replan_trigger_enabled", False))
+        if int(execute) == 1 and next_collab_trigger_enabled:
+            try:
+                coord = getattr(self, "_next_collab_replan_coord", None)
+                viz = getattr(self, "_viz_tab", None)
+                turn_tab = getattr(self, "_turn_radius_tab", None)
+                context_payload = None
+                if viz is not None and hasattr(viz, "build_execute_next_replan_context"):
+                    context_payload = viz.build_execute_next_replan_context()
+                turn_views = None
+                if turn_tab is not None and hasattr(turn_tab, "build_views"):
+                    turn_views = turn_tab.build_views()
+                if coord is not None:
+                    replan_payload, logs = coord.on_execute_next(
+                        context_payload,
+                        turn_views=turn_views,
+                        current_mission_plan_id=self._current_mission_plan_id,
+                        system_mode=self._system_mode_code,
+                    )
+                    for line in logs:
+                        self._append_log_line(line)
+                    if isinstance(replan_payload, dict):
+                        self._send_0902(replan_payload)
+                        return
+            except Exception as exc:
+                self._append_log_line(f"[0902] next-collab-on-0803 error: {exc}")
+            self._append_log_line("[NEXTCOLLAB] 0902 next-collab skipped -> falling back to normal execute=1 handling")
+        if int(execute) == 1 and not next_collab_trigger_enabled:
+            self._append_log_line("[NEXTCOLLAB] monitoring trigger OFF -> skip 0902 replan on 0803 execute=1")
+
         viz = getattr(self, "_viz_tab", None)
         if viz is None or not hasattr(viz, "handle_execute_command"):
             return
@@ -2800,7 +3405,7 @@ class MainWindow(QMainWindow):
     def _poll_forced_hold_deadlines(self) -> None:
         try:
             coord = getattr(self, "_forced_command_coord", None)
-            if coord is None:
+            if coord is None or not self._forced_command_replan_enabled:
                 return
             payloads, logs = coord.poll_due_holds(
                 system_mode=self._system_mode_code,

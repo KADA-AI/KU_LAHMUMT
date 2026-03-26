@@ -19,6 +19,7 @@
     data-dem-available="__DEM_AVAILABLE__"
     data-dem-tile-size="__DEM_TILE_SIZE__"
     data-dem-max-zoom="__DEM_MAX_ZOOM__"
+    data-dem-bounds="__DEM_BOUNDS__"
     data-dem-encoding="__DEM_ENCODING__"
     data-dem-exaggeration="__DEM_EXAGGERATION__"
     data-dem-pitch-threshold="__DEM_PITCH_THRESHOLD__"
@@ -45,6 +46,9 @@
     <div class="toolbar">
       <div class="toolbar-title">SIM MAP</div>
       <div class="toolbar-time" id="sim-time">T+00:00:00</div>
+      <button id="toggle-sweep-lines" class="toggle is-active" type="button" aria-pressed="true">
+        Sweep Lines
+      </button>
       <button id="toggle-buildings" class="toggle">3D Buildings</button>
     </div>
     <div id="mission-legend" class="mission-legend" aria-hidden="true">
@@ -69,6 +73,19 @@
           <span class="mission-legend-dot"></span>UAV3
         </div>
       </div>
+    </div>
+    <div class="monitoring-card">
+      <div class="monitoring-copy">
+        <div class="monitoring-eyebrow">Visual Mode</div>
+        <div class="monitoring-title">Monitoring</div>
+        <div class="monitoring-meta" id="monitoring-meta">SIM playback</div>
+      </div>
+      <label class="monitoring-switch" for="monitoring-toggle" aria-label="Toggle monitoring mode">
+        <input id="monitoring-toggle" type="checkbox" />
+        <span class="monitoring-switch-track">
+          <span class="monitoring-switch-thumb"></span>
+        </span>
+      </label>
     </div>
     <div id="left-controls" class="panel panel-left">
       <button type="button" class="ui-btn ui-btn-text" data-agent="LAH1">
@@ -255,6 +272,20 @@
         <span class="scenario-panel-title">Scenario</span>
       </div>
       <div class="scenario-panel-body">
+        <div class="scenario-hero">
+          <div>
+            <div class="scenario-hero-eyebrow">Message Composer</div>
+            <div class="scenario-hero-title">Scenario Inputs</div>
+          </div>
+          <div class="scenario-hero-status" id="scenario-mode-chip">Direct Input</div>
+        </div>
+        <div class="scenario-tabs" role="tablist" aria-label="Scenario tabs">
+          <button type="button" class="scenario-tab is-active" data-scn-tab="0202">0202</button>
+          <button type="button" class="scenario-tab" data-scn-tab="0801">0801</button>
+          <button type="button" class="scenario-tab" data-scn-tab="0802">0802</button>
+          <button type="button" class="scenario-tab" data-scn-tab="0803">0803</button>
+          <button type="button" class="scenario-tab" data-scn-tab="enemy">Enemy</button>
+        </div>
         <section class="scenario-card">
           <div class="scenario-card-title">0202 선행임무 정보</div>
           <div class="scenario-row">
@@ -278,6 +309,14 @@
               <option value="coord">좌표</option>
               <option value="target">표적</option>
             </select>
+          </div>
+          <div class="scenario-row scenario-row-coord" data-scn-coord-block>
+            <label class="scenario-label" for="scn-0202-lat">Coordinate</label>
+            <div class="scenario-coord">
+              <input id="scn-0202-lat" class="scenario-input" type="number" step="0.000001" placeholder="Lat" />
+              <input id="scn-0202-lon" class="scenario-input" type="number" step="0.000001" placeholder="Lon" />
+              <input id="scn-0202-alt" class="scenario-input" type="number" step="1" value="1000" placeholder="Alt" />
+            </div>
           </div>
           <div class="scenario-row scenario-row-target is-hidden" data-scn-target-block>
             <label class="scenario-label" for="scn-0202-target-id">Target ID</label>
@@ -427,7 +466,7 @@
     </div>
     <div id="left-side-panel" class="side-panel-left" aria-hidden="true">
       <div class="side-panel-left-header">
-        <span class="side-panel-left-title">LEFT GUI</span>
+        <span class="side-panel-left-title">UAV SENSOR</span>
       </div>
       <div class="side-panel-left-body">
         <div class="data-empty">

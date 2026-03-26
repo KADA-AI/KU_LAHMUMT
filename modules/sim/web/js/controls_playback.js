@@ -102,45 +102,45 @@ export const initPlaybackControls = () => {
   }
 
   if (playbackPlayButton) {
-    playbackPlayButton.addEventListener("click", (event) => {
+    playbackPlayButton.addEventListener("click", async (event) => {
       event.stopPropagation();
       const next = !playbackPlayButton.classList.contains("is-active");
       setPlaying(next);
       const sim = getSimClient();
       if (sim) {
         if (next && typeof sim.play === "function") {
-          sim.play();
+          await sim.play();
         } else if (!next && typeof sim.pause === "function") {
-          sim.pause();
+          await sim.pause();
         }
       }
     });
   }
 
   if (playbackPauseButton) {
-    playbackPauseButton.addEventListener("click", (event) => {
+    playbackPauseButton.addEventListener("click", async (event) => {
       event.stopPropagation();
       stopPlayback();
       const sim = getSimClient();
       if (sim && typeof sim.pause === "function") {
-        sim.pause();
+        await sim.pause();
       }
     });
   }
 
   if (playbackStopButton) {
-    playbackStopButton.addEventListener("click", (event) => {
+    playbackStopButton.addEventListener("click", async (event) => {
       event.stopPropagation();
       stopPlayback();
       const sim = getSimClient();
       if (sim && typeof sim.stop === "function") {
-        sim.stop();
+        await sim.stop();
       }
     });
   }
 
   if (playbackResetButton) {
-    playbackResetButton.addEventListener("click", (event) => {
+    playbackResetButton.addEventListener("click", async (event) => {
       event.stopPropagation();
       stopPlayback();
       if (playbackSpeedOptions.length > 0) {
@@ -150,12 +150,12 @@ export const initPlaybackControls = () => {
       }
       const sim = getSimClient();
       if (sim && typeof sim.clear === "function") {
-        sim.clear();
+        await sim.clear();
       } else if (sim && typeof sim.reset === "function") {
-        sim.reset();
+        await sim.reset();
       }
       if (sim && typeof sim.resetIntegration === "function") {
-        sim.resetIntegration();
+        await sim.resetIntegration();
       }
       if (typeof window.clearMissionData === "function") {
         window.clearMissionData();
