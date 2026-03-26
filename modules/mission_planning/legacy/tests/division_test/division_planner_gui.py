@@ -3940,19 +3940,35 @@ class DivisionPlannerWindow(QMainWindow):
         if mid_line_length_m <= 1e-6:
             mid_line_length_m = _distance(tangent_point_xy, target_point_xy)
 
-        entry_point_xy = self._first_polygon_entry_point_xy(
+        bearing_deg = float(base_row.get("bearingDeg", 0.0) or 0.0)
+        sweep_lines_xy = self._sweep_lines_for_polygon_xy(
             part_polygon_xy,
+            bearing_deg,
+            sep_m=sep_m,
+        )
+        first_segment_row = self._first_sweep_segment_point_xy(
+            sweep_lines_xy,
             tangent_point_xy,
             target_point_xy,
         )
-        if entry_point_xy is None:
-            entry_point_xy = target_point_xy
-        entry_distance_m = _distance(tangent_point_xy, entry_point_xy)
+        first_segment_point_xy = first_segment_row[0] if first_segment_row is not None else None
+        first_segment_distance_m = float(first_segment_row[1]) if first_segment_row is not None else 0.0
+        if first_segment_point_xy is None:
+            first_segment_point_xy = self._first_polygon_entry_point_xy(
+                part_polygon_xy,
+                tangent_point_xy,
+                target_point_xy,
+            )
+            if first_segment_point_xy is not None:
+                first_segment_distance_m = _distance(tangent_point_xy, first_segment_point_xy)
+        if first_segment_point_xy is None:
+            first_segment_point_xy = target_point_xy
+            first_segment_distance_m = _distance(tangent_point_xy, first_segment_point_xy)
 
         start_waypoint_xy = tangent_point_xy
         start_label = "T"
-        if sep_m > 1e-6 and entry_distance_m > sep_m + 1e-6:
-            start_waypoint_xy = self._project_along_xy(entry_point_xy, tangent_point_xy, sep_m)
+        if sep_m > 1e-6 and first_segment_distance_m > sep_m + 1e-6:
+            start_waypoint_xy = self._project_along_xy(first_segment_point_xy, tangent_point_xy, sep_m)
             start_label = "T'"
 
         end_waypoint_xy = self._project_along_xy(
@@ -3962,20 +3978,20 @@ class DivisionPlannerWindow(QMainWindow):
         )
 
         start_eta_sec = horizon_s + (_distance(tangent_point_xy, start_waypoint_xy) / float(TURN_PREVIEW_SPEED_MPS))
-        entry_eta_sec = horizon_s + (_distance(tangent_point_xy, entry_point_xy) / float(TURN_PREVIEW_SPEED_MPS))
+        entry_eta_sec = horizon_s + (_distance(tangent_point_xy, first_segment_point_xy) / float(TURN_PREVIEW_SPEED_MPS))
         end_eta_sec = horizon_s + (_distance(tangent_point_xy, end_waypoint_xy) / float(TURN_PREVIEW_SPEED_MPS))
 
         if _distance(route_xy[-1], start_waypoint_xy) > 1e-6:
             route_xy.append(start_waypoint_xy)
         if (
-            _distance(tangent_point_xy, end_waypoint_xy) > entry_distance_m + 1e-6
+            _distance(tangent_point_xy, end_waypoint_xy) > first_segment_distance_m + 1e-6
             and
-            _distance(entry_point_xy, start_waypoint_xy) > 1e-6
-            and _distance(entry_point_xy, end_waypoint_xy) > 1e-6
+            _distance(first_segment_point_xy, start_waypoint_xy) > 1e-6
+            and _distance(first_segment_point_xy, end_waypoint_xy) > 1e-6
         ):
-            route_xy.append(entry_point_xy)
-            marker_rows.append({"xy": entry_point_xy, "label": "E", "kind": "entry", "etaSec": entry_eta_sec})
-            timeline_rows.append({"label": "E", "kind": "entry", "etaSec": entry_eta_sec})
+            route_xy.append(first_segment_point_xy)
+            marker_rows.append({"xy": first_segment_point_xy, "label": "S1", "kind": "entry", "etaSec": entry_eta_sec})
+            timeline_rows.append({"label": "S1", "kind": "entry", "etaSec": entry_eta_sec})
         if _distance(route_xy[-1], end_waypoint_xy) > 1e-6:
             route_xy.append(end_waypoint_xy)
 
@@ -4011,7 +4027,7 @@ class DivisionPlannerWindow(QMainWindow):
             "waypointList": waypoint_list,
             "tangentXY": tangent_point_xy,
             "targetXY": target_point_xy,
-            "entryPointXY": entry_point_xy,
+            "entryPointXY": first_segment_point_xy,
             "waypointStartXY": start_waypoint_xy,
             "waypointEndXY": end_waypoint_xy,
             "targetFaceXY": end_waypoint_xy,
@@ -4023,15 +4039,16 @@ class DivisionPlannerWindow(QMainWindow):
             "dbSepM": float(sep_m),
             "shapeWidthM": float(width_ref_m),
             "midLineLengthM": float(mid_line_length_m),
-            "entryDistanceM": float(entry_distance_m),
+            "entryDistanceM": float(first_segment_distance_m),
             "startLabel": start_label,
+            "sweepLineListXY": sweep_lines_xy,
             "centerLineXY": [
                 (float(point_xy[0]), float(point_xy[1]))
                 for point_xy in base_row.get("centerLineXY", [])
                 if isinstance(point_xy, (tuple, list)) and len(point_xy) >= 2
             ] if isinstance(base_row.get("centerLineXY"), list) else [],
             "partPolygonXY": part_polygon_xy,
-            "bearingDeg": float(base_row.get("bearingDeg", 0.0) or 0.0),
+            "bearingDeg": float(bearing_deg),
         }
 
     def _assign_split_result_by_prediction_distance(self, split_result: SplitRunResult) -> Dict[str, Any]:
