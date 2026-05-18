@@ -1,0 +1,54 @@
+uint optionID:
+ - 길이 : 4
+ - unit : N/A
+ - 비고 : 옵션 ID
+
+bool recommend:
+ - 길이 : 1
+ - unit : N/A
+ - 비고 : 해당 옵션이 추천인지 여부
+
+uint optionName:
+ - 길이 : 4
+ - unit : N/A
+ - 비고 : 옵션 명(시스템 추천, 위험최소화, 최적 연료소모 등)
+ - enum : 2=공격특화, 3=공격배제, 4=정찰특화, 5=최소시간, 6=정찰/시간 균형
+
+uint missionPlanID:
+ - 길이 : 4
+ - unit : N/A
+ - 비고 : 연결된 임무 계획 ID
+
+int survivalRate:
+ - 길이 : 4
+ - unit : N/A
+ - 비고 : 기존 대비 생존확률
+ - enum : -1=생존확률 감소, 0=변화없음, 1=생존확률 증가
+
+int timeContraction:
+ - 길이 : 4
+ - unit : N/A
+ - 비고 : 기존 대비 임무소요시간 감소량
+ - enum : -1=시간증가, 0=변화 없음, 1=시간감소효과
+
+int recogEffectiveness:
+ - 길이 : 4
+ - unit : N/A
+ - 비고 : 기존 대비 촬영 효과
+ - enum : -1=시간증가, 0=변화 없음, 1=시간감소효과
+
+int fuelWarning:
+ - 길이 : 4
+ - unit : N/A
+ - 비고 : 해당 임무 계획이 연료의 부족이 존재할 가능성이 있는지 알림
+ - enum : -1=연료량주의, 0=연료양호
+
+uint distance:
+ - 길이 : 4
+ - unit : m
+ - 비고 : 지휘기 잔여 이동거리
+
+uint target:
+ - 길이 : 4
+ - unit : N/A
+ - 비고 : 표적 타격 계획 수

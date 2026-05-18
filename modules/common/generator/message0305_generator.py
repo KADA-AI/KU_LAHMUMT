@@ -5,6 +5,7 @@
 import os, re, json, random
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
+from modules.common.string_limits import REPLAN_REASON_BYTE_LIMIT, limit_utf8_bytes
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RULES_DIR = os.path.normpath(os.path.join(HERE, "..", "nFusion_MessageLIbrary", "rules"))
@@ -426,7 +427,10 @@ def _gen_ReplanStatus(source: str = "DS"):
     obj["timestamp"] = gen_value("timestamp", "uint64", MSG_ID, obj, 0)
     obj["source"] = gen_value("source", "string", MSG_ID, obj, 0)
     obj["missionPlanningStatus"] = gen_value("missionPlanningStatus", "uint32", MSG_ID, obj, 0)
-    obj["replanReason"] = gen_value("replanReason", "string", MSG_ID, obj, 0)
+    obj["replanReason"] = limit_utf8_bytes(
+        gen_value("replanReason", "string", MSG_ID, obj, 0),
+        REPLAN_REASON_BYTE_LIMIT,
+    )
     return obj
 
 

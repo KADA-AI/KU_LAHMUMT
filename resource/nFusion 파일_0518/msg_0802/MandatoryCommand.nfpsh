@@ -1,0 +1,23 @@
+# MessageID 0802 강제명령
+
+ulong timestamp:
+ - 길이 : 8
+ - min : 0
+ - Max : 2^64-1
+ - unit : ms
+ - 비고 : 2000년 1월 1일부터 ms
+
+string source:
+ - 비고 : 메시지를 전송하는 모듈 이름
+
+uint aircraftID:
+ - 길이 : 4
+ - unit : N/A
+ - 비고 : 강제명령 대상 무인기 식별자 (ID)
+ - enum : 4=무인기 1, 5=무인기 2, 6=무인기 3
+
+uint mandatoryType:
+ - 길이 : 4
+ - unit : N/A
+ - 비고 : 강제명령의 종류
+ - enum : 1=강제 대기, 2=강제 귀환, 3=강제 임무복귀(대기 상태를 푸는 것)

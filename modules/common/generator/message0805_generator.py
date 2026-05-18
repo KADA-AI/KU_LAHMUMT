@@ -425,7 +425,7 @@ def _gen_SystemEvent(source: str = "DS"):
     obj = {}
     obj["timestamp"] = gen_value("timestamp", "uint64", MSG_ID, obj, 0)
     obj["source"] = gen_value("source", "string", MSG_ID, obj, 0)
-    obj["eventType"] = gen_value("eventType", "uint32", MSG_ID, obj, 0)
+    obj["eventType"] = random.choice([1, 2, 3, 4, 5, 6, 100])
     return obj
 
 

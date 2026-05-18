@@ -9,6 +9,7 @@ from System import UInt64  # type: ignore
 from nFusion.Model.msg_0001 import NoticeInfo  # type: ignore
 from nFusion.Model.CommonType import *  # type: ignore  # noqa: F401,F403
 
+from modules.common.string_limits import NOTICE_CONTENTS_BYTE_LIMIT, limit_utf8_bytes
 from modules.common.source_utils import get_default_source_code, override_source_fields
 MSG_ID = "0001"
 
@@ -57,7 +58,7 @@ def _normalize_body(body_dict: dict | None) -> dict:
         source = get_default_source_code()
 
     contents_val = data.get("contents", data.get("Contents", ""))
-    contents = str(contents_val or "")
+    contents = limit_utf8_bytes(contents_val, NOTICE_CONTENTS_BYTE_LIMIT)
 
     return {
         "timestamp": timestamp,

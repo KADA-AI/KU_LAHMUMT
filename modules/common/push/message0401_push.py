@@ -349,6 +349,10 @@ def _dict_to_SensorInfo(data: dict):
     if operational_mode is not None: _try_set(obj, "operationalMode", int(operational_mode))
     sensor_type = data.get("sensorType")
     if sensor_type is not None: _try_set(obj, "sensorType", int(sensor_type))
+    filming = _first_key_ci(data, "filming", "Filming")
+    if filming is not None:
+        data["filming"] = int(filming)
+        _try_set(obj, "filming", int(filming))
     fov = data.get("fov")
     if fov is not None: _try_set(obj, "fov", float(fov))
 
@@ -368,6 +372,12 @@ def _dict_to_UnmannedInfo(data: dict):
         _try_set(obj, "currentWaypointID", _dict_to_CurrentWaypointID(data["currentWaypointID"]))
     flight_mode = data.get("flightMode")
     if flight_mode is not None: _try_set(obj, "flightMode", int(flight_mode))
+    flying = _first_key_ci(data, "flying", "onMission", "OnMission")
+    if flying is not None:
+        data["flying"] = int(flying)
+        data.setdefault("onMission", int(flying))
+        if not _try_set(obj, "flying", int(flying)):
+            _try_set(obj, "onMission", int(flying))
     if "loiterCoordinate" in data and isinstance(data["loiterCoordinate"], dict):
         _try_set(obj, "loiterCoordinate", _dict_to_LoiterCoordinate(data["loiterCoordinate"]))
     if "targetFollowing" in data and isinstance(data["targetFollowing"], dict):
@@ -380,9 +390,6 @@ def _dict_to_UnmannedInfo(data: dict):
     if payload_health is not None: _try_set(obj, "payloadHealth", int(payload_health))
     fuel_warning = data.get("fuelWarning")
     if fuel_warning is not None: _try_set(obj, "fuelWarning", int(fuel_warning))
-    on_mission = data.get("onMission")
-    if on_mission is None: on_mission = data.get("OnMission")
-    if on_mission is not None: _try_set(obj, "onMission", int(on_mission))
     return obj
 
 
@@ -405,9 +412,12 @@ def _dict_to_AgentState(data: dict):
     if health is not None: _try_set(obj, "health", int(health))
     last_signal = data.get("lastSignalTime")
     if last_signal is not None: _try_set(obj, "lastSignalTime", int(last_signal))
-    on_mission = data.get("onMission")
-    if on_mission is None: on_mission = data.get("OnMission")
-    if on_mission is not None: _try_set(obj, "onMission", int(on_mission))
+    flying = _first_key_ci(data, "flying", "onMission", "OnMission")
+    if flying is not None:
+        data["flying"] = int(flying)
+        data.setdefault("onMission", int(flying))
+        if not _try_set(obj, "flying", int(flying)):
+            _try_set(obj, "onMission", int(flying))
     if "mannedInfo" in data and isinstance(data["mannedInfo"], dict):
         _try_set(obj, "mannedInfo", _dict_to_MannedInfo(data["mannedInfo"]))
     if "unmannedInfo" in data and isinstance(data["unmannedInfo"], dict):

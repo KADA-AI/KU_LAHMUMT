@@ -161,6 +161,8 @@ def _to_dict_SensorInfo(obj):
     if _v is not None: d['operationalMode'] = int(_v)
     _v = _get(obj, 'sensorType', 'SensorType')
     if _v is not None: d['sensorType'] = int(_v)
+    _v = _get(obj, 'filming', 'Filming')
+    if _v is not None: d['filming'] = int(_v)
     _v = _get(obj, 'fov', 'Fov')
     if _v is not None: d['fov'] = float(_v)
     _sub = _get(obj, 'centerCoordinate', 'CenterCoordinate')
@@ -188,6 +190,10 @@ def _to_dict_UnmannedInfo(obj):
     if _sub is not None: d['currentWaypointID'] = _to_dict_CurrentWaypointID(_sub)
     _v = _get(obj, 'flightMode', 'FlightMode')
     if _v is not None: d['flightMode'] = int(_v)
+    _v = _get(obj, 'flying', 'Flying', 'onMission', 'OnMission')
+    if _v is not None:
+        d['flying'] = int(_v)
+        d['onMission'] = int(_v)
     _sub = _get(obj, 'loiterCoordinate', 'LoiterCoordinate')
     if _sub is not None: d['loiterCoordinate'] = _to_dict_LoiterCoordinate(_sub)
     _sub = _get(obj, 'targetFollowing', 'TargetFollowing')
@@ -200,8 +206,6 @@ def _to_dict_UnmannedInfo(obj):
     if _v is not None: d['payloadHealth'] = int(_v)
     _v = _get(obj, 'fuelWarning', 'FuelWarning')
     if _v is not None: d['fuelWarning'] = int(_v)
-    _v = _get(obj, 'onMission', 'OnMission')
-    if _v is not None: d['onMission'] = int(_v)
     return d
 
 def _to_dict_AgentState(obj):
@@ -220,8 +224,10 @@ def _to_dict_AgentState(obj):
     if _v is not None: d['health'] = int(_v)
     _v = _get(obj, 'lastSignalTime', 'LastSignalTime')
     if _v is not None: d['lastSignalTime'] = int(_v)
-    _v = _get(obj, 'onMission', 'OnMission')
-    if _v is not None: d['onMission'] = int(_v)
+    _v = _get(obj, 'flying', 'Flying', 'onMission', 'OnMission')
+    if _v is not None:
+        d['flying'] = int(_v)
+        d['onMission'] = int(_v)
     _sub = _get(obj, 'mannedInfo', 'MannedInfo')
     if _sub is not None: d['mannedInfo'] = _to_dict_MannedInfo(_sub)
     _sub = _get(obj, 'unmannedInfo', 'UnmannedInfo')

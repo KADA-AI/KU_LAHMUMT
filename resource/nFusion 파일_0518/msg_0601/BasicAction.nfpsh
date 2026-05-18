@@ -1,0 +1,34 @@
+# MessageID 0601 기저행위
+
+ulong timestamp:
+ - 길이 : 8
+ - min : 0
+ - Max : 2^64-1
+ - unit : ms
+ - 비고 : 2000년 1월 1일부터 ms
+
+string source:
+ - 비고 : 메시지를 전송하는 모듈 이름
+
+uint aircraftID:
+ - 길이 : 4
+ - min : 0
+ - Max : 6
+ - unit : N/A
+ - 비고 : 무인기 ID
+
+uint flightMode:
+ - 길이 : 4
+ - min : 0
+ - Max : 9
+ - unit : N/A
+ - 비고 : 무인기 기저행위(비행모드)
+ - enum : 0=Not Used, 1=자동이륙(Not Used), 2=자동착륙(Not Used), 3=통제권이양지 이동, 4=전술집결지 이동, 5=RTB, 6=편대비행, 7=경로이동비행, 8=점항법비행, 9=표적추적비행
+
+uint filmingMode:
+ - 길이 : 4
+ - min : 0
+ - Max : 6
+ - unit : N/A
+ - 비고 : 무인기 기저행위(임무장비 운용모드)
+ - enum : 0=Not Used, 1=좌표지향모드, 2=구간탐색모드, 3=자동추적모드, 4=구역감시모드, 5=기체고정모드, 6=자동주사모드

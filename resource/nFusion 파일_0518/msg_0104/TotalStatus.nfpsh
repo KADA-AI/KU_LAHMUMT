@@ -1,0 +1,51 @@
+# MessageID 0104 공중통제모의기 상태정보
+
+ulong timestamp:
+ - 길이 : 8
+ - min : 0
+ - Max : 2^64-1
+ - unit : ms
+ - 비고 : 2000년 1월 1일부터 ms
+
+string source:
+ - 비고 : 메시지를 전송하는 모듈 이름
+
+uint aircraftID:
+ - 길이 : 4
+ - min : 1
+ - Max : 3
+ - unit : N/A
+ - 비고 : 유인기 ID
+ - enum : 1=지휘기, 2=편대기1, 3=편대기2
+
+uint mode:
+ - 길이 : 4
+ - min : 1
+ - Max : 2
+ - unit : N/A
+ - 비고 : 현재 모드
+ - enum : 1=지휘기모드, 2=편대기모드
+
+uint SBC1Status:
+ - 길이 : 4
+ - min : 1
+ - Max : 2
+ - unit : N/A
+ - 비고 : SBC#1의 종합상태정보
+ - enum : 1=정상, 2=비정상
+
+uint SBC2Status:
+ - 길이 : 4
+ - min : 0
+ - Max : 2
+ - unit : N/A
+ - 비고 : SBC#1에서 확인한 SBC#2의 종합상태정보. Unknown의 경우 해당 SBC의 상태를 알 수 없는 경우(예를들어 SW 실행 전)
+ - enum : 0=Unknown, 1=정상, 2=비정상
+
+uint SBC3Status:
+ - 길이 : 4
+ - min : 0
+ - Max : 2
+ - unit : N/A
+ - 비고 : SBC#1에서 확인한 SBC#3의 종합상태정보. Unknown의 경우 해당 SBC의 상태를 알 수 없는 경우(예를들어 SW 실행 전)
+ - enum : 0=Unknown, 1=정상, 2=비정상

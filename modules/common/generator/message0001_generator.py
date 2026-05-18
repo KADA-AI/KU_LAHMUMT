@@ -6,6 +6,7 @@ import random
 from datetime import datetime, timezone
 
 from modules.common.source_utils import get_default_source_code
+from modules.common.string_limits import NOTICE_CONTENTS_BYTE_LIMIT, limit_utf8_bytes
 
 _EPOCH_2000 = datetime(2000, 1, 1, tzinfo=timezone.utc)
 
@@ -23,7 +24,7 @@ def make_msg0001_body(source: str | None = None, contents: str | None = None) ->
     return {
         "timestamp": now_ms_2000(),
         "source": str(source),
-        "contents": str(contents),
+        "contents": limit_utf8_bytes(contents, NOTICE_CONTENTS_BYTE_LIMIT),
     }
 
 

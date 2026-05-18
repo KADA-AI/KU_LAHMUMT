@@ -1,0 +1,7 @@
+# message ID 53130
+
+byte presenceVector
+byte[] timestamp
+uint currentMissionSegmentID
+uint individualMissionProgressN
+IndividualMissionProgress[] individualMissionProgressList

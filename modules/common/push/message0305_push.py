@@ -5,11 +5,19 @@
 import json, importlib, traceback
 from datetime import datetime, timezone
 from System import Activator
+from modules.common.string_limits import REPLAN_REASON_BYTE_LIMIT, limit_utf8_bytes
+try:
+    from modules.common.push_type_cache import iter_csharp_types, resolve_csharp_type
+except Exception:
+    iter_csharp_types = None
+    resolve_csharp_type = None
 
 _EPOCH_2000 = datetime(2000, 1, 1, tzinfo=timezone.utc)
 _now_ms = lambda: int((datetime.utcnow().replace(tzinfo=timezone.utc) - _EPOCH_2000).total_seconds() * 1000)
 from modules.common.source_utils import get_default_source_code, override_source_fields
 MSG_ID = "0305"
+_TYPE_MODULES = ('nFusion.Model.msg_0305', 'nFusion.Model.CommonType', 'nFusion.Model')
+_MSG0305_TYPE = None
 
 def _try_set(obj, name: str, value) -> bool:
     """lowerCamel / PascalCase 모두 시도하여 .NET 프로퍼티를 세팅"""
@@ -23,13 +31,15 @@ def _try_set(obj, name: str, value) -> bool:
     return False
 
 def _cs(name: str):
+    if callable(resolve_csharp_type):
+        return resolve_csharp_type(MSG_ID, name, module_names=_TYPE_MODULES)
     """
     타입 탐색 범위 확대:
       - nFusion.Model.msg_0305
       - nFusion.Model.CommonType
       - nFusion.Model
     """
-    for modname in ('nFusion.Model.msg_0305', 'nFusion.Model.CommonType', 'nFusion.Model'):
+    for modname in _TYPE_MODULES:
         try:
             mod = importlib.import_module(modname)
             t = getattr(mod, name, None)
@@ -40,6 +50,12 @@ def _cs(name: str):
     return None
 
 def _new_msg0305():
+    global _MSG0305_TYPE
+    if _MSG0305_TYPE is not None:
+        try:
+            return Activator.CreateInstance(_MSG0305_TYPE)
+        except Exception:
+            _MSG0305_TYPE = None
     """
     안전한 인스턴스 생성:
       1) 알려진 후보명을 순차 시도 (실패 시 계속)
@@ -60,13 +76,14 @@ def _new_msg0305():
             obj = Activator.CreateInstance(t)  # t() 대신 Activator로 생성 안정화
             # 후보 프로퍼티 존재 확인(둘 중 하나만 있어도 OK)
             if any(hasattr(obj, k) for k in ("missionPlanningStatus", "MissionPlanningStatus", "status", "Status")):
+                _MSG0305_TYPE = t
                 return obj
         except Exception:
             continue
 
     # ② 전체 public 타입 스캔: 생성 성공 + status 계열 프로퍼티 보유 시 채택
     tried = []
-    for modname in ('nFusion.Model.msg_0305', 'nFusion.Model.CommonType', 'nFusion.Model'):
+    for modname in _TYPE_MODULES:
         try:
             mod = importlib.import_module(modname)
         except Exception:
@@ -78,6 +95,7 @@ def _new_msg0305():
             try:
                 obj = Activator.CreateInstance(t)
                 if any(hasattr(obj, k) for k in ("missionPlanningStatus", "MissionPlanningStatus", "status", "Status")):
+                    _MSG0305_TYPE = t
                     return obj
             except Exception:
                 continue
@@ -99,7 +117,9 @@ def _dict_to_obj(body: dict):
         _try_set(obj, "StatusCode", st)
     # reason(옵션)
     if "replanReason" in body:
-        _try_set(obj, "replanReason", str(body["replanReason"]))
+        reason_text = limit_utf8_bytes(body["replanReason"], REPLAN_REASON_BYTE_LIMIT)
+        body["replanReason"] = reason_text
+        _try_set(obj, "replanReason", reason_text)
     return obj
 
 def make_and_push(body_dict: dict, node_messenger) -> bytes:

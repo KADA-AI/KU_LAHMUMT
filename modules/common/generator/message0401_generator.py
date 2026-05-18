@@ -289,6 +289,7 @@ def gen_value(field_name: str, type_token: str, ctx_msg_id: str, obj_context: Op
     if base in ("uint32","int32","uint64","int64"):
         if lname == "timestamp": return now_ms_2000()
         if lname in ("health","currentindividualmissionprogress"): return random.randint(0,100)
+        if lname in ("flying","filming"): return random.randint(0, 2)
         return random.randint(0, 1000) if base.startswith("u") else random.randint(-1000, 1000)
     if base in ("float32","float64"):
         if lname in ("fuel","lowerlimit","upperlimit"): return round(random.uniform(0.0, 100.0), 6)
@@ -487,6 +488,7 @@ def _gen_SensorInfo(source: str = "DS"):
     obj = {}
     obj["operationalMode"] = gen_value("operationalMode", "uint32", MSG_ID, obj, 0)
     obj["sensorType"] = gen_value("sensorType", "uint32", MSG_ID, obj, 0)
+    obj["filming"] = gen_value("filming", "uint32", MSG_ID, obj, 0)
     obj["fov"] = gen_value("fov", "float32", MSG_ID, obj, 0)
     obj["centerCoordinate"] = _gen_CenterCoordinate(source=source)
     return obj
@@ -495,6 +497,7 @@ def _gen_UnmannedInfo(source: str = "DS"):
     obj = {}
     obj["currentWaypointID"] = _gen_CurrentWaypointID(source=source)
     obj["flightMode"] = gen_value("flightMode", "uint32", MSG_ID, obj, 0)
+    obj["flying"] = gen_value("flying", "uint32", MSG_ID, obj, 0)
     obj["loiterCoordinate"] = _gen_LoiterCoordinate(source=source)
     obj["targetFollowing"] = _gen_TargetFollowing(source=source)
     obj["leaderAircraftID"] = _gen_LeaderAircraftID(source=source)
