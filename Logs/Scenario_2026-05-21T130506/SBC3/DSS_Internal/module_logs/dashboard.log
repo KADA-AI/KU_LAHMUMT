@@ -1,0 +1,47 @@
+
+[2026-05-21 13:05:06] process-log attached: dashboard
+[OPS] Standby 활성화(신규 경로 적용) 2026-05-21T130506 @ C:\Users\LAHMUMT_2\Desktop\DSS_KU\Logs\Scenario_2026-05-21T130506\SBC3
+[OPS] New sortie detected -> mission IDs reset for active scenario
+[OPS] DB root snapshot requested from modules
+[OPS] SystemMode=1 수신 -> 대기모드 진입
+모든 SW 대기모드 진입
+[OPS] SystemMode=2 수신 -> 초기임무계획 모드 진입
+모든 SW 초기임무계획 모드
+[OPS] 0305 재계획 완료 (모드 전환은 0101 수신만 반영)
+[OPS] SystemMode=3 수신 -> 임무 수행 모드 진입
+모든 SW 임무 수행 모드 진입
+[OPS] 0305 재계획 완료 (모드 전환은 0101 수신만 반영)
+[OPS] 0702 수신 -> 모드 전환 없음 (0101 전용)
+[OPS] 0305 재계획 완료 (모드 전환은 0101 수신만 반영)
+[OPS] 0702 수신 -> 모드 전환 없음 (0101 전용)
+[0201] DB 참조! (C:\Users\LAHMUMT_2\Desktop\DSS_KU\Logs\Scenario_2026-05-21T130506\SBC3\InputMissionPlan\2.json)
+[OPS] 0305 재계획 완료 (모드 전환은 0101 수신만 반영)
+[OPS] 0702 수신 -> 모드 전환 없음 (0101 전용)
+[0201] DB 참조! (C:\Users\LAHMUMT_2\Desktop\DSS_KU\Logs\Scenario_2026-05-21T130506\SBC3\InputMissionPlan\3.json)
+[OPS] 0305 재계획 완료 (모드 전환은 0101 수신만 반영)
+[OPS] 0702 수신 -> 모드 전환 없음 (0101 전용)
+[OPS] 0305 재계획 완료 (모드 전환은 0101 수신만 반영)
+[OPS] 0702 수신 -> 모드 전환 없음 (0101 전용)
+[OPS] 0305 재계획 완료 (모드 전환은 0101 수신만 반영)
+
+[2026-05-21 13:35:45] process-log attached: dashboard
+[RUN] mission_planning_gui.py @ C:\Users\LAHMUMT_2\Desktop\DSS_KU\modules\mission_planning\mission_planning_gui.py
+[RUN] monitoring_gui.py @ C:\Users\LAHMUMT_2\Desktop\DSS_KU\modules\monitoring\monitoring_gui.py
+[RUN] decision_support_gui.py @ C:\Users\LAHMUMT_2\Desktop\DSS_KU\modules\decision_support\decision_support_gui.py
+[RUN] info_manage.py @ C:\Users\LAHMUMT_2\Desktop\DSS_KU\modules\info_manage\info_manage.py
+모든 SW 초기화 모드 진입
+[FOV_DB] selected C:\Users\LAHMUMT_2\Desktop\DSS_KU\resource\db\fov_db_탱크_72_38_6_3.2.csv (7010 rows)
+
+[2026-05-21 13:37:25] process-log attached: dashboard
+[RUN] mission_planning_gui.py @ C:\Users\LAHMUMT_2\Desktop\DSS_KU\modules\mission_planning\mission_planning_gui.py
+[RUN] monitoring_gui.py @ C:\Users\LAHMUMT_2\Desktop\DSS_KU\modules\monitoring\monitoring_gui.py
+[RUN] decision_support_gui.py @ C:\Users\LAHMUMT_2\Desktop\DSS_KU\modules\decision_support\decision_support_gui.py
+[RUN] info_manage.py @ C:\Users\LAHMUMT_2\Desktop\DSS_KU\modules\info_manage\info_manage.py
+모든 SW 초기화 모드 진입
+
+[2026-05-27 16:33:06] process-log attached: dashboard
+[RUN] mission_planning_gui.py @ C:\Users\LAHMUMT_2\Desktop\DSS_KU\modules\mission_planning\mission_planning_gui.py
+[RUN] monitoring_gui.py @ C:\Users\LAHMUMT_2\Desktop\DSS_KU\modules\monitoring\monitoring_gui.py
+[RUN] decision_support_gui.py @ C:\Users\LAHMUMT_2\Desktop\DSS_KU\modules\decision_support\decision_support_gui.py
+[RUN] info_manage.py @ C:\Users\LAHMUMT_2\Desktop\DSS_KU\modules\info_manage\info_manage.py
+모든 SW 초기화 모드 진입

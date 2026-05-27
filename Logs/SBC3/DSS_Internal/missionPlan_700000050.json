@@ -1,0 +1,822 @@
+{
+  "timestamp": "2026-05-21T04:44:09.702381+00:00",
+  "status": "success",
+  "stopReason": null,
+  "reason": "협업기저임무 재수행 요청",
+  "replanLevel": 1,
+  "sessionId": null,
+  "context": {
+    "plan_ids": [
+      700000049,
+      700000050,
+      700000051
+    ],
+    "option_names": [
+      "정찰/시간 균형",
+      "정찰특화",
+      "최소시간"
+    ],
+    "mission_ids": [
+      6,
+      3
+    ],
+    "reason": "협업기저임무 재수행 요청",
+    "replan_detail": {
+      "trigger": "0201",
+      "triggerType": "collabReexecuteInputRefresh",
+      "inputMissionPackageID": 4,
+      "reexecuteSourceInputMissionID": 5,
+      "currentRemainingCollaborativeReplan": true,
+      "currentInputMissionID": 6,
+      "entryStrategy": "turn_projection",
+      "entryLeadTimeS": 5.0,
+      "turnRadiusScale": 1.4,
+      "entryAircraftList": [
+        {
+          "aircraftID": 4,
+          "coordinate": {
+            "latitude": 37.93391847023669,
+            "longitude": 128.17554491406008,
+            "altitude": 1943
+          },
+          "source": "snapshotForwardProjection5s",
+          "headingDeg": 5.7568359375,
+          "etaS": 5.0
+        },
+        {
+          "aircraftID": 5,
+          "coordinate": {
+            "latitude": 37.926976638036564,
+            "longitude": 128.19447876172538,
+            "altitude": 1875
+          },
+          "source": "snapshotForwardProjection5s",
+          "headingDeg": 8.492431640625,
+          "etaS": 5.0
+        },
+        {
+          "aircraftID": 6,
+          "coordinate": {
+            "latitude": 37.924630449453176,
+            "longitude": 128.2048406957691,
+            "altitude": 1967
+          },
+          "source": "snapshotForwardProjection5s",
+          "headingDeg": 189.77783203125,
+          "etaS": 5.0
+        }
+      ],
+      "sourceMissionPlanID": 700000048,
+      "currentMissionPlanID": 700000048,
+      "representativeEntryCoordinate": {
+        "latitude": 37.92850851924214,
+        "longitude": 128.19162145718485,
+        "altitude": 1928
+      }
+    },
+    "sourceMissionPlanID": 700000048,
+    "currentMissionPlanID": 700000048,
+    "replan_level": 1,
+    "inputMissionPackageID": 4,
+    "_replan_timing": {
+      "base_perf": 17497.1646598,
+      "base_wall_ms": 1779338649590,
+      "payload_timestamp_ms": 832653849300,
+      "trigger": "general_3_option",
+      "replanLevel": 1,
+      "optionCount": 3,
+      "forceDirect": 0,
+      "0902_received_ms": 0.147,
+      "0902_received_wall_ms": 1779338649591,
+      "0902_received_trigger": "general_3_option",
+      "0902_received_replanLevel": 1,
+      "0902_received_optionCount": 3,
+      "0902_received_forceDirect": 0,
+      "0902_archived_ms": 1.141,
+      "0902_archived_wall_ms": 1779338649592,
+      "0902_archived_path": "replan_request_832653849300.json",
+      "pipeline_scheduled_ms": 2.294,
+      "pipeline_scheduled_wall_ms": 1779338649593,
+      "pipeline_scheduled_delay_ms": 100,
+      "scheduled_start_ms": 104.261,
+      "scheduled_start_wall_ms": 1779338649695,
+      "0305_status_1_ms": 108.143,
+      "0305_status_1_wall_ms": 1779338649699,
+      "0305_status_1_reason": "협업기저임무 재수행 요청"
+    },
+    "_0902_capture_path": "C:\\Users\\TRL98\\Desktop\\LAH_MUMT\\Logs\\Scenario_2026-05-21T132543\\SBC3\\DSS_Internal\\replan_request_transport\\replan_request_832653849300.json"
+  },
+  "planIds": [
+    700000049,
+    700000050,
+    700000051
+  ],
+  "summary": {
+    "mode": "legacy",
+    "plan_ids": [
+      700000049,
+      700000050,
+      700000051
+    ],
+    "option_codes": [
+      6,
+      4,
+      5
+    ],
+    "sourceArtifactCache": {
+      "entries": 34,
+      "hits": 28,
+      "misses": 34,
+      "loadsByKind": {
+        "FlightPath": 6,
+        "IndividualMissionPlan": 24,
+        "InputMissionPlan": 2,
+        "MissionPlan": 1,
+        "MissionReferenceInfo": 1
+      }
+    }
+  },
+  "steps": [
+    {
+      "step": "start",
+      "status": "info",
+      "detail": {
+        "reason": "협업기저임무 재수행 요청",
+        "plan_ids": [
+          700000049,
+          700000050,
+          700000051
+        ],
+        "replan_level": 1
+      }
+    },
+    {
+      "step": "0201_resolved",
+      "status": "ok",
+      "detail": {
+        "path": "C:\\Users\\TRL98\\Desktop\\LAH_MUMT\\Logs\\Scenario_2026-05-21T132543\\SBC3\\InputMissionPlan\\4.json",
+        "latest_id": 4
+      }
+    },
+    {
+      "step": "0203_resolved",
+      "status": "ok",
+      "detail": {
+        "path": "C:\\Users\\TRL98\\Desktop\\LAH_MUMT\\Logs\\Scenario_2026-05-21T132543\\SBC3\\MissionReferenceInfo\\1.json",
+        "latest_id": 1
+      }
+    },
+    {
+      "step": "input_validation",
+      "status": "ok",
+      "detail": {
+        "missions": 6,
+        "aircrafts": 6,
+        "uavs": 3,
+        "lahs": 3,
+        "skippedSinglePointCoordinateOnly": 0,
+        "takeOver": 3,
+        "handOver": 3,
+        "flightArea": 1
+      }
+    },
+    {
+      "step": "store_output",
+      "status": "ok",
+      "detail": {
+        "plan_count": 3,
+        "imp_files": 18,
+        "flightpath_files": 36
+      }
+    },
+    {
+      "step": "replan_pipeline",
+      "status": "success",
+      "detail": {
+        "plan_ids": [
+          700000049,
+          700000050,
+          700000051
+        ],
+        "option_codes": [
+          6,
+          4,
+          5
+        ]
+      }
+    }
+  ],
+  "issues": [],
+  "messages": [
+    {
+      "ts": "2026-05-21T04:44:09.704761+00:00",
+      "text": "[INFO] Using latest 0203 ID 1 for missionReferencePackageID (fallback)"
+    },
+    {
+      "ts": "2026-05-21T04:44:09.705605+00:00",
+      "text": "[STEP 0] Replan pipeline start (reason=협업기저임무 재수행 요청)"
+    },
+    {
+      "ts": "2026-05-21T04:44:09.709299+00:00",
+      "text": "[INFO] UAV params loaded (cruise=40.00, turn_step=15.0)"
+    },
+    {
+      "ts": "2026-05-21T04:44:09.710556+00:00",
+      "text": "[INFO] Latest input snapshot → 0201:ID=4,ts=832653849166,src=-, 0203:ID=1,ts=832652848760,src=-"
+    },
+    {
+      "ts": "2026-05-21T04:44:09.711325+00:00",
+      "text": "[STEP 0] Using latest 0201 ID 4 (4.json)"
+    },
+    {
+      "ts": "2026-05-21T04:44:09.711858+00:00",
+      "text": "[STEP 0] Using latest 0203 ID 1 (1.json)"
+    },
+    {
+      "ts": "2026-05-21T04:44:09.719276+00:00",
+      "text": "[CHECK] 0201/0203 필수 데이터 확인 시작"
+    },
+    {
+      "ts": "2026-05-21T04:44:09.720631+00:00",
+      "text": "[OK] 0201 inputMissionList 확인됨 (count=6) → 진행"
+    },
+    {
+      "ts": "2026-05-21T04:44:09.721812+00:00",
+      "text": "[OK] 0201 availableAircraftList 확인됨 (count=6) → 진행"
+    },
+    {
+      "ts": "2026-05-21T04:44:09.722642+00:00",
+      "text": "[OK] 0201 inputMissionPackageType=1 확인"
+    },
+    {
+      "ts": "2026-05-21T04:44:09.723622+00:00",
+      "text": "[OK] 0201 mainSensor=1 확인"
+    },
+    {
+      "ts": "2026-05-21T04:44:09.724534+00:00",
+      "text": "[CHECK] 0201 기체 수=6 (UAV=3, LAH=3)"
+    },
+    {
+      "ts": "2026-05-21T04:44:09.725246+00:00",
+      "text": "[CHECK] 0201 임무: total=6 missingID=0 missingDetail=0 missingShape=0 unknownType=0 typeZeroAuto=0 typeZeroInvalid=0 lineOnlyViolation=0 skippedSinglePoint=0"
+    },
+    {
+      "ts": "2026-05-21T04:44:09.727018+00:00",
+      "text": "[OK] 0203 takeOverInfoList 확인됨 (count=3) → 진행"
+    },
+    {
+      "ts": "2026-05-21T04:44:09.728030+00:00",
+      "text": "[OK] 0203 handOverInfoList 확인됨 (count=3) → 진행"
+    },
+    {
+      "ts": "2026-05-21T04:44:09.728816+00:00",
+      "text": "[OK] 0203 flightAreaList 확인됨 (count=1) → 진행"
+    },
+    {
+      "ts": "2026-05-21T04:44:09.730272+00:00",
+      "text": "[CHECK] 0203 flightAreaList count=1"
+    },
+    {
+      "ts": "2026-05-21T04:44:09.731316+00:00",
+      "text": "[INFO] 임무 진행영역 스냅샷 미적용: sourcePlan=700000048, reason=fresh collabReexecuteInputRefresh trigger"
+    },
+    {
+      "ts": "2026-05-21T04:44:09.732450+00:00",
+      "text": "[INFO] 현재 임무 collaborative hybrid armed: inputMissionID=6, sourcePlan=700000048, mode=reexecute_first_mission, aircraft=[4, 5, 6], options=all"
+    },
+    {
+      "ts": "2026-05-21T04:44:09.733475+00:00",
+      "text": "[INFO] Filtered completed input missions (removed=1, 2, 4, 5, converted=-, widthAdjusted=-, skippedSinglePoint=-, snapshot=-, collapse=-)"
+    },
+    {
+      "ts": "2026-05-21T04:44:09.734400+00:00",
+      "text": "[REPLAN][TIME] parallel_safety_gate_ms=139.7 wall_ms=1779338649730 enabled=True workers=3 waypoint_block_size=50000 reasons=-"
+    },
+    {
+      "ts": "2026-05-21T04:44:09.735150+00:00",
+      "text": "[INFO] 현재임무 재수행 옵션 병렬 생성 활성화: variant별 hybrid 요청 격리 적용"
+    },
+    {
+      "ts": "2026-05-21T04:44:09.736003+00:00",
+      "text": "[INFO] 일반 재계획 옵션 병렬 생성 활성화: variants=3, workers=3"
+    },
+    {
+      "ts": "2026-05-21T04:44:10.298142+00:00",
+      "text": "[INFO] variant 1 waypointID blocks reserved: 0303=601186-651185, 0304=651186-701185"
+    },
+    {
+      "ts": "2026-05-21T04:44:10.926898+00:00",
+      "text": "[INFO] variant 2 waypointID blocks reserved: 0303=701186-751185, 0304=751186-801185"
+    },
+    {
+      "ts": "2026-05-21T04:44:11.526485+00:00",
+      "text": "[INFO] variant 3 waypointID blocks reserved: 0303=801186-851185, 0304=851186-901185"
+    },
+    {
+      "ts": "2026-05-21T04:44:16.393801+00:00",
+      "text": "[REPLAN][TIME] variant_started_ms=1937.3 wall_ms=1779338651528 variant=1 option=6 mode=parallel_core"
+    },
+    {
+      "ts": "2026-05-21T04:44:16.395010+00:00",
+      "text": "[REPLAN][TIME] variant_core_finished_ms=6802.1 wall_ms=1779338656392 variant=1 option=6 mode=parallel_core status=success duration_ms=4864.731"
+    },
+    {
+      "ts": "2026-05-21T04:44:16.395867+00:00",
+      "text": "[STEP 1.1] Divide & Pattern start"
+    },
+    {
+      "ts": "2026-05-21T04:44:16.405313+00:00",
+      "text": "[variant 1] [ENHANCED][1] split start: uavs=[4, 5, 6]"
+    },
+    {
+      "ts": "2026-05-21T04:44:16.421031+00:00",
+      "text": "[variant 1] [ENHANCED][1] split done: pieces=6"
+    },
+    {
+      "ts": "2026-05-21T04:44:16.442999+00:00",
+      "text": "[variant 1] [ENHANCED][2] type-decider done: profile=6 changed=6/6"
+    },
+    {
+      "ts": "2026-05-21T04:44:16.462374+00:00",
+      "text": "[variant 1] [ENHANCED][3] expected-path done: count=6"
+    },
+    {
+      "ts": "2026-05-21T04:44:16.481954+00:00",
+      "text": "[variant 1] [ENHANCED][4] area-review done: overflow=0 targets=0 pieces=6->6"
+    },
+    {
+      "ts": "2026-05-21T04:44:16.567567+00:00",
+      "text": "[variant 1] [ENHANCED][5] expected-velocity done: pieces=6 dbRows=7010"
+    },
+    {
+      "ts": "2026-05-21T04:44:16.568747+00:00",
+      "text": "[variant 1] [ENHANCED][6] 0302 export done: files=6"
+    },
+    {
+      "ts": "2026-05-21T04:44:16.569700+00:00",
+      "text": "[variant 1] [ENHANCED] total=1333.5 ms"
+    },
+    {
+      "ts": "2026-05-21T04:44:16.570474+00:00",
+      "text": "[TIME] divide_and_pattern (variant=1): 1333.7 ms"
+    },
+    {
+      "ts": "2026-05-21T04:44:16.581820+00:00",
+      "text": "[OK] IMP generated: 6 file(s) (variant=1)"
+    },
+    {
+      "ts": "2026-05-21T04:44:16.582699+00:00",
+      "text": "[TIME] build_0301+load (variant=1): 128.8 ms"
+    },
+    {
+      "ts": "2026-05-21T04:44:16.583632+00:00",
+      "text": "[OK] MissionPlan built: MissionPlan_1779338652861.json (variant=1)"
+    },
+    {
+      "ts": "2026-05-21T04:44:16.587250+00:00",
+      "text": "[TIME] collect_missions (variant=1): 38.6 ms, count=12"
+    },
+    {
+      "ts": "2026-05-21T04:44:16.588711+00:00",
+      "text": "[variant 1] [REEXEC-FIRST] current-position first mission builder armed: sourcePlan=700000048, inputMissionID=6, sourceTemplateInputID=5, aircraft=[4, 5, 6], entries=A4=37.9339185,128.1755449,alt=1943.0, A5=37.9269766,128.1944788,alt=1875.0, A6=37.9246304,128.2048407,alt=1967.0"
+    },
+    {
+      "ts": "2026-05-21T04:44:16.589852+00:00",
+      "text": "[variant 1] [REEXEC-FIRST] division planner area-division pieces=3"
+    },
+    {
+      "ts": "2026-05-21T04:44:16.591099+00:00",
+      "text": "[variant 1] [REEXEC-FIRST] division planner final workflow=no_split paths=3"
+    },
+    {
+      "ts": "2026-05-21T04:44:16.592612+00:00",
+      "text": "[variant 1] current remaining generic 0303 skipped: inputMissionID=6, missions=3, aircraft=[4, 5, 6], pathIDs=[400000001, 500000001, 600000001]"
+    },
+    {
+      "ts": "2026-05-21T04:44:16.594023+00:00",
+      "text": "[INFO] FlightPath build mode (variant=1): 0303=aircraft_parallel workers=2 aircraft=3, 0304=sequential"
+    },
+    {
+      "ts": "2026-05-21T04:44:16.595252+00:00",
+      "text": "[REPLAN][METRIC] flightpath_build_0303 variant=1 option=6 recon=0 mode=parallel_core buildMode=aircraft_parallel workers=2 aircraft=3 paths=3 reassignedWaypoints=9 elapsed_ms=235.426 fallback=- worker_ms=4:140.759|5:173.667|6:91.687"
+    },
+    {
+      "ts": "2026-05-21T04:44:16.596725+00:00",
+      "text": "[INFO] FlightPath build time: 0303=235.4 ms, 0304=9.4 ms"
+    },
+    {
+      "ts": "2026-05-21T04:44:16.598253+00:00",
+      "text": "[variant 1] current remaining collaborative hybrid applied: inputMissionID=6, aircraft=[4, 5, 6], removedPaths=3, workflow=reexecute_first_mission:no_split"
+    },
+    {
+      "ts": "2026-05-21T04:44:16.599775+00:00",
+      "text": "[INFO] Applied LAH-UAV ETA follow speed plan (variant=1)"
+    },
+    {
+      "ts": "2026-05-21T04:44:16.600811+00:00",
+      "text": "[OK] FlightPath counts (variant=1): 0303=6 / 0304=6"
+    },
+    {
+      "ts": "2026-05-21T04:44:16.601774+00:00",
+      "text": "[REPLAN][METRIC] flightpath_counts variant=1 option=6 recon=0 mode=parallel_core paths0303=6 paths0304=6 pathsTotal=12 waypoints0303=15 waypoints0304=12 waypointsTotal=27 maxWaypointsPerPath=3 emptyPaths=0 formationPaths=0"
+    },
+    {
+      "ts": "2026-05-21T04:44:19.151872+00:00",
+      "text": "[REPLAN][TIME] variant_started_ms=1939.7 wall_ms=1779338651530 variant=3 option=5 mode=parallel_core"
+    },
+    {
+      "ts": "2026-05-21T04:44:19.153842+00:00",
+      "text": "[REPLAN][TIME] variant_core_finished_ms=9559.4 wall_ms=1779338659150 variant=3 option=5 mode=parallel_core status=success duration_ms=7619.739"
+    },
+    {
+      "ts": "2026-05-21T04:44:19.155699+00:00",
+      "text": "[STEP 1.3] Divide & Pattern start"
+    },
+    {
+      "ts": "2026-05-21T04:44:19.156574+00:00",
+      "text": "[variant 3] [ENHANCED][1] split start: uavs=[4, 5, 6]"
+    },
+    {
+      "ts": "2026-05-21T04:44:19.157365+00:00",
+      "text": "[variant 3] [ENHANCED][1] split done: pieces=6"
+    },
+    {
+      "ts": "2026-05-21T04:44:19.158047+00:00",
+      "text": "[variant 3] [ENHANCED][2] type-decider done: profile=6 changed=6/6"
+    },
+    {
+      "ts": "2026-05-21T04:44:19.158710+00:00",
+      "text": "[variant 3] [ENHANCED][3] expected-path done: count=6"
+    },
+    {
+      "ts": "2026-05-21T04:44:19.176681+00:00",
+      "text": "[variant 3] [ENHANCED][4] area-review done: overflow=0 targets=0 pieces=6->6"
+    },
+    {
+      "ts": "2026-05-21T04:44:19.195880+00:00",
+      "text": "[variant 3] [ENHANCED][5] expected-velocity done: pieces=6 dbRows=7010"
+    },
+    {
+      "ts": "2026-05-21T04:44:19.214661+00:00",
+      "text": "[variant 3] [ENHANCED][6] 0302 export done: files=6"
+    },
+    {
+      "ts": "2026-05-21T04:44:19.230828+00:00",
+      "text": "[variant 3] [ENHANCED] total=1339.9 ms"
+    },
+    {
+      "ts": "2026-05-21T04:44:19.249308+00:00",
+      "text": "[TIME] divide_and_pattern (variant=3): 1340.2 ms"
+    },
+    {
+      "ts": "2026-05-21T04:44:19.292552+00:00",
+      "text": "[OK] IMP generated: 6 file(s) (variant=3)"
+    },
+    {
+      "ts": "2026-05-21T04:44:19.312326+00:00",
+      "text": "[TIME] build_0301+load (variant=3): 147.2 ms"
+    },
+    {
+      "ts": "2026-05-21T04:44:19.313660+00:00",
+      "text": "[OK] MissionPlan built: MissionPlan_1779338652870.json (variant=3)"
+    },
+    {
+      "ts": "2026-05-21T04:44:19.314626+00:00",
+      "text": "[TIME] collect_missions (variant=3): 55.4 ms, count=12"
+    },
+    {
+      "ts": "2026-05-21T04:44:19.325863+00:00",
+      "text": "[variant 3] [REEXEC-FIRST] current-position first mission builder armed: sourcePlan=700000048, inputMissionID=6, sourceTemplateInputID=5, aircraft=[4, 5, 6], entries=A4=37.9339185,128.1755449,alt=1943.0, A5=37.9269766,128.1944788,alt=1875.0, A6=37.9246304,128.2048407,alt=1967.0"
+    },
+    {
+      "ts": "2026-05-21T04:44:19.327733+00:00",
+      "text": "[variant 3] [REEXEC-FIRST] division planner area-division pieces=3"
+    },
+    {
+      "ts": "2026-05-21T04:44:19.328679+00:00",
+      "text": "[variant 3] [REEXEC-FIRST] division planner final workflow=no_split paths=3"
+    },
+    {
+      "ts": "2026-05-21T04:44:19.329615+00:00",
+      "text": "[variant 3] current remaining generic 0303 skipped: inputMissionID=6, missions=3, aircraft=[4, 5, 6], pathIDs=[400000001, 500000001, 600000001]"
+    },
+    {
+      "ts": "2026-05-21T04:44:19.334461+00:00",
+      "text": "[INFO] FlightPath build mode (variant=3): 0303=aircraft_parallel workers=2 aircraft=3, 0304=sequential"
+    },
+    {
+      "ts": "2026-05-21T04:44:19.335448+00:00",
+      "text": "[REPLAN][METRIC] flightpath_build_0303 variant=3 option=5 recon=0 mode=parallel_core buildMode=aircraft_parallel workers=2 aircraft=3 paths=3 reassignedWaypoints=9 elapsed_ms=231.047 fallback=- worker_ms=4:166.362|5:141.750|6:84.999"
+    },
+    {
+      "ts": "2026-05-21T04:44:19.336338+00:00",
+      "text": "[INFO] FlightPath build time: 0303=231.0 ms, 0304=5.8 ms"
+    },
+    {
+      "ts": "2026-05-21T04:44:19.337362+00:00",
+      "text": "[variant 3] current remaining collaborative hybrid applied: inputMissionID=6, aircraft=[4, 5, 6], removedPaths=3, workflow=reexecute_first_mission:no_split"
+    },
+    {
+      "ts": "2026-05-21T04:44:19.339474+00:00",
+      "text": "[INFO] Applied LAH-UAV ETA follow speed plan (variant=3)"
+    },
+    {
+      "ts": "2026-05-21T04:44:19.340341+00:00",
+      "text": "[OK] FlightPath counts (variant=3): 0303=6 / 0304=6"
+    },
+    {
+      "ts": "2026-05-21T04:44:19.341266+00:00",
+      "text": "[REPLAN][METRIC] flightpath_counts variant=3 option=5 recon=0 mode=parallel_core paths0303=6 paths0304=6 pathsTotal=12 waypoints0303=15 waypoints0304=12 waypointsTotal=27 maxWaypointsPerPath=3 emptyPaths=0 formationPaths=0"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.068621+00:00",
+      "text": "[REPLAN][TIME] variant_started_ms=1939.3 wall_ms=1779338651530 variant=2 option=4 mode=parallel_core"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.069915+00:00",
+      "text": "[REPLAN][TIME] variant_core_finished_ms=14475.1 wall_ms=1779338664065 variant=2 option=4 mode=parallel_core status=success duration_ms=12535.8"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.071518+00:00",
+      "text": "[STEP 1.2] Divide & Pattern start"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.072112+00:00",
+      "text": "[variant 2] [ENHANCED][1] split start: uavs=[4, 5, 6]"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.072710+00:00",
+      "text": "[variant 2] [ENHANCED][1] split done: pieces=6"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.073374+00:00",
+      "text": "[variant 2] [REPLAN][METRIC] recon_area_review_before option=4 pieces=6 areaPieces=3 maxSegmentM=600.000 maxSplitCountLimit=0 minSegmentM=0.000 fixedFovDeg=2.400 areaFovDeg=2.400 sweepSeparationM=1000.000 sweepSeparationScale=1.000 turnRadiusM=800.000"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.074228+00:00",
+      "text": "[variant 2] [REPLAN][METRIC] recon_area_review option=4 elapsed_ms=746.670 maxSegmentM=600.000 maxSplitCountLimit=0 minSegmentM=0.000 pieces_before=6 pieces_after=16 area_before=3 area_after=13 targets=3 localized=3 changed_details=3 detail_count=3 split_count_sum=13 raw_split_count_sum=13 max_split_count=5 max_raw_split_count=5 split_capped_count=0 max_projected_span_m=2497.311 max_total_len_m=0.000 max_segment_len_m=538.930 fixedFovDeg=2.400 areaFovDeg=2.400 sweepSeparationM=1000.000 sweepSeparationScale=1.000 turnRadiusM=800.000 reasons=-"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.074841+00:00",
+      "text": "[variant 2] [ENHANCED][1R] recon-area-review done: targets=3 localized=3 pieces=6->16"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.075431+00:00",
+      "text": "[variant 2] [ENHANCED][2] type-decider done: profile=6 changed=16/16"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.076233+00:00",
+      "text": "[variant 2] [ENHANCED][3] expected-path done: count=16"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.077014+00:00",
+      "text": "[variant 2] [ENHANCED][4] area-review done: overflow=0 targets=0 pieces=16->16"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.077796+00:00",
+      "text": "[variant 2] [ENHANCED][5] expected-velocity done: pieces=16 dbRows=7010"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.079038+00:00",
+      "text": "[variant 2] [ENHANCED][6] 0302 export done: files=6"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.079697+00:00",
+      "text": "[variant 2] [ENHANCED] total=1642.6 ms"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.080451+00:00",
+      "text": "[TIME] divide_and_pattern (variant=2): 1643.0 ms"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.081037+00:00",
+      "text": "[OK] IMP generated: 6 file(s) (variant=2)"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.081629+00:00",
+      "text": "[TIME] build_0301+load (variant=2): 18.3 ms"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.082803+00:00",
+      "text": "[OK] MissionPlan built: MissionPlan_1779338653173.json (variant=2)"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.083513+00:00",
+      "text": "[TIME] collect_missions (variant=2): 11.4 ms, count=22"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.084143+00:00",
+      "text": "[variant 2] [REEXEC-FIRST] current-position first mission builder armed: sourcePlan=700000048, inputMissionID=6, sourceTemplateInputID=5, aircraft=[4, 5, 6], entries=A4=37.9339185,128.1755449,alt=1943.0, A5=37.9269766,128.1944788,alt=1875.0, A6=37.9246304,128.2048407,alt=1967.0"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.085015+00:00",
+      "text": "[variant 2] [REEXEC-FIRST] division planner area-division pieces=3"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.085663+00:00",
+      "text": "[variant 2] [REEXEC-FIRST] division planner final workflow=no_split paths=3"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.086993+00:00",
+      "text": "[variant 2] current remaining generic 0303 skipped: inputMissionID=6, missions=13, aircraft=[4, 5, 6], pathIDs=[400000001, 400000002, 400000003, 400000004, 500000001, 500000002, 500000003, 500000004, 600000001, 600000002, 600000003, 600000004, 600000005]"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.087817+00:00",
+      "text": "[INFO] FlightPath build mode (variant=2): 0303=aircraft_parallel workers=2 aircraft=3, 0304=sequential"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.088453+00:00",
+      "text": "[REPLAN][METRIC] flightpath_build_0303 variant=2 option=4 recon=1 mode=parallel_core buildMode=aircraft_parallel workers=2 aircraft=3 paths=3 reassignedWaypoints=9 elapsed_ms=218.089 fallback=- worker_ms=4:126.981|5:159.236|6:88.520"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.089291+00:00",
+      "text": "[INFO] FlightPath build time: 0303=218.1 ms, 0304=5.1 ms"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.089836+00:00",
+      "text": "[variant 2] current remaining collaborative hybrid applied: inputMissionID=6, aircraft=[4, 5, 6], removedPaths=13, workflow=reexecute_first_mission:no_split"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.090381+00:00",
+      "text": "[INFO] Applied LAH-UAV ETA follow speed plan (variant=2)"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.091133+00:00",
+      "text": "[OK] FlightPath counts (variant=2): 0303=6 / 0304=6"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.091685+00:00",
+      "text": "[REPLAN][METRIC] flightpath_counts variant=2 option=4 recon=1 mode=parallel_core paths0303=6 paths0304=6 pathsTotal=12 waypoints0303=15 waypoints0304=12 waypointsTotal=27 maxWaypointsPerPath=3 emptyPaths=0 formationPaths=0"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.156618+00:00",
+      "text": "[TIME] pathID_mapping (variant=1, current_remaining_parallel_store): 87.0 ms"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.157694+00:00",
+      "text": "[INFO] pathID mapping done after current remaining hybrid merge (variant=1, parallel_store)"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.159047+00:00",
+      "text": "[INFO] FlightPath pathID enforced (variant=1): 0303=6, 0304=6"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.217393+00:00",
+      "text": "[TIME] build_0302 (variant=1): 43.0 ms, packages=6"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.218863+00:00",
+      "text": "[INFO] FlightPath individualMissionID synced (variant=1): fixed=12"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.224744+00:00",
+      "text": "[TIME] write_0302 (variant=1): 7.3 ms, files=6"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.285810+00:00",
+      "text": "[TIME] write_FlightPath (variant=1): 55.4 ms, files=12"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.292837+00:00",
+      "text": "[REPLAN][METRIC] flightpath_write variant=1 option=6 recon=0 mode=parallel_store files0303=6 files0304=6 filesTotal=12 write_ms=55.444"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.295382+00:00",
+      "text": "[TIME] write_0301 (variant=1): 1.2 ms"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.296069+00:00",
+      "text": "[OK] Stored variant 1: MissionPlanID=700000049, IMP=6, FlightPath=12"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.296816+00:00",
+      "text": "[REPLAN][TIME] variant_finished_ms=14704.5 wall_ms=1779338664295 variant=1 option=6 mode=parallel_store status=success duration_ms=5089.502"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.297449+00:00",
+      "text": "[TIME] variant_total (variant=1): 5089.5 ms"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.298179+00:00",
+      "text": "[INFO] Option mapping #1: planID=700000049, optionCode=6(정찰/시간 균형)"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.393032+00:00",
+      "text": "[TIME] pathID_mapping (variant=2, current_remaining_parallel_store): 94.5 ms"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.394196+00:00",
+      "text": "[INFO] pathID mapping done after current remaining hybrid merge (variant=2, parallel_store)"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.395458+00:00",
+      "text": "[INFO] FlightPath pathID enforced (variant=2): 0303=6, 0304=6"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.452991+00:00",
+      "text": "[TIME] build_0302 (variant=2): 42.9 ms, packages=6"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.454082+00:00",
+      "text": "[INFO] FlightPath individualMissionID synced (variant=2): fixed=12"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.461424+00:00",
+      "text": "[TIME] write_0302 (variant=2): 8.5 ms, files=6"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.531186+00:00",
+      "text": "[TIME] write_FlightPath (variant=2): 59.6 ms, files=12"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.541484+00:00",
+      "text": "[REPLAN][METRIC] flightpath_write variant=2 option=4 recon=1 mode=parallel_store files0303=6 files0304=6 filesTotal=12 write_ms=59.577"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.546961+00:00",
+      "text": "[TIME] write_0301 (variant=2): 1.4 ms"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.547729+00:00",
+      "text": "[OK] Stored variant 2: MissionPlanID=700000050, IMP=6, FlightPath=12"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.548941+00:00",
+      "text": "[REPLAN][TIME] variant_finished_ms=14955.8 wall_ms=1779338664546 variant=2 option=4 mode=parallel_store status=success duration_ms=12783.054"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.549827+00:00",
+      "text": "[TIME] variant_total (variant=2): 12783.1 ms"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.550421+00:00",
+      "text": "[INFO] Option mapping #2: planID=700000050, optionCode=4(정찰특화)"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.644374+00:00",
+      "text": "[TIME] pathID_mapping (variant=3, current_remaining_parallel_store): 94.7 ms"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.645381+00:00",
+      "text": "[INFO] pathID mapping done after current remaining hybrid merge (variant=3, parallel_store)"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.646495+00:00",
+      "text": "[INFO] FlightPath pathID enforced (variant=3): 0303=6, 0304=6"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.707271+00:00",
+      "text": "[TIME] build_0302 (variant=3): 43.5 ms, packages=6"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.709151+00:00",
+      "text": "[INFO] FlightPath individualMissionID synced (variant=3): fixed=12"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.716099+00:00",
+      "text": "[TIME] write_0302 (variant=3): 8.3 ms, files=6"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.784755+00:00",
+      "text": "[TIME] write_FlightPath (variant=3): 58.4 ms, files=12"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.789522+00:00",
+      "text": "[REPLAN][METRIC] flightpath_write variant=3 option=5 recon=0 mode=parallel_store files0303=6 files0304=6 filesTotal=12 write_ms=58.434"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.792531+00:00",
+      "text": "[TIME] write_0301 (variant=3): 1.4 ms"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.793209+00:00",
+      "text": "[OK] Stored variant 3: MissionPlanID=700000051, IMP=6, FlightPath=12"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.793798+00:00",
+      "text": "[REPLAN][TIME] variant_finished_ms=15201.5 wall_ms=1779338664792 variant=3 option=5 mode=parallel_store status=success duration_ms=7861.159"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.794387+00:00",
+      "text": "[TIME] variant_total (variant=3): 7861.2 ms"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.795024+00:00",
+      "text": "[INFO] Option mapping #3: planID=700000051, optionCode=5(최소시간)"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.796093+00:00",
+      "text": "[OK] Stored mission data: MissionPlan=3, IndividualMission=18, FlightPath=36"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.797757+00:00",
+      "text": "[REPLAN][TIME] id_tab_update_deferred_ms=15205.2 wall_ms=1779338664796"
+    },
+    {
+      "ts": "2026-05-21T04:44:24.798535+00:00",
+      "text": "[REPLAN][TIME] pipeline_done_ms=15205.4 wall_ms=1779338664796 plans=3 force_direct=False"
+    }
+  ],
+  "missionPlanID": 700000050,
+  "logPath": "C:\\Users\\TRL98\\Desktop\\LAH_MUMT\\Logs\\Scenario_2026-05-21T132543\\SBC3\\DSS_Internal\\missionPlan_700000050.json"
+}

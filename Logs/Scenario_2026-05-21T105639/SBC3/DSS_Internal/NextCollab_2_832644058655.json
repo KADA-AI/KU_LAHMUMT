@@ -1,0 +1,160 @@
+{
+  "timestamp": 832644058655,
+  "reason": "_협업 기저 전환으로 인한 재계획",
+  "sourceMissionPlanID": 700000001,
+  "sourceInputMissionPackageID": 1,
+  "generatedMissionPlanID": 700000002,
+  "generatedInputMissionPackageID": 1,
+  "reusedInputMissionPackage": true,
+  "currentInputMissionID": 1,
+  "targetInputMissionID": 2,
+  "targetAircraftIDs": [
+    4,
+    5,
+    6
+  ],
+  "representativeEntryCoordinate": {
+    "latitude": 37.85430001667121,
+    "longitude": 128.15166456156396,
+    "altitude": 1799
+  },
+  "nextInputEntryCoordinate": {
+    "latitude": 37.89855,
+    "longitude": 128.1926,
+    "altitude": 0
+  },
+  "entryAircraftList": [
+    {
+      "aircraftID": 4,
+      "coordinate": {
+        "latitude": 37.864482832590284,
+        "longitude": 128.15305052437938,
+        "altitude": 1492
+      }
+    },
+    {
+      "aircraftID": 5,
+      "coordinate": {
+        "latitude": 37.853686273156924,
+        "longitude": 128.15011049818418,
+        "altitude": 2005
+      }
+    },
+    {
+      "aircraftID": 6,
+      "coordinate": {
+        "latitude": 37.844730944266416,
+        "longitude": 128.1518326621283,
+        "altitude": 1901
+      }
+    }
+  ],
+  "areaReview": {
+    "enabled": true,
+    "mode": "next_collab_local_assigned",
+    "plannerWorkflow": "no_split",
+    "changed": true,
+    "overflowRows": 0,
+    "targets": 3,
+    "oldPieceCount": 3,
+    "newPieceCount": 3,
+    "pathRowCount": 3,
+    "details": [],
+    "generatedMissionCount": 3
+  },
+  "plannerWorkflow": "no_split",
+  "plannerResultText": "Mission: area\nUAV: UAV4, UAV5, UAV6\n[1] flow=initial split pieces=3\n[DIR] M1 A1 ID=1 move=23.14 split=113.14 in=23.14\n[1a] prediction-assign speed=40m/s horizon=5s radius=630m assigned=3/3 UAV4=1, UAV5=1, UAV6=1\n\nArea division pieces: 3\n  P1: UAV4 (R, 5518.7m)\n  P2: UAV5 (R, 6839.4m)\n  P3: UAV6 (R, 8276.1m)\n[MID] generation refBearing=23.1deg\n  P1 / UAV4: boxWidth 1806m | maxWidth 1803m (L 900m / R 903m) | T0 R 183.3s | Sep_Start 4152m | Width_Start 1803m | DB OK (W 1803m / SEP 2071m)\n  P2 / UAV5: boxWidth 1807m | maxWidth 1805m (L 902m / R 903m) | T0 R 224.7s | Sep_Start 5180m | Width_Start 1805m | DB OK (W 1806m / SEP 1793m)\n  P3 / UAV6: boxWidth 1806m | maxWidth 1804m (L 903m / R 902m) | T0 R 258.1s | Sep_Start 6945m | Width_Start 1804m | DB OK (W 1805m / SEP 1174m)\n[DBG] P1 widthStartM=1803.1 dbMaxWidthM=6363.3 → NO_SPLIT\n[DBG] P2 widthStartM=1805.4 dbMaxWidthM=6363.3 → NO_SPLIT\n[DBG] P3 widthStartM=1804.4 dbMaxWidthM=6363.3 → NO_SPLIT\n[DBG] total=3 no_split=3\n[MID] DB covers all current widths. Split workflow disabled; use Make Path - 0.\n[PATH0] Make Path - 0\n  DB max sep = 4642m\n  Area Path0 trigger sep = 3000m\n  P1/UAV4: T0'(sep=915m) | W=1803m | shapeL=3409m (midLine=0m) | T→T'=3341m | T0'→WP_E=3409m | FOV=7.7° VEL=154km/h | ETA=173.7s\n  P2/UAV5: T0'(sep=903m) | W=1805m | shapeL=3910m (midLine=0m) | T→T'=4807m | T0'→WP_E=3910m | FOV=7.7° VEL=154km/h | ETA=210.5s\n  P3/UAV6: T0'(sep=905m) | W=1804m | shapeL=3571m (midLine=0m) | T→T'=6564m | T0'→WP_E=3571m | FOV=7.7° VEL=154km/h | ETA=242.3s\n[SWEEP] Make Sweep\n  UAV4/P1: foot=123.1m (step=68.4m, line-rule) | L=3259m → 49 sweep lines | W=1905m (clipped=Y) | spacing=sep+FOV\n  UAV5/P2: foot=121.6m (step=67.6m, line-rule) | L=3917m → 59 sweep lines | W=1814m (clipped=Y) | spacing=sep+FOV\n  UAV6/P3: foot=121.8m (step=67.7m, line-rule) | L=3671m → 55 sweep lines | W=2092m (clipped=Y) | spacing=sep+FOV",
+  "plannedPathRowCount": 3,
+  "generatedIndividualMissionPackageIDs": [
+    800000007,
+    800000008,
+    800000009,
+    800000010,
+    800000011,
+    800000012
+  ],
+  "generatedPathIDs": [
+    400000004,
+    500000004,
+    600000004
+  ],
+  "replanFlowMode": "next_collab_local_assigned",
+  "timingMs": {
+    "load_source": 4.515,
+    "prepare_replacements": 2647.615,
+    "build_artifacts": 55.511,
+    "write_artifacts": 29.543,
+    "total": 2737.196
+  },
+  "logMessages": [
+    "[NEXTCOLLAB] division planner area-division pieces=3",
+    "[NEXTCOLLAB] division planner final workflow=no_split paths=3",
+    "[NEXTCOLLAB] LAH 0304 regeneration incomplete; missing pathIDs=[100000004, 200000004, 300000004]",
+    "[NEXTCOLLAB] stored replanned artifacts -> plan:700000002.json, input:reuse(1.json), imp:6, fp:3 (25.9 ms)",
+    "[NEXTCOLLAB][TIME] timingMs={'load_source': 4.515, 'prepare_replacements': 2647.615, 'build_artifacts': 55.511, 'write_artifacts': 29.543, 'total': 2737.196}"
+  ],
+  "detail": {
+    "trigger": "0803",
+    "triggerType": "nextCollaborativeMission",
+    "sourceMissionPlanID": 700000001,
+    "inputMissionPackageID": 1,
+    "currentInputMissionID": 1,
+    "targetInputMissionID": 2,
+    "entryLeadTimeS": 5.0,
+    "turnRadiusScale": 1.4,
+    "entryStrategy": "turn_projection",
+    "entryAircraftList": [
+      {
+        "aircraftID": 4,
+        "coordinate": {
+          "latitude": 37.864482832590284,
+          "longitude": 128.15305052437938,
+          "altitude": 1492.0
+        },
+        "source": "forwardProjection5s",
+        "headingDeg": 314.7637939453125,
+        "etaS": 5.0
+      },
+      {
+        "aircraftID": 5,
+        "coordinate": {
+          "latitude": 37.853686273156924,
+          "longitude": 128.15011049818418,
+          "altitude": 2005
+        },
+        "source": "forwardProjection5s",
+        "headingDeg": 358.6981201171875,
+        "etaS": 5.0
+      },
+      {
+        "aircraftID": 6,
+        "coordinate": {
+          "latitude": 37.844730944266416,
+          "longitude": 128.1518326621283,
+          "altitude": 1901
+        },
+        "source": "forwardProjection5s",
+        "headingDeg": 10.65673828125,
+        "etaS": 5.0
+      }
+    ],
+    "keepCurrentMissionDone": true,
+    "forceDirectUpdate": true,
+    "suppress0702Fallback": true,
+    "selectedReplanReason": "_협업 기저 전환으로 인한 재계획",
+    "timestamp": 832644058116,
+    "representativeEntryCoordinate": {
+      "latitude": 37.85430001667121,
+      "longitude": 128.15166456156396,
+      "altitude": 1799
+    },
+    "representativeTargetEntryCoordinate": {
+      "latitude": 37.901738,
+      "longitude": 128.16909333333334,
+      "altitude": 1967
+    },
+    "missionPlanID": 700000002,
+    "savedAt": "2026-05-21T02:00:58.116362+00:00"
+  },
+  "logArtifactMode": "pretty"
+}

@@ -1,0 +1,305 @@
+[
+  {
+    "timestamp": 832654459613,
+    "source": "MSM",
+    "inputMissionPackageID": 5,
+    "replanRequestTime": {
+      "replanRequestTimestamp": 832654459613
+    },
+    "replanLevel": 1,
+    "replanRequest": "무인기 1번 고장 재계획",
+    "inputMissionIDList": [
+      {
+        "inputMissionID": 7
+      },
+      {
+        "inputMissionID": 3
+      }
+    ],
+    "pendingOptionList": [
+      {
+        "optionID": 6,
+        "optionName": "정찰/시간 균형",
+        "missionPlanID": 700000068
+      },
+      {
+        "optionID": 4,
+        "optionName": "정찰특화",
+        "missionPlanID": 700000069
+      },
+      {
+        "optionID": 5,
+        "optionName": "최소시간",
+        "missionPlanID": 700000070
+      }
+    ],
+    "replanDetail": {
+      "trigger": "0401",
+      "triggerType": "abnormalHealthUnavailable",
+      "sourceMissionPlanID": 700000067,
+      "currentMissionPlanID": 700000067,
+      "aircraftID": 4,
+      "flightMode": 7,
+      "health": 2,
+      "rtbCause": "health",
+      "fuelWarning": 1,
+      "payloadHealth": 2,
+      "datalinkConnected": true,
+      "commandAircraftID": 1,
+      "commandDatalinkConnected": true,
+      "lastSignalTime": 832654398917,
+      "reason": "무인기 1번 고장 재계획",
+      "currentRemainingCollaborativeReplan": true,
+      "currentInputMissionID": 7,
+      "entryStrategy": "turn_projection",
+      "entryLeadTimeS": 5.0,
+      "turnRadiusScale": 1.4,
+      "entryAircraftList": [
+        {
+          "aircraftID": 4,
+          "coordinate": {
+            "latitude": 37.915717379510255,
+            "longitude": 128.19117926913745,
+            "altitude": 1863.0
+          },
+          "source": "forwardProjection5s",
+          "headingDeg": 278.9263916015625,
+          "etaS": 5.0
+        },
+        {
+          "aircraftID": 5,
+          "coordinate": {
+            "latitude": 37.91948660417276,
+            "longitude": 128.19069611062676,
+            "altitude": 1831.0
+          },
+          "source": "forwardProjection5s",
+          "headingDeg": 142.371826171875,
+          "etaS": 5.0
+        },
+        {
+          "aircraftID": 6,
+          "coordinate": {
+            "latitude": 37.92916069178595,
+            "longitude": 128.17571420542993,
+            "altitude": 1886.0
+          },
+          "source": "forwardProjection5s",
+          "headingDeg": 266.4019775390625,
+          "etaS": 5.0
+        }
+      ],
+      "representativeEntryCoordinate": {
+        "latitude": 37.92145489182299,
+        "longitude": 128.1858631950647,
+        "altitude": 1860
+      }
+    },
+    "sourceMissionPlanID": 700000067,
+    "currentMissionPlanID": 700000067,
+    "replanReason": "무인기 1번 고장 재계획",
+    "savedAt": "2026-05-21T04:54:20.090470+00:00"
+  },
+  {
+    "timestamp": 832654459613,
+    "source": "MSM",
+    "inputMissionPackageID": 5,
+    "replanRequestTime": {
+      "replanRequestTimestamp": 832654459613
+    },
+    "replanLevel": 1,
+    "replanRequest": "무인기 2번 고장 재계획",
+    "inputMissionIDList": [
+      {
+        "inputMissionID": 7
+      },
+      {
+        "inputMissionID": 3
+      }
+    ],
+    "pendingOptionList": [
+      {
+        "optionID": 6,
+        "optionName": "정찰/시간 균형",
+        "missionPlanID": 700000071
+      },
+      {
+        "optionID": 4,
+        "optionName": "정찰특화",
+        "missionPlanID": 700000072
+      },
+      {
+        "optionID": 5,
+        "optionName": "최소시간",
+        "missionPlanID": 700000073
+      }
+    ],
+    "replanDetail": {
+      "trigger": "0401",
+      "triggerType": "abnormalHealthUnavailable",
+      "sourceMissionPlanID": 700000067,
+      "currentMissionPlanID": 700000067,
+      "aircraftID": 5,
+      "flightMode": 7,
+      "health": 2,
+      "rtbCause": "health",
+      "fuelWarning": 1,
+      "payloadHealth": 2,
+      "datalinkConnected": true,
+      "commandAircraftID": 1,
+      "commandDatalinkConnected": true,
+      "lastSignalTime": 832654398980,
+      "reason": "무인기 2번 고장 재계획",
+      "currentRemainingCollaborativeReplan": true,
+      "currentInputMissionID": 7,
+      "entryStrategy": "turn_projection",
+      "entryLeadTimeS": 5.0,
+      "turnRadiusScale": 1.4,
+      "entryAircraftList": [
+        {
+          "aircraftID": 4,
+          "coordinate": {
+            "latitude": 37.915717379510255,
+            "longitude": 128.19117926913745,
+            "altitude": 1863.0
+          },
+          "source": "forwardProjection5s",
+          "headingDeg": 278.9263916015625,
+          "etaS": 5.0
+        },
+        {
+          "aircraftID": 5,
+          "coordinate": {
+            "latitude": 37.91948660417276,
+            "longitude": 128.19069611062676,
+            "altitude": 1831.0
+          },
+          "source": "forwardProjection5s",
+          "headingDeg": 142.371826171875,
+          "etaS": 5.0
+        },
+        {
+          "aircraftID": 6,
+          "coordinate": {
+            "latitude": 37.92916069178595,
+            "longitude": 128.17571420542993,
+            "altitude": 1886.0
+          },
+          "source": "forwardProjection5s",
+          "headingDeg": 266.4019775390625,
+          "etaS": 5.0
+        }
+      ],
+      "representativeEntryCoordinate": {
+        "latitude": 37.92145489182299,
+        "longitude": 128.1858631950647,
+        "altitude": 1860
+      }
+    },
+    "sourceMissionPlanID": 700000067,
+    "currentMissionPlanID": 700000067,
+    "replanReason": "무인기 2번 고장 재계획",
+    "savedAt": "2026-05-21T04:55:05.441514+00:00"
+  },
+  {
+    "timestamp": 832654459613,
+    "source": "MSM",
+    "inputMissionPackageID": 5,
+    "replanRequestTime": {
+      "replanRequestTimestamp": 832654459613
+    },
+    "replanLevel": 1,
+    "replanRequest": "무인기 3번 고장 재계획",
+    "inputMissionIDList": [
+      {
+        "inputMissionID": 7
+      },
+      {
+        "inputMissionID": 3
+      }
+    ],
+    "pendingOptionList": [
+      {
+        "optionID": 6,
+        "optionName": "정찰/시간 균형",
+        "missionPlanID": 700000074
+      },
+      {
+        "optionID": 4,
+        "optionName": "정찰특화",
+        "missionPlanID": 700000075
+      },
+      {
+        "optionID": 5,
+        "optionName": "최소시간",
+        "missionPlanID": 700000076
+      }
+    ],
+    "replanDetail": {
+      "trigger": "0401",
+      "triggerType": "abnormalHealthUnavailable",
+      "sourceMissionPlanID": 700000067,
+      "currentMissionPlanID": 700000067,
+      "aircraftID": 6,
+      "flightMode": 7,
+      "health": 2,
+      "rtbCause": "health",
+      "fuelWarning": 1,
+      "payloadHealth": 2,
+      "datalinkConnected": true,
+      "commandAircraftID": 1,
+      "commandDatalinkConnected": true,
+      "lastSignalTime": 832654398868,
+      "reason": "무인기 3번 고장 재계획",
+      "currentRemainingCollaborativeReplan": true,
+      "currentInputMissionID": 7,
+      "entryStrategy": "turn_projection",
+      "entryLeadTimeS": 5.0,
+      "turnRadiusScale": 1.4,
+      "entryAircraftList": [
+        {
+          "aircraftID": 4,
+          "coordinate": {
+            "latitude": 37.915717379510255,
+            "longitude": 128.19117926913745,
+            "altitude": 1863.0
+          },
+          "source": "forwardProjection5s",
+          "headingDeg": 278.9263916015625,
+          "etaS": 5.0
+        },
+        {
+          "aircraftID": 5,
+          "coordinate": {
+            "latitude": 37.91948660417276,
+            "longitude": 128.19069611062676,
+            "altitude": 1831.0
+          },
+          "source": "forwardProjection5s",
+          "headingDeg": 142.371826171875,
+          "etaS": 5.0
+        },
+        {
+          "aircraftID": 6,
+          "coordinate": {
+            "latitude": 37.92916069178595,
+            "longitude": 128.17571420542993,
+            "altitude": 1886.0
+          },
+          "source": "forwardProjection5s",
+          "headingDeg": 266.4019775390625,
+          "etaS": 5.0
+        }
+      ],
+      "representativeEntryCoordinate": {
+        "latitude": 37.92145489182299,
+        "longitude": 128.1858631950647,
+        "altitude": 1860
+      }
+    },
+    "sourceMissionPlanID": 700000067,
+    "currentMissionPlanID": 700000067,
+    "replanReason": "무인기 3번 고장 재계획",
+    "savedAt": "2026-05-21T04:55:50.943649+00:00"
+  }
+]

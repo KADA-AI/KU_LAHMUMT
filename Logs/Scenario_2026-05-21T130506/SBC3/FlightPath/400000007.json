@@ -1,0 +1,37 @@
+{
+  "timestamp": 832651523748,
+  "source": "MMR",
+  "pathID": 400000007,
+  "aircraftID": 4,
+  "individualMissionID": 900000028,
+  "isFormationFlight": false,
+  "waypointList": [
+    {
+      "waypointID": 114,
+      "coordinate": {
+        "latitude": 37.899765,
+        "longitude": 128.17627,
+        "altitude": 1792
+      },
+      "speed": 30.0,
+      "eta": 0,
+      "ecf": 0.0,
+      "nextWaypointID": 0,
+      "waypointPassType": 2,
+      "filmingProperty": {
+        "fieldOfView": 5.0,
+        "sensorType": 1,
+        "operationMode": 3,
+        "autoTracking": {
+          "targetID": 7
+        }
+      },
+      "loiterProperty": {
+        "radius": 400,
+        "direction": 1,
+        "time": 0,
+        "speed": 30
+      }
+    }
+  ]
+}

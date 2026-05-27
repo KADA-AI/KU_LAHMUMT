@@ -1,0 +1,96 @@
+{
+  "missionPlanID": 700000006,
+  "timestamp": 832651799259,
+  "missionCount": 2,
+  "missions": [
+    {
+      "inputMissionID": 3,
+      "missionType": "line",
+      "individualMissionIDs": [
+        900000069,
+        900000071,
+        900000073
+      ],
+      "aircraftIDs": [
+        4,
+        5,
+        6
+      ],
+      "plannedAreaM2": 3700578.665339816,
+      "remainingAreaM2": 3700578.6653398154,
+      "coveragePercent": 0,
+      "isDone": false,
+      "sourceLineWidthM": 1000.0,
+      "sourceCoordinateList": [
+        {
+          "latitude": 37.89855,
+          "longitude": 128.1926,
+          "altitude": 0
+        },
+        {
+          "latitude": 37.869625,
+          "longitude": 128.21355,
+          "altitude": 0
+        }
+      ],
+      "remainingDetail": {
+        "coordinateList": [
+          {
+            "latitude": 37.89855,
+            "longitude": 128.1926,
+            "altitude": 0
+          },
+          {
+            "latitude": 37.869625,
+            "longitude": 128.21355,
+            "altitude": 0
+          }
+        ],
+        "lineList": [
+          {
+            "width": 1000.0,
+            "coordinateList": [
+              {
+                "latitude": 37.89855,
+                "longitude": 128.1926,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.869625,
+                "longitude": 128.21355,
+                "altitude": 0
+              }
+            ]
+          }
+        ],
+        "areaList": []
+      }
+    },
+    {
+      "inputMissionID": 4,
+      "missionType": "area",
+      "individualMissionIDs": [
+        900000068,
+        900000070,
+        900000072
+      ],
+      "aircraftIDs": [
+        4,
+        5,
+        6
+      ],
+      "plannedAreaM2": 13880474.401104433,
+      "remainingAreaM2": 0.0,
+      "coveragePercent": 100,
+      "isDone": true,
+      "sourceLineWidthM": null,
+      "sourceCoordinateList": [],
+      "remainingDetail": {
+        "coordinateList": [],
+        "lineList": [],
+        "areaList": []
+      }
+    }
+  ],
+  "savedAt": "2026-05-21T04:08:20.720313+00:00"
+}

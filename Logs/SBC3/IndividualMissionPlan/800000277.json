@@ -1,0 +1,101 @@
+{
+  "timestamp": 832654002076,
+  "Source": "MMR",
+  "individualMissionPackageID": 800000277,
+  "aircraftID": 4,
+  "individualMissionList": [
+    {
+      "individualMissionID": 900000667,
+      "isDone": false,
+      "relatedMission": {
+        "relatedMissionType": 1,
+        "inputMissionID": 6,
+        "priorMissionID": 0
+      },
+      "individualMissionInfo": {
+        "individualMissionType": 3,
+        "patternType": 6,
+        "autoZoomIn": true,
+        "BEARING": 34.6114689091375,
+        "SPEED": 154.0,
+        "FOV": 3.2,
+        "SEP": 2161.642369688997,
+        "MOVE_BEARING": 26.609319059163454,
+        "areaList": [
+          {
+            "isHole": false,
+            "coordinateList": [
+              {
+                "latitude": 37.89883727827638,
+                "longitude": 128.16333652815982,
+                "altitude": 1907
+              },
+              {
+                "latitude": 37.9098890015759,
+                "longitude": 128.16915899009044,
+                "altitude": 1907
+              },
+              {
+                "latitude": 37.9098890015759,
+                "longitude": 128.16915899009044,
+                "altitude": 1907
+              },
+              {
+                "latitude": 37.907677954113936,
+                "longitude": 128.18475065741788,
+                "altitude": 1907
+              },
+              {
+                "latitude": 37.898703945753724,
+                "longitude": 128.17690177901594,
+                "altitude": 1907
+              }
+            ]
+          }
+        ],
+        "targetID": null,
+        "coordinateList": []
+      },
+      "pathID": 400000154,
+      "bearing_deg": 34.6114689091375
+    },
+    {
+      "individualMissionID": 900000646,
+      "isDone": false,
+      "relatedMission": {
+        "relatedMissionType": 1,
+        "inputMissionID": 3,
+        "priorMissionID": 0
+      },
+      "individualMissionInfo": {
+        "individualMissionType": 6,
+        "patternType": 8,
+        "autoZoomIn": true,
+        "BEARING": 150.23975675889693,
+        "SPEED": 140.0,
+        "FOV": 11.7,
+        "SEP": 227.0,
+        "MOVE_BEARING": 150.23975675889693,
+        "lineList": [
+          {
+            "width": 333.3333333333333,
+            "coordinateList": [
+              {
+                "latitude": 37.900035838357056,
+                "longitude": 128.19589455851747,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.871110838357055,
+                "longitude": 128.21684455851747,
+                "altitude": 0
+              }
+            ]
+          }
+        ],
+        "targetID": null
+      },
+      "pathID": 400000149
+    }
+  ]
+}

@@ -2,15 +2,14 @@ from __future__ import annotations
 
 import os
 import socket
+import sys
 import time
+import traceback
 
 from modules.common.process_console import ensure_console, install_process_file_logging
-from modules.common import db_paths
-from modules.sim.config import SERVER_HOST, SERVER_PORT, resolve_server_binding
-from modules.sim.server.http_server import MapServer
 
 ensure_console(os.getenv("KU_CONSOLE_TITLE", "KU Simulation Console"))
-install_process_file_logging("simulation")
+# 로그 파일은 대기모드 진입 후 DB 경로가 확정된 뒤에 쌓도록 지연 설치
 
 
 def _collect_local_ipv4_addresses() -> list[str]:
@@ -42,11 +41,17 @@ def _collect_local_ipv4_addresses() -> list[str]:
 
 
 def main() -> None:
+    print(f"[sim] bootstrap start: python={sys.executable}")
+    from modules.common import db_paths
+    from modules.sim.config import SERVER_HOST, SERVER_PORT, resolve_server_binding
+    from modules.sim.server.http_server import MapServer
+
     db_root = db_paths.bootstrap_db_root()
     db_paths.ensure_env_watch()
     host, port = resolve_server_binding(SERVER_HOST, SERVER_PORT)
     server = MapServer(host=host, port=port)
     server.start()
+    install_process_file_logging("simulation")
     print(f"[sim] active db root: {db_root}")
     print(f"[sim] current_scenario.json: {db_paths.INFO_PATH}")
     print(f"[sim] web map running at http://127.0.0.1:{port}/")
@@ -65,4 +70,18 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except ModuleNotFoundError as exc:
+        missing_name = str(getattr(exc, "name", "") or "").strip() or "unknown"
+        print(f"[sim ERR] startup failed: missing dependency '{missing_name}'", file=sys.stderr)
+        print(
+            f"[sim HINT] install with: \"{sys.executable}\" -m pip install {missing_name}",
+            file=sys.stderr,
+        )
+        traceback.print_exc()
+        raise
+    except Exception as exc:
+        print(f"[sim ERR] startup failed: {exc}", file=sys.stderr)
+        traceback.print_exc()
+        raise

@@ -1,0 +1,2959 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>미션 시나리오 생성기</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=Noto+Serif+KR:wght@600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg-top: #f7f3ee;
+        --bg-bottom: #eef2f7;
+        --card: rgba(255, 255, 255, 0.72);
+        --card-strong: rgba(255, 255, 255, 0.92);
+        --stroke: rgba(10, 15, 22, 0.08);
+        --text: #14181d;
+        --muted: #65707c;
+        --accent: #0a63ff;
+        --accent-strong: #0048c7;
+        --glow: rgba(10, 99, 255, 0.15);
+        --highlight: rgba(255, 139, 76, 0.22);
+        --shadow: 0 24px 60px rgba(17, 24, 39, 0.14);
+        --radius: 22px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "IBM Plex Sans KR", "Pretendard", "Apple SD Gothic Neo", sans-serif;
+        color: var(--text);
+        min-height: 100vh;
+        background: radial-gradient(circle at 20% 10%, #fff4ea 0%, transparent 55%),
+          radial-gradient(circle at 85% 15%, #e5f0ff 0%, transparent 50%),
+          linear-gradient(160deg, var(--bg-top), var(--bg-bottom));
+        overflow: hidden;
+      }
+
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        background-image: radial-gradient(rgba(10, 99, 255, 0.06) 1px, transparent 1px);
+        background-size: 140px 140px;
+        opacity: 0.35;
+        pointer-events: none;
+      }
+
+      body::after {
+        content: "";
+        position: fixed;
+        inset: -20% -10% auto auto;
+        width: 380px;
+        height: 380px;
+        background: radial-gradient(circle, rgba(255, 139, 76, 0.35), transparent 70%);
+        filter: blur(20px);
+        animation: float 18s ease-in-out infinite;
+        pointer-events: none;
+      }
+
+      @keyframes float {
+        0%,
+        100% {
+          transform: translateY(0px);
+        }
+        50% {
+          transform: translateY(24px);
+        }
+      }
+
+      @keyframes rise {
+        from {
+          opacity: 0;
+          transform: translateY(20px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      .shell {
+        height: 100vh;
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr);
+        padding: 30px 32px 34px;
+        gap: 24px;
+      }
+
+      header {
+        background: var(--card-strong);
+        border-radius: var(--radius);
+        padding: 24px 32px;
+        box-shadow: var(--shadow);
+        border: 1px solid rgba(255, 255, 255, 0.6);
+        backdrop-filter: blur(16px);
+        animation: rise 0.6s ease-out;
+      }
+
+      header h1 {
+        margin: 0;
+        font-family: "Noto Serif KR", "Apple SD Gothic Neo", serif;
+        font-size: 34px;
+        letter-spacing: 0.4px;
+      }
+
+      header p {
+        margin: 8px 0 0;
+        color: var(--muted);
+        font-size: 15px;
+      }
+
+      main {
+        display: grid;
+        grid-template-columns: minmax(360px, 560px) minmax(360px, 1fr);
+        gap: 24px;
+        height: 100%;
+        min-height: 0;
+        align-items: stretch;
+        overflow: hidden;
+      }
+
+      .stack {
+        display: grid;
+        gap: 24px;
+        align-content: start;
+        height: 100%;
+        min-height: 0;
+      }
+
+      .right-stack {
+        display: flex;
+        flex-direction: column;
+        gap: 24px;
+        height: 100%;
+        min-height: 0;
+      }
+
+      #previewCard {
+        margin-bottom: 24px;
+      }
+
+      .card {
+        background: var(--card);
+        border-radius: var(--radius);
+        padding: 24px 26px 26px;
+        border: 1px solid rgba(255, 255, 255, 0.6);
+        backdrop-filter: blur(18px);
+        box-shadow: var(--shadow);
+        animation: rise 0.7s ease-out;
+      }
+
+      .card-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+
+      .card-head .head-actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .badge {
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: rgba(10, 99, 255, 0.12);
+        color: var(--accent-strong);
+        font-size: 12px;
+        font-weight: 600;
+      }
+
+      .preview-controls {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .preview-controls button {
+        border: 1px solid rgba(20, 24, 29, 0.1);
+        background: white;
+        border-radius: 8px;
+        padding: 6px 8px;
+        font-size: 12px;
+        cursor: pointer;
+      }
+
+      .result-picker {
+        min-width: 148px;
+        border: 1px solid rgba(20, 24, 29, 0.12);
+        background: rgba(255, 255, 255, 0.96);
+        border-radius: 10px;
+        padding: 6px 10px;
+        font-size: 12px;
+        color: var(--text);
+      }
+
+      #previewCard {
+        display: flex;
+        flex-direction: column;
+        flex: 0 0 clamp(240px, 38vh, 380px);
+        min-height: 0;
+      }
+
+      .preview-wrap {
+        position: relative;
+        flex: 1;
+        min-height: 0;
+        border-radius: 18px;
+        overflow: hidden;
+        border: 1px solid rgba(20, 24, 29, 0.12);
+        background: linear-gradient(130deg, rgba(255, 255, 255, 0.7), rgba(232, 240, 255, 0.8));
+        cursor: grab;
+      }
+
+      #previewCanvas {
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+
+      .preview-empty {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        padding: 18px;
+        color: var(--muted);
+        font-size: 14px;
+        background: rgba(255, 255, 255, 0.4);
+        backdrop-filter: blur(4px);
+      }
+
+      .preview-empty.hidden {
+        display: none;
+      }
+
+      .preview3d-modal {
+        position: fixed;
+        inset: 0;
+        z-index: 120;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 28px;
+        background: rgba(10, 16, 28, 0.56);
+        backdrop-filter: blur(12px);
+      }
+
+      .preview3d-modal.is-hidden {
+        display: none;
+      }
+
+      .preview3d-dialog {
+        width: min(1040px, calc(100vw - 56px));
+        max-height: calc(100vh - 56px);
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr);
+        border-radius: 24px;
+        overflow: hidden;
+        background: rgba(255, 252, 248, 0.98);
+        border: 1px solid rgba(255, 255, 255, 0.75);
+        box-shadow: 0 24px 64px rgba(17, 24, 39, 0.28);
+      }
+
+      .preview3d-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 16px 18px;
+        background: linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(245, 248, 255, 0.9));
+        border-bottom: 1px solid rgba(17, 24, 39, 0.08);
+      }
+
+      .preview3d-copy {
+        display: grid;
+        gap: 4px;
+      }
+
+      .preview3d-title {
+        margin: 0;
+        font-size: 20px;
+        font-weight: 700;
+        color: #1f2937;
+      }
+
+      .preview3d-subtitle {
+        margin: 0;
+        font-size: 12px;
+        color: #64748b;
+      }
+
+      .preview3d-close {
+        min-width: 42px;
+        height: 42px;
+        border: 1px solid rgba(17, 24, 39, 0.1);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.84);
+        color: #334155;
+        font-size: 24px;
+        line-height: 1;
+        cursor: pointer;
+      }
+
+      .preview3d-close:hover {
+        background: rgba(255, 255, 255, 1);
+      }
+
+      .preview3d-body {
+        min-height: 0;
+        overflow: auto;
+        padding: 16px 18px 20px;
+        background:
+          radial-gradient(circle at 18% 20%, rgba(123, 170, 255, 0.18), transparent 26%),
+          linear-gradient(180deg, rgba(239, 244, 255, 0.96), rgba(249, 251, 255, 0.98));
+      }
+
+      .preview3d-body img {
+        width: 100%;
+        height: auto;
+        display: block;
+        border-radius: 18px;
+        border: 1px solid rgba(15, 23, 42, 0.08);
+        background: #ffffff;
+        box-shadow: 0 14px 38px rgba(15, 23, 42, 0.14);
+      }
+
+      .legend {
+        margin-top: 10px;
+        background: rgba(255, 255, 255, 0.9);
+        border-radius: 12px;
+        border: 1px solid rgba(20, 24, 29, 0.1);
+        padding: 8px 12px;
+        font-size: 12px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px 20px;
+        color: var(--text);
+        min-height: 36px;
+      }
+
+      .legend-item {
+        gap: 10px;
+      }
+
+      .legend-item span {
+        white-space: nowrap;
+      }
+
+      .legend-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .legend-icon {
+        width: 14px;
+        height: 14px;
+        display: inline-block;
+        position: relative;
+        flex: 0 0 auto;
+      }
+
+      .legend-flight {
+        border: 2px solid #6fa7ff;
+        border-radius: 3px;
+        background: rgba(111, 167, 255, 0.12);
+      }
+
+      .legend-prohibit {
+        border: 2px dashed #ff7b6b;
+        border-radius: 3px;
+        background: rgba(255, 123, 107, 0.12);
+      }
+
+      .legend-mission::before {
+        content: "";
+        position: absolute;
+        left: 1px;
+        right: 1px;
+        top: 50%;
+        height: 2px;
+        background: #0a63ff;
+        transform: translateY(-50%);
+        border-radius: 999px;
+      }
+
+      .legend-target::before,
+      .legend-target::after {
+        content: "";
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 12px;
+        height: 2px;
+        background: #1f1f1f;
+        transform-origin: center;
+      }
+
+      .legend-target::before {
+        transform: translate(-50%, -50%) rotate(45deg);
+      }
+
+      .legend-target::after {
+        transform: translate(-50%, -50%) rotate(-45deg);
+      }
+
+      .legend-takeover,
+      .legend-handover,
+      .legend-rtb {
+        border-radius: 999px;
+      }
+
+      .legend-takeover {
+        background: #33b679;
+      }
+
+      .legend-handover {
+        background: #fbbc04;
+      }
+
+      .legend-rtb {
+        background: #ea4335;
+      }
+
+      #outputCard {
+        height: 320px;
+        display: flex;
+        flex-direction: column;
+      }
+
+      #configCard {
+        display: flex;
+        flex-direction: column;
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow: hidden;
+        padding: 12px 18px 14px;
+      }
+
+      #configCard h2 {
+        font-size: 17px;
+        margin-bottom: 6px;
+      }
+
+      #configCard .status {
+        font-size: 12px;
+        margin-top: 6px;
+      }
+
+      #configCard .config-group {
+        margin-bottom: 12px;
+        padding-bottom: 10px;
+      }
+
+      #configCard .config-group h3 {
+        font-size: 12px;
+        margin: 6px 0 8px;
+      }
+
+      #configCard label {
+        font-size: 12px;
+      }
+
+      #configCard input,
+      #configCard textarea {
+        font-size: 13px;
+        padding: 10px 12px;
+      }
+
+      #configCard textarea {
+        min-height: 70px;
+      }
+
+      main > section,
+      .right-stack > .card {
+        min-height: 0;
+      }
+
+      .card h2 {
+        font-size: 19px;
+        margin: 0 0 14px;
+        font-weight: 600;
+      }
+
+      .row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+        margin-bottom: 16px;
+      }
+
+      .field {
+        display: grid;
+        gap: 6px;
+      }
+
+      label {
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      input,
+      textarea {
+        width: 100%;
+        border-radius: 12px;
+        border: 1px solid var(--stroke);
+        background: #f6f7fb;
+        padding: 12px 14px;
+        font-family: inherit;
+        font-size: 15px;
+        color: var(--text);
+        outline: none;
+        transition: border 0.2s ease, box-shadow 0.2s ease;
+      }
+
+      input.readonly,
+      textarea.readonly {
+        background: #f1f1f5;
+        color: #7a818b;
+      }
+
+      textarea {
+        min-height: 90px;
+        resize: vertical;
+      }
+
+      input:focus,
+      textarea:focus {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 4px var(--glow);
+      }
+
+      .checkbox {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .checkbox input[type="checkbox"] {
+        width: 20px;
+        height: 20px;
+        accent-color: var(--accent);
+        cursor: pointer;
+      }
+
+      .actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+        margin-top: 14px;
+      }
+
+      button {
+        border: none;
+        border-radius: 999px;
+        padding: 13px 20px;
+        font-weight: 600;
+        font-size: 15px;
+        cursor: pointer;
+        transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+      }
+
+      button.primary {
+        background: linear-gradient(135deg, var(--accent), #47a1ff);
+        color: white;
+        box-shadow: 0 14px 30px rgba(10, 99, 255, 0.25);
+      }
+
+      button.secondary {
+        background: #f1f3f8;
+        color: var(--text);
+      }
+
+      button:hover {
+        transform: translateY(-1px);
+      }
+
+      button:active {
+        transform: translateY(1px);
+      }
+
+      button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+        transform: none;
+      }
+
+      .output-list {
+        display: grid;
+        gap: 14px;
+        overflow-y: auto;
+        padding-right: 6px;
+        flex: 1;
+        min-height: 0;
+      }
+
+      .output-item {
+        background: rgba(255, 255, 255, 0.6);
+        border-radius: 16px;
+        padding: 14px 16px;
+        border: 1px solid rgba(255, 255, 255, 0.8);
+      }
+
+      .output-item span {
+        display: block;
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      .output-item strong {
+        font-size: 14px;
+        color: var(--text);
+        word-break: break-all;
+      }
+
+      .status {
+        margin-top: 14px;
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      .config-scroll {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        padding-right: 8px;
+        scrollbar-gutter: stable;
+        overscroll-behavior: contain;
+      }
+
+      .config-scroll::-webkit-scrollbar {
+        width: 8px;
+      }
+
+      .config-scroll::-webkit-scrollbar-thumb {
+        background: rgba(20, 24, 29, 0.2);
+        border-radius: 999px;
+      }
+
+      .config-scroll::-webkit-scrollbar-track {
+        background: rgba(255, 255, 255, 0.4);
+        border-radius: 999px;
+      }
+
+      .config-group {
+        margin-bottom: 20px;
+        padding-bottom: 16px;
+        border-bottom: 1px solid rgba(20, 24, 29, 0.08);
+      }
+
+      .config-group h3 {
+        font-size: 14px;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        color: var(--muted);
+        margin: 10px 0 12px;
+      }
+
+      .config-field {
+        display: grid;
+        gap: 8px;
+        margin-bottom: 14px;
+      }
+
+      .config-desc {
+        font-size: 13px;
+        color: var(--muted);
+        line-height: 1.5;
+        margin-bottom: 8px;
+      }
+
+      .loading {
+        position: relative;
+        box-shadow:
+          0 0 0 1px rgba(39, 144, 255, 0.16),
+          0 20px 44px rgba(15, 23, 40, 0.12);
+      }
+
+      .loading::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        border-radius: inherit;
+        border: 1px solid rgba(39, 144, 255, 0.2);
+        pointer-events: none;
+      }
+
+      button.primary,
+      button.secondary {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+      }
+
+      button.primary.is-busy {
+        opacity: 0.96;
+      }
+
+      button.primary.is-busy::after {
+        content: "";
+        width: 14px;
+        height: 14px;
+        border-radius: 999px;
+        border: 2px solid rgba(40, 22, 9, 0.22);
+        border-top-color: rgba(40, 22, 9, 0.82);
+        animation: spin 0.82s linear infinite;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      @media (max-width: 1050px) {
+        main {
+          grid-template-columns: 1fr;
+        }
+        .right-stack {
+          height: auto;
+        }
+        #previewCard {
+          flex: 0 0 260px;
+        }
+        #outputCard {
+          height: 260px;
+        }
+      }
+    </style>
+    <style>
+      :root {
+        --canvas-night: linear-gradient(160deg, rgba(8, 15, 30, 0.96), rgba(17, 35, 62, 0.88));
+        --panel-surface: rgba(255, 251, 245, 0.78);
+        --panel-strong-surface: rgba(255, 255, 255, 0.92);
+        --panel-line: rgba(73, 55, 36, 0.14);
+        --hero-ink: #0f1728;
+        --hero-soft: #677285;
+        --signal: #ff8b3d;
+        --signal-deep: #d85a16;
+        --signal-cool: #2790ff;
+        --signal-mint: #10a37f;
+        --stage-shadow: 0 32px 72px rgba(15, 23, 40, 0.22);
+      }
+
+      body {
+        overflow: auto;
+        background:
+          radial-gradient(circle at 12% 12%, rgba(255, 201, 150, 0.42), transparent 32%),
+          radial-gradient(circle at 88% 10%, rgba(39, 144, 255, 0.2), transparent 28%),
+          linear-gradient(145deg, #f5ecdf 0%, #eef2f8 38%, #e8eef5 100%);
+      }
+
+      body::before {
+        background-image:
+          linear-gradient(rgba(15, 23, 40, 0.035) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(15, 23, 40, 0.035) 1px, transparent 1px);
+        background-size: 84px 84px;
+        opacity: 0.65;
+      }
+
+      body::after {
+        inset: auto auto -16% -8%;
+        width: 460px;
+        height: 460px;
+        background: radial-gradient(circle, rgba(13, 163, 127, 0.2), transparent 72%);
+      }
+
+      .shell {
+        min-height: 100vh;
+        height: auto;
+        padding: 18px 20px 22px;
+        gap: 14px;
+      }
+
+      .hero {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 11px 16px;
+        border-radius: 20px;
+        background:
+          linear-gradient(135deg, rgba(255, 255, 255, 0.95), rgba(255, 249, 242, 0.76)),
+          radial-gradient(circle at top right, rgba(255, 139, 61, 0.16), transparent 36%);
+        border: 1px solid rgba(255, 255, 255, 0.82);
+        box-shadow: var(--stage-shadow);
+      }
+
+      .hero-copy {
+        display: grid;
+        gap: 4px;
+        max-width: 680px;
+      }
+
+      .hero-kicker,
+      .panel-kicker,
+      .stage-kicker,
+      .config-group-kicker {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 10px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: var(--signal-deep);
+        font-weight: 700;
+      }
+
+      .hero-kicker::before,
+      .panel-kicker::before,
+      .stage-kicker::before,
+      .config-group-kicker::before {
+        content: "";
+        width: 20px;
+        height: 1px;
+        background: currentColor;
+        opacity: 0.7;
+      }
+
+      .hero h1 {
+        margin: 0;
+        font-size: clamp(20px, 1.8vw, 28px);
+        line-height: 1.05;
+        color: var(--hero-ink);
+      }
+
+      .hero-flags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        justify-content: flex-end;
+      }
+
+      .hero-flag {
+        display: inline-flex;
+        align-items: center;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: rgba(15, 23, 40, 0.06);
+        border: 1px solid rgba(15, 23, 40, 0.08);
+        color: var(--hero-ink);
+        font-size: 10px;
+        font-weight: 600;
+      }
+
+      main.workspace {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 14px;
+        min-height: 0;
+        align-items: start;
+      }
+
+      .content-column {
+        min-width: 0;
+        display: grid;
+        gap: 14px;
+      }
+
+      .stage-column {
+        min-width: 0;
+        display: flex;
+      }
+
+      #previewCard.stage-card {
+        flex: 1 1 auto;
+        width: 100%;
+        min-width: 0;
+      }
+
+      .control-column {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        min-height: 0;
+      }
+
+      .control-sidebar {
+        width: 360px;
+        min-width: 0;
+        justify-self: start;
+      }
+
+      .sidebar-shell {
+        display: grid;
+        gap: 10px;
+        width: 360px;
+      }
+
+      .sidebar-rail {
+        display: flex;
+        align-items: stretch;
+        gap: 10px;
+        padding: 6px;
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.72);
+        border: 1px solid rgba(255, 255, 255, 0.76);
+        box-shadow: 0 16px 32px rgba(15, 23, 40, 0.1);
+        backdrop-filter: blur(18px);
+      }
+
+      .sidebar-tab {
+        flex: 1 1 0;
+        height: 44px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 0 14px;
+        border-radius: 12px;
+        border: 1px solid transparent;
+        background: transparent;
+        color: var(--hero-soft);
+        transition: background 0.18s ease, transform 0.18s ease, border-color 0.18s ease;
+      }
+
+      .sidebar-tab:hover {
+        background: rgba(15, 23, 40, 0.05);
+        transform: translateY(-1px);
+      }
+
+      .sidebar-tab.is-active {
+        background: linear-gradient(135deg, rgba(255, 139, 61, 0.16), rgba(39, 144, 255, 0.12));
+        border-color: rgba(15, 23, 40, 0.08);
+        color: var(--hero-ink);
+      }
+
+      .sidebar-tab svg {
+        width: 16px;
+        height: 16px;
+        stroke: currentColor;
+        fill: none;
+        stroke-width: 1.85;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+
+      .sidebar-tab-label {
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .sidebar-card {
+        min-width: 0;
+        position: relative;
+        max-height: calc(100vh - 190px);
+        border-radius: 20px;
+        background: var(--panel-strong-surface);
+        border: 1px solid rgba(255, 255, 255, 0.76);
+        box-shadow: 0 20px 44px rgba(15, 23, 40, 0.12);
+        backdrop-filter: blur(18px);
+        overflow-y: auto;
+        overflow-x: hidden;
+        overscroll-behavior: contain;
+      }
+
+      .sidebar-shell.is-collapsed .sidebar-card {
+        display: none;
+      }
+
+      .sidebar-card.loading {
+        position: relative;
+      }
+
+      .sidebar-panel {
+        display: grid;
+        gap: 12px;
+        padding: 14px;
+      }
+
+      .sidebar-panel.is-hidden {
+        display: none;
+      }
+
+      .sidebar-panel-head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .sidebar-panel-copy {
+        display: grid;
+        gap: 4px;
+        min-width: 0;
+      }
+
+      .sidebar-panel-copy h2 {
+        margin: 0;
+        font-size: 17px;
+        color: var(--hero-ink);
+      }
+
+      .sidebar-panel-copy p {
+        margin: 0;
+        font-size: 11px;
+        line-height: 1.45;
+        color: var(--hero-soft);
+      }
+
+      .sidebar-badge {
+        display: inline-flex;
+        align-items: center;
+        padding: 8px 10px;
+        border-radius: 999px;
+        background: rgba(15, 23, 40, 0.06);
+        color: var(--hero-soft);
+        font-size: 11px;
+        font-weight: 700;
+        white-space: nowrap;
+      }
+
+      .sidebar-panel-body {
+        display: grid;
+        gap: 12px;
+      }
+
+      .config-category-bar {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .config-category-btn {
+        min-height: 40px;
+        display: flex;
+        align-items: center;
+        justify-content: flex-start;
+        padding: 10px 14px;
+        border-radius: 14px;
+        border: 1px solid rgba(15, 23, 40, 0.08);
+        background: rgba(15, 23, 40, 0.04);
+        color: var(--hero-soft);
+        font-size: 12px;
+        line-height: 1.3;
+        font-weight: 700;
+        text-align: left;
+        transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+      }
+
+      .config-category-btn:hover {
+        background: rgba(15, 23, 40, 0.07);
+      }
+
+      .config-category-btn.is-active {
+        background: linear-gradient(135deg, rgba(255, 139, 61, 0.18), rgba(39, 144, 255, 0.14));
+        border-color: rgba(15, 23, 40, 0.1);
+        color: var(--hero-ink);
+      }
+
+      .stage-card {
+        flex: 0 0 auto;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        padding: 14px;
+        color: #eef4ff;
+        background:
+          radial-gradient(circle at top left, rgba(255, 139, 61, 0.11), transparent 24%),
+          radial-gradient(circle at bottom right, rgba(39, 144, 255, 0.18), transparent 26%),
+          var(--canvas-night);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        box-shadow: var(--stage-shadow);
+      }
+
+      .stage-topbar {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 4px 6px 0;
+      }
+
+      .stage-title-block {
+        display: grid;
+        gap: 6px;
+        min-width: 0;
+      }
+
+      .stage-title-block h2 {
+        margin: 0;
+        font-size: 20px;
+        color: #f8fbff;
+      }
+
+      .stage-subtitle {
+        margin: 0;
+        font-size: 11px;
+        line-height: 1.45;
+        color: rgba(226, 234, 247, 0.78);
+        max-width: 420px;
+      }
+
+      .stage-card .head-actions {
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+
+      .stage-card .badge {
+        background: rgba(255, 255, 255, 0.12);
+        color: #ecf3ff;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+      }
+
+      .preview-controls {
+        padding: 6px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+      }
+
+      .preview-controls button,
+      .result-picker {
+        height: 36px;
+        padding: 0 12px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(255, 255, 255, 0.12);
+        color: #eff5ff;
+      }
+
+      .preview-controls button:hover,
+      .result-picker:hover {
+        background: rgba(255, 255, 255, 0.18);
+      }
+
+      .preview-stage-frame {
+        position: relative;
+        flex: 0 0 auto;
+        min-height: 320px;
+        padding: 6px;
+        border-radius: 24px;
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.02));
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+      }
+
+      .preview-wrap {
+        border-radius: 20px;
+        background:
+          radial-gradient(circle at 22% 18%, rgba(255, 139, 61, 0.1), transparent 24%),
+          linear-gradient(160deg, rgba(17, 26, 46, 0.95), rgba(11, 20, 38, 0.96));
+        border: 1px solid rgba(255, 255, 255, 0.08);
+      }
+
+      .preview-empty {
+        background: rgba(6, 12, 24, 0.58);
+        color: rgba(231, 237, 245, 0.82);
+      }
+
+      .legend {
+        margin-top: 0;
+        padding: 12px 14px;
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        color: rgba(240, 244, 255, 0.88);
+      }
+
+      .panel {
+        margin: 0;
+        border-radius: 22px;
+        background: var(--panel-surface);
+        border: 1px solid rgba(255, 255, 255, 0.74);
+        box-shadow: 0 20px 44px rgba(15, 23, 40, 0.12);
+        overflow: hidden;
+        backdrop-filter: blur(18px);
+      }
+
+      .panel[open] {
+        background: var(--panel-strong-surface);
+      }
+
+      .panel-summary {
+        list-style: none;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 18px 18px 16px;
+        cursor: pointer;
+      }
+
+      .panel-summary::-webkit-details-marker {
+        display: none;
+      }
+
+      .panel-summary-copy {
+        display: grid;
+        gap: 5px;
+      }
+
+      .panel-summary h2 {
+        margin: 0;
+        font-size: 20px;
+        color: var(--hero-ink);
+      }
+
+      .panel-state {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        border-radius: 999px;
+        background: rgba(15, 23, 40, 0.06);
+        color: var(--hero-soft);
+        font-size: 12px;
+        font-weight: 600;
+      }
+
+      .panel-summary::after {
+        content: "▾";
+        font-size: 14px;
+        color: var(--hero-soft);
+        transition: transform 0.24s ease;
+      }
+
+      .panel:not([open]) .panel-summary::after {
+        transform: rotate(-90deg);
+      }
+
+      .panel-body {
+        padding: 0 18px 18px;
+        animation: rise 0.22s ease-out;
+      }
+
+      .panel-generation .panel-body,
+      .panel-results .panel-body {
+        display: grid;
+        gap: 16px;
+      }
+
+      .panel-results .output-list {
+        max-height: 260px;
+      }
+
+      .panel-results .status {
+        margin-top: 0;
+      }
+
+      .panel-config .panel-body {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        min-height: 0;
+      }
+
+      #configCard {
+        flex: 1;
+      }
+
+      #configCard .panel-body {
+        min-height: 0;
+      }
+
+      .config-intro {
+        margin: 0;
+        padding: 0 2px;
+        background: transparent;
+        border: none;
+        color: var(--hero-soft);
+        font-size: 11px;
+        line-height: 1.5;
+      }
+
+      .config-scroll {
+        display: grid;
+        gap: 12px;
+        padding-right: 4px;
+        max-height: none;
+        overflow: visible;
+      }
+
+      .config-scroll::-webkit-scrollbar {
+        width: 10px;
+      }
+
+      .config-scroll::-webkit-scrollbar-thumb {
+        background: rgba(15, 23, 40, 0.18);
+        border-radius: 999px;
+      }
+
+      .config-scroll::-webkit-scrollbar-track {
+        background: transparent;
+      }
+
+      .config-group {
+        margin: 0;
+        border: 1px solid var(--panel-line);
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.54);
+        overflow: hidden;
+      }
+
+      .config-group.is-hidden {
+        display: none;
+      }
+
+      .config-group-head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 14px 16px 0;
+      }
+
+      .config-group-title {
+        display: grid;
+        gap: 4px;
+        min-width: 0;
+      }
+
+      .config-group-title h3 {
+        margin: 0;
+        font-size: 16px;
+        color: var(--hero-ink);
+      }
+
+      .config-group-title p {
+        margin: 0;
+        font-size: 11px;
+        line-height: 1.45;
+        color: var(--hero-soft);
+      }
+
+      .config-group-meta {
+        display: inline-flex;
+        align-items: center;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: rgba(15, 23, 40, 0.06);
+        color: var(--hero-soft);
+        font-size: 11px;
+        font-weight: 700;
+      }
+
+      .config-group-body {
+        padding: 10px 16px 16px;
+      }
+
+      .config-field {
+        padding: 14px 0;
+        margin: 0;
+        border-top: 1px solid rgba(73, 55, 36, 0.08);
+      }
+
+      .config-group-body .config-field:first-child {
+        border-top: none;
+      }
+
+      .config-desc {
+        margin-bottom: 10px;
+        font-size: 12px;
+        color: var(--hero-soft);
+      }
+
+      .row {
+        margin-bottom: 0;
+      }
+
+      .field,
+      .checkbox {
+        padding: 14px 16px;
+        border-radius: 18px;
+        background: rgba(15, 23, 40, 0.045);
+        border: 1px solid rgba(15, 23, 40, 0.06);
+      }
+
+      .checkbox {
+        display: grid;
+        grid-template-columns: 22px 1fr;
+        align-items: center;
+      }
+
+      .checkbox label {
+        color: var(--hero-ink);
+      }
+
+      #generationModeHint {
+        margin-top: 0;
+        padding: 12px 14px;
+        border-radius: 16px;
+        background: rgba(39, 144, 255, 0.08);
+        border: 1px solid rgba(39, 144, 255, 0.1);
+        color: #285c8b;
+      }
+
+      input,
+      textarea {
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.84);
+        border: 1px solid rgba(15, 23, 40, 0.08);
+      }
+
+      button.primary {
+        background: linear-gradient(135deg, var(--signal), #ffb365);
+        color: #281609;
+        box-shadow: 0 18px 30px rgba(216, 90, 22, 0.22);
+      }
+
+      button.secondary {
+        background: rgba(15, 23, 40, 0.06);
+      }
+
+      .actions {
+        grid-template-columns: 1.3fr 1fr;
+        margin-top: 0;
+      }
+
+      .output-item {
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.74);
+        border: 1px solid rgba(15, 23, 40, 0.06);
+      }
+
+      .output-item span {
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .status-console {
+        padding: 12px 14px;
+        border-radius: 16px;
+        background: #111827;
+        color: #d6f5e8;
+        font-family: "IBM Plex Sans KR", monospace;
+      }
+
+      .results-strip {
+        position: relative;
+        display: grid;
+        gap: 12px;
+        padding: 14px 16px 16px;
+        border-radius: 20px;
+        background: var(--panel-strong-surface);
+        border: 1px solid rgba(255, 255, 255, 0.8);
+        box-shadow: 0 20px 44px rgba(15, 23, 40, 0.12);
+        backdrop-filter: blur(18px);
+      }
+
+      .results-head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 14px;
+      }
+
+      .results-copy {
+        display: grid;
+        gap: 6px;
+      }
+
+      .results-copy h2 {
+        margin: 0;
+        font-size: 18px;
+        color: var(--hero-ink);
+      }
+
+      .results-copy p {
+        margin: 0;
+        font-size: 11px;
+        line-height: 1.45;
+        color: var(--hero-soft);
+      }
+
+      .results-badge {
+        display: inline-flex;
+        align-items: center;
+        padding: 8px 12px;
+        border-radius: 999px;
+        background: rgba(15, 23, 40, 0.06);
+        color: var(--hero-soft);
+        font-size: 11px;
+        font-weight: 700;
+      }
+
+      .results-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .results-strip .output-item {
+        min-height: 72px;
+        padding: 12px 14px;
+      }
+
+      .results-strip .output-item strong {
+        display: block;
+        margin-top: 8px;
+        font-size: 13px;
+        line-height: 1.5;
+        word-break: break-all;
+        color: var(--hero-ink);
+      }
+
+      .loading::before {
+        border-color: rgba(39, 144, 255, 0.24);
+      }
+
+      @media (max-width: 1240px) {
+        main.workspace {
+          grid-template-columns: 1fr;
+        }
+
+        .preview-stage-frame {
+          min-height: 300px;
+        }
+
+        .control-sidebar {
+          width: 100%;
+        }
+
+        .sidebar-card {
+          max-height: none;
+        }
+
+        .sidebar-shell,
+        .sidebar-shell.is-collapsed {
+          width: 100%;
+        }
+
+        .results-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+
+      @media (max-width: 760px) {
+        .shell {
+          padding: 14px;
+        }
+
+        .hero,
+        .panel-summary,
+        .panel-body,
+        .stage-topbar {
+          padding-left: 14px;
+          padding-right: 14px;
+        }
+
+        .hero {
+          flex-direction: column;
+          align-items: flex-start;
+        }
+
+        .stage-topbar {
+          flex-direction: column;
+        }
+
+        .results-head,
+        .sidebar-panel-head {
+          flex-direction: column;
+        }
+
+        .row,
+        .actions {
+          grid-template-columns: 1fr;
+        }
+
+        .head-actions {
+          width: 100%;
+          justify-content: flex-start;
+        }
+
+        .preview-stage-frame {
+          min-height: 260px;
+        }
+
+        .preview3d-modal {
+          padding: 16px;
+        }
+
+        .preview3d-dialog {
+          width: calc(100vw - 32px);
+          max-height: calc(100vh - 32px);
+        }
+
+        .results-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .sidebar-shell.is-collapsed {
+          width: 100%;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <header class="hero">
+        <div class="hero-copy">
+          <span class="hero-kicker">웹 미션 콘솔</span>
+          <h1>미션 시나리오 생성기</h1>
+        </div>
+        <div class="hero-flags">
+          <span class="hero-flag">미리보기 중심</span>
+          <span class="hero-flag">접이식 제어 패널</span>
+          <span class="hero-flag">브라우저 3D 보기</span>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <section class="content-column">
+          <section class="stage-column">
+            <div class="card stage-card" id="previewCard">
+            <div class="stage-topbar">
+              <div class="stage-title-block">
+                <span class="stage-kicker">메인 화면</span>
+                <h2>미션 시각화</h2>
+                <p class="stage-subtitle">생성된 시나리오의 비행 구역, 참조점, 미션 경로, 타깃을 메인 화면에 올리고 바로 미션 선택과 3D 프리뷰로 이어집니다.</p>
+              </div>
+              <div class="head-actions">
+                <div class="preview-controls">
+                  <button type="button" id="zoomOutBtn">-</button>
+                  <button type="button" id="zoomFitBtn">맞춤</button>
+                  <button type="button" id="zoomInBtn">+</button>
+                  <button type="button" id="preview3dBtn">3D</button>
+                </div>
+                <select id="generatedResultSelect" class="result-picker" title="생성 결과">
+                  <option value="">최근 결과</option>
+                </select>
+                <span class="badge" id="selectedMissionBadge">미션 선택</span>
+                <span class="badge" id="previewMeta">-</span>
+              </div>
+            </div>
+            <div class="preview-stage-frame">
+              <div class="preview-wrap" id="previewWrap">
+                <canvas id="previewCanvas"></canvas>
+                <div class="preview-empty" id="previewEmpty">
+                  미션을 생성하면 타겟, 참조점, 비행 구역이 메인 스테이지에 표시됩니다.
+                </div>
+              </div>
+            </div>
+            <div class="legend">
+              <div class="legend-item"><span class="legend-icon legend-flight"></span>비행 구역</div>
+              <div class="legend-item"><span class="legend-icon legend-prohibit"></span>금지 구역</div>
+              <div class="legend-item"><span class="legend-icon legend-mission"></span>미션 경로</div>
+              <div class="legend-item"><span class="legend-icon legend-target"></span>타겟</div>
+              <div class="legend-item"><span class="legend-icon legend-takeover"></span>TakeOver</div>
+              <div class="legend-item"><span class="legend-icon legend-handover"></span>HandOver</div>
+              <div class="legend-item"><span class="legend-icon legend-rtb"></span>RTB</div>
+            </div>
+            </div>
+          </section>
+
+          <section class="results-strip" id="resultsCard">
+            <div class="results-head">
+              <div class="results-copy">
+                <span class="panel-kicker">결과</span>
+                <h2>선택 결과</h2>
+                <p>현재 선택된 번들의 저장 경로와 생성 상태를 미리보기 바로 아래에서 확인합니다.</p>
+              </div>
+              <span class="results-badge">현재 번들</span>
+            </div>
+            <div class="results-grid">
+              <div class="output-item">
+                <span>시나리오</span>
+                <strong id="outScenario">-</strong>
+              </div>
+              <div class="output-item">
+                <span>0201 (IMP)</span>
+                <strong id="outImp">-</strong>
+              </div>
+              <div class="output-item">
+                <span>0203 (SCN)</span>
+                <strong id="outScn">-</strong>
+              </div>
+              <div class="output-item">
+                <span>타깃</span>
+                <strong id="outTgt">-</strong>
+              </div>
+            </div>
+            <div class="status status-console" id="statusText">대기 중.</div>
+          </section>
+        </section>
+
+        <aside class="control-sidebar">
+          <div class="sidebar-shell" id="sidebarShell">
+            <div class="sidebar-rail">
+              <button
+                type="button"
+                class="sidebar-tab is-active"
+                data-sidebar-target="generation"
+                aria-pressed="true"
+                title="생성"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 5v14"></path>
+                  <path d="M5 12h14"></path>
+                </svg>
+                <span class="sidebar-tab-label">생성</span>
+              </button>
+              <button
+                type="button"
+                class="sidebar-tab"
+                data-sidebar-target="config"
+                aria-pressed="false"
+                title="설정"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M4 7h16"></path>
+                  <path d="M7 12h13"></path>
+                  <path d="M10 17h10"></path>
+                  <circle cx="8" cy="7" r="1.5"></circle>
+                  <circle cx="11" cy="12" r="1.5"></circle>
+                  <circle cx="14" cy="17" r="1.5"></circle>
+                </svg>
+                <span class="sidebar-tab-label">설정</span>
+              </button>
+            </div>
+
+            <div class="sidebar-card" id="sidebarCard">
+              <section class="sidebar-panel" id="generationPanel" data-sidebar-panel="generation">
+                <div class="sidebar-panel-head">
+                  <div class="sidebar-panel-copy">
+                    <span class="panel-kicker">생성</span>
+                    <h2>생성 패널</h2>
+                    <p>빠른 생성 조건과 기본 모드를 여기서 조정합니다.</p>
+                  </div>
+                  <span class="sidebar-badge">빠른 설정</span>
+                </div>
+                <div class="sidebar-panel-body">
+                  <div class="row">
+                    <div class="field">
+                      <label>생성 횟수</label>
+                      <input id="countInput" type="number" min="1" />
+                    </div>
+                    <div class="field">
+                      <label>시작 오프셋 최대 (m)</label>
+                      <input id="offsetInput" type="number" min="0" />
+                    </div>
+                  </div>
+                  <div class="row">
+                    <div class="field">
+                      <label>타깃 타입</label>
+                      <input id="targetTypesInput" type="text" placeholder="[1, 2]" />
+                    </div>
+                  </div>
+                  <div class="checkbox">
+                    <input id="compositeRouteToggle" type="checkbox" />
+                    <label for="compositeRouteToggle">복합 운용 임무 경로</label>
+                  </div>
+                  <div class="checkbox">
+                    <input id="terrainTargetingToggle" type="checkbox" />
+                    <label for="terrainTargetingToggle">SAM/RADAR DEM 배치 적용</label>
+                  </div>
+                  <div class="status" id="generationModeHint"></div>
+                  <div class="actions">
+                    <button class="primary" id="generateBtn">생성</button>
+                    <button class="secondary" id="resetBtn">초기화</button>
+                  </div>
+                </div>
+              </section>
+
+              <section class="sidebar-panel is-hidden" id="configPanel" data-sidebar-panel="config">
+                <div class="sidebar-panel-head">
+                  <div class="sidebar-panel-copy">
+                    <span class="panel-kicker">설정</span>
+                    <h2>설정 값 수정</h2>
+                    <p>세부 설정값은 섹션별로 접고 펼치며 조정합니다.</p>
+                  </div>
+                  <span class="sidebar-badge">분류별 아코디언</span>
+                </div>
+                <div class="sidebar-panel-body">
+                  <p class="config-intro">리스트와 딕셔너리는 JSON으로 입력하세요. 예: [1, 2] 또는 {"1": 1.0, "2": 0.0}</p>
+                  <div class="config-category-bar" id="configCategoryBar"></div>
+                  <div class="config-scroll" id="configFields"></div>
+                </div>
+              </section>
+            </div>
+          </div>
+        </aside>
+      </main>
+
+      <div class="preview3d-modal is-hidden" id="preview3dModal" aria-hidden="true">
+        <div class="preview3d-dialog" role="dialog" aria-modal="true" aria-labelledby="preview3dTitle">
+          <div class="preview3d-head">
+            <div class="preview3d-copy">
+              <h2 class="preview3d-title" id="preview3dTitle">3D 미리보기</h2>
+              <p class="preview3d-subtitle" id="preview3dSubtitle">선택한 미션의 지형 기반 3D 보기</p>
+            </div>
+            <button type="button" class="preview3d-close" id="preview3dCloseBtn" aria-label="3D 미리보기 닫기">
+              ×
+            </button>
+          </div>
+          <div class="preview3d-body">
+            <img id="preview3dImage" alt="Mission 3D preview" />
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      let configFields = {};
+      const state = {
+        defaults: {},
+        generation: {},
+        generatedResults: [],
+        selectedResultIndex: -1,
+        preview: null,
+        previewZoom: 1,
+        previewOffset: { x: 0, y: 0 },
+        isDragging: false,
+        dragStart: { x: 0, y: 0 },
+        dragOrigin: { x: 0, y: 0 },
+        dragMoved: false,
+        selectedMissionId: null,
+        project: null,
+        preview3dUrl: null,
+      };
+
+      const elements = {
+        count: document.getElementById("countInput"),
+        offset: document.getElementById("offsetInput"),
+        targetTypes: document.getElementById("targetTypesInput"),
+        compositeRoute: document.getElementById("compositeRouteToggle"),
+        terrainTargeting: document.getElementById("terrainTargetingToggle"),
+        generationModeHint: document.getElementById("generationModeHint"),
+        generateBtn: document.getElementById("generateBtn"),
+        resetBtn: document.getElementById("resetBtn"),
+        outScenario: document.getElementById("outScenario"),
+        outImp: document.getElementById("outImp"),
+        outScn: document.getElementById("outScn"),
+        outTgt: document.getElementById("outTgt"),
+        status: document.getElementById("statusText"),
+        generationPanel: document.getElementById("generationPanel"),
+        resultsCard: document.getElementById("resultsCard"),
+        previewCanvas: document.getElementById("previewCanvas"),
+        previewEmpty: document.getElementById("previewEmpty"),
+        previewMeta: document.getElementById("previewMeta"),
+        selectedMissionBadge: document.getElementById("selectedMissionBadge"),
+        generatedResultSelect: document.getElementById("generatedResultSelect"),
+        preview3dBtn: document.getElementById("preview3dBtn"),
+        previewCard: document.getElementById("previewCard"),
+        configPanel: document.getElementById("configPanel"),
+        configCategoryBar: document.getElementById("configCategoryBar"),
+        configScroll: document.getElementById("configFields"),
+        previewWrap: document.getElementById("previewWrap"),
+        zoomInBtn: document.getElementById("zoomInBtn"),
+        zoomOutBtn: document.getElementById("zoomOutBtn"),
+        zoomFitBtn: document.getElementById("zoomFitBtn"),
+        sidebarShell: document.getElementById("sidebarShell"),
+        sidebarCard: document.getElementById("sidebarCard"),
+        preview3dModal: document.getElementById("preview3dModal"),
+        preview3dImage: document.getElementById("preview3dImage"),
+        preview3dTitle: document.getElementById("preview3dTitle"),
+        preview3dSubtitle: document.getElementById("preview3dSubtitle"),
+        preview3dCloseBtn: document.getElementById("preview3dCloseBtn"),
+      };
+
+      function stringifyValue(value) {
+        if (typeof value === "string") {
+          return value;
+        }
+        if (Array.isArray(value) || typeof value === "object") {
+          return JSON.stringify(value);
+        }
+        return String(value);
+      }
+
+      function basename(path) {
+        if (!path) return "-";
+        const parts = String(path).split(/[\\/]/);
+        return parts[parts.length - 1] || path;
+      }
+
+      function resultLabel(item, index) {
+        if (!item) return `Result ${index + 1}`;
+        return item.scenarioName || basename(item.scenario) || `Result ${index + 1}`;
+      }
+
+      function displayConfigGroupName(name) {
+        const raw = String(name || "").trim();
+        if (!raw) return "설정";
+
+        const alias = {
+          "Scenario Sensor Override": "센서 설정",
+          "FlightReferenceInfoData": "비행 참조 정보",
+          "InputMissionPlanData": "협업 임무 계획",
+          "TargetInfo": "표적 배치",
+          "비행참조정보": "비행 참조 정보",
+          "협업기지임무계획": "협업 기지 임무 계획",
+        };
+
+        if (alias[raw]) return alias[raw];
+
+        const withoutParen = raw.replace(/\s*\([^)]*\)\s*/g, " ").replace(/\s+/g, " ").trim();
+        if (alias[withoutParen]) return alias[withoutParen];
+
+        const normalized = withoutParen
+          .replace(/Scenario Sensor Override/gi, "센서 설정")
+          .replace(/FlightReferenceInfoData/gi, "비행 참조 정보")
+          .replace(/InputMissionPlanData/gi, "협업 임무 계획")
+          .replace(/TargetInfo/gi, "표적 배치")
+          .replace(/Scenario/gi, "시나리오")
+          .replace(/Sensor Override/gi, "센서 설정")
+          .replace(/\bData\b/gi, "")
+          .replace(/\s+/g, " ")
+          .trim();
+
+        return normalized || raw;
+      }
+
+      function buildConfig(schema, defaults) {
+        const container = document.getElementById("configFields");
+        const categoryBar = elements.configCategoryBar || document.getElementById("configCategoryBar");
+        container.innerHTML = "";
+        if (categoryBar) categoryBar.innerHTML = "";
+        configFields = {};
+
+        schema.forEach((section, index) => {
+          const items = Array.isArray(section.items) ? section.items : [];
+          const sectionName = displayConfigGroupName(section.group || `설정 ${index + 1}`);
+          const group = document.createElement("section");
+          group.className = "config-group";
+          group.dataset.configGroup = String(index);
+          if (index !== 0) {
+            group.classList.add("is-hidden");
+          }
+
+          if (categoryBar) {
+            const categoryBtn = document.createElement("button");
+            categoryBtn.type = "button";
+            categoryBtn.className = "config-category-btn";
+            categoryBtn.dataset.configCategory = String(index);
+            if (index === 0) {
+              categoryBtn.classList.add("is-active");
+            }
+            categoryBtn.setAttribute("aria-pressed", String(index === 0));
+            categoryBtn.textContent = sectionName;
+            categoryBtn.addEventListener("click", () => setActiveConfigGroup(index));
+            categoryBar.appendChild(categoryBtn);
+          }
+
+          const head = document.createElement("div");
+          head.className = "config-group-head";
+
+          const titleWrap = document.createElement("div");
+          titleWrap.className = "config-group-title";
+
+          const kicker = document.createElement("span");
+          kicker.className = "config-group-kicker";
+          kicker.textContent = "설정 구분";
+
+          const title = document.createElement("h3");
+          title.textContent = sectionName;
+
+          titleWrap.appendChild(kicker);
+          titleWrap.appendChild(title);
+          if (section.desc) {
+            const desc = document.createElement("p");
+            desc.textContent = section.desc;
+            titleWrap.appendChild(desc);
+          }
+
+          const meta = document.createElement("span");
+          meta.className = "config-group-meta";
+          meta.textContent = `${items.length}개 항목`;
+
+          head.appendChild(titleWrap);
+          head.appendChild(meta);
+          group.appendChild(head);
+
+          const body = document.createElement("div");
+          body.className = "config-group-body";
+
+          items.forEach((item) => {
+            const field = document.createElement("div");
+            field.className = "config-field";
+            const label = document.createElement("label");
+            label.textContent = item.label || item.key;
+            const value = defaults[item.key] ?? item.value ?? "";
+            const valueText = stringifyValue(value);
+
+            const useArea = valueText.length > 40 || valueText.startsWith("[") || valueText.startsWith("{");
+            const input = useArea ? document.createElement("textarea") : document.createElement("input");
+            input.value = valueText;
+            if (item.editable === false) {
+              input.readOnly = true;
+              input.classList.add("readonly");
+            }
+            field.appendChild(label);
+            if (item.desc) {
+              const desc = document.createElement("div");
+              desc.className = "config-desc";
+              desc.textContent = item.desc;
+              field.appendChild(desc);
+            }
+            field.appendChild(input);
+            body.appendChild(field);
+            configFields[item.key] = input;
+          });
+
+          group.appendChild(body);
+          container.appendChild(group);
+        });
+      }
+
+      function setActiveConfigGroup(index) {
+        document.querySelectorAll("[data-config-category]").forEach((button, buttonIndex) => {
+          button.classList.toggle("is-active", buttonIndex === index);
+          button.setAttribute("aria-pressed", String(buttonIndex === index));
+        });
+
+        document.querySelectorAll("[data-config-group]").forEach((group, groupIndex) => {
+          group.classList.toggle("is-hidden", groupIndex !== index);
+        });
+
+        if (elements.configScroll) {
+          elements.configScroll.scrollTop = 0;
+        }
+      }
+
+      function applyDefaults() {
+        Object.entries(state.defaults).forEach(([name, value]) => {
+          if (configFields[name]) {
+            configFields[name].value = stringifyValue(value);
+          }
+        });
+        elements.count.value = state.generation.count || "1";
+        elements.offset.value = state.generation.max_offset || "2500";
+        elements.targetTypes.value = state.generation.target_types || "[1, 2]";
+        elements.compositeRoute.checked = !!state.generation.composite_route;
+        elements.terrainTargeting.checked = state.generation.terrain_targeting !== false;
+        applyGenerationModeState();
+      }
+
+      function applyGenerationModeState() {
+        const composite = !!elements.compositeRoute?.checked;
+        elements.offset.disabled = composite;
+        if (elements.generationModeHint) {
+          elements.generationModeHint.textContent = composite
+            ? "복합 운용 모드에서는 시작 오프셋과 일반 랜덤 경로 배치 설정이 무시됩니다. 자동 임무 생성 구역, 시작 참조점, 타겟 설정, DetectPixel/RecogPixel은 그대로 적용됩니다."
+            : "일반 랜덤 모드에서는 생성 옵션과 설정값이 전체 랜덤 임무 생성 규칙에 그대로 적용됩니다.";
+        }
+      }
+
+      function renderGeneratedResultOptions(results) {
+        const select = elements.generatedResultSelect;
+        if (!select) return;
+        select.innerHTML = "";
+        if (!Array.isArray(results) || !results.length) {
+          const option = document.createElement("option");
+          option.value = "";
+          option.textContent = "최근 결과";
+          select.appendChild(option);
+          select.disabled = true;
+          return;
+        }
+        results.forEach((item, index) => {
+          const option = document.createElement("option");
+          option.value = String(index);
+          option.textContent = resultLabel(item, index);
+          select.appendChild(option);
+        });
+        select.disabled = results.length < 2;
+      }
+
+      function firstPreviewMissionId(preview) {
+        if (!preview || !preview.missions) {
+          return null;
+        }
+        const groups = [preview.missions.lines, preview.missions.areas, preview.missions.points];
+        for (const group of groups) {
+          if (!Array.isArray(group)) continue;
+          for (const item of group) {
+            const id = Number(item && item.id);
+            if (Number.isFinite(id) && id > 0) {
+              return id;
+            }
+          }
+        }
+        return null;
+      }
+
+      function applyPreviewState(preview, preferredMissionId = null) {
+        closePreview3dModal();
+        state.preview = preview || null;
+        const missionId = Number(preferredMissionId);
+        state.selectedMissionId =
+          Number.isFinite(missionId) && missionId > 0
+            ? missionId
+            : firstPreviewMissionId(state.preview);
+        updateSelectedBadge();
+        renderPreview(state.preview);
+      }
+
+      function revokePreview3dUrl() {
+        if (state.preview3dUrl) {
+          URL.revokeObjectURL(state.preview3dUrl);
+          state.preview3dUrl = null;
+        }
+      }
+
+      function closePreview3dModal() {
+        revokePreview3dUrl();
+        if (elements.preview3dImage) {
+          elements.preview3dImage.removeAttribute("src");
+        }
+        if (elements.preview3dModal) {
+          elements.preview3dModal.classList.add("is-hidden");
+          elements.preview3dModal.setAttribute("aria-hidden", "true");
+        }
+      }
+
+      function openPreview3dModal(blobUrl, missionId) {
+        revokePreview3dUrl();
+        state.preview3dUrl = blobUrl;
+        if (elements.preview3dTitle) {
+          elements.preview3dTitle.textContent = `미션 ${missionId} 3D 미리보기`;
+        }
+        if (elements.preview3dSubtitle) {
+          elements.preview3dSubtitle.textContent = "지형과 임무 형상을 같은 창에서 바로 확인합니다.";
+        }
+        if (elements.preview3dImage) {
+          elements.preview3dImage.src = blobUrl;
+        }
+        if (elements.preview3dModal) {
+          elements.preview3dModal.classList.remove("is-hidden");
+          elements.preview3dModal.setAttribute("aria-hidden", "false");
+        }
+      }
+
+      function applyGeneratedResult(index) {
+        const results = Array.isArray(state.generatedResults) ? state.generatedResults : [];
+        if (!results.length || index < 0 || index >= results.length) {
+          return;
+        }
+        const item = results[index];
+        state.selectedResultIndex = index;
+        if (elements.generatedResultSelect) {
+          elements.generatedResultSelect.value = String(index);
+        }
+        elements.outScenario.textContent = item.scenario || "-";
+        elements.outImp.textContent = item.imp || "-";
+        elements.outScn.textContent = item.scn || "-";
+        elements.outTgt.textContent = item.tgt || "-";
+        applyPreviewState(item.preview || null);
+      }
+
+      function setBusy(isBusy) {
+        const idleLabel = elements.generateBtn.dataset.idleLabel || elements.generateBtn.textContent || "생성";
+        elements.generateBtn.dataset.idleLabel = idleLabel;
+        elements.generateBtn.disabled = isBusy;
+        elements.resetBtn.disabled = isBusy;
+        elements.generateBtn.textContent = isBusy ? "생성 중" : idleLabel;
+        elements.generateBtn.classList.toggle("is-busy", isBusy);
+        elements.resultsCard.classList.toggle("loading", isBusy);
+        elements.previewCard.classList.toggle("loading", isBusy);
+        elements.sidebarCard.classList.toggle("loading", isBusy);
+      }
+
+      function setSidebarPanel(panelName) {
+        const shell = elements.sidebarShell;
+        const card = elements.sidebarCard;
+        if (!shell || !card) return;
+
+        const next = panelName || "generation";
+
+        document.querySelectorAll("[data-sidebar-target]").forEach((button) => {
+          const active = button.getAttribute("data-sidebar-target") === next;
+          button.classList.toggle("is-active", active);
+          button.setAttribute("aria-pressed", String(active));
+        });
+
+        document.querySelectorAll("[data-sidebar-panel]").forEach((panel) => {
+          panel.classList.toggle("is-hidden", panel.getAttribute("data-sidebar-panel") !== next);
+        });
+      }
+
+      function bindSidebarTabs() {
+        document.querySelectorAll("[data-sidebar-target]").forEach((button) => {
+          button.addEventListener("click", () => {
+            const target = button.getAttribute("data-sidebar-target");
+            setSidebarPanel(target);
+          });
+        });
+      }
+
+      const lineCoords = (item) =>
+        Array.isArray(item) ? item : item && Array.isArray(item.coords) ? item.coords : [];
+      const areaCoords = (item) =>
+        Array.isArray(item) ? item : item && Array.isArray(item.coords) ? item.coords : [];
+      const pointCoord = (item) =>
+        Array.isArray(item) ? item : item && Array.isArray(item.coord) ? item.coord : null;
+
+      function collectPreviewPoints(preview) {
+        const points = [];
+        const pushList = (list) => {
+          if (!Array.isArray(list)) return;
+          list.forEach((pt) => {
+            if (Array.isArray(pt) && pt.length >= 2) {
+              points.push(pt);
+            }
+          });
+        };
+        (preview.flight_areas || []).forEach(pushList);
+        (preview.prohibited_areas || []).forEach(pushList);
+        (preview.missions?.lines || []).forEach((line) => pushList(lineCoords(line)));
+        (preview.missions?.areas || []).forEach((area) => pushList(areaCoords(area)));
+        (preview.missions?.points || []).forEach((pt) => {
+          const coord = pointCoord(pt);
+          if (coord) points.push(coord);
+        });
+        pushList(preview.takeover || []);
+        pushList(preview.handover || []);
+        pushList(preview.rtb || []);
+        (preview.targets || []).forEach((t) => {
+          if (t && Array.isArray(t.coord)) {
+            points.push(t.coord);
+          }
+        });
+        (preview.target_paths || []).forEach(pushList);
+        return points;
+      }
+
+      function collectFocusPoints(preview) {
+        const points = [];
+        const pushList = (list) => {
+          if (!Array.isArray(list)) return;
+          list.forEach((pt) => {
+            if (Array.isArray(pt) && pt.length >= 2) {
+              points.push(pt);
+            }
+          });
+        };
+        (preview.missions?.lines || []).forEach((line) => pushList(lineCoords(line)));
+        (preview.missions?.areas || []).forEach((area) => pushList(areaCoords(area)));
+        (preview.missions?.points || []).forEach((pt) => {
+          const coord = pointCoord(pt);
+          if (coord) points.push(coord);
+        });
+        pushList(preview.takeover || []);
+        pushList(preview.handover || []);
+        pushList(preview.rtb || []);
+        (preview.targets || []).forEach((t) => {
+          if (t && Array.isArray(t.coord)) {
+            points.push(t.coord);
+          }
+        });
+        (preview.target_paths || []).forEach(pushList);
+        return points;
+      }
+
+      function collectAreaPoints(preview) {
+        const points = [];
+        const pushList = (list) => {
+          if (!Array.isArray(list)) return;
+          list.forEach((pt) => {
+            if (Array.isArray(pt) && pt.length >= 2) {
+              points.push(pt);
+            }
+          });
+        };
+        (preview.flight_areas || []).forEach(pushList);
+        (preview.prohibited_areas || []).forEach(pushList);
+        return points;
+      }
+
+      function computeBounds(points) {
+        if (!points.length) return null;
+        let minLat = points[0][0];
+        let maxLat = points[0][0];
+        let minLon = points[0][1];
+        let maxLon = points[0][1];
+        points.forEach(([lat, lon]) => {
+          minLat = Math.min(minLat, lat);
+          maxLat = Math.max(maxLat, lat);
+          minLon = Math.min(minLon, lon);
+          maxLon = Math.max(maxLon, lon);
+        });
+        return { minLat, maxLat, minLon, maxLon };
+      }
+
+      function expandBounds(bounds, ratio = 0.04) {
+        if (!bounds) return bounds;
+        const latSpan = Math.max(0.000001, bounds.maxLat - bounds.minLat);
+        const lonSpan = Math.max(0.000001, bounds.maxLon - bounds.minLon);
+        const latPad = latSpan * ratio;
+        const lonPad = lonSpan * ratio;
+        return {
+          minLat: bounds.minLat - latPad,
+          maxLat: bounds.maxLat + latPad,
+          minLon: bounds.minLon - lonPad,
+          maxLon: bounds.maxLon + lonPad,
+        };
+      }
+
+      function updatePreviewMeta(preview) {
+        const missionCount =
+          (preview.missions?.lines?.length || 0) +
+          (preview.missions?.areas?.length || 0) +
+          (preview.missions?.points?.length || 0);
+        const targetCount = preview.targets?.length || 0;
+        const refCount =
+          (preview.takeover?.length || 0) +
+          (preview.handover?.length || 0) +
+          (preview.rtb?.length || 0);
+        elements.previewMeta.textContent = `미션 ${missionCount} · 타겟 ${targetCount} · 참조점 ${refCount}`;
+      }
+
+      function clampZoom(value) {
+        return Math.min(6, Math.max(0.4, value));
+      }
+
+      function setZoom(value) {
+        state.previewZoom = clampZoom(value);
+        if (state.preview) {
+          renderPreview(state.preview);
+        }
+      }
+
+      function zoomBy(delta) {
+        setZoom(state.previewZoom * delta);
+      }
+
+      function resetPan() {
+        state.previewOffset = { x: 0, y: 0 };
+      }
+
+      function polyCentroid(coords) {
+        if (!coords || !coords.length) return null;
+        let sumLat = 0;
+        let sumLon = 0;
+        coords.forEach((c) => {
+          sumLat += c[0];
+          sumLon += c[1];
+        });
+        return [sumLat / coords.length, sumLon / coords.length];
+      }
+
+      function updateSelectedBadge() {
+        if (!elements.selectedMissionBadge) return;
+        if (state.selectedMissionId) {
+          elements.selectedMissionBadge.textContent = `선택 ID ${state.selectedMissionId}`;
+        } else {
+          elements.selectedMissionBadge.textContent = "미션 선택";
+        }
+      }
+
+      function setSelectedMission(id) {
+        state.selectedMissionId = id;
+        updateSelectedBadge();
+        if (state.preview) {
+          renderPreview(state.preview);
+        }
+      }
+
+      function renderPreview(preview) {
+        const canvas = elements.previewCanvas;
+        const empty = elements.previewEmpty;
+        if (!preview) {
+          empty.classList.remove("hidden");
+          elements.previewMeta.textContent = "-";
+          const ctx = canvas.getContext("2d");
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          return;
+        }
+
+        const allPoints = collectPreviewPoints(preview);
+        const areaPoints = collectAreaPoints(preview);
+        const focusPoints = collectFocusPoints(preview);
+        let bounds =
+          computeBounds(areaPoints) ||
+          preview.bounds ||
+          computeBounds(focusPoints) ||
+          computeBounds(allPoints);
+        if (!bounds) {
+          empty.classList.remove("hidden");
+          elements.previewMeta.textContent = "-";
+          return;
+        }
+
+        empty.classList.add("hidden");
+        updatePreviewMeta(preview);
+
+        const rect = canvas.getBoundingClientRect();
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = Math.max(1, rect.width * dpr);
+        canvas.height = Math.max(1, rect.height * dpr);
+        const ctx = canvas.getContext("2d");
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, rect.width, rect.height);
+
+        bounds = expandBounds(bounds);
+        const pad = 16;
+        const centerLat = (bounds.minLat + bounds.maxLat) / 2;
+        const centerLon = (bounds.minLon + bounds.maxLon) / 2;
+        const metersPerDegLat = 111320;
+        const metersPerDegLon = metersPerDegLat * Math.cos((centerLat * Math.PI) / 180);
+        const lonSpanMeters = Math.max(0.01, (bounds.maxLon - bounds.minLon) * metersPerDegLon);
+        const latSpanMeters = Math.max(0.01, (bounds.maxLat - bounds.minLat) * metersPerDegLat);
+        const scale = Math.min(
+          (rect.width - pad * 2) / lonSpanMeters,
+          (rect.height - pad * 2) / latSpanMeters
+        ) * state.previewZoom;
+
+        const toXY = (coord) => {
+          const xMeters = (coord[1] - centerLon) * metersPerDegLon;
+          const yMeters = (coord[0] - centerLat) * metersPerDegLat;
+          const x = rect.width / 2 + xMeters * scale + state.previewOffset.x;
+          const y = rect.height / 2 - yMeters * scale + state.previewOffset.y;
+          return [x, y];
+        };
+        state.project = toXY;
+
+        const toMeters = (coord) => {
+          const xMeters = (coord[1] - centerLon) * metersPerDegLon;
+          const yMeters = (coord[0] - centerLat) * metersPerDegLat;
+          return [xMeters, yMeters];
+        };
+
+        const lineLengthMeters = (coords) => {
+          if (!coords || coords.length < 2) return 0;
+          let total = 0;
+          for (let i = 1; i < coords.length; i += 1) {
+            const [x1, y1] = toMeters(coords[i - 1]);
+            const [x2, y2] = toMeters(coords[i]);
+            total += Math.hypot(x2 - x1, y2 - y1);
+          }
+          return total;
+        };
+
+        const drawPolygon = (coords, fill, stroke, dash, width = 2) => {
+          if (!coords || coords.length < 2) return;
+          ctx.beginPath();
+          const [sx, sy] = toXY(coords[0]);
+          ctx.moveTo(sx, sy);
+          coords.slice(1).forEach((c) => {
+            const [x, y] = toXY(c);
+            ctx.lineTo(x, y);
+          });
+          ctx.closePath();
+          if (fill) {
+            ctx.fillStyle = fill;
+            ctx.fill();
+          }
+          if (stroke) {
+            ctx.setLineDash(dash || []);
+            ctx.strokeStyle = stroke;
+            ctx.lineWidth = width;
+            ctx.stroke();
+            ctx.setLineDash([]);
+          }
+        };
+
+        const drawLine = (coords, stroke, width, dash) => {
+          if (!coords || coords.length < 2) return;
+          ctx.beginPath();
+          const [sx, sy] = toXY(coords[0]);
+          ctx.moveTo(sx, sy);
+          coords.slice(1).forEach((c) => {
+            const [x, y] = toXY(c);
+            ctx.lineTo(x, y);
+          });
+          ctx.setLineDash(dash || []);
+          ctx.strokeStyle = stroke;
+          ctx.lineWidth = width;
+          ctx.stroke();
+          ctx.setLineDash([]);
+        };
+
+        const drawPoint = (coord, color, size, stroke = "white") => {
+          const [x, y] = toXY(coord);
+          ctx.beginPath();
+          ctx.arc(x, y, size, 0, Math.PI * 2);
+          ctx.fillStyle = color;
+          ctx.fill();
+          if (stroke) {
+            ctx.lineWidth = 1.5;
+            ctx.strokeStyle = stroke;
+            ctx.stroke();
+          }
+        };
+
+        const drawSquare = (coord, color, size, stroke = "white") => {
+          const [x, y] = toXY(coord);
+          ctx.beginPath();
+          ctx.rect(x - size, y - size, size * 2, size * 2);
+          ctx.fillStyle = color;
+          ctx.fill();
+          if (stroke) {
+            ctx.lineWidth = 1.5;
+            ctx.strokeStyle = stroke;
+            ctx.stroke();
+          }
+        };
+
+        const drawLabel = (coord, text, color) => {
+          if (!coord || !text) return;
+          const [x, y] = toXY(coord);
+          ctx.save();
+          ctx.font = "12px 'IBM Plex Sans KR', sans-serif";
+          ctx.textBaseline = "middle";
+          const paddingX = 6;
+          const paddingY = 4;
+          const metrics = ctx.measureText(text);
+          const width = metrics.width + paddingX * 2;
+          const height = 16 + paddingY;
+          ctx.fillStyle = "rgba(255, 255, 255, 0.85)";
+          ctx.strokeStyle = "rgba(18, 18, 18, 0.15)";
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          if (ctx.roundRect) {
+            ctx.roundRect(x - width / 2, y - height - 6, width, height, 6);
+          } else {
+            ctx.rect(x - width / 2, y - height - 6, width, height);
+          }
+          ctx.fill();
+          ctx.stroke();
+          ctx.fillStyle = color;
+          ctx.fillText(text, x - metrics.width / 2, y - height / 2 - 6);
+          ctx.restore();
+        };
+
+        (preview.flight_areas || []).forEach((poly) =>
+          drawPolygon(poly, "rgba(111, 167, 255, 0.12)", "rgba(10, 99, 255, 0.65)", [], 2.2)
+        );
+        (preview.prohibited_areas || []).forEach((poly) =>
+          drawPolygon(poly, "rgba(255, 123, 107, 0.18)", "rgba(255, 87, 64, 0.75)", [], 2)
+        );
+
+        (preview.missions?.areas || []).forEach((area) => {
+          const coords = areaCoords(area);
+          if (!coords.length) return;
+          drawPolygon(coords, "rgba(10, 99, 255, 0.1)", "rgba(10, 99, 255, 0.85)", [6, 4], 2.2);
+          const centroid = polyCentroid(coords);
+          const idText = area && area.id ? `ID ${area.id}` : "";
+          if (idText) {
+            drawLabel(centroid, idText, "#0a63ff");
+          }
+          if (state.selectedMissionId && area && area.id === state.selectedMissionId) {
+            drawPolygon(coords, null, "rgba(255, 196, 0, 0.95)", [], 3.5);
+          }
+        });
+
+        (preview.missions?.lines || []).forEach((line) => {
+          const coords = lineCoords(line);
+          if (!coords.length) return;
+          drawLine(coords, "rgba(10, 99, 255, 0.9)", 2.6);
+          if (coords.length > 2) {
+            for (let i = 1; i < coords.length - 1; i += 1) {
+              drawPoint(coords[i], "rgba(10, 99, 255, 0.6)", 2.4);
+            }
+          }
+          drawPoint(coords[0], "#10b981", 4);
+          drawSquare(coords[coords.length - 1], "#ef4444", 4);
+          const lengthMeters =
+            line && typeof line.length_m === "number" ? line.length_m : lineLengthMeters(coords);
+          const lengthKm = lengthMeters / 1000;
+          const lengthText =
+            lengthKm >= 10 ? lengthKm.toFixed(1) : lengthKm >= 1 ? lengthKm.toFixed(2) : lengthKm.toFixed(3);
+          const idText = line && line.id ? `ID ${line.id} (${lengthText}km)` : "";
+          if (idText) {
+            const mid = coords[Math.floor(coords.length / 2)];
+            drawLabel(mid, idText, "#0a63ff");
+          }
+          if (state.selectedMissionId && line && line.id === state.selectedMissionId) {
+            drawLine(coords, "rgba(255, 196, 0, 0.95)", 4.2);
+          }
+        });
+
+        (preview.missions?.points || []).forEach((pt) => {
+          const coord = pointCoord(pt);
+          if (!coord) return;
+          drawPoint(coord, "#0a63ff", 4);
+          if (pt && pt.id) {
+            drawLabel(coord, `ID ${pt.id}`, "#0a63ff");
+          }
+          if (state.selectedMissionId && pt && pt.id === state.selectedMissionId) {
+            drawPoint(coord, "rgba(255, 196, 0, 0.95)", 6);
+          }
+        });
+
+        (preview.target_paths || []).forEach((path) =>
+          drawLine(path, "rgba(255, 176, 64, 0.68)", 2.1, [4, 4])
+        );
+        (preview.targets || []).forEach((t) => {
+          if (!t || !Array.isArray(t.coord)) return;
+          const [x, y] = toXY(t.coord);
+          ctx.strokeStyle = "rgba(255, 255, 255, 0.92)";
+          ctx.lineWidth = 4.6;
+          ctx.beginPath();
+          ctx.moveTo(x - 7, y - 7);
+          ctx.lineTo(x + 7, y + 7);
+          ctx.moveTo(x + 7, y - 7);
+          ctx.lineTo(x - 7, y + 7);
+          ctx.stroke();
+          ctx.strokeStyle = "#ff8b3d";
+          ctx.lineWidth = 2.6;
+          ctx.beginPath();
+          ctx.moveTo(x - 6, y - 6);
+          ctx.lineTo(x + 6, y + 6);
+          ctx.moveTo(x + 6, y - 6);
+          ctx.lineTo(x - 6, y + 6);
+          ctx.stroke();
+        });
+
+        (preview.takeover || []).forEach((pt) => drawPoint(pt, "#33b679", 5));
+        (preview.handover || []).forEach((pt) => drawPoint(pt, "#fbbc04", 5));
+        (preview.rtb || []).forEach((pt) => drawPoint(pt, "#ea4335", 5));
+      }
+
+      function selectMissionAt(event) {
+        if (!state.preview || !state.project) return;
+        const rect = elements.previewCanvas.getBoundingClientRect();
+        const x = event.clientX - rect.left;
+        const y = event.clientY - rect.top;
+        const pointSegmentDistance = (px, py, ax, ay, bx, by) => {
+          const abx = bx - ax;
+          const aby = by - ay;
+          const ab2 = abx * abx + aby * aby;
+          if (ab2 <= 0.000001) return Math.hypot(px - ax, py - ay);
+          let t = ((px - ax) * abx + (py - ay) * aby) / ab2;
+          t = Math.max(0, Math.min(1, t));
+          const cx = ax + abx * t;
+          const cy = ay + aby * t;
+          return Math.hypot(px - cx, py - cy);
+        };
+        const pointInPoly = (px, py, poly) => {
+          let inside = false;
+          for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+            const xi = poly[i][0];
+            const yi = poly[i][1];
+            const xj = poly[j][0];
+            const yj = poly[j][1];
+            const intersect =
+              yi > py !== yj > py &&
+              px < ((xj - xi) * (py - yi)) / (yj - yi + 1e-12) + xi;
+            if (intersect) inside = !inside;
+          }
+          return inside;
+        };
+        const distanceToPolyline = (coords) => {
+          if (!coords || coords.length < 2) return Infinity;
+          let minDist = Infinity;
+          for (let i = 0; i < coords.length - 1; i++) {
+            const [ax, ay] = state.project(coords[i]);
+            const [bx, by] = state.project(coords[i + 1]);
+            const dist = pointSegmentDistance(x, y, ax, ay, bx, by);
+            if (dist < minDist) minDist = dist;
+          }
+          return minDist;
+        };
+        const distanceToPolygon = (coords) => {
+          if (!coords || coords.length < 3) return Infinity;
+          const poly = coords.map((c) => state.project(c));
+          if (pointInPoly(x, y, poly)) return 0;
+          let minDist = Infinity;
+          for (let i = 0; i < poly.length; i++) {
+            const a = poly[i];
+            const b = poly[(i + 1) % poly.length];
+            const dist = pointSegmentDistance(x, y, a[0], a[1], b[0], b[1]);
+            if (dist < minDist) minDist = dist;
+          }
+          return minDist;
+        };
+
+        let best = null;
+        (state.preview.missions?.lines || []).forEach((line) => {
+          const coords = lineCoords(line);
+          const dist = distanceToPolyline(coords);
+          if (!best || dist < best.dist) {
+            best = { id: line.id, dist };
+          }
+        });
+        (state.preview.missions?.areas || []).forEach((area) => {
+          const coords = areaCoords(area);
+          const dist = distanceToPolygon(coords);
+          if (!best || dist < best.dist) {
+            best = { id: area.id, dist };
+          }
+        });
+        (state.preview.missions?.points || []).forEach((pt) => {
+          const coord = pointCoord(pt);
+          if (!coord) return;
+          const [cx, cy] = state.project(coord);
+          const dist = Math.hypot(cx - x, cy - y);
+          if (!best || dist < best.dist) {
+            best = { id: pt.id, dist };
+          }
+        });
+
+        if (best && best.dist < 32) {
+          setSelectedMission(best.id);
+        }
+      }
+
+      function collectPayload() {
+        const config = {};
+        Object.entries(configFields).forEach(([name, input]) => {
+          config[name] = input.value;
+        });
+        return {
+          config,
+          generation: {
+            count: elements.count.value,
+            max_offset: elements.offset.value,
+            target_types: elements.targetTypes.value,
+            composite_route: elements.compositeRoute.checked,
+            terrain_targeting: elements.terrainTargeting.checked,
+          },
+        };
+      }
+
+      elements.compositeRoute.addEventListener("change", applyGenerationModeState);
+
+      if (elements.generatedResultSelect) {
+        elements.generatedResultSelect.addEventListener("change", (event) => {
+          const value = Number(event.target.value);
+          if (Number.isFinite(value)) {
+            applyGeneratedResult(value);
+          }
+        });
+      }
+
+      elements.resetBtn.addEventListener("click", () => {
+        applyDefaults();
+        elements.status.textContent = "기본값으로 복원했습니다.";
+      });
+
+      async function apiJson(url, options = {}) {
+        const response = await fetch(url, {
+          headers: { "Content-Type": "application/json" },
+          cache: "no-store",
+          ...options,
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(payload.error || `Request failed: ${response.status}`);
+        }
+        return payload;
+      }
+
+      function applyGenerationResponse(data) {
+        const results = Array.isArray(data.results)
+          ? data.results
+          : data.preview
+            ? [data]
+            : [];
+        state.generatedResults = results;
+        renderGeneratedResultOptions(results);
+        if (results.length) {
+          applyGeneratedResult(results.length - 1);
+        } else {
+          elements.outScenario.textContent = data.scenario || "-";
+          elements.outImp.textContent = data.imp || "-";
+          elements.outScn.textContent = data.scn || "-";
+          elements.outTgt.textContent = data.tgt || "-";
+          applyPreviewState(data.preview || null);
+        }
+        const summary = data.summary || null;
+        if (summary && Number.isFinite(Number(summary.generated_count))) {
+          const generated = Number(summary.generated_count) || 0;
+          const requested = Number(summary.requested_count) || generated;
+          elements.status.textContent =
+            generated < requested
+              ? `일부 완료 (${generated}/${requested})`
+              : `완료 (${generated})`;
+          return;
+        }
+        elements.status.textContent = "완료.";
+      }
+
+      async function pollJob(jobId) {
+        try {
+          const data = await apiJson(`/api/jobs/${encodeURIComponent(jobId)}`);
+          if (data.latest_status) {
+            elements.status.textContent = data.latest_status;
+          }
+          if (data.state === "completed") {
+            setBusy(false);
+            applyGenerationResponse(data.result || {});
+            return;
+          }
+          if (data.state === "failed") {
+            setBusy(false);
+            elements.status.textContent = data.error || "생성에 실패했습니다.";
+            return;
+          }
+          window.setTimeout(() => pollJob(jobId), 800);
+        } catch (err) {
+          setBusy(false);
+          elements.status.textContent = err.message || "작업 상태 조회에 실패했습니다.";
+        }
+      }
+
+      async function startGeneration() {
+        try {
+          setBusy(true);
+          elements.status.textContent = "생성 중입니다...";
+          const data = await apiJson("/api/generate", {
+            method: "POST",
+            body: JSON.stringify(collectPayload()),
+          });
+          await pollJob(data.job_id);
+        } catch (err) {
+          setBusy(false);
+          elements.status.textContent = err.message || "생성 요청에 실패했습니다.";
+        }
+      }
+
+      elements.generateBtn.addEventListener("click", startGeneration);
+
+      async function initBackend() {
+        try {
+          const data = await apiJson("/api/bootstrap", { method: "GET" });
+          state.defaults = data.config_defaults || {};
+          state.generation = data.generation_defaults || {};
+          buildConfig(data.config_schema || [], state.defaults);
+          applyDefaults();
+          renderPreview(state.preview);
+        } catch (err) {
+          elements.status.textContent = err.message || "초기 설정 로드에 실패했습니다.";
+        }
+      }
+
+      window.addEventListener("DOMContentLoaded", initBackend);
+      window.addEventListener("DOMContentLoaded", () => {
+        bindSidebarTabs();
+        const initialPanel = new URLSearchParams(window.location.search).get("panel");
+        setSidebarPanel(initialPanel === "config" ? "config" : "generation");
+
+        if (elements.zoomInBtn) {
+          elements.zoomInBtn.addEventListener("click", () => zoomBy(1.2));
+        }
+        if (elements.zoomOutBtn) {
+          elements.zoomOutBtn.addEventListener("click", () => zoomBy(1 / 1.2));
+        }
+        if (elements.zoomFitBtn) {
+          elements.zoomFitBtn.addEventListener("click", () => {
+            setZoom(1);
+            resetPan();
+          });
+        }
+        if (elements.preview3dBtn) {
+          elements.preview3dBtn.addEventListener("click", async () => {
+            const missionId = state.selectedMissionId || firstPreviewMissionId(state.preview);
+            if (!missionId) {
+              elements.status.textContent = "먼저 미션을 선택해 주세요.";
+              return;
+            }
+            if (!state.selectedMissionId) {
+              setSelectedMission(missionId);
+            }
+            const impPath = elements.outImp.textContent || "";
+            if (!impPath || impPath === "-") {
+              elements.status.textContent = "3D 보기에 사용할 임무 경로가 없습니다.";
+              return;
+            }
+            const url =
+              `/api/preview3d?imp_path=${encodeURIComponent(impPath)}` +
+              `&mission_id=${encodeURIComponent(missionId)}`;
+            elements.status.textContent = `3D 미리보기 렌더링 중 (ID ${missionId})`;
+            try {
+              const response = await fetch(url, { cache: "no-store" });
+              if (!response.ok) {
+                const payload = await response.json().catch(() => ({}));
+                throw new Error(payload.error || `Request failed: ${response.status}`);
+              }
+              const blob = await response.blob();
+              const blobUrl = URL.createObjectURL(blob);
+              openPreview3dModal(blobUrl, missionId);
+              elements.status.textContent = `3D 미리보기를 열었습니다 (ID ${missionId})`;
+            } catch (error) {
+              elements.status.textContent = `3D 오류: ${error.message || error}`;
+            }
+          });
+        }
+        if (elements.preview3dCloseBtn) {
+          elements.preview3dCloseBtn.addEventListener("click", closePreview3dModal);
+        }
+        if (elements.preview3dModal) {
+          elements.preview3dModal.addEventListener("click", (event) => {
+            if (event.target === elements.preview3dModal) {
+              closePreview3dModal();
+            }
+          });
+        }
+        window.addEventListener("keydown", (event) => {
+          if (event.key === "Escape") {
+            closePreview3dModal();
+          }
+        });
+        if (elements.previewWrap) {
+          elements.previewWrap.addEventListener(
+            "wheel",
+            (event) => {
+              if (!state.preview) return;
+              event.preventDefault();
+              const delta = event.deltaY < 0 ? 1.1 : 1 / 1.1;
+              zoomBy(delta);
+            },
+            { passive: false }
+          );
+
+          elements.previewWrap.addEventListener("mousedown", (event) => {
+            if (!state.preview) return;
+            state.isDragging = true;
+            state.dragMoved = false;
+            state.dragStart = { x: event.clientX, y: event.clientY };
+            state.dragOrigin = { ...state.previewOffset };
+            elements.previewWrap.style.cursor = "grabbing";
+          });
+
+          window.addEventListener("mouseup", () => {
+            if (!state.isDragging) return;
+            state.isDragging = false;
+            if (elements.previewWrap) {
+              elements.previewWrap.style.cursor = "default";
+            }
+          });
+
+          window.addEventListener("mousemove", (event) => {
+            if (!state.isDragging) return;
+            const dx = event.clientX - state.dragStart.x;
+            const dy = event.clientY - state.dragStart.y;
+            if (Math.hypot(dx, dy) > 4) {
+              state.dragMoved = true;
+            }
+            state.previewOffset = {
+              x: state.dragOrigin.x + dx,
+              y: state.dragOrigin.y + dy,
+            };
+            if (state.preview) {
+              renderPreview(state.preview);
+            }
+          });
+
+          elements.previewWrap.addEventListener("click", (event) => {
+            if (!state.preview) return;
+            if (state.dragMoved) return;
+            selectMissionAt(event);
+          });
+        }
+      });
+      window.addEventListener("resize", () => {
+        if (state.preview) {
+          window.requestAnimationFrame(() => renderPreview(state.preview));
+        }
+      });
+    </script>
+  </body>
+</html>

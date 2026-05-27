@@ -3,14 +3,27 @@ ID allocator – 0301/0302/0303 공통
 임무 재계획 시에도 중복을 막기 위해 마지막 번호를 json 파일에 저장해 둔다.
 """
 from pathlib import Path
-import json, threading, time
+import json, logging, threading, time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 import os
 from modules.common import db_paths
 
+try:  # Windows
+    import msvcrt  # type: ignore
+except Exception:  # pragma: no cover - non-Windows fallback
+    msvcrt = None  # type: ignore
+
+try:  # POSIX
+    import fcntl  # type: ignore
+except Exception:  # pragma: no cover - Windows fallback
+    fcntl = None  # type: ignore
+
 _LOCK = threading.Lock()
+_LOG = logging.getLogger(__name__)
 _LEGACY_STORE = Path(__file__).resolve().parent / "id_tracker.json"
 _STORE = _LEGACY_STORE
+_FILE_LOCK_LOCAL = threading.local()
 
 # ── 초기 값 & 증분 규칙 ───────────────────────────────────────
 BASE = {
@@ -22,10 +35,53 @@ BASE = {
         1: 100_000_001, 2: 200_000_001, 3: 300_000_001,
         4: 400_000_001, 5: 500_000_001, 6: 600_000_001,
     },
-    "waypoint": 1,             # 필요한 경우
+    "waypoint": 50,            # WaypointID starts at 50 by mission-planning rule.
 }
 VOLATILE_KEYS = {"waypoint"}
 _ACTIVE_DB_ROOT = None
+
+
+@contextmanager
+def _store_file_lock(path: Path | None = None):
+    """Serialize id_tracker read-modify-write across processes."""
+    target = Path(path) if path is not None else _STORE
+    depth = int(getattr(_FILE_LOCK_LOCAL, "depth", 0) or 0)
+    if depth > 0:
+        _FILE_LOCK_LOCAL.depth = depth + 1
+        try:
+            yield
+        finally:
+            _FILE_LOCK_LOCAL.depth = depth
+        return
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = target.with_name(f"{target.name}.lock")
+    lock_file = lock_path.open("a+b")
+    _FILE_LOCK_LOCAL.depth = 1
+    acquired = False
+    try:
+        lock_file.seek(0, os.SEEK_END)
+        if lock_file.tell() == 0:
+            lock_file.write(b"\0")
+            lock_file.flush()
+        lock_file.seek(0)
+        if msvcrt is not None:
+            msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+        elif fcntl is not None:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        acquired = True
+        yield
+    finally:
+        try:
+            if acquired:
+                lock_file.seek(0)
+                if msvcrt is not None:
+                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+                elif fcntl is not None:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        finally:
+            _FILE_LOCK_LOCAL.depth = 0
+            lock_file.close()
 
 
 def _resolve_store_path() -> Path:
@@ -59,15 +115,18 @@ def _load(path: Path | None = None) -> dict:
     - 파일 없음: {} 반환
     - 파일이 비었거나(JSONDecodeError) 손상: .bak로 1회 백업 후 {} 반환
     """
+    target = Path(path) if path is not None else _STORE
+    started = time.perf_counter()
     try:
-        if not target.exists():
-            return {}
-        # 빈 파일(사이즈 0) 처리
-        if target.stat().st_size == 0:
-            return {}
-        with target.open("r", encoding="utf-8") as f:
-            data = json.load(f)
-            return _normalize_state(data)
+        with _store_file_lock(target):
+            if not target.exists():
+                return {}
+            # 빈 파일(사이즈 0) 처리
+            if target.stat().st_size == 0:
+                return {}
+            with target.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+                return _normalize_state(data)
     except json.JSONDecodeError:
         # 손상된 경우 자동 백업(기존 .bak 없을 때만)
         try:
@@ -76,8 +135,20 @@ def _load(path: Path | None = None) -> dict:
                 target.replace(bak)
         except Exception:
             pass
+        _LOG.warning(
+            "id_tracker JSON decode failed: path=%s elapsed_ms=%.1f",
+            target,
+            (time.perf_counter() - started) * 1000.0,
+            exc_info=True,
+        )
         return {}
     except Exception:
+        _LOG.warning(
+            "id_tracker load failed: path=%s elapsed_ms=%.1f",
+            target,
+            (time.perf_counter() - started) * 1000.0,
+            exc_info=True,
+        )
         return {}
 
 
@@ -86,11 +157,12 @@ def _read_store_state(path: Path | None = None) -> dict:
     """현재 디스크 상태를 불러와 최신 값을 유지한다."""
     target = path or _STORE
     try:
-        if not target.exists() or target.stat().st_size == 0:
-            return {}
-        with target.open('r', encoding='utf-8') as f:
-            data = json.load(f)
-            return _normalize_state(data)
+        with _store_file_lock(target):
+            if not target.exists() or target.stat().st_size == 0:
+                return {}
+            with target.open('r', encoding='utf-8') as f:
+                data = json.load(f)
+                return _normalize_state(data)
     except Exception:
         return {}
 
@@ -100,65 +172,66 @@ def _save(state: dict, path: Path | None = None) -> None:
     ID 상태를 안전하게 덮어쓰다.
     """
     store_path = path or _STORE
-    state = _normalize_state(state)
-    existing = _read_store_state(store_path)
-    if existing:
-        for key, value in existing.items():
-            if key in VOLATILE_KEYS:
-                continue
-            if key == 'pathID':
-                if not isinstance(value, dict):
+    with _store_file_lock(store_path):
+        state = _normalize_state(state)
+        existing = _read_store_state(store_path)
+        if existing:
+            for key, value in existing.items():
+                if key in VOLATILE_KEYS:
                     continue
-                path_state = state.setdefault('pathID', {})
-                for subkey, subval in value.items():
-                    try:
-                        aid = int(subkey)
-                        existing_val = int(subval)
-                    except (TypeError, ValueError):
+                if key == 'pathID':
+                    if not isinstance(value, dict):
                         continue
-                    current_val = path_state.get(aid)
-                    try:
-                        current_int = int(current_val)
-                    except (TypeError, ValueError):
-                        current_int = None
-                    if current_int is None or existing_val > current_int:
-                        path_state[aid] = existing_val
-                continue
-            try:
-                existing_int = int(value)
-            except (TypeError, ValueError):
-                continue
-            current_val = state.get(key)
-            try:
-                current_int = int(current_val)
-            except (TypeError, ValueError):
-                current_int = None
-            if current_int is None or existing_int > current_int:
-                state[key] = existing_int
+                    path_state = state.setdefault('pathID', {})
+                    for subkey, subval in value.items():
+                        try:
+                            aid = int(subkey)
+                            existing_val = int(subval)
+                        except (TypeError, ValueError):
+                            continue
+                        current_val = path_state.get(aid)
+                        try:
+                            current_int = int(current_val)
+                        except (TypeError, ValueError):
+                            current_int = None
+                        if current_int is None or existing_val > current_int:
+                            path_state[aid] = existing_val
+                    continue
+                try:
+                    existing_int = int(value)
+                except (TypeError, ValueError):
+                    continue
+                current_val = state.get(key)
+                try:
+                    current_int = int(current_val)
+                except (TypeError, ValueError):
+                    current_int = None
+                if current_int is None or existing_int > current_int:
+                    state[key] = existing_int
 
-    store_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = store_path.with_name(
-        f"{store_path.name}.{os.getpid()}.{threading.get_ident()}.tmp"
-    )
-    with tmp.open("w", encoding="utf-8") as f:
-        json.dump(_normalize_state(state), f, ensure_ascii=False, separators=(",", ":"))
-    for attempt in range(5):
-        try:
-            tmp.replace(store_path)
-            return
-        except PermissionError:
-            time.sleep(0.1 * (attempt + 1))
-        except Exception:
+        store_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = store_path.with_name(
+            f"{store_path.name}.{os.getpid()}.{threading.get_ident()}.tmp"
+        )
+        with tmp.open("w", encoding="utf-8") as f:
+            json.dump(_normalize_state(state), f, ensure_ascii=False, separators=(",", ":"))
+        for attempt in range(5):
             try:
-                tmp.unlink()
+                tmp.replace(store_path)
+                return
+            except PermissionError:
+                time.sleep(0.1 * (attempt + 1))
             except Exception:
-                pass
-            raise
-    try:
-        tmp.unlink()
-    except Exception:
-        pass
-    raise PermissionError(f"id_tracker write failed after retries: {store_path}")
+                try:
+                    tmp.unlink()
+                except Exception:
+                    pass
+                raise
+        try:
+            tmp.unlink()
+        except Exception:
+            pass
+        raise PermissionError(f"id_tracker write failed after retries: {store_path}")
 _state: dict = {}              # {key: last_used}
 
 _volatile_counters = {key: BASE[key] - 1 for key in VOLATILE_KEYS}
@@ -411,43 +484,45 @@ def _next(key: str, inc: int = 1, subkey=None) -> int:
         if key in VOLATILE_KEYS:
             if subkey is not None:
                 raise ValueError(f"volatile key '{key}' does not support subkey allocation")
-            if key == "waypoint":
-                _refresh_waypoint_counter()
-            cur = _volatile_counters.get(key, BASE[key] - 1)
-            cur += inc
-            _volatile_counters[key] = cur
-            if key == "waypoint":
-                _record_waypoint_usage(cur)
-            return cur
+            with _store_file_lock(_STORE):
+                if key == "waypoint":
+                    _refresh_waypoint_counter()
+                cur = _volatile_counters.get(key, BASE[key] - 1)
+                cur += inc
+                _volatile_counters[key] = cur
+                if key == "waypoint":
+                    _record_waypoint_usage(cur)
+                return cur
 
-        disk_state = _read_store_state()
+        with _store_file_lock(_STORE):
+            disk_state = _read_store_state()
 
-        if subkey is None:
-            current_base = BASE.get(key, 0) - 1
-            try:
-                disk_value = int(disk_state.get(key, current_base))
-            except (TypeError, ValueError):
-                disk_value = current_base
-            try:
-                mem_value = int(_state.get(key, current_base))
-            except (TypeError, ValueError):
-                mem_value = current_base
-            cur = max(mem_value, disk_value) + inc
-            _state[key] = cur
-        else:                 # pathID
-            path_map = _state.setdefault(key, {})
-            disk_map = disk_state.get(key, {})
-            try:
-                disk_value = int(disk_map.get(subkey, BASE[key][subkey] - 1))
-            except (TypeError, ValueError):
-                disk_value = BASE[key][subkey] - 1
-            try:
-                mem_value = int(path_map.get(subkey, BASE[key][subkey] - 1))
-            except (TypeError, ValueError):
-                mem_value = BASE[key][subkey] - 1
-            cur = max(mem_value, disk_value) + inc
-            path_map[subkey] = cur
-        _save(_state)
+            if subkey is None:
+                current_base = BASE.get(key, 0) - 1
+                try:
+                    disk_value = int(disk_state.get(key, current_base))
+                except (TypeError, ValueError):
+                    disk_value = current_base
+                try:
+                    mem_value = int(_state.get(key, current_base))
+                except (TypeError, ValueError):
+                    mem_value = current_base
+                cur = max(mem_value, disk_value) + inc
+                _state[key] = cur
+            else:                 # pathID
+                path_map = _state.setdefault(key, {})
+                disk_map = disk_state.get(key, {})
+                try:
+                    disk_value = int(disk_map.get(subkey, BASE[key][subkey] - 1))
+                except (TypeError, ValueError):
+                    disk_value = BASE[key][subkey] - 1
+                try:
+                    mem_value = int(path_map.get(subkey, BASE[key][subkey] - 1))
+                except (TypeError, ValueError):
+                    mem_value = BASE[key][subkey] - 1
+                cur = max(mem_value, disk_value) + inc
+                path_map[subkey] = cur
+            _save(_state)
         if key == "pathID" and subkey is not None:
             _record_path_usage(subkey, cur)
         return cur
@@ -463,48 +538,50 @@ def _reserve_range(key: str, count: int, subkey=None) -> tuple[int, int]:
         if key in VOLATILE_KEYS:
             if subkey is not None:
                 raise ValueError(f"volatile key '{key}' does not support subkey allocation")
-            if key == "waypoint":
-                _refresh_waypoint_counter()
-            current_base = _volatile_counters.get(key, BASE[key] - 1)
-            start = int(current_base + 1)
-            end = int(current_base + count_int)
-            _volatile_counters[key] = end
-            if key == "waypoint":
-                _record_waypoint_usage(end)
-            return start, end
+            with _store_file_lock(_STORE):
+                if key == "waypoint":
+                    _refresh_waypoint_counter()
+                current_base = _volatile_counters.get(key, BASE[key] - 1)
+                start = int(current_base + 1)
+                end = int(current_base + count_int)
+                _volatile_counters[key] = end
+                if key == "waypoint":
+                    _record_waypoint_usage(end)
+                return start, end
 
-        disk_state = _read_store_state()
+        with _store_file_lock(_STORE):
+            disk_state = _read_store_state()
 
-        if subkey is None:
-            current_base = BASE.get(key, 0) - 1
-            try:
-                disk_value = int(disk_state.get(key, current_base))
-            except (TypeError, ValueError):
-                disk_value = current_base
-            try:
-                mem_value = int(_state.get(key, current_base))
-            except (TypeError, ValueError):
-                mem_value = current_base
-            start = int(max(mem_value, disk_value) + 1)
-            end = int(start + count_int - 1)
-            _state[key] = end
-        else:
-            path_map = _state.setdefault(key, {})
-            disk_map = disk_state.get(key, {})
-            base_value = BASE[key][subkey] - 1
-            try:
-                disk_value = int(disk_map.get(subkey, base_value))
-            except (TypeError, ValueError):
-                disk_value = base_value
-            try:
-                mem_value = int(path_map.get(subkey, base_value))
-            except (TypeError, ValueError):
-                mem_value = base_value
-            start = int(max(mem_value, disk_value) + 1)
-            end = int(start + count_int - 1)
-            path_map[subkey] = end
+            if subkey is None:
+                current_base = BASE.get(key, 0) - 1
+                try:
+                    disk_value = int(disk_state.get(key, current_base))
+                except (TypeError, ValueError):
+                    disk_value = current_base
+                try:
+                    mem_value = int(_state.get(key, current_base))
+                except (TypeError, ValueError):
+                    mem_value = current_base
+                start = int(max(mem_value, disk_value) + 1)
+                end = int(start + count_int - 1)
+                _state[key] = end
+            else:
+                path_map = _state.setdefault(key, {})
+                disk_map = disk_state.get(key, {})
+                base_value = BASE[key][subkey] - 1
+                try:
+                    disk_value = int(disk_map.get(subkey, base_value))
+                except (TypeError, ValueError):
+                    disk_value = base_value
+                try:
+                    mem_value = int(path_map.get(subkey, base_value))
+                except (TypeError, ValueError):
+                    mem_value = base_value
+                start = int(max(mem_value, disk_value) + 1)
+                end = int(start + count_int - 1)
+                path_map[subkey] = end
 
-        _save(_state)
+            _save(_state)
         if key == "pathID" and subkey is not None:
             _record_path_usage(subkey, end)
         return start, end

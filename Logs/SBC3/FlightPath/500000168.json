@@ -1,0 +1,64 @@
+{
+  "timestamp": 832653939037,
+  "source": "MMR",
+  "pathID": 500000168,
+  "aircraftID": 5,
+  "isFormationFlight": false,
+  "waypointList": [
+    {
+      "waypointID": 901325,
+      "coordinate": {
+        "latitude": 37.907174,
+        "longitude": 128.173358,
+        "altitude": 1923
+      },
+      "speed": 58.0,
+      "eta": 21,
+      "ecf": 0.0,
+      "nextWaypointID": 901326,
+      "waypointPassType": 1,
+      "filmingProperty": {
+        "fieldOfView": 5.0,
+        "sensorType": 1,
+        "operationMode": 1,
+        "coordinateOrientation": {
+          "coordinate": {
+            "latitude": 37.8994154017302,
+            "longitude": 128.1636411730619,
+            "altitude": 913
+          }
+        }
+      },
+      "loiterProperty": {},
+      "isDone": false
+    },
+    {
+      "waypointID": 901326,
+      "coordinate": {
+        "latitude": 37.899415,
+        "longitude": 128.163641,
+        "altitude": 1923
+      },
+      "speed": 58.0,
+      "eta": 42,
+      "ecf": 0.0,
+      "nextWaypointID": 0,
+      "waypointPassType": 3,
+      "filmingProperty": {
+        "fieldOfView": 5.0,
+        "sensorType": 1,
+        "operationMode": 1,
+        "coordinateOrientation": {
+          "coordinate": {
+            "latitude": 37.8994154017302,
+            "longitude": 128.1636411730619,
+            "altitude": 913
+          }
+        }
+      },
+      "loiterProperty": {},
+      "isDone": false
+    }
+  ],
+  "individualMissionID": 900000621
+}

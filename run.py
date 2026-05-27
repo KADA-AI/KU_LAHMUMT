@@ -4,11 +4,61 @@
 # -------------------------------------------------------------
 
 from __future__ import annotations
-import os, sys, subprocess, threading, json
-from datetime import datetime, timezone
+import os, sys, subprocess, threading, json, socket
 os.environ["KU_ROLE"] = "decision"
 from pathlib import Path
 from typing import Dict, List, Tuple
+
+
+def _bootstrap_hidden_windows_launch() -> None:
+    if os.name != "nt":
+        return
+
+    os.environ.setdefault("KU_SHOW_RUN_CONSOLE", "1")
+    os.environ.setdefault("KU_SHOW_MODULE_CONSOLES", "0")
+
+    if str(os.environ.get("KU_SHOW_RUN_CONSOLE", "")).strip().lower() in {"1", "true", "yes", "on"}:
+        return
+    if str(os.environ.get("KU_RUNPY_GUI_RELAUNCHED", "")).strip().lower() in {"1", "true", "yes", "on"}:
+        return
+
+    exe = Path(sys.executable)
+    exe_name = exe.name.lower()
+    if exe_name in {"pythonw.exe", "pyw.exe"}:
+        return
+
+    hidden_launcher_name = {
+        "python.exe": "pythonw.exe",
+        "py.exe": "pyw.exe",
+    }.get(exe_name)
+    if not hidden_launcher_name:
+        return
+
+    pythonw = exe.with_name(hidden_launcher_name)
+    if not pythonw.exists():
+        return
+
+    try:
+        import ctypes
+
+        console = ctypes.windll.kernel32.GetConsoleWindow()
+        if console:
+            ctypes.windll.user32.ShowWindow(console, 0)
+    except Exception:
+        pass
+
+    env = os.environ.copy()
+    env["KU_RUNPY_GUI_RELAUNCHED"] = "1"
+    subprocess.Popen(
+        [str(pythonw), str(Path(__file__).resolve()), *sys.argv[1:]],
+        cwd=str(Path(__file__).resolve().parent),
+        env=env,
+        close_fds=True,
+    )
+    raise SystemExit(0)
+
+
+_bootstrap_hidden_windows_launch()
 
 from PyQt5.QtCore import qInstallMessageHandler, QtMsgType, QObject, pyqtSignal, QTimer, QMetaObject, Qt, Q_ARG, pyqtSlot
 from PyQt5.QtGui import QCursor, QTextCursor
@@ -16,13 +66,9 @@ from PyQt5.QtWidgets import QApplication, QTextEdit, QPlainTextEdit
 
 from modules.common import db_paths
 from modules.common.process_console import (
-    activate_process_log_session,
-    begin_process_log_session,
     creationflags_for_subprocess,
     emit_process_log,
     ensure_console,
-    flush_pending_process_logs,
-    get_process_log_session,
     install_process_file_logging,
     preferred_console_python,
     should_show_module_consoles,
@@ -52,7 +98,6 @@ def _qt_silent_handler(mode: QtMsgType, context, message: str):
 qInstallMessageHandler(_qt_silent_handler)
 
 ensure_console("KU Dashboard Console")
-begin_process_log_session(force_new=True)
 install_process_file_logging("dashboard")
 
 # -------------------------------------------------------------
@@ -62,7 +107,10 @@ def _bootstrap_paths():
     modules_dir = root / "modules"
     common_dir = modules_dir / "common"
     ds_dir = modules_dir / "decision_support"
-    for p in (root, modules_dir, common_dir, ds_dir):
+    # insert(0) 순서: 마지막에 삽입된 것이 가장 앞에 옴
+    # root를 마지막에 넣어서 프로젝트 루트가 최우선이 되도록 함
+    # (modules/app/ 가 app/ 를 가리지 않도록)
+    for p in (ds_dir, common_dir, modules_dir, root):
         p_str = str(p)
         if p.exists() and p_str not in sys.path:
             sys.path.insert(0, p_str)
@@ -73,7 +121,6 @@ def _bootstrap_paths():
     return root, common_dir, ds_dir
 
 PROJECT_ROOT, COMMON_DIR, DS_DIR = _bootstrap_paths()
-SCENARIO_ACTIVATION_STATE_PATH = PROJECT_ROOT / "temp" / "scenario_activation_state.json"
 
 
 hardened_base_ids = {
@@ -89,56 +136,6 @@ hardened_base_ids = {
         6: 600_000_000,
     },
 }
-
-
-def _read_scenario_activation_state() -> dict:
-    try:
-        with SCENARIO_ACTIVATION_STATE_PATH.open("r", encoding="utf-8") as fh:
-            data = json.load(fh)
-        if isinstance(data, dict):
-            return dict(data)
-    except Exception:
-        pass
-    return {}
-
-
-def _write_scenario_activation_state(
-    *,
-    pending_new_scenario: bool,
-    db_root: str | None = None,
-    scenario_dir: str | None = None,
-    timestamp_ms: int | None = None,
-    iso: str | None = None,
-    process_log_session_id: str | None = None,
-) -> dict:
-    payload = {
-        "pending_new_scenario": bool(pending_new_scenario),
-        "db_root": str(db_root).strip() if db_root else None,
-        "scenario_dir": str(scenario_dir).strip() if scenario_dir else None,
-        "timestamp_ms": int(timestamp_ms) if timestamp_ms is not None else None,
-        "iso": str(iso).strip() if iso else None,
-        "process_log_session_id": str(process_log_session_id).strip() if process_log_session_id else None,
-        "updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-    }
-    try:
-        SCENARIO_ACTIVATION_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        SCENARIO_ACTIVATION_STATE_PATH.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),
-            encoding="utf-8",
-        )
-    except Exception:
-        pass
-    return payload
-
-
-def _current_process_log_session_id() -> str | None:
-    try:
-        state = get_process_log_session()
-    except Exception:
-        return None
-    session_id = str((state or {}).get("session_id") or "").strip()
-    return session_id or None
-
 
 def _should_force_reset_ids() -> bool:
     raw = str(os.environ.get("KU_FORCE_RESET_IDS", "") or "").strip().lower()
@@ -453,6 +450,29 @@ def _load_tab_defs() -> Dict[str, Dict[str, List[Tuple[str, str]]]]:
 _env_safe = os.getenv("KU_SAFE_STATES_WHEN_APPS_RUNNING", "")
 SAFE_STATES_WHEN_APPS_RUNNING = set([s.strip() for s in _env_safe.split(",") if s.strip()]) or {"S110"}
 
+ROLE_CTRL_PORTS = {
+    "mission": 45981,
+    "monitor": 45982,
+    "decision": 45983,
+    "info": 45984,
+}
+
+ROLE_SCRIPT_NAMES = {
+    "mission": "mission_planning_gui.py",
+    "monitor": "monitoring_gui.py",
+    "decision": "decision_support_gui.py",
+    "info": "info_manage.py",
+}
+
+ROLE_SERVICE_SCRIPT_NAMES = {}
+
+ROLE_VIEWER_PROCESS_KEYS = {}
+
+ROLE_VIEWER_CTRL_PORTS = {}
+
+ROLE_EXISTING_SHOW_DELAY_MS = 250
+ROLE_STARTUP_SHOW_DELAY_MS = 1800
+
 # -------------------------------------------------------------
 # 대시보드 오케스트레이터 (모니터링/관리 전용)
 class DashboardOrchestrator(QObject):
@@ -477,6 +497,12 @@ class DashboardOrchestrator(QObject):
         # 모드 루프 방지용 상태
         self._mode_text = "초기화 모드"
         self._last_mode_broadcast_ms = 0.0
+        self._module_mode = {
+            "assignment": "초기화 모드",
+            "monitoring": "초기화 모드",
+            "decision": "초기화 모드",
+            "info": "초기화 모드",
+        }
 
         # 안전 로거 alias
         self._log_everywhere = getattr(self, "_log_everywhere", None) or (lambda text: self._append_log_global(str(text)))
@@ -487,6 +513,12 @@ class DashboardOrchestrator(QObject):
         self.uiLog2.connect(self._log_to_role)            # (role, text) -> 해당 모듈
 
         self._init_rows()
+        self._bind_service_gui_buttons()
+        self._service_status_timer = QTimer(self)
+        self._service_status_timer.setInterval(1000)
+        self._service_status_timer.timeout.connect(self._refresh_service_status_panel)
+        self._service_status_timer.start()
+        self._refresh_service_status_panel()
         reset_btn = getattr(self.win, "btn_decision_reset", None)
         if reset_btn is not None and hasattr(reset_btn, "clicked"):
             try:
@@ -500,33 +532,8 @@ class DashboardOrchestrator(QObject):
         # 시작 시 초기화 모드
         self._set_mode_text_all("초기화 모드")
 
-        self._module_mode = {"assignment": "초기화 모드", "monitoring": "초기화 모드", "decision": "초기화 모드", "info": "초기화 모드"}
-
         self._last_system_mode_code: int | None = None
         info = db_paths.get_info()
-        activation_state = _read_scenario_activation_state()
-        current_log_session_id = _current_process_log_session_id()
-        activation_session_id = str(activation_state.get("process_log_session_id") or "").strip()
-        pending_new_scenario = bool(activation_state.get("pending_new_scenario")) and bool(
-            current_log_session_id and activation_session_id and activation_session_id == current_log_session_id
-        )
-        stale_pending_new_scenario = bool(activation_state.get("pending_new_scenario")) and not pending_new_scenario
-        has_active_scenario = bool(info.get("source") == "scenario" and info.get("db_root"))
-        if has_active_scenario and not pending_new_scenario:
-            self._scenario_activated_once = True
-            _write_scenario_activation_state(
-                pending_new_scenario=False,
-                db_root=info.get("db_root"),
-                scenario_dir=info.get("scenario_dir"),
-                timestamp_ms=info.get("timestamp_ms"),
-                iso=info.get("iso"),
-                process_log_session_id=current_log_session_id,
-            )
-            try:
-                activate_process_log_session(db_root=info.get("db_root"))
-                flush_pending_process_logs(db_root=info.get("db_root"))
-            except Exception:
-                pass
         self._scenario_timestamp = info.get("timestamp_ms")
         try:
             db_root_init = info.get("db_root") or db_paths.get_active_db_root_str()
@@ -536,16 +543,6 @@ class DashboardOrchestrator(QObject):
             self.win.update_scenario_status_indicator(False, tooltip)
         except Exception:
             pass
-        if has_active_scenario and not pending_new_scenario:
-            try:
-                self._safe_log(f"[OPS] Reusing active scenario DB on startup @ {info.get('db_root')}")
-            except Exception:
-                pass
-        elif stale_pending_new_scenario and has_active_scenario:
-            try:
-                self._safe_log(f"[OPS] Ignoring stale new-scenario request from another dashboard session; reuse active DB @ {info.get('db_root')}")
-            except Exception:
-                pass
 
     def _log_to_role(self, role: str, text: str):
         """해당 role 모듈 로그에만 기록. 실패 시 글로벌 폴백."""
@@ -641,6 +638,7 @@ class DashboardOrchestrator(QObject):
     def _apply_mode_event(self, role: str, norm: str):
         self._set_mode_text_single(role, norm)
         self._safe_log(f"[MODE] {role} -> {norm}")
+        self._refresh_service_status_panel()
 
     # --------- UI 위젯 해결 ---------
 
@@ -734,6 +732,94 @@ class DashboardOrchestrator(QObject):
                 cursor.deleteChar()
         except Exception:
             pass
+
+    def _bind_service_gui_buttons(self) -> None:
+        getter = getattr(self.win, "module_gui_buttons", None)
+        if not callable(getter):
+            return
+        try:
+            buttons = getter()
+        except Exception:
+            return
+        if not isinstance(buttons, dict):
+            return
+        for role, button in buttons.items():
+            if button is None:
+                continue
+            try:
+                button.clicked.disconnect()
+            except Exception:
+                pass
+            try:
+                button.clicked.connect(lambda _checked=False, r=str(role): self._show_or_launch_role_gui(r))
+            except Exception:
+                pass
+
+    def _refresh_service_status_panel(self) -> None:
+        updater = getattr(self.win, "update_module_service_status", None)
+        if not callable(updater):
+            return
+        role_processes = getattr(self.win, "_role_processes", None)
+        if not isinstance(role_processes, dict):
+            return
+        module_mode = getattr(self, "_module_mode", {})
+        for role in ("mission", "monitor", "decision", "info"):
+            proc = role_processes.get(role)
+            running = bool(proc is not None and proc.poll() is None)
+            if proc is not None and not running:
+                role_processes.pop(role, None)
+            mode_role = self._normalize_role(role)
+            mode_text = getattr(self, "_mode_text", "초기화 모드")
+            if isinstance(module_mode, dict):
+                mode_text = module_mode.get(mode_role) or mode_text
+            try:
+                updater(role, running, pid=getattr(proc, "pid", None) if running else None, mode_text=mode_text)
+            except Exception:
+                pass
+
+    def _send_role_ctrl(self, role: str, payload: dict, *, port: int | None = None) -> bool:
+        port = int(port) if port is not None else ROLE_CTRL_PORTS.get(str(role))
+        if port is None:
+            return False
+        body = dict(payload or {})
+        body.setdefault("role", role)
+        data = json.dumps(body, ensure_ascii=False).encode("utf-8")
+        sock = None
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.sendto(data, ("127.0.0.1", int(port)))
+            return True
+        except Exception as exc:
+            try:
+                self._safe_log(f"[RUN WARN] GUI control failed ({role}): {exc}")
+            except Exception:
+                pass
+            return False
+        finally:
+            if sock is not None:
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+
+    def _show_or_launch_role_gui(self, role: str) -> None:
+        role = str(role or "").strip().lower()
+        script_name = ROLE_SCRIPT_NAMES.get(role)
+        if not script_name:
+            return
+        role_processes = getattr(self.win, "_role_processes", None)
+        proc = role_processes.get(role) if isinstance(role_processes, dict) else None
+        if proc is not None and proc.poll() is None:
+            self._send_role_ctrl(role, {"cmd": "show_window", "delay_ms": ROLE_EXISTING_SHOW_DELAY_MS})
+            self._safe_log(f"[RUN] show GUI requested: {role}")
+            self._refresh_service_status_panel()
+            return
+        self._launch_gui(script_name, start_hidden=True)
+        QTimer.singleShot(
+            ROLE_STARTUP_SHOW_DELAY_MS,
+            lambda r=role: self._send_role_ctrl(r, {"cmd": "show_window"}),
+        )
+        self._refresh_service_status_panel()
 
     def _recently_seen(self, tag: str, mid: str, window: float = 0.3) -> bool:
         import time
@@ -882,13 +968,13 @@ class DashboardOrchestrator(QObject):
             if status == 0:
                 self._safe_log("[OPS] 0305 재계획 진행 중")
             elif status == 1:
-                self._safe_log("[OPS] 0305 재계획 완료 (대기모드 전환은 0702 수신 후)")
+                self._safe_log("[OPS] 0305 재계획 완료 (모드 전환은 0101 수신만 반영)")
             return
 
-        # 0702 수신 -> 대기모드 전환
+        # 0702는 계획/옵션 반영 신호로만 취급한다.
+        # 실행 이후 모드 전이는 0101만 권한을 가진다.
         if mid == "0702":
-            self._safe_log("[OPS] 0702 수신 -> 대기모드 전환")
-            self._enter_standby()
+            self._safe_log("[OPS] 0702 수신 -> 모드 전환 없음 (0101 전용)")
             return
 
     def _handle_system_mode_message(self, payload: dict | None, raw: bytes | None) -> None:
@@ -932,9 +1018,7 @@ class DashboardOrchestrator(QObject):
         if code == 1:
             self._maybe_activate_scenario(timestamp)
 
-        if code == 2:
-            self._safe_log("[OPS] SystemMode=2 수신 -> 초기임무계획 모드 진입")
-            self._enter_initial_plan()
+        self._apply_system_mode_code(code)
 
         self._last_system_mode_code = code
 
@@ -943,48 +1027,18 @@ class DashboardOrchestrator(QObject):
     def _maybe_activate_scenario(self, timestamp: int | None) -> None:
         if self._last_system_mode_code == 1:
             return
+        if self._scenario_activated_once:
+            reuse_root = db_paths.get_active_db_root_str()
+            self._safe_log(f"[OPS] Standby re-entry - reuse existing DB @ {reuse_root}")
+            try:
+                self.win.update_scenario_status_indicator(False, f"재사용 경로: {reuse_root}")
+            except Exception:
+                pass
+            return
         if timestamp is None:
             self._safe_log("[OPS] Standby entry missing timestamp -> skip DB activation")
             try:
                 self.win.update_scenario_status_indicator(False, "타임스탬프 없음 -> 기존 경로 유지")
-            except Exception:
-                pass
-            return
-        activation_state = _read_scenario_activation_state()
-        current_log_session_id = _current_process_log_session_id()
-        activation_session_id = str(activation_state.get("process_log_session_id") or "").strip()
-        pending_new_scenario = bool(activation_state.get("pending_new_scenario")) and bool(
-            current_log_session_id and activation_session_id and activation_session_id == current_log_session_id
-        )
-        try:
-            current_info = db_paths.get_info()
-        except Exception:
-            current_info = {}
-        active_timestamp = None
-        try:
-            active_timestamp = int(
-                (current_info.get("timestamp_ms") if isinstance(current_info, dict) else None)
-                or self._scenario_timestamp
-            )
-        except Exception:
-            active_timestamp = None
-        active_db_root = (
-            (current_info.get("db_root") if isinstance(current_info, dict) else None)
-            or db_paths.get_active_db_root_str()
-        )
-        has_active_scenario = bool(
-            isinstance(current_info, dict)
-            and current_info.get("source") == "scenario"
-            and active_db_root
-        )
-        if has_active_scenario and not pending_new_scenario and active_timestamp == int(timestamp):
-            self._scenario_activated_once = True
-            self._scenario_timestamp = active_timestamp
-            self._safe_log(
-                f"[OPS] Standby re-entry (same timestamp={int(timestamp)}) - reuse existing DB @ {active_db_root}"
-            )
-            try:
-                self.win.update_scenario_status_indicator(False, f"재사용 경로: {active_db_root}")
             except Exception:
                 pass
             return
@@ -1001,21 +1055,6 @@ class DashboardOrchestrator(QObject):
 
         self._scenario_timestamp = info.get("timestamp_ms")
         db_root = info.get("db_root")
-        _write_scenario_activation_state(
-            pending_new_scenario=False,
-            db_root=db_root,
-            scenario_dir=info.get("scenario_dir"),
-            timestamp_ms=info.get("timestamp_ms"),
-            iso=info.get("iso"),
-            process_log_session_id=current_log_session_id,
-        )
-        try:
-            activate_process_log_session(db_root=db_root)
-            flushed = flush_pending_process_logs(db_root=db_root)
-            if flushed:
-                self._safe_log(f"[OPS] Pre-standby module logs attached to new DB ({flushed} files)")
-        except Exception as exc:
-            self._safe_log(f"[WARN] Pending module log attach failed: {exc}")
         if db_root:
             try:
                 self.win.update_db_root(db_root)
@@ -1052,6 +1091,13 @@ class DashboardOrchestrator(QObject):
                     self._safe_log(f"[WARN] Standby DB path missing: {db_root_str}")
             except Exception:
                 self._safe_log(f"[WARN] Standby DB path inspection failed: {db_root_str}")
+        try:
+            broadcaster = getattr(self.win, "_broadcast_ctrl", None)
+            if callable(broadcaster):
+                broadcaster({"cmd": "db_root"})
+                self._safe_log("[OPS] DB root snapshot requested from modules")
+        except Exception as exc:
+            self._safe_log(f"[WARN] DB root snapshot request failed: {exc}")
         self._scenario_activated_once = True
         try:
             write_vehicle_status(None)
@@ -1085,14 +1131,6 @@ class DashboardOrchestrator(QObject):
             except Exception:
                 pass
 
-        try:
-            begin_process_log_session(force_new=True)
-        except Exception as exc:
-            try:
-                self._safe_log(f"[WARN] Process log session reset failed: {exc}")
-            except Exception:
-                pass
-
         self._scenario_activated_once = False
         self._scenario_timestamp = None
         try:
@@ -1111,19 +1149,6 @@ class DashboardOrchestrator(QObject):
             self._safe_log(log_msg)
         except Exception:
             pass
-
-        try:
-            current_info = db_paths.get_info()
-        except Exception:
-            current_info = {}
-        _write_scenario_activation_state(
-            pending_new_scenario=True,
-            db_root=(current_info.get("db_root") if isinstance(current_info, dict) else None) or prev_root,
-            scenario_dir=current_info.get("scenario_dir") if isinstance(current_info, dict) else None,
-            timestamp_ms=current_info.get("timestamp_ms") if isinstance(current_info, dict) else None,
-            iso=current_info.get("iso") if isinstance(current_info, dict) else None,
-            process_log_session_id=_current_process_log_session_id(),
-        )
 
         try:
             self._set_mode_text_all("모듈 초기화 중")
@@ -1148,20 +1173,49 @@ class DashboardOrchestrator(QObject):
         self._set_mode_text_all("초기임무계획")
         self._safe_log("모든 SW 초기임무계획 모드")
 
+    def _enter_execution(self):
+        self._set_mode_text_all("임무 수행")
+        self._safe_log("모든 SW 임무 수행 모드 진입")
+
+    def _apply_system_mode_code(self, code: int) -> None:
+        if code == 0:
+            self._safe_log("[OPS] SystemMode=0 수신 -> 초기화 모드 진입")
+            self._set_mode_text_all("초기화 모드")
+            return
+        if code == 1:
+            self._safe_log("[OPS] SystemMode=1 수신 -> 대기모드 진입")
+            self._enter_standby()
+            return
+        if code == 2:
+            self._safe_log("[OPS] SystemMode=2 수신 -> 초기임무계획 모드 진입")
+            self._enter_initial_plan()
+            return
+        if code == 3:
+            self._safe_log("[OPS] SystemMode=3 수신 -> 임무 수행 모드 진입")
+            self._enter_execution()
+            return
+
     def _set_mode_text_all(self, text: str):
+        norm = self._normalize_mode_text(text)
+        self._mode_text = norm
+        module_mode = getattr(self, "_module_mode", None)
+        if isinstance(module_mode, dict):
+            for key in list(module_mode.keys()):
+                module_mode[key] = norm
         for key in ("assignment", "monitoring", "decision"):
             mod = self.widgets.get(key)
             if not mod:
                 continue
             if hasattr(mod, "set_mode_text") and callable(mod.set_mode_text):
-                try: mod.set_mode_text(text); continue
+                try: mod.set_mode_text(norm); continue
                 except Exception: pass
             try:
                 ml = getattr(mod, "mode_line", None)
                 if ml is not None and hasattr(ml, "setText"):
-                    ml.setText(text)
+                    ml.setText(norm)
             except Exception:
                 pass
+        self._refresh_service_status_panel()
 
     def trigger_initial_plan_pipeline(self, reason: str = "초기임무재계획") -> None:
         normalized_reason = str(reason or "초기임무재계획")
@@ -1187,10 +1241,16 @@ class DashboardOrchestrator(QObject):
     def _launch_all_guis(self):
         if not self._ensure_launch_ready(show_message=True, context="run.py 초기 실행"):
             return
-        for sn in ("mission_planning_gui.py", "monitoring_gui.py", "decision_support_gui.py", "info_manage.py"):
-            self._launch_gui(sn)
+        for sn in (
+            "mission_planning_gui.py",
+            "monitoring_gui.py",
+            "decision_support_gui.py",
+            "info_manage.py",
+        ):
+            self._launch_gui(sn, start_hidden=True)
         QTimer.singleShot(1000, lambda: self._set_mode_text_all("초기화 모드"))
         QTimer.singleShot(1000, lambda: self._safe_log("모든 SW 초기화 모드 진입"))
+        QTimer.singleShot(1200, self._refresh_service_status_panel)
 
     def _self_check_all(self, on: bool = True) -> None:
         """Best-effort self-check trigger for any embedded modules."""
@@ -1208,7 +1268,105 @@ class DashboardOrchestrator(QObject):
                 except Exception:
                     pass
 
-    def _launch_gui(self, script_name: str):
+    def _launch_service(self, role: str) -> None:
+        import sys, os, subprocess
+        from pathlib import Path
+
+        role = str(role or "").strip().lower()
+        script_name = ROLE_SERVICE_SCRIPT_NAMES.get(role)
+        if not script_name:
+            return
+        if not self._ensure_launch_ready(show_message=True, context=f"{role} service 실행"):
+            return
+
+        root = Path(__file__).resolve().parent
+        candidates = [
+            root / script_name,
+            root / "modules" / script_name,
+            root / "modules" / "decision_support" / script_name,
+            root / "modules" / "info_manage" / script_name,
+        ]
+        script = next((p for p in candidates if p.exists()), None)
+        if script is None:
+            msg = f"[RUN ERR] service not found: {script_name}\n - searched:\n   " + "\n   ".join(str(c) for c in candidates)
+            try:
+                self._safe_log(msg)
+            except Exception:
+                pass
+            return
+
+        role_processes = getattr(self.win, "_role_processes", None)
+        if isinstance(role_processes, dict):
+            existing = role_processes.get(role)
+            if existing and existing.poll() is None:
+                try:
+                    self._safe_log(f"[RUN] restarting service: {role}")
+                except Exception:
+                    pass
+                try:
+                    existing.terminate()
+                    existing.wait(timeout=3)
+                except Exception:
+                    try:
+                        existing.kill()
+                    except Exception:
+                        pass
+                finally:
+                    role_processes.pop(role, None)
+
+        ui_line = getattr(self.win, "_db_path_line", None)
+        ui_val = ui_line.text().strip() if ui_line and hasattr(ui_line, "text") else ""
+        db_root = ui_val or db_paths.get_active_db_root_str()
+        try:
+            Path(db_root).mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+
+        env = os.environ.copy()
+        env.setdefault("KU_LAUNCHED_BY_DASHBOARD", "1")
+        env["KU_MISSION_DB_ROOT"] = db_root
+        env["PYTHONUNBUFFERED"] = "1"
+        if role in ROLE_CTRL_PORTS:
+            env["KU_CTRL_PORT"] = str(ROLE_CTRL_PORTS[role])
+        title_map = {
+            "decision": "KU Decision Support Service",
+            "info": "KU Info Manage Service",
+        }
+        env["KU_CONSOLE_TITLE"] = title_map.get(role, f"KU {role} Service")
+
+        try:
+            self._safe_log(f"[RUN] {role} service @ {script}")
+        except Exception:
+            pass
+        try:
+            proc = subprocess.Popen(
+                [preferred_console_python(sys.executable), str(script)],
+                cwd=str(root),
+                env=env,
+                start_new_session=True,
+                creationflags=creationflags_for_subprocess(
+                    show_console=should_show_module_consoles(),
+                    new_process_group=True,
+                ),
+            )
+            if isinstance(role_processes, dict):
+                role_processes[role] = proc
+            self._refresh_service_status_panel()
+        except Exception as exc:
+            try:
+                self._safe_log(f"[RUN ERR] {role} service: {exc}")
+            except Exception:
+                pass
+
+    def _launch_gui(
+        self,
+        script_name: str,
+        *,
+        start_hidden: bool = False,
+        process_key: str | None = None,
+        ctrl_port: int | None = None,
+        viewer_only: bool = False,
+    ):
         import sys, os, subprocess
         from pathlib import Path
 
@@ -1283,10 +1441,25 @@ class DashboardOrchestrator(QObject):
             "info": "KU Info Manage Console",
         }
         role_key = role_map.get(script_basename)
+        process_key = process_key or role_key
         env["KU_CONSOLE_TITLE"] = title_map.get(role_key, f"KU {script_basename} Console")
+        effective_ctrl_port = ctrl_port if ctrl_port is not None else ROLE_CTRL_PORTS.get(role_key)
+        if effective_ctrl_port is not None:
+            env["KU_CTRL_PORT"] = str(effective_ctrl_port)
+        env["KU_START_HIDDEN"] = "1" if start_hidden else "0"
+        env["KU_HIDE_ON_CLOSE"] = "1"
+        env["KU_VIEWER_ONLY"] = "1" if viewer_only else "0"
+        offset_map = {
+            "mission": "40,40",
+            "monitor": "130,90",
+            "decision": "220,140",
+            "info": "310,190",
+        }
+        if role_key in offset_map:
+            env["KU_WINDOW_OFFSET"] = offset_map[role_key]
         role_processes = getattr(self.win, "_role_processes", None)
-        if role_key and isinstance(role_processes, dict):
-            existing = role_processes.get(role_key)
+        if process_key and isinstance(role_processes, dict):
+            existing = role_processes.get(process_key)
             if existing and existing.poll() is None:
                 try:
                     self._safe_log(f"[RUN] restarting: {script_basename}")
@@ -1301,7 +1474,7 @@ class DashboardOrchestrator(QObject):
                     except Exception:
                         pass
                 finally:
-                    role_processes.pop(role_key, None)
+                    role_processes.pop(process_key, None)
 
         try:
             proc = subprocess.Popen(
@@ -1311,8 +1484,9 @@ class DashboardOrchestrator(QObject):
                 start_new_session=True,
                 creationflags=creationflags,
             )
-            if role_key and isinstance(role_processes, dict):
-                role_processes[role_key] = proc
+            if process_key and isinstance(role_processes, dict):
+                role_processes[process_key] = proc
+            self._refresh_service_status_panel()
         except Exception as e:
             err = f"[RUN ERR] {script_basename}: {e}"
             try: self._safe_log(err)

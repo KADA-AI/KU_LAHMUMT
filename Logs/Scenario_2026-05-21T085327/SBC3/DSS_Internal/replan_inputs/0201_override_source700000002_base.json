@@ -1,0 +1,161 @@
+{
+  "timestamp": 832638838505,
+  "inputMissionPackageID": 1,
+  "inputMissionPackageType": 1,
+  "mainSensor": 1,
+  "availableAircraftList": [
+    {
+      "aircraftID": 1
+    },
+    {
+      "aircraftID": 2
+    },
+    {
+      "aircraftID": 3
+    },
+    {
+      "aircraftID": 4
+    },
+    {
+      "aircraftID": 5
+    },
+    {
+      "aircraftID": 6
+    }
+  ],
+  "inputMissionList": [
+    {
+      "inputMissionID": 2,
+      "inputMissionType": 2,
+      "regionType": 0,
+      "isDone": false,
+      "missionDetail": {
+        "coordinateList": [],
+        "lineList": [],
+        "areaList": [
+          {
+            "isHole": false,
+            "coordinateList": [
+              {
+                "latitude": 37.90876410344082,
+                "longitude": 128.19093019078355,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.908437375407935,
+                "longitude": 128.19071739100968,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.91633835029299,
+                "longitude": 128.17252712066295,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.91150493301583,
+                "longitude": 128.16937937711532,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.91168271885991,
+                "longitude": 128.1694627246867,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.91567195670144,
+                "longitude": 128.15590279543864,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.915446658705164,
+                "longitude": 128.15579721537262,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.92567,
+                "longitude": 128.15527,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.92519494123522,
+                "longitude": 128.17829613893173,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.924719882470455,
+                "longitude": 128.20132227786348,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.924499999999995,
+                "longitude": 128.21198,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.900369965726405,
+                "longitude": 128.20785605047746,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.908916490456285,
+                "longitude": 128.19105363612866,
+                "altitude": 0
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "inputMissionID": 3,
+      "inputMissionType": 1,
+      "regionType": 0,
+      "isDone": false,
+      "missionDetail": {
+        "coordinateList": [
+          {
+            "latitude": 37.89855,
+            "longitude": 128.1926,
+            "altitude": 0
+          },
+          {
+            "latitude": 37.869625,
+            "longitude": 128.21355,
+            "altitude": 0
+          }
+        ],
+        "lineList": [
+          {
+            "width": 1000.0,
+            "coordinateList": [
+              {
+                "latitude": 37.89855,
+                "longitude": 128.1926,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.869625,
+                "longitude": 128.21355,
+                "altitude": 0
+              }
+            ]
+          }
+        ],
+        "areaList": [],
+        "sourceLineWidthM": 1000.0,
+        "sourceCoordinateList": [
+          {
+            "latitude": 37.89855,
+            "longitude": 128.1926,
+            "altitude": 0
+          },
+          {
+            "latitude": 37.869625,
+            "longitude": 128.21355,
+            "altitude": 0
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,518 @@
+{
+  "timestamp": "2026-05-21T04:51:24.498798+00:00",
+  "status": "success",
+  "stopReason": null,
+  "reason": "표적103 격파 후 복귀",
+  "replanLevel": 2,
+  "sessionId": null,
+  "context": {
+    "plan_ids": [
+      700000067
+    ],
+    "mission_ids": [
+      7,
+      3
+    ],
+    "reason": "표적103 격파 후 복귀",
+    "replan_detail": {
+      "trigger": "0402",
+      "triggerType": "attackClosedDestroyed",
+      "closureReason": "destroyed",
+      "sourceMissionPlanID": 700000065,
+      "currentMissionPlanID": 700000065,
+      "missionPlanID": 700000067,
+      "targetID": 103,
+      "watcherID": 5,
+      "targetType": 3,
+      "coordinate": {
+        "latitude": 37.91216278076172,
+        "longitude": 128.18344116210938,
+        "altitude": 657.0
+      },
+      "targetInFrame": false,
+      "isDestroyed": true,
+      "threat": 0.949999988079071,
+      "matchStrategy": "watcher_match",
+      "trackingAircraftIDList": [
+        5
+      ]
+    },
+    "sourceMissionPlanID": 700000065,
+    "currentMissionPlanID": 700000065,
+    "force_direct_update": true,
+    "suppress_0702_fallback": true,
+    "replan_level": 2,
+    "inputMissionPackageID": 5,
+    "_replan_timing": {
+      "base_perf": 17932.0658792,
+      "base_wall_ms": 1779339084488,
+      "payload_timestamp_ms": 832654284126,
+      "trigger": "post_attack_direct",
+      "replanLevel": 2,
+      "optionCount": 1,
+      "forceDirect": 1,
+      "0902_received_ms": 0.099,
+      "0902_received_wall_ms": 1779339084488,
+      "0902_received_trigger": "post_attack_direct",
+      "0902_received_replanLevel": 2,
+      "0902_received_optionCount": 1,
+      "0902_received_forceDirect": 1,
+      "0902_archived_ms": 1.131,
+      "0902_archived_wall_ms": 1779339084489,
+      "0902_archived_path": "replan_request_832654284126.json",
+      "pipeline_scheduled_ms": 2.247,
+      "pipeline_scheduled_wall_ms": 1779339084490,
+      "pipeline_scheduled_delay_ms": 0,
+      "scheduled_start_ms": 3.207,
+      "scheduled_start_wall_ms": 1779339084491,
+      "0305_status_1_ms": 6.327,
+      "0305_status_1_wall_ms": 1779339084494,
+      "0305_status_1_reason": "표적103 격파 후 복귀"
+    },
+    "_0902_capture_path": "C:\\Users\\TRL98\\Desktop\\LAH_MUMT\\Logs\\Scenario_2026-05-21T132543\\SBC3\\DSS_Internal\\replan_request_transport\\replan_request_832654284126.json"
+  },
+  "planIds": [
+    700000067
+  ],
+  "summary": {
+    "mode": "postAttackRejoin",
+    "status": "success",
+    "plan_ids": [
+      700000067
+    ],
+    "source_plan_id": 700000065,
+    "updated_aircraft_ids": [
+      2,
+      4,
+      5,
+      6
+    ],
+    "generated_imp_ids": [
+      800000310,
+      800000311,
+      800000312,
+      800000313
+    ],
+    "generated_path_ids": [
+      200000112,
+      200000113,
+      400000168,
+      400000169,
+      400000170,
+      500000207,
+      500000208,
+      600000161,
+      600000162
+    ],
+    "cleared_tracking_aircraft_ids": [
+      5
+    ],
+    "rebound_tracking_aircraft_ids": [],
+    "released_attack_manned_aircraft_ids": [
+      2
+    ],
+    "group_evaluations": [
+      {
+        "input_mission_id": 7,
+        "replan_needed": false,
+        "skip_reason": "remaining_work_too_small",
+        "active_progress_skip_percent": 70,
+        "active_progress_by_aircraft": {
+          "4": 34,
+          "6": 100
+        },
+        "active_progress_aircraft_ids": [
+          4,
+          6
+        ],
+        "active_progress_sample_count": 2,
+        "active_avg_progress_percent": 67.0,
+        "active_remaining_eta_s": 47,
+        "max_return_eta_s": 29,
+        "min_remaining_eta_s": 120,
+        "rejoin_margin_s": 45,
+        "rejoin_reference": {
+          "latitude": 37.91630172729492,
+          "longitude": 128.18521118164062,
+          "altitude": 1958
+        },
+        "available_aircraft_ids": [
+          4,
+          5,
+          6
+        ],
+        "ongoing_tracking_aircraft_ids": [],
+        "active_aircraft_ids": [
+          4,
+          6
+        ],
+        "returning_aircraft_ids": [
+          5
+        ],
+        "return_eta_by_aircraft": {
+          "5": 29
+        },
+        "returning_lah_updates": [
+          {
+            "aircraft_id": 2,
+            "individualMissionPackageID": 800000310,
+            "generatedPathIDs": [
+              200000112,
+              200000113
+            ],
+            "removedWaypointID": null,
+            "followUpMissionCount": 1
+          }
+        ],
+        "active_only_remaining_update": {
+          "applied": false,
+          "reason": "remaining_work_too_small_uses_done_or_suffix_update"
+        },
+        "active_completed_updates": [
+          {
+            "aircraft_id": 6,
+            "individualMissionPackageID": 800000311,
+            "doneIndividualMissionID": 900000752,
+            "donePathID": 600000161,
+            "generatedPathIDs": [
+              600000161,
+              600000162
+            ],
+            "followUpMissionCount": 1,
+            "holdSeconds": 34,
+            "finalCoordinate": {
+              "latitude": 37.926181,
+              "longitude": 128.177606,
+              "altitude": 1967
+            },
+            "orientationCoordinate": {
+              "latitude": 37.92512887199138,
+              "longitude": 128.1679961873736,
+              "altitude": 867
+            },
+            "completedByOnMission2": false
+          }
+        ],
+        "active_path_resume_updates": [
+          {
+            "aircraft_id": 4,
+            "individualMissionPackageID": 800000312,
+            "resume": {
+              "individualMissionID": 900000754,
+              "pathID": 400000169
+            },
+            "removedWaypointID": 1201516,
+            "donePathID": 400000168,
+            "donePath": "C:\\Users\\TRL98\\Desktop\\LAH_MUMT\\Logs\\Scenario_2026-05-21T132543\\SBC3\\FlightPath\\400000168.json",
+            "resumePath": "C:\\Users\\TRL98\\Desktop\\LAH_MUMT\\Logs\\Scenario_2026-05-21T132543\\SBC3\\FlightPath\\400000169.json",
+            "followUpMissionCount": 1,
+            "generatedPathIDs": [
+              400000168,
+              400000169,
+              400000170
+            ]
+          }
+        ],
+        "tracking_release_updates": [
+          {
+            "aircraft_id": 5,
+            "individualMissionPackageID": 800000313,
+            "generatedPathIDs": [
+              500000207,
+              500000208
+            ],
+            "returnMission": {
+              "individualMissionID": 900000756,
+              "pathID": 500000207,
+              "finalCoordinate": {
+                "latitude": 37.924768,
+                "longitude": 128.198972,
+                "altitude": 1829
+              }
+            },
+            "followUpMissionCount": 1
+          }
+        ]
+      }
+    ],
+    "option_names": [
+      "공격 후 복귀 재계획"
+    ],
+    "logArtifactMode": "pretty",
+    "logArtifactWritten": true,
+    "log_path": "C:\\Users\\TRL98\\Desktop\\LAH_MUMT\\Logs\\Scenario_2026-05-21T132543\\SBC3\\DSS_Internal\\log_post_attack_rejoin_20260521T045129.json",
+    "sourceArtifactCache": {
+      "entries": 16,
+      "hits": 30,
+      "misses": 16,
+      "loadsByKind": {
+        "FlightPath": 8,
+        "IndividualMissionPlan": 6,
+        "InputMissionPlan": 1,
+        "MissionPlan": 1
+      }
+    }
+  },
+  "steps": [
+    {
+      "step": "start",
+      "status": "info",
+      "detail": {
+        "reason": "표적103 격파 후 복귀",
+        "plan_ids": [
+          700000067
+        ],
+        "replan_level": 2
+      }
+    },
+    {
+      "step": "post_attack_rejoin_pipeline",
+      "status": "success",
+      "detail": {
+        "mode": "postAttackRejoin",
+        "status": "success",
+        "plan_ids": [
+          700000067
+        ],
+        "source_plan_id": 700000065,
+        "updated_aircraft_ids": [
+          2,
+          4,
+          5,
+          6
+        ],
+        "generated_imp_ids": [
+          800000310,
+          800000311,
+          800000312,
+          800000313
+        ],
+        "generated_path_ids": [
+          200000112,
+          200000113,
+          400000168,
+          400000169,
+          400000170,
+          500000207,
+          500000208,
+          600000161,
+          600000162
+        ],
+        "cleared_tracking_aircraft_ids": [
+          5
+        ],
+        "rebound_tracking_aircraft_ids": [],
+        "released_attack_manned_aircraft_ids": [
+          2
+        ],
+        "group_evaluations": [
+          {
+            "input_mission_id": 7,
+            "replan_needed": false,
+            "skip_reason": "remaining_work_too_small",
+            "active_progress_skip_percent": 70,
+            "active_progress_by_aircraft": {
+              "4": 34,
+              "6": 100
+            },
+            "active_progress_aircraft_ids": [
+              4,
+              6
+            ],
+            "active_progress_sample_count": 2,
+            "active_avg_progress_percent": 67.0,
+            "active_remaining_eta_s": 47,
+            "max_return_eta_s": 29,
+            "min_remaining_eta_s": 120,
+            "rejoin_margin_s": 45,
+            "rejoin_reference": {
+              "latitude": 37.91630172729492,
+              "longitude": 128.18521118164062,
+              "altitude": 1958
+            },
+            "available_aircraft_ids": [
+              4,
+              5,
+              6
+            ],
+            "ongoing_tracking_aircraft_ids": [],
+            "active_aircraft_ids": [
+              4,
+              6
+            ],
+            "returning_aircraft_ids": [
+              5
+            ],
+            "return_eta_by_aircraft": {
+              "5": 29
+            },
+            "returning_lah_updates": [
+              {
+                "aircraft_id": 2,
+                "individualMissionPackageID": 800000310,
+                "generatedPathIDs": [
+                  200000112,
+                  200000113
+                ],
+                "removedWaypointID": null,
+                "followUpMissionCount": 1
+              }
+            ],
+            "active_only_remaining_update": {
+              "applied": false,
+              "reason": "remaining_work_too_small_uses_done_or_suffix_update"
+            },
+            "active_completed_updates": [
+              {
+                "aircraft_id": 6,
+                "individualMissionPackageID": 800000311,
+                "doneIndividualMissionID": 900000752,
+                "donePathID": 600000161,
+                "generatedPathIDs": [
+                  600000161,
+                  600000162
+                ],
+                "followUpMissionCount": 1,
+                "holdSeconds": 34,
+                "finalCoordinate": {
+                  "latitude": 37.926181,
+                  "longitude": 128.177606,
+                  "altitude": 1967
+                },
+                "orientationCoordinate": {
+                  "latitude": 37.92512887199138,
+                  "longitude": 128.1679961873736,
+                  "altitude": 867
+                },
+                "completedByOnMission2": false
+              }
+            ],
+            "active_path_resume_updates": [
+              {
+                "aircraft_id": 4,
+                "individualMissionPackageID": 800000312,
+                "resume": {
+                  "individualMissionID": 900000754,
+                  "pathID": 400000169
+                },
+                "removedWaypointID": 1201516,
+                "donePathID": 400000168,
+                "donePath": "C:\\Users\\TRL98\\Desktop\\LAH_MUMT\\Logs\\Scenario_2026-05-21T132543\\SBC3\\FlightPath\\400000168.json",
+                "resumePath": "C:\\Users\\TRL98\\Desktop\\LAH_MUMT\\Logs\\Scenario_2026-05-21T132543\\SBC3\\FlightPath\\400000169.json",
+                "followUpMissionCount": 1,
+                "generatedPathIDs": [
+                  400000168,
+                  400000169,
+                  400000170
+                ]
+              }
+            ],
+            "tracking_release_updates": [
+              {
+                "aircraft_id": 5,
+                "individualMissionPackageID": 800000313,
+                "generatedPathIDs": [
+                  500000207,
+                  500000208
+                ],
+                "returnMission": {
+                  "individualMissionID": 900000756,
+                  "pathID": 500000207,
+                  "finalCoordinate": {
+                    "latitude": 37.924768,
+                    "longitude": 128.198972,
+                    "altitude": 1829
+                  }
+                },
+                "followUpMissionCount": 1
+              }
+            ]
+          }
+        ],
+        "option_names": [
+          "공격 후 복귀 재계획"
+        ],
+        "logArtifactMode": "pretty",
+        "logArtifactWritten": true,
+        "log_path": "C:\\Users\\TRL98\\Desktop\\LAH_MUMT\\Logs\\Scenario_2026-05-21T132543\\SBC3\\DSS_Internal\\log_post_attack_rejoin_20260521T045129.json"
+      }
+    }
+  ],
+  "issues": [],
+  "messages": [
+    {
+      "ts": "2026-05-21T04:51:24.500985+00:00",
+      "text": "[INFO] Using latest 0203 ID 1 for missionReferencePackageID (fallback)"
+    },
+    {
+      "ts": "2026-05-21T04:51:24.501685+00:00",
+      "text": "[STEP 0] Replan pipeline start (reason=표적103 격파 후 복귀)"
+    },
+    {
+      "ts": "2026-05-21T04:51:24.502773+00:00",
+      "text": "[POSTATTACK] 공격 종료 재계획 요청 감지 → 복귀 협업 재계획 평가 실행"
+    },
+    {
+      "ts": "2026-05-21T04:51:24.585466+00:00",
+      "text": "[POSTATTACK] [PRIOR] Falling back to first pending mission for aircraft 2 (current waypoint not found in plan)."
+    },
+    {
+      "ts": "2026-05-21T04:51:25.779392+00:00",
+      "text": "[POSTATTACK] [POSTATTACK][LAH] returning LAH resume package written (aircraft=2, imp=800000310.json, missions=2)."
+    },
+    {
+      "ts": "2026-05-21T04:51:25.780444+00:00",
+      "text": "[POSTATTACK] [POSTATTACK][ACTIVE-DONE] completion hold extended for returning UAV rejoin (hold=34s)."
+    },
+    {
+      "ts": "2026-05-21T04:51:26.708356+00:00",
+      "text": "[POSTATTACK] [POSTATTACK][ACTIVE-DONE] completed current input preserved as active boundary marker (aircraft=6, inputMissionID=7, imp=800000311.json, donePath=600000161.json, hold=34s, followUps=1)."
+    },
+    {
+      "ts": "2026-05-21T04:51:27.163240+00:00",
+      "text": "[POSTATTACK] [POSTATTACK][ACTIVE-SUFFIX] Resume trimmed by currentWP (lastRemovedWP=1201516)."
+    },
+    {
+      "ts": "2026-05-21T04:51:27.593575+00:00",
+      "text": "[POSTATTACK] [POSTATTACK][ACTIVE-SUFFIX] Added replan anchor waypoint to done path (anchorWP=1201577)."
+    },
+    {
+      "ts": "2026-05-21T04:51:27.594396+00:00",
+      "text": "[POSTATTACK] [POSTATTACK][ACTIVE-SUFFIX] Resume sweep trim applied (cutPoints=75, rawCutPoints=75, doneSweepPoints=0, pathID=400000167)."
+    },
+    {
+      "ts": "2026-05-21T04:51:28.007990+00:00",
+      "text": "[POSTATTACK] [POSTATTACK][ACTIVE-SUFFIX] Resume searchSpeed scaled (factor=1.30, waypoints=1)."
+    },
+    {
+      "ts": "2026-05-21T04:51:28.413866+00:00",
+      "text": "[POSTATTACK] [POSTATTACK][ACTIVE-SUFFIX] Generated done/resume mission -> aircraft=4 IMP:800000312.json PATHS:400000168.json/400000169.json"
+    },
+    {
+      "ts": "2026-05-21T04:51:28.837904+00:00",
+      "text": "[POSTATTACK] [POSTATTACK][TRACK-RETURN] short return path collapsed (aircraft=5, distance=1222.6m, threshold=2000.0m)."
+    },
+    {
+      "ts": "2026-05-21T04:51:29.322974+00:00",
+      "text": "[POSTATTACK] [POSTATTACK][TRACK-RETURN] tracking branch replaced with return-only package (aircraft=5, imp=800000313.json, path=500000207.json, hold=34s, followUps=1, speed=58.0)."
+    },
+    {
+      "ts": "2026-05-21T04:51:29.344391+00:00",
+      "text": "[POSTATTACK] [ATTACK-SLOT] released manned attack slots after closed tracking assignments -> inputMissionPackageID=5, aircraft=[2]."
+    },
+    {
+      "ts": "2026-05-21T04:51:29.356166+00:00",
+      "text": "[POSTATTACK] carried area remaining snapshot -> mission_area_snapshot_700000067.json (sourcePlan=700000065, plan=700000067)."
+    },
+    {
+      "ts": "2026-05-21T04:51:29.357317+00:00",
+      "text": "[POSTATTACK] MissionPlan updated for post-attack rejoin -> 700000067.json (sourcePlan=700000065, updatedAircraft=[2, 4, 5, 6])."
+    },
+    {
+      "ts": "2026-05-21T04:51:29.360744+00:00",
+      "text": "[REPLAN][TIME] pipeline_done_ms=4871.5 wall_ms=1779339089359 plans=1 force_direct=True"
+    }
+  ],
+  "missionPlanID": 700000067,
+  "logPath": "C:\\Users\\TRL98\\Desktop\\LAH_MUMT\\Logs\\Scenario_2026-05-21T132543\\SBC3\\DSS_Internal\\missionPlan_700000067.json"
+}

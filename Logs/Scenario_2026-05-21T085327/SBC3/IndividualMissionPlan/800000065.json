@@ -1,0 +1,73 @@
+{
+  "timestamp": 832639683715,
+  "Source": "MMR",
+  "individualMissionPackageID": 800000065,
+  "aircraftID": 6,
+  "individualMissionList": [
+    {
+      "individualMissionID": 900000173,
+      "isDone": false,
+      "relatedMission": {
+        "relatedMissionType": 1,
+        "inputMissionID": 2,
+        "priorMissionID": 0,
+        "attackReason": "표적58 등 3개 발견",
+        "targetID": 59
+      },
+      "individualMissionInfo": {
+        "individualMissionType": 1,
+        "patternType": 1,
+        "autoZoomIn": true,
+        "coordinateList": [
+          {
+            "latitude": 37.911842346191406,
+            "longitude": 128.18765258789062,
+            "altitude": 1965
+          }
+        ],
+        "lineList": [],
+        "areaList": [],
+        "targetID": 59
+      },
+      "pathID": 600000041
+    },
+    {
+      "individualMissionID": 900000175,
+      "isDone": false,
+      "relatedMission": {
+        "relatedMissionType": 1,
+        "inputMissionID": 3,
+        "priorMissionID": 0
+      },
+      "individualMissionInfo": {
+        "individualMissionType": 6,
+        "patternType": 8,
+        "autoZoomIn": true,
+        "BEARING": 150.23925888335532,
+        "SPEED": 140.0,
+        "FOV": 11.7,
+        "SEP": 227.0,
+        "MOVE_BEARING": 150.23925888335532,
+        "lineList": [
+          {
+            "width": 333.3333333333333,
+            "coordinateList": [
+              {
+                "latitude": 37.89855,
+                "longitude": 128.1926,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.869625,
+                "longitude": 128.21355,
+                "altitude": 0
+              }
+            ]
+          }
+        ],
+        "targetID": null
+      },
+      "pathID": 600000043
+    }
+  ]
+}

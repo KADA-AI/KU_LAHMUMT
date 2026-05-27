@@ -1,0 +1,108 @@
+{
+  "timestamp": 832653951670,
+  "Source": "MMR",
+  "individualMissionPackageID": 800000264,
+  "aircraftID": 5,
+  "individualMissionList": [
+    {
+      "individualMissionID": 900000642,
+      "isDone": false,
+      "relatedMission": {
+        "relatedMissionType": 1,
+        "inputMissionID": 6,
+        "priorMissionID": 0,
+        "attackReason": "표적100 등 2개 발견",
+        "targetID": 99
+      },
+      "individualMissionInfo": {
+        "individualMissionType": 1,
+        "patternType": 1,
+        "autoZoomIn": true,
+        "coordinateList": [
+          {
+            "latitude": 37.914939880371094,
+            "longitude": 128.1830596923828,
+            "altitude": 1953
+          }
+        ],
+        "lineList": [],
+        "areaList": [],
+        "targetID": 99
+      },
+      "pathID": 500000174
+    },
+    {
+      "individualMissionID": 900000643,
+      "isDone": false,
+      "relatedMission": {
+        "relatedMissionType": 1,
+        "inputMissionID": 6,
+        "priorMissionID": 0
+      },
+      "individualMissionInfo": {
+        "individualMissionType": 7,
+        "patternType": 10,
+        "autoZoomIn": false,
+        "BEARING": 202.57102143027208,
+        "SPEED": 154.0,
+        "FOV": 7.2,
+        "SEP": 980.1276822371326,
+        "MOVE_BEARING": 26.609319059163454,
+        "areaList": [],
+        "targetID": null,
+        "coordinateList": [
+          {
+            "latitude": 37.90717764105065,
+            "longitude": 128.17335043272237,
+            "altitude": 1953
+          },
+          {
+            "latitude": 37.8994154017302,
+            "longitude": 128.1636411730619,
+            "altitude": 1953
+          }
+        ],
+        "lineList": []
+      },
+      "pathID": 500000175
+    },
+    {
+      "individualMissionID": 900000644,
+      "isDone": false,
+      "relatedMission": {
+        "relatedMissionType": 1,
+        "inputMissionID": 3,
+        "priorMissionID": 0
+      },
+      "individualMissionInfo": {
+        "individualMissionType": 6,
+        "patternType": 8,
+        "autoZoomIn": true,
+        "BEARING": 150.23876102943382,
+        "SPEED": 140.0,
+        "FOV": 11.7,
+        "SEP": 227.0,
+        "MOVE_BEARING": 150.23876102943382,
+        "lineList": [
+          {
+            "width": 333.3333333333333,
+            "coordinateList": [
+              {
+                "latitude": 37.897064161642945,
+                "longitude": 128.18930544148253,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.868139161642944,
+                "longitude": 128.21025544148253,
+                "altitude": 0
+              }
+            ]
+          }
+        ],
+        "targetID": null
+      },
+      "pathID": 500000176
+    }
+  ]
+}

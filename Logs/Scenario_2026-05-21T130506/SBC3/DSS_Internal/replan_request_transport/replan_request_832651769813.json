@@ -1,0 +1,52 @@
+[
+  {
+    "timestamp": 832651769813,
+    "source": "MSM",
+    "inputMissionPackageID": 3,
+    "replanRequestTime": {
+      "replanRequestTimestamp": 832651769813
+    },
+    "replanLevel": 2,
+    "replanRequest": "표적9 격파 후 복귀",
+    "inputMissionIDList": [
+      {
+        "inputMissionID": 5
+      },
+      {
+        "inputMissionID": 3
+      }
+    ],
+    "missionPlanIDList": [
+      {
+        "missionPlanID": 700000014
+      }
+    ],
+    "replanDetail": {
+      "trigger": "0402",
+      "triggerType": "attackClosedDestroyed",
+      "closureReason": "destroyed",
+      "sourceMissionPlanID": 700000012,
+      "currentMissionPlanID": 700000012,
+      "missionPlanID": 700000014,
+      "targetID": 9,
+      "watcherID": 2,
+      "targetType": 3,
+      "coordinate": {
+        "latitude": 37.91399383544922,
+        "longitude": 128.19515991210938,
+        "altitude": 0.0
+      },
+      "targetInFrame": false,
+      "isDestroyed": true,
+      "threat": 0.0,
+      "matchStrategy": "watcher_unavailable",
+      "trackingAircraftIDList": [
+        6
+      ]
+    },
+    "sourceMissionPlanID": 700000012,
+    "currentMissionPlanID": 700000012,
+    "replanReason": "표적9 격파 후 복귀",
+    "savedAt": "2026-05-21T04:09:29.924432+00:00"
+  }
+]

@@ -1,0 +1,147 @@
+[
+  {
+    "timestamp": 832643987334,
+    "source": "MSM",
+    "replanRequestTime": {
+      "replanRequestTimestamp": 832643987334
+    },
+    "replanLevel": 1,
+    "inputMissionIDList": [
+      {
+        "inputMissionID": 1
+      },
+      {
+        "inputMissionID": 2
+      },
+      {
+        "inputMissionID": 3
+      }
+    ],
+    "individualMissionIDList": null,
+    "priorMissionList": null,
+    "replanReason": "초기임무재계획",
+    "pendingOptionList": [
+      {
+        "optionID": 1,
+        "optionName": "1",
+        "missionPlanID": 700000001
+      }
+    ]
+  },
+  {
+    "timestamp": 832644058116,
+    "source": "MSM",
+    "replanRequestTime": {
+      "replanRequestTimestamp": 832644058116
+    },
+    "replanLevel": 3,
+    "inputMissionIDList": [
+      {
+        "inputMissionID": 2
+      }
+    ],
+    "individualMissionIDList": null,
+    "priorMissionList": null,
+    "replanReason": "_협업 기저 전환으로 인한 재계획",
+    "pendingOptionList": [
+      {
+        "optionID": 1,
+        "optionName": "비행/촬영",
+        "missionPlanID": 700000002
+      }
+    ]
+  },
+  {
+    "timestamp": 832644221364,
+    "source": "MSM",
+    "replanRequestTime": {
+      "replanRequestTimestamp": 832644221364
+    },
+    "replanLevel": 2,
+    "inputMissionIDList": [
+      {
+        "inputMissionID": 2
+      },
+      {
+        "inputMissionID": 3
+      }
+    ],
+    "individualMissionIDList": null,
+    "priorMissionList": null,
+    "replanReason": "표적74 발견 재계획",
+    "pendingOptionList": [
+      {
+        "optionID": 2,
+        "optionName": "공격 특화",
+        "missionPlanID": 700000003
+      },
+      {
+        "optionID": 3,
+        "optionName": "공격 배제",
+        "missionPlanID": 700000004
+      }
+    ]
+  },
+  {
+    "timestamp": 832644274610,
+    "source": "MSM",
+    "replanRequestTime": {
+      "replanRequestTimestamp": 832644274610
+    },
+    "replanLevel": 2,
+    "inputMissionIDList": [
+      {
+        "inputMissionID": 2
+      },
+      {
+        "inputMissionID": 3
+      }
+    ],
+    "individualMissionIDList": null,
+    "priorMissionList": null,
+    "replanReason": "표적75 등 2개 발견",
+    "pendingOptionList": [
+      {
+        "optionID": 2,
+        "optionName": "공격 특화",
+        "missionPlanID": 700000005
+      },
+      {
+        "optionID": 3,
+        "optionName": "공격 배제",
+        "missionPlanID": 700000006
+      }
+    ]
+  },
+  {
+    "timestamp": 832644284620,
+    "source": "MSM",
+    "replanRequestTime": {
+      "replanRequestTimestamp": 832644284620
+    },
+    "replanLevel": 2,
+    "inputMissionIDList": [
+      {
+        "inputMissionID": 2
+      },
+      {
+        "inputMissionID": 3
+      }
+    ],
+    "individualMissionIDList": null,
+    "priorMissionList": null,
+    "replanReason": "표적76 등 3개 발견",
+    "pendingOptionList": [
+      {
+        "optionID": 2,
+        "optionName": "공격 특화",
+        "missionPlanID": 700000007
+      },
+      {
+        "optionID": 3,
+        "optionName": "공격 배제",
+        "missionPlanID": 700000008
+      }
+    ]
+  }
+]

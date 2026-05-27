@@ -1,0 +1,559 @@
+
+[2026-05-21 10:56:40] process-log attached: mission_planning
+[PATH] DB root changed: C:\Users\TRL98\Desktop\LAH_MUMT\Logs\Scenario_2026-05-21T101407\SBC3 -> C:\Users\TRL98\Desktop\LAH_MUMT\Logs\Scenario_2026-05-21T105639\SBC3
+[LOG] Mission planning log rebound: C:\Users\TRL98\Desktop\LAH_MUMT\Logs\Scenario_2026-05-21T105639\SBC3\DSS_Internal\mission_planning_gui_20260521T015640_052348Z.log
+[MODE] 슬라이더 변경 → 대기모드
+[0101/POLL] 모드 동기화 code=1
+[0201] DB 참조! (C:\Users\TRL98\Desktop\LAH_MUMT\Logs\Scenario_2026-05-21T105639\SBC3\InputMissionPlan\1.json)
+[INFO] Latest 0201 ID updated → 1
+[0203] DB 참조! (C:\Users\TRL98\Desktop\LAH_MUMT\Logs\Scenario_2026-05-21T105639\SBC3\MissionReferenceInfo\1.json)
+[INFO] Latest 0203 ID updated → 1
+[MODE] 슬라이더 변경 → 초기 임무 계획
+[0101/POLL] 모드 동기화 code=2
+[REPLAN][TIME] 0902_received_ms=0.1 wall_ms=1779328787398 trigger=general_or_unknown replanLevel=1 optionCount=1 forceDirect=0
+[REPLAN][TIME] 0902_archived_ms=1.5 wall_ms=1779328787399 path=replan_request_832643987334.json
+[AUTO] 0902 received (planIds=700000001)
+[REPLAN][TIME] pipeline_scheduled_ms=3.0 wall_ms=1779328787401 delay_ms=100
+[AUTO] replan pipeline scheduled after 0.1s delay
+[REPLAN][TIME] scheduled_start_ms=110.9 wall_ms=1779328787509
+[REPLAN][TIME] 0305_status_1_ms=133.9 wall_ms=1779328787532 reason=초기임무재계획
+[0305] status=1, reason=초기임무재계획 전송
+[INFO] Using latest 0201 ID 1 for inputMissionPackageID (fallback)
+[INFO] Using latest 0203 ID 1 for missionReferencePackageID (fallback)
+[STEP 0] Replan pipeline start (reason=초기임무재계획)
+[INFO] UAV params loaded (cruise=40.00, turn_step=15.0)
+[INFO] Latest input snapshot → 0201:ID=1,ts=832643986983,src=-, 0203:ID=1,ts=832643987048,src=-
+[STEP 0] Using latest 0201 ID 1 (1.json)
+[STEP 0] Using latest 0203 ID 1 (1.json)
+[CHECK] 0201/0203 필수 데이터 확인 시작
+[OK] 0201 inputMissionList 확인됨 (count=3) → 진행
+[OK] 0201 availableAircraftList 확인됨 (count=6) → 진행
+[OK] 0201 inputMissionPackageType=1 확인
+[OK] 0201 mainSensor=1 확인
+[CHECK] 0201 기체 수=6 (UAV=3, LAH=3)
+[CHECK] 0201 임무: total=3 missingID=0 missingDetail=0 missingShape=0 unknownType=0 typeZeroAuto=0 typeZeroInvalid=0 lineOnlyViolation=0 skippedSinglePoint=0
+[OK] 0203 takeOverInfoList 확인됨 (count=3) → 진행
+[OK] 0203 handOverInfoList 확인됨 (count=3) → 진행
+[OK] 0203 flightAreaList 확인됨 (count=1) → 진행
+[CHECK] 0203 flightAreaList count=1
+[variant 1] 일반 재계획 모드 적용
+[REPLAN][TIME] variant_started_ms=154.2 wall_ms=1779328787552 variant=1 option=1 mode=sequential
+[STEP 1.1] Divide & Pattern start
+[variant 1] [ENHANCED][1] split start: uavs=[4, 5, 6]
+[variant 1] [ENHANCED][1] split done: pieces=9
+[variant 1] [ENHANCED][2] type-decider done: profile=6 changed=9/9
+[variant 1] [ENHANCED][3] expected-path done: count=9
+[variant 1] [ENHANCED][4] area-review done: overflow=0 targets=0 pieces=9->9
+[variant 1] [ENHANCED][5] expected-velocity done: pieces=9 dbRows=7010
+[variant 1] [ENHANCED][6] 0302 export done: files=6
+[variant 1] [ENHANCED] total=485.8 ms
+[TIME] divide_and_pattern (variant=1): 486.2 ms
+[OK] IMP generated: 6 file(s) (variant=1)
+[TIME] build_0301+load (variant=1): 14.5 ms
+[OK] MissionPlan built: MissionPlan_1779328788038.json (variant=1)
+[TIME] collect_missions (variant=1): 8.1 ms, count=18
+[TIME] pathID_mapping (variant=1): 90.9 ms
+[INFO] pathID mapping done for 0302/0303/0304 (variant=1)
+[SWEEP][LINE] separation=227.00m, fov=11.70°, spacing=25.84m (~39 strips/1km)
+[SWEEP][AREA-DB] missionID=900000005 widthRef=3809.53m dbWidth=3980.39m fov=2.70 sep=1641.00
+[SWEEP][AREA] separation=1641.00m, fov=2.70°, spacing=42.97m (~23 strips/1km)
+[SWEEP][AREA-DB] missionID=900000002 widthRef=4546.59m dbWidth=4784.81m fov=1.70 sep=2734.00
+[SWEEP][AREA] separation=2734.00m, fov=1.70°, spacing=45.07m (~22 strips/1km)
+[SWEEP][LINE] separation=227.00m, fov=11.70°, spacing=25.84m (~39 strips/1km)
+[SWEEP][AREA-DB] missionID=900000008 widthRef=4022.54m dbWidth=4232.35m fov=2.20 sep=2140.00
+[SWEEP][AREA] separation=2140.00m, fov=2.20°, spacing=45.66m (~22 strips/1km)
+[INFO] FlightPath build mode (variant=1): 0303=aircraft_parallel workers=2 aircraft=3, 0304=sequential
+[REPLAN][METRIC] flightpath_build_0303 variant=1 option=1 recon=0 mode=sequential buildMode=aircraft_parallel workers=2 aircraft=3 paths=9 reassignedWaypoints=23 elapsed_ms=4157.978 fallback=- worker_ms=4:3164.741|5:2663.540|6:1309.071
+[INFO] FlightPath build time: 0303=4158.0 ms, 0304=27.8 ms
+[INFO] Applied LAH-UAV ETA follow speed plan (variant=1)
+[OK] FlightPath counts (variant=1): 0303=9 / 0304=9
+[REPLAN][METRIC] flightpath_counts variant=1 option=1 recon=0 mode=sequential paths0303=9 paths0304=9 pathsTotal=18 waypoints0303=23 waypoints0304=18 waypointsTotal=41 maxWaypointsPerPath=3 emptyPaths=0 formationPaths=0
+[TIME] build_0302 (variant=1): 44.6 ms, packages=6
+[INFO] FlightPath individualMissionID synced (variant=1): fixed=18
+[TIME] write_0302 (variant=1): 9.3 ms, files=6
+[TIME] write_FlightPath (variant=1): 100.8 ms, files=18
+[REPLAN][METRIC] flightpath_write variant=1 option=1 recon=0 mode=sequential files0303=9 files0304=9 filesTotal=18 write_ms=100.811
+[TIME] write_0301 (variant=1): 1.2 ms
+[OK] Stored variant 1: MissionPlanID=700000001, IMP=6, FlightPath=18
+[REPLAN][TIME] variant_finished_ms=5147.1 wall_ms=1779328792545 variant=1 option=1 mode=sequential status=success duration_ms=4992.873
+[TIME] variant_total (variant=1): 4992.9 ms
+[INFO] Option mapping #1: planID=700000001, optionCode=1(시스템 추천)
+[OK] Stored mission data: MissionPlan=1, IndividualMission=6, FlightPath=18
+[REPLAN][TIME] id_tab_update_deferred_ms=5150.6 wall_ms=1779328792548
+[REPLAN][TIME] pipeline_done_ms=5150.7 wall_ms=1779328792548 plans=1 force_direct=False
+[REPLAN][TIME] 0301_queued_ms=5150.7 wall_ms=1779328792548 plans=1
+[STEP 4] 0301 push queued (planIds=700000001)
+[0301] missionPlanID=700000001 전송
+[PUSH] 0301 direct batch send
+[REPLAN][TIME] 0301_sent_ms=5180.4 wall_ms=1779328792578 plans=1
+[REPLAN][TIME] post_0301_delivery_queued_ms=5181.2 wall_ms=1779328792579 grace_ms=0 timeout_ms=20 force_direct=0 mode=option_or_0901
+[INFO] Post-0301 apply queued (mode=option_or_0901, grace=0ms, timeout=20ms, plans=1)
+[REPLAN][TIME] 0305_status_2_ms=5184.3 wall_ms=1779328792582 reason=초기임무재계획
+[0305] status=2, reason=초기임무재계획, elapsed=5.07s 전송
+[REPLAN][TIME] post_0301_completion_ready_ms=5185.8 wall_ms=1779328792584 mode=option_or_0901
+[REPLAN][METRIC] source_artifact_cache entries=8 hits=0 misses=8
+[INFO] Post-0301 ready (timeout) -> sending 0903
+[REPLAN][TIME] post_0301_flushed_ms=5206.0 wall_ms=1779328792604 delivery=0903 trigger=timeout plans=1
+[REPLAN][TIME] id_tab_update_flushed_ms=5206.7 wall_ms=1779328792604
+[REPLAN][TIME] 0903_sent_ms=5452.6 wall_ms=1779328792850 missionPlanID=700000001
+[0903] request sent (missionPlanID=700000001)
+[MODE] 슬라이더 변경 → 대기모드
+[0101/POLL] 모드 동기화 code=1
+[MODE] 슬라이더 변경 → 임무 수행
+[0101/POLL] 모드 동기화 code=3
+[REPLAN][TIME] 0902_received_ms=0.2 wall_ms=1779328858532 trigger=next_collab_direct replanLevel=3 optionCount=1 forceDirect=0
+[REPLAN][TIME] 0902_archived_ms=2.0 wall_ms=1779328858534 path=replan_request_832644058116.json
+[AUTO] 0902 received (planIds=700000002)
+[REPLAN][TIME] pipeline_scheduled_ms=3.8 wall_ms=1779328858536 delay_ms=100
+[AUTO] replan pipeline scheduled after 0.1s delay
+[REPLAN][TIME] scheduled_start_ms=99.9 wall_ms=1779328858632
+[REPLAN][TIME] 0305_status_1_ms=102.1 wall_ms=1779328858634 reason=_협업 기저 전환으로 인한 재계획
+[0305] status=1, reason=_협업 기저 전환으로 인한 재계획 전송
+[INFO] Using latest 0203 ID 1 for missionReferencePackageID (fallback)
+[STEP 0] Replan pipeline start (reason=_협업 기저 전환으로 인한 재계획)
+[NEXTCOLLAB] Level-3 next collaborative mission request detected. Using dedicated pipeline.
+[NEXTCOLLAB] division planner area-division pieces=3
+[FOV_DB] loaded 7010 rows, 7008 unique widths, path=C:\Users\TRL98\Desktop\LAH_MUMT\branNew\KU\DSS_KU\resource\db\fov_db.csv
+[NEXTCOLLAB] division planner final workflow=no_split paths=3
+[NEXTCOLLAB] LAH 0304 regeneration incomplete; missing pathIDs=[100000004, 200000004, 300000004]
+[NEXTCOLLAB] stored replanned artifacts -> plan:700000002.json, input:reuse(1.json), imp:6, fp:3 (25.9 ms)
+[NEXTCOLLAB][TIME] timingMs={'load_source': 4.515, 'prepare_replacements': 2647.615, 'build_artifacts': 55.511, 'write_artifacts': 29.543, 'total': 2737.196}
+[NEXTCOLLAB] log captured -> C:\Users\TRL98\Desktop\LAH_MUMT\Logs\Scenario_2026-05-21T105639\SBC3\DSS_Internal\NextCollab_2_832644058655.json
+[NEXTCOLLAB][DELIVERY] direct push start (planIds=700000002)
+[REPLAN][TIME] pipeline_done_ms=2864.8 wall_ms=1779328861396 plans=1 force_direct=True
+[REPLAN][TIME] 0301_queued_ms=2864.8 wall_ms=1779328861396 plans=1
+[STEP 4] 0301 push queued (planIds=700000002)
+[INFO] Direct delivery -> skip 0901/0701, send 0301+0903 only
+[0301] missionPlanID=700000002 전송
+[PUSH] 0301 direct batch send
+[REPLAN][TIME] 0301_sent_ms=2873.1 wall_ms=1779328861405 plans=1
+[REPLAN][TIME] post_0301_delivery_queued_ms=2873.9 wall_ms=1779328861406 grace_ms=0 timeout_ms=1200 force_direct=1 mode=direct_0903
+[INFO] Post-0301 apply queued (mode=direct_0903, grace=0ms, timeout=1200ms, plans=1)
+[REPLAN][TIME] 0305_status_2_ms=2876.6 wall_ms=1779328861408 reason=_협업 기저 전환으로 인한 재계획
+[0305] status=2, reason=_협업 기저 전환으로 인한 재계획, elapsed=2.77s 전송
+[REPLAN][TIME] post_0301_completion_ready_ms=2878.1 wall_ms=1779328861410 mode=direct_0903
+[INFO] Post-0301 ready (0305_status_2) -> sending 0903
+[REPLAN][TIME] post_0301_flushed_ms=2879.5 wall_ms=1779328861411 delivery=0903 trigger=0305_status_2 plans=1
+[REPLAN][TIME] id_tab_update_flushed_ms=2880.3 wall_ms=1779328861412
+[REPLAN][TIME] id_tab_update_deferred_ms=2865.0 wall_ms=1779328861397
+[NEXTCOLLAB] Next collaborative mission pipeline complete (planIds=[700000002], log=C:\Users\TRL98\Desktop\LAH_MUMT\Logs\Scenario_2026-05-21T105639\SBC3\DSS_Internal\NextCollab_2_832644058655.json)
+[REPLAN][METRIC] source_artifact_cache entries=15 hits=0 misses=15
+[REPLAN][TIME] 0903_sent_ms=3018.7 wall_ms=1779328861550 missionPlanID=700000002
+[0903] request sent (missionPlanID=700000002)
+[REPLAN][TIME] 0902_received_ms=0.3 wall_ms=1779329022429 trigger=attack_2_option replanLevel=2 optionCount=2 forceDirect=0
+[REPLAN][TIME] 0902_archived_ms=1.5 wall_ms=1779329022430 path=replan_request_832644221364.json
+[AUTO] 0902 received (planIds=700000003, 700000004)
+[REPLAN][TIME] pipeline_scheduled_ms=2.6 wall_ms=1779329022431 delay_ms=0
+[REPLAN][TIME] scheduled_start_ms=3.4 wall_ms=1779329022432
+[REPLAN][TIME] 0305_status_1_ms=5.4 wall_ms=1779329022434 reason=표적74 발견 재계획
+[0305] status=1, reason=표적74 발견 재계획 전송
+[INFO] Using latest 0203 ID 1 for missionReferencePackageID (fallback)
+[STEP 0] Replan pipeline start (reason=표적74 발견 재계획)
+[REPLAN][TIME] attack_exclusion_parallel_started_ms=10.7 wall_ms=1779329022440 option_index=2 sourcePlanID=700000002
+[ATTACK-EXCLUDE] parallel generation started (sourcePlanID=700000002, optionIndex=2)
+[ATTACK] 공격 특화 재계획 요청 감지 → 전용 파이프라인 실행
+[ATTACK] [TIME] select_manned_aircraft=9ms
+[ATTACK] STEP1 Selected manned aircraft: aircraft 2 (fuel=1200.0, coord=(37.77788543701172, 128.15631103515625, alt=1199))
+[ATTACK] [TIME] load_target_entries=0ms
+[ATTACK] STEP2 UAV tracking summary: watcher 4?’target 74, watcher 4?’target unknown-1, watcher 4?’target unknown-2, watcher 4?’target unknown-4, watcher 4?’target unknown-5, watcher 5?’target unknown-3
+[ATTACK] STEP2.5 Using bundled 0402 targets: target=74 watcher=4
+[ATTACK] [ATTACK] Selected target id=74 type=4 weaponType=3 (preferred=3, ammo={'type1': 500, 'type2': 7, 'type3': 2})
+[ATTACK] [TIME] compute_attack_point=6ms
+[ATTACK] STEP3 Attack plan completed: lat=37.894837, lon=128.160886, alt=1079m
+[ATTACK] [ATTACK] Weapon choice aircraft=2 preferred=3 selected=3 ammo={'type1': 500, 'type2': 7, 'type3': 2}
+[ATTACK] [ATTACK][ETA] Tracking ETA computed with LAH max attack speed (dist=13010.7m, speed=73.61m/s, +30s) -> 207s
+[ATTACK] [ATTACK] Using requested missionPlanID 700000003 (sourcePlanID=700000002)
+[ATTACK] [ATTACK][POINT] Primary target adaptive standoff mode=candidate_within_standoff currentDist=15010.653534172787m candidateDist=1999.9999999994457m standoff=300.0/2000.0m.
+[ATTACK] [ATTACK][ETA] UAV 5 remaining mission time: 0.0s
+[ATTACK] [ATTACK][ETA] UAV 6 remaining mission time: 92.0s
+[ATTACK] [ATTACK][ETA] Non-tracking UAV ETA selected: UAV 6 with 92s remaining
+[ATTACK] [ATTACK][ETA] All tracking ETAs unified to 92s
+[ATTACK] [ATTACK][COLLAB] Remaining UAV entry lookahead applied: 9.0s (pathFollow=3, linearFallback=3, currentOnly=0)
+[ATTACK] [PRIOR] Falling back to first mission for aircraft 2 (current waypoint not found in plan).
+[FOV_DB] loaded 7010 rows, 7008 unique widths, path=C:\Users\TRL98\Desktop\LAH_MUMT\branNew\KU\DSS_KU\resource\db\fov_db.csv
+[ATTACK] [ATTACK][LAH] Using max attack speed 73.61m/s (265.0km/h) for aircraft 2.
+[ATTACK] [ATTACK][LAH] Inferred current waypoint from position -> 79.
+[ATTACK] [ATTACK][LAH] Dropped current waypoint from resume path (currentWP=79, nextWP=80).
+[ATTACK] [ATTACK][LAH] Preserved completed prefix, inserted attack, and reattached 2 follow-up mission(s).
+[ATTACK] [ATTACK][LAH] Generated attack/resume missions -> IMP:800000014.json PATHS:200000005.json/200000006.json (followUps=2)
+[ATTACK] [PRIOR] Falling back to first mission for aircraft 1 (current waypoint not found in plan).
+[ATTACK] [ATTACK][LAH] Inferred current waypoint from position -> 73.
+[ATTACK] [ATTACK][LAH] Dropped current waypoint from resume path (currentWP=73, nextWP=74).
+[ATTACK] [ATTACK][LAH] Preserved completed prefix, inserted hold, and reattached 2 follow-up mission(s).
+[ATTACK] [ATTACK][LAH] Generated hold/resume missions -> IMP:800000015.json PATHS:100000005.json/100000006.json (followUps=2)
+[ATTACK] [PRIOR] Falling back to first mission for aircraft 3 (current waypoint not found in plan).
+[ATTACK] [ATTACK][LAH] Inferred current waypoint from position -> 85.
+[ATTACK] [ATTACK][LAH] Dropped current waypoint from resume path (currentWP=85, nextWP=86).
+[ATTACK] [ATTACK][LAH] Preserved completed prefix, inserted hold, and reattached 2 follow-up mission(s).
+[ATTACK] [ATTACK][LAH] Generated hold/resume missions -> IMP:800000017.json PATHS:300000005.json/300000006.json (followUps=2)
+[ATTACK] [NEXTCOLLAB] division planner area-division pieces=2
+[ATTACK] [NEXTCOLLAB] division planner final workflow=no_split paths=2
+[ATTACK] [ATTACK][COLLAB] Collaborative replacement IMP written (aircraft=5, imp=800000018.json, missions=1).
+[ATTACK] [ATTACK][COLLAB] Collaborative replacement IMP written (aircraft=6, imp=800000019.json, missions=1).
+[ATTACK] [ATTACK][COLLAB] First sweep searchSpeed boosted (aircraft=5, pathID=500000005, waypointID=130, factor=1.30, old=838.40, new=1089.92).
+[ATTACK] [ATTACK][COLLAB] First sweep searchSpeed boosted (aircraft=6, pathID=600000005, waypointID=148, factor=1.30, old=567.54, new=737.80).
+[ATTACK] [ATTACK][COLLAB] Collaborative remaining mission replanned (inputMissionID=2, unavailable=[4], remaining=[5, 6], workflow=no_split).
+[ATTACK] [ATTACK][UAV] Resume trimmed by currentWP (lastRemovedWP=93).
+[ATTACK] [ATTACK][UAV] Added replan anchor waypoint to done path (anchorWP=152).
+[ATTACK] [ATTACK][UAV] Resume sweep trim applied (cutPoints=45, rawCutPoints=45, doneSweepPoints=0, pathID=400000004).
+[ATTACK] [ATTACK][UAV] Resume searchSpeed scaled (factor=1.30, waypoints=1).
+[ATTACK] [ATTACK][COLLAB] Tracking UAV resume replaced with release transit (aircraft=4, targetFinishEta=68, speed=58.0m/s).
+[ATTACK] [ATTACK][UAV] Preserved completed prefix, inserted tracking, and reattached 1 follow-up mission(s).
+[ATTACK] [ATTACK][UAV] Generated tracking/resume missions -> IMP:800000021.json PATHS:400000009.json/400000010.json (followUps=1)
+[ATTACK] [ATTACK][UAV] Tracking assignment state saved (aircraft=4, sourcePlan=700000002, attackPlan=700000003).
+[ATTACK] [ATTACK][COLLAB] Aircraft 5 handled by collaborative remaining replan (inputMissionID=2).
+[ATTACK] [ATTACK][COLLAB] Aircraft 6 handled by collaborative remaining replan (inputMissionID=2).
+[ATTACK] [ATTACK][PLAN] carried area remaining snapshot -> mission_area_snapshot_700000003.json (sourcePlanID=700000002, planID=700000003)
+[ATTACK] [ATTACK][PLAN] MissionPlan saved -> 700000003.json (planID=700000003)
+[ATTACK] [ATTACK][TIME] override_detail={"phases": {"metadata_normalize": {"elapsedMs": 0.008, "attackTargetCount": 1, "selectedMannedCount": 1}, "agent_index": {"elapsedMs": 0.079, "aircraftCount": 6}, "weapon_choice": {"elapsedMs": 3.123, "selectedWeaponType": 3, "ammoAvailable": true}, "initial_tracking_eta": {"elapsedMs": 0.651, "useDetectionTracking": true, "trackingEtaS": 207}, "resolve_source_plan": {"elapsedMs": 1.686, "sourcePlanID": 700000002}, "source_plan_load": {"elapsedMs": 0.39, "sourcePlanID": 700000002, "aircraftCount": 6}, "sweep_progress_load": {"elapsedMs": 0.417, "entries": 12}, "plan_id_resolve": {"elapsedMs": 0.022, "requested": true, "missionPlanID": 700000003}, "source_artifact_cache_build": {"elapsedMs": 0.016, "aircraftEntries": 6}, "done_input_ids_load": {"elapsedMs": 1.014, "count": 1}, "plan_deepcopy": {"elapsedMs": 0.054}, "target_uav_assignment": {"elapsedMs": 0.281, "assignedTargetCount": 1, "usedTrackingUavCount": 1}, "manned_sequence_assignment": {"elapsedMs": 2.595, "aircraftCount": 1, "error": null}, "attack_coordinate_resolution": {"elapsedMs": 2.564, "resolvedCount": 1, "mannedSequenceCount": 1}, "remaining_eta": {"elapsedMs": 27.67, "allUavCount": 3, "trackingUavCount": 1, "computedEtaCount": 1, "adjustedEtaS": 92}, "descriptor_list_build": {"elapsedMs": 0.039, "descriptorCount": 6, "activeMannedCount": 1, "otherLahCount": 2, "otherUavCount": 2}, "collab_tracking_scan": {"elapsedMs": 5.964, "inputCount": 1, "unavailableUavCount": 1}, "collab_agent_state_map": {"elapsedMs": 9.484, "aircraftCount": 6}, "collab_parallel_started": {"elapsedMs": 0.66, "inputCount": 1, "workers": 1}, "collab_parallel_join": {"elapsedMs": 345.007, "waitReason": "UAV_TRACK", "inputCount": 1}, "descriptor_loop": {"elapsedMs": 2487.291, "descriptorCount": 6, "updateCount": 4}, "final_collab_plan_update": {"elapsedMs": 0.014, "collabInputCount": 1}, "mission_plan_write": {"elapsedMs": 15.092, "missionPlanID": 700000003}, "option_meta_build": {"elapsedMs": 0.067, "targetCount": 1, "collabInputCount": 1}}, "collabRuns": [{"inputMissionID": 2, "unavailableAircraftIDs": [4], "elapsedMs": 1965.278, "status": "ok", "replacementAircraftIDs": [5, 6], "generatedPathCount": 2, "finishEtaS": 68, "workflow": "no_split"}], "descriptorDetails": [{"aircraftID": 2, "label": "manned", "mode": "LAH_ATTACK", "resolveArtifacts": {"elapsedMs": 0.989, "currentWaypointID": null, "sourcePathID": 200000001, "sourceImpID": 800000008}, "loadArtifacts": {"elapsedMs": 0.007, "impLoaded": true, "fpLoaded": true}, "cloneAndLocateMission": {"elapsedMs": 0.107, "missionCount": 3, "targetIndex": 0}, "allocateAndPlanUpdate": {"elapsedMs": 17.36, "newImpID": 800000014}, "builder": {"elapsedMs": 591.823, "builderMode": "LAH_ATTACK"}, "builderDetail": {"allocate_ids": {"elapsedMs": 297.182, "attackPathID": 200000005, "resumePathID": 200000006, "attackIndividualID": 900000024, "resumeIndividualID": 900000025, "entryWaypointID": 108, "attackWaypointID": 110}, "split_lah_resume": {"elapsedMs": 136.622, "resumeWaypointCount": 1, "removedWaypointID": 79}, "clone_followups": {"elapsedMs": 106.528, "followUpMissionCount": 2, "followUpPathCount": 2}, "payload_build": {"elapsedMs": 35.54, "hasResume": true, "followUpMissionCount": 2, "attackSpeedMps": 73.61}, "write_json": {"elapsedMs": 8.364, "fileCount": 5}, "totalMs": 590.252}, "status": "ok", "elapsedMs": 610.416}, {"aircraftID": 1, "label": "lah_hold_1", "mode": "LAH_HOLD_RESUME", "resolveArtifacts": {"elapsedMs": 0.852, "currentWaypointID": null, "sourcePathID": 100000001, "sourceImpID": 800000007}, "loadArtifacts": {"elapsedMs": 0.007, "impLoaded": true, "fpLoaded": true}, "cloneAndLocateMission": {"elapsedMs": 0.111, "missionCount": 3, "targetIndex": 0}, "allocateAndPlanUpdate": {"elapsedMs": 12.218, "newImpID": 800000015}, "builder": {"elapsedMs": 409.519, "builderMode": "LAH_HOLD_RESUME"}, "builderDetail": {"allocate_ids": {"elapsedMs": 29.267, "holdPathID": 100000005, "resumePathID": 100000006, "holdIndividualID": 900000030, "resumeIndividualID": 900000031}, "split_lah_resume": {"elapsedMs": 161.737, "resumeWaypointCount": 1, "removedWaypointID": 73}, "clone_followups": {"elapsedMs": 112.549, "followUpMissionCount": 2, "followUpPathCount": 2}, "payload_build": {"elapsedMs": 205.407, "hasResume": true, "followUpMissionCount": 2}, "write_json": {"elapsedMs": 7.132, "fileCount": 5}, "totalMs": 409.464}, "status": "ok", "elapsedMs": 422.846}, {"aircraftID": 3, "label": "lah_hold_3", "mode": "LAH_HOLD_RESUME", "resolveArtifacts": {"elapsedMs": 0.987, "currentWaypointID": null, "sourcePathID": 300000001, "sourceImpID": 800000009}, "loadArtifacts": {"elapsedMs": 0.005, "impLoaded": true, "fpLoaded": true}, "cloneAndLocateMission": {"elapsedMs": 0.108, "missionCount": 3, "targetIndex": 0}, "allocateAndPlanUpdate": {"elapsedMs": 21.255, "newImpID": 800000017}, "builder": {"elapsedMs": 568.688, "builderMode": "LAH_HOLD_RESUME"}, "builderDetail": {"allocate_ids": {"elapsedMs": 47.702, "holdPathID": 300000005, "resumePathID": 300000006, "holdIndividualID": 900000036, "resumeIndividualID": 900000037}, "split_lah_resume": {"elapsedMs": 237.491, "resumeWaypointCount": 1, "removedWaypointID": 85}, "clone_followups": {"elapsedMs": 213.696, "followUpMissionCount": 2, "followUpPathCount": 2}, "payload_build": {"elapsedMs": 268.225, "hasResume": true, "followUpMissionCount": 2}, "write_json": {"elapsedMs": 9.738, "fileCount": 5}, "totalMs": 568.647}, "status": "ok", "elapsedMs": 591.173}, {"aircraftID": 4, "label": "uav_tracking_4", "mode": "UAV_TRACK", "resolveArtifacts": {"elapsedMs": 0.028, "currentWaypointID": 94, "sourcePathID": 400000004, "sourceImpID": 800000010}, "loadArtifacts": {"elapsedMs": 0.004, "impLoaded": true, "fpLoaded": true}, "cloneAndLocateMission": {"elapsedMs": 0.221, "missionCount": 3, "targetIndex": 1}, "allocateAndPlanUpdate": {"elapsedMs": 16.721, "newImpID": 800000021}, "builder": {"elapsedMs": 495.641, "builderMode": "UAV_TRACK"}, "builderDetail": {"allocate_ids": {"elapsedMs": 107.496, "donePathID": 400000008, "attackPathID": 400000009, "resumePathID": 400000010, "trackingIndividualID": 900000042, "resumeIndividualID": 900000043, "targetWaypointID": 149}, "split_done_resume": {"elapsedMs": 186.466, "sourceSinglePoint": false, "doneWaypointCount": 2, "resumeWaypointCount": 1, "removedWaypointID": 93}, "clone_followups": {"elapsedMs": 79.701, "followUpMissionCount": 1, "followUpPathCount": 1}, "release_resume": {"elapsedMs": 47.461, "releaseWaypointCount": 2, "targetFinishEtaS": 68}, "write_json": {"elapsedMs": 63.897, "fileCount": 5}, "totalMs": 492.356}, "trackingState": {"elapsedMs": 1.999}, "status": "ok", "elapsedMs": 515.489}, {"aircraftID": 5, "label": "uav_resume_5", "mode": "UAV_RESUME", "resolveArtifacts": {"elapsedMs": 0.023, "currentWaypointID": 98, "sourcePathID": 500000004, "sourceImpID": 800000011}, "loadArtifacts": {"elapsedMs": 0.003, "impLoaded": true, "fpLoaded": true}, "cloneAndLocateMission": {"elapsedMs": 0.166, "missionCount": 3, "targetIndex": 1}, "status": "handled_by_collab", "elapsedMs": 0.838}, {"aircraftID": 6, "label": "uav_resume_6", "mode": "UAV_RESUME", "resolveArtifacts": {"elapsedMs": 0.022, "currentWaypointID": 101, "sourcePathID": 600000004, "sourceImpID": 800000012}, "loadArtifacts": {"elapsedMs": 0.003, "impLoaded": true, "fpLoaded": true}, "cloneAndLocateMission": {"elapsedMs": 0.162, "missionCount": 3, "targetIndex": 1}, "status": "handled_by_collab", "elapsedMs": 0.984}], "totalMs": 2556}
+[ATTACK] [ATTACK][TIME] override_total=2556ms
+[ATTACK] [TIME] apply_attack_plan_overrides=2564ms
+[ATTACK] [TIME] timingMs={"read_source": 11.286, "descriptor_build": 4.712, "write_artifacts": 2573.68, "delivery_wait": 13.339}
+[ATTACK] [TIME] total=2604ms
+[ATTACK] 분석 로그 저장: C:\Users\TRL98\Desktop\LAH_MUMT\Logs\Scenario_2026-05-21T105639\SBC3\DSS_Internal\log_attack_algorithm_20260521T020345_045412.json
+[ATTACK] mark target used: targetIDs=74
+[ATTACK-EXCLUDE] ATTACK-EXCLUDE using requested missionPlanID 700000004 (sourcePlanID=700000002)
+[ATTACK-EXCLUDE] [PRIOR][UAV] Resume trimmed by currentWP (lastRemovedWP=93).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Added replan anchor waypoint to done path (anchorWP=105).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Resume sweep trim applied (cutPoints=45, rawCutPoints=45, doneSweepPoints=0, pathID=400000004).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Resume searchSpeed scaled (factor=1.30, waypoints=1).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Generated done/resume mission -> aircraft=4 IMP:800000013.json PATHS:400000005.json/400000006.json
+[ATTACK-EXCLUDE] [PRIOR][UAV] Resume trimmed by currentWP (lastRemovedWP=97).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Added replan anchor waypoint to done path (anchorWP=135).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Resume sweep trim applied (cutPoints=36, rawCutPoints=36, doneSweepPoints=0, pathID=500000004).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Resume searchSpeed scaled (factor=1.30, waypoints=1).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Generated done/resume mission -> aircraft=5 IMP:800000016.json PATHS:500000006.json/500000007.json
+[ATTACK-EXCLUDE] [PRIOR][UAV] Resume sweep trim applied (cutPoints=39, rawCutPoints=39, doneSweepPoints=0, pathID=600000004).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Resume searchSpeed scaled (factor=1.30, waypoints=1).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Generated done/resume mission -> aircraft=6 IMP:800000020.json PATHS:600000007.json
+[ATTACK-EXCLUDE] 공격 배제 MissionPlan 저장 -> 700000004.json (planID=700000004)
+[ATTACK-EXCLUDE] ATTACK-EXCLUDE carried area remaining snapshot -> mission_area_snapshot_700000004.json (sourcePlanID=700000002, planID=700000004)
+[ATTACK] 공격 임무 계획 완료 (planIds=700000003)
+[INFO] UAV params loaded (cruise=40.00, turn_step=15.0)
+[INFO] Latest input snapshot → 0201:ID=1,ts=832643986983,src=-, 0203:ID=1,ts=832643987048,src=-
+[STEP 0] Using latest 0201 ID 1 (1.json)
+[STEP 0] Using latest 0203 ID 1 (1.json)
+[CHECK] 0201/0203 필수 데이터 확인 시작
+[OK] 0201 inputMissionList 확인됨 (count=3) → 진행
+[OK] 0201 availableAircraftList 확인됨 (count=6) → 진행
+[OK] 0201 inputMissionPackageType=1 확인
+[OK] 0201 mainSensor=1 확인
+[CHECK] 0201 기체 수=6 (UAV=3, LAH=3)
+[CHECK] 0201 임무: total=3 missingID=0 missingDetail=0 missingShape=0 unknownType=0 typeZeroAuto=0 typeZeroInvalid=0 lineOnlyViolation=0 skippedSinglePoint=0
+[OK] 0203 takeOverInfoList 확인됨 (count=3) → 진행
+[OK] 0203 handOverInfoList 확인됨 (count=3) → 진행
+[OK] 0203 flightAreaList 확인됨 (count=1) → 진행
+[CHECK] 0203 flightAreaList count=1
+[INFO] 임무 진행영역 스냅샷 적용: sourcePlan=700000002, updated=2, done=0
+[INFO] 임무 진행영역 재계획 collapse 적용: groups=2, normalized=2, 3
+[INFO] Filtered completed input missions (removed=1, converted=-, widthAdjusted=-, skippedSinglePoint=-, snapshot=updated=2, done=0, collapse=groups=2, normalized=2,3)
+[REPLAN][TIME] variant_started_ms=2647.2 wall_ms=1779329025076 variant=1 option=3 mode=attack_exclusion
+[variant 1] 공격 배제 병렬 결과 병합
+[REPLAN][TIME] attack_exclusion_parallel_joined_ms=2744.3 wall_ms=1779329025173 variant=1 duration_ms=2724.363 wait_ms=87.712
+[OK] 공격 배제 variant 저장: MissionPlanID=700000004 (elapsed=2724.4 ms)
+[INFO] Option mapping #1: planID=700000004, optionCode=3(공격배제)
+[REPLAN][TIME] variant_finished_ms=2744.5 wall_ms=1779329025173 variant=1 option=3 mode=attack_exclusion status=success duration_ms=2724.363
+[OK] Stored mission data: MissionPlan=1, IndividualMission=0, FlightPath=0
+[REPLAN][TIME] id_tab_update_deferred_ms=2745.4 wall_ms=1779329025174
+[REPLAN][TIME] pipeline_done_ms=2745.5 wall_ms=1779329025174 plans=2 force_direct=False
+[REPLAN][TIME] 0301_queued_ms=2745.6 wall_ms=1779329025174 plans=2
+[STEP 4] 0301 push queued (planIds=700000003, 700000004)
+[0301] missionPlanID=700000003 전송
+[0301] missionPlanID=700000004 전송
+[PUSH] 0301 direct batch send
+[REPLAN][TIME] 0301_sent_ms=2863.1 wall_ms=1779329025292 plans=2
+[REPLAN][TIME] post_0301_delivery_queued_ms=2863.8 wall_ms=1779329025293 grace_ms=0 timeout_ms=20 force_direct=0 mode=option_or_0901
+[INFO] Post-0301 apply queued (mode=option_or_0901, grace=0ms, timeout=20ms, plans=2)
+[REPLAN][TIME] 0305_status_2_ms=2866.9 wall_ms=1779329025296 reason=표적74 발견 재계획
+[0305] status=2, reason=표적74 발견 재계획, elapsed=2.86s 전송
+[REPLAN][TIME] post_0301_completion_ready_ms=2868.2 wall_ms=1779329025297 mode=option_or_0901
+[REPLAN][METRIC] source_artifact_cache entries=27 hits=42 misses=27
+[INFO] Post-0301 ready (timeout) -> sending 0901
+[REPLAN][TIME] post_0301_flushed_ms=2887.0 wall_ms=1779329025316 delivery=0901 trigger=timeout
+[REPLAN][TIME] 0901_sent_ms=2904.1 wall_ms=1779329025333 options=2
+[0901] option request sent (count=2, codes=2(공격특화), 3(공격배제))
+[REPLAN][TIME] id_tab_update_flushed_ms=2905.8 wall_ms=1779329025335
+[REPLAN][TIME] 0902_received_ms=0.2 wall_ms=1779329075888 trigger=attack_2_option replanLevel=2 optionCount=2 forceDirect=0
+[REPLAN][TIME] 0902_archived_ms=1.3 wall_ms=1779329075889 path=replan_request_832644274610.json
+[AUTO] 0902 received (planIds=700000005, 700000006)
+[REPLAN][TIME] pipeline_scheduled_ms=2.3 wall_ms=1779329075890 delay_ms=0
+[REPLAN][TIME] scheduled_start_ms=3.2 wall_ms=1779329075891
+[REPLAN][TIME] 0305_status_1_ms=4.9 wall_ms=1779329075893 reason=표적75 등 2개 발견
+[0305] status=1, reason=표적75 등 2개 발견 전송
+[INFO] Using latest 0203 ID 1 for missionReferencePackageID (fallback)
+[STEP 0] Replan pipeline start (reason=표적75 등 2개 발견)
+[REPLAN][TIME] attack_exclusion_parallel_started_ms=9.5 wall_ms=1779329075898 option_index=2 sourcePlanID=700000002
+[ATTACK-EXCLUDE] parallel generation started (sourcePlanID=700000002, optionIndex=2)
+[ATTACK] 공격 특화 재계획 요청 감지 → 전용 파이프라인 실행
+[ATTACK] [TIME] select_manned_aircraft=12ms
+[ATTACK] STEP1 Selected manned aircraft: aircraft 3 (fuel=1200.0, coord=(37.788631439208984, 128.17909240722656, alt=1199))
+[ATTACK] [TIME] load_target_entries=1ms
+[ATTACK] STEP2 UAV tracking summary: watcher 4?’target 74, watcher 5?’target 75, watcher 4?’target unknown-1, watcher 4?’target unknown-2, watcher 4?’target unknown-4, watcher 4?’target unknown-5, watcher 5?’target unknown-10, watcher 5?’target unknown-3, watcher 5?’target unknown-6, watcher 5?’target unknown-7, watcher 6?’target unknown-8, watcher 6?’target unknown-9
+[ATTACK] STEP2.5 Using bundled 0402 targets: target=75 watcher=5, target=74 watcher=4
+[ATTACK] STEP2.6 Multi-target manned selection: 2, 3
+[ATTACK] [ATTACK] Selected target id=75 type=1 weaponType=2 (preferred=2, ammo={'type1': 500, 'type2': 7, 'type3': 2})
+[ATTACK] [TIME] compute_attack_point=6ms
+[ATTACK] STEP3 Attack plan completed: lat=37.898260, lon=128.171487, alt=983m
+[ATTACK] [ATTACK] Weapon choice aircraft=2 preferred=2 selected=2 ammo={'type1': 500, 'type2': 7, 'type3': 2}
+[ATTACK] [ATTACK][ETA] Tracking ETA computed with LAH max attack speed (dist=12067.7m, speed=73.61m/s, +30s) -> 194s
+[ATTACK] [ATTACK] Using requested missionPlanID 700000005 (sourcePlanID=700000002)
+[ATTACK] [ATTACK][POINT] Primary target adaptive standoff mode=far_projected_to_preferred_standoff currentDist=14067.748467086065m candidateDist=2000.0000000001785m standoff=300.0/2000.0m.
+[ATTACK] [ATTACK][ETA] UAV 6 remaining mission time: 0.0s
+[ATTACK] [ATTACK][ETA] Non-tracking UAV ETA selected: UAV 6 with 0s remaining
+[ATTACK] [ATTACK][ETA] All tracking ETAs unified to 0s
+[ATTACK] [ATTACK][COLLAB] Remaining UAV entry lookahead applied: 9.0s (pathFollow=3, linearFallback=3, currentOnly=0)
+[ATTACK] [PRIOR] Falling back to first mission for aircraft 2 (current waypoint not found in plan).
+[FOV_DB] loaded 7010 rows, 7008 unique widths, path=C:\Users\TRL98\Desktop\LAH_MUMT\branNew\KU\DSS_KU\resource\db\fov_db.csv
+[ATTACK] [ATTACK][LAH] Using max attack speed 73.61m/s (265.0km/h) for aircraft 2.
+[ATTACK] [ATTACK][LAH] Inferred current waypoint from position -> 79.
+[ATTACK] [ATTACK][LAH] Dropped current waypoint from resume path (currentWP=79, nextWP=80).
+[ATTACK] [ATTACK][LAH] Preserved completed prefix, inserted attack, and reattached 2 follow-up mission(s).
+[ATTACK] [ATTACK][LAH] Generated attack/resume missions -> IMP:800000023.json PATHS:200000009.json/200000010.json (followUps=2)
+[ATTACK] [PRIOR] Falling back to first mission for aircraft 3 (current waypoint not found in plan).
+[ATTACK] [ATTACK][LAH] Using max attack speed 73.61m/s (265.0km/h) for aircraft 3.
+[ATTACK] [ATTACK][LAH] Inferred current waypoint from position -> 85.
+[ATTACK] [ATTACK][LAH] Dropped current waypoint from resume path (currentWP=85, nextWP=86).
+[ATTACK] [ATTACK][LAH] Preserved completed prefix, inserted attack, and reattached 2 follow-up mission(s).
+[ATTACK] [ATTACK][LAH] Generated attack/resume missions -> IMP:800000025.json PATHS:300000009.json/300000010.json (followUps=2)
+[ATTACK] [PRIOR] Falling back to first mission for aircraft 1 (current waypoint not found in plan).
+[ATTACK] [ATTACK][LAH] Inferred current waypoint from position -> 73.
+[ATTACK] [ATTACK][LAH] Dropped current waypoint from resume path (currentWP=73, nextWP=74).
+[ATTACK] [ATTACK][LAH] Preserved completed prefix, inserted hold, and reattached 2 follow-up mission(s).
+[ATTACK] [ATTACK][LAH] Generated hold/resume missions -> IMP:800000028.json PATHS:100000009.json/100000010.json (followUps=2)
+[ATTACK] [NEXTCOLLAB] division planner area-division pieces=1
+[ATTACK] [NEXTCOLLAB] division planner final workflow=no_split paths=1
+[ATTACK] [ATTACK][COLLAB] Collaborative replacement IMP written (aircraft=6, imp=800000027.json, missions=1).
+[ATTACK] [ATTACK][COLLAB] First sweep searchSpeed boosted (aircraft=6, pathID=600000009, waypointID=193, factor=1.30, old=841.21, new=1093.57).
+[ATTACK] [ATTACK][COLLAB] Collaborative remaining mission replanned (inputMissionID=2, unavailable=[4, 5], remaining=[6], workflow=no_split).
+[ATTACK] [ATTACK][UAV] Tracking target altitude kept for sensor only; flight altitude replaced 683m -> 1952m.
+[ATTACK] [ATTACK][UAV] Resume trimmed by currentWP (lastRemovedWP=97).
+[ATTACK] [ATTACK][UAV] Added replan anchor waypoint to done path (anchorWP=213).
+[ATTACK] [ATTACK][UAV] Resume sweep trim applied (cutPoints=68, rawCutPoints=68, doneSweepPoints=0, pathID=500000004).
+[ATTACK] [ATTACK][UAV] Resume searchSpeed scaled (factor=1.30, waypoints=1).
+[ATTACK] [ATTACK][COLLAB] Tracking UAV resume replaced with release transit (aircraft=5, targetFinishEta=94, speed=58.0m/s).
+[ATTACK] [ATTACK][UAV] Preserved completed prefix, inserted tracking, and reattached 1 follow-up mission(s).
+[ATTACK] [ATTACK][UAV] Generated tracking/resume missions -> IMP:800000029.json PATHS:500000013.json/500000014.json (followUps=1)
+[ATTACK] [ATTACK][UAV] Tracking assignment state saved (aircraft=5, sourcePlan=700000002, attackPlan=700000005).
+[ATTACK] [ATTACK][UAV] Resume trimmed by currentWP (lastRemovedWP=93).
+[ATTACK] [ATTACK][UAV] Added replan anchor waypoint to done path (anchorWP=222).
+[ATTACK] [ATTACK][UAV] Resume sweep trim applied (cutPoints=45, rawCutPoints=45, doneSweepPoints=0, pathID=400000004).
+[ATTACK] [ATTACK][UAV] Resume searchSpeed scaled (factor=1.30, waypoints=1).
+[ATTACK] [ATTACK][COLLAB] Tracking UAV resume replaced with release transit (aircraft=4, targetFinishEta=94, speed=58.0m/s).
+[ATTACK] [ATTACK][UAV] Preserved completed prefix, inserted tracking, and reattached 1 follow-up mission(s).
+[ATTACK] [ATTACK][UAV] Generated tracking/resume missions -> IMP:800000030.json PATHS:400000016.json/400000017.json (followUps=1)
+[ATTACK] [ATTACK][UAV] Tracking assignment state saved (aircraft=4, sourcePlan=700000002, attackPlan=700000005).
+[ATTACK] [ATTACK][COLLAB] Aircraft 6 handled by collaborative remaining replan (inputMissionID=2).
+[ATTACK] [ATTACK][PLAN] carried area remaining snapshot -> mission_area_snapshot_700000005.json (sourcePlanID=700000002, planID=700000005)
+[ATTACK] [ATTACK][PLAN] MissionPlan saved -> 700000005.json (planID=700000005)
+[ATTACK] [ATTACK][TIME] override_detail={"phases": {"metadata_normalize": {"elapsedMs": 0.009, "attackTargetCount": 2, "selectedMannedCount": 2}, "agent_index": {"elapsedMs": 0.432, "aircraftCount": 6}, "weapon_choice": {"elapsedMs": 2.712, "selectedWeaponType": 2, "ammoAvailable": true}, "initial_tracking_eta": {"elapsedMs": 0.556, "useDetectionTracking": true, "trackingEtaS": 194}, "resolve_source_plan": {"elapsedMs": 0.812, "sourcePlanID": 700000002}, "source_plan_load": {"elapsedMs": 0.446, "sourcePlanID": 700000002, "aircraftCount": 6}, "sweep_progress_load": {"elapsedMs": 0.547, "entries": 12}, "plan_id_resolve": {"elapsedMs": 0.019, "requested": true, "missionPlanID": 700000005}, "source_artifact_cache_build": {"elapsedMs": 0.017, "aircraftEntries": 6}, "done_input_ids_load": {"elapsedMs": 1.401, "count": 1}, "plan_deepcopy": {"elapsedMs": 0.053}, "target_uav_assignment": {"elapsedMs": 0.535, "assignedTargetCount": 2, "usedTrackingUavCount": 2}, "manned_sequence_assignment": {"elapsedMs": 13.397, "aircraftCount": 2, "error": null}, "attack_coordinate_resolution": {"elapsedMs": 8.51, "resolvedCount": 2, "mannedSequenceCount": 2}, "remaining_eta": {"elapsedMs": 10.689, "allUavCount": 3, "trackingUavCount": 2, "computedEtaCount": 2, "adjustedEtaS": 0}, "descriptor_list_build": {"elapsedMs": 0.04, "descriptorCount": 6, "activeMannedCount": 2, "otherLahCount": 1, "otherUavCount": 1}, "collab_tracking_scan": {"elapsedMs": 23.516, "inputCount": 1, "unavailableUavCount": 2}, "collab_agent_state_map": {"elapsedMs": 36.266, "aircraftCount": 6}, "collab_parallel_started": {"elapsedMs": 0.693, "inputCount": 1, "workers": 1}, "collab_parallel_join": {"elapsedMs": 3.258, "waitReason": "UAV_TRACK", "inputCount": 1}, "descriptor_loop": {"elapsedMs": 3041.396, "descriptorCount": 6, "updateCount": 5}, "final_collab_plan_update": {"elapsedMs": 0.01, "collabInputCount": 1}, "mission_plan_write": {"elapsedMs": 11.074, "missionPlanID": 700000005}, "option_meta_build": {"elapsedMs": 0.066, "targetCount": 2, "collabInputCount": 1}}, "collabRuns": [{"inputMissionID": 2, "unavailableAircraftIDs": [4, 5], "elapsedMs": 1563.172, "status": "ok", "replacementAircraftIDs": [6], "generatedPathCount": 1, "finishEtaS": 94, "workflow": "no_split"}], "descriptorDetails": [{"aircraftID": 2, "label": "manned", "mode": "LAH_ATTACK", "resolveArtifacts": {"elapsedMs": 1.553, "currentWaypointID": null, "sourcePathID": 200000001, "sourceImpID": 800000008}, "loadArtifacts": {"elapsedMs": 0.005, "impLoaded": true, "fpLoaded": true}, "cloneAndLocateMission": {"elapsedMs": 0.12, "missionCount": 3, "targetIndex": 0}, "allocateAndPlanUpdate": {"elapsedMs": 19.075, "newImpID": 800000023}, "builder": {"elapsedMs": 934.911, "builderMode": "LAH_ATTACK"}, "builderDetail": {"allocate_ids": {"elapsedMs": 349.102, "attackPathID": 200000009, "resumePathID": 200000010, "attackIndividualID": 900000047, "resumeIndividualID": 900000048, "entryWaypointID": 167, "attackWaypointID": 169}, "split_lah_resume": {"elapsedMs": 219.293, "resumeWaypointCount": 1, "removedWaypointID": 79}, "clone_followups": {"elapsedMs": 270.649, "followUpMissionCount": 2, "followUpPathCount": 2}, "payload_build": {"elapsedMs": 85.2, "hasResume": true, "followUpMissionCount": 2, "attackSpeedMps": 73.61}, "write_json": {"elapsedMs": 5.094, "fileCount": 5}, "totalMs": 932.579}, "status": "ok", "elapsedMs": 955.799}, {"aircraftID": 3, "label": "manned", "mode": "LAH_ATTACK", "resolveArtifacts": {"elapsedMs": 0.816, "currentWaypointID": null, "sourcePathID": 300000001, "sourceImpID": 800000009}, "loadArtifacts": {"elapsedMs": 0.007, "impLoaded": true, "fpLoaded": true}, "cloneAndLocateMission": {"elapsedMs": 0.13, "missionCount": 3, "targetIndex": 0}, "allocateAndPlanUpdate": {"elapsedMs": 113.639, "newImpID": 800000025}, "builder": {"elapsedMs": 782.797, "builderMode": "LAH_ATTACK"}, "builderDetail": {"allocate_ids": {"elapsedMs": 180.71, "attackPathID": 300000009, "resumePathID": 300000010, "attackIndividualID": 900000054, "resumeIndividualID": 900000055, "entryWaypointID": 186, "attackWaypointID": 187}, "split_lah_resume": {"elapsedMs": 243.516, "resumeWaypointCount": 1, "removedWaypointID": 85}, "clone_followups": {"elapsedMs": 306.628, "followUpMissionCount": 2, "followUpPathCount": 2}, "payload_build": {"elapsedMs": 41.593, "hasResume": true, "followUpMissionCount": 2, "attackSpeedMps": 73.61}, "write_json": {"elapsedMs": 5.469, "fileCount": 5}, "totalMs": 780.994}, "status": "ok", "elapsedMs": 897.521}, {"aircraftID": 1, "label": "lah_hold_1", "mode": "LAH_HOLD_RESUME", "resolveArtifacts": {"elapsedMs": 0.505, "currentWaypointID": null, "sourcePathID": 100000001, "sourceImpID": 800000007}, "loadArtifacts": {"elapsedMs": 0.004, "impLoaded": true, "fpLoaded": true}, "cloneAndLocateMission": {"elapsedMs": 0.154, "missionCount": 3, "targetIndex": 0}, "allocateAndPlanUpdate": {"elapsedMs": 8.603, "newImpID": 800000028}, "builder": {"elapsedMs": 347.261, "builderMode": "LAH_HOLD_RESUME"}, "builderDetail": {"allocate_ids": {"elapsedMs": 22.797, "holdPathID": 100000009, "resumePathID": 100000010, "holdIndividualID": 900000060, "resumeIndividualID": 900000061}, "split_lah_resume": {"elapsedMs": 143.358, "resumeWaypointCount": 1, "removedWaypointID": 73}, "clone_followups": {"elapsedMs": 109.789, "followUpMissionCount": 2, "followUpPathCount": 2}, "payload_build": {"elapsedMs": 171.226, "hasResume": true, "followUpMissionCount": 2}, "write_json": {"elapsedMs": 5.891, "fileCount": 5}, "totalMs": 347.216}, "status": "ok", "elapsedMs": 356.642}, {"aircraftID": 5, "label": "uav_tracking_5", "mode": "UAV_TRACK", "resolveArtifacts": {"elapsedMs": 0.032, "currentWaypointID": 98, "sourcePathID": 500000004, "sourceImpID": 800000011}, "loadArtifacts": {"elapsedMs": 0.005, "impLoaded": true, "fpLoaded": true}, "cloneAndLocateMission": {"elapsedMs": 0.243, "missionCount": 3, "targetIndex": 1}, "allocateAndPlanUpdate": {"elapsedMs": 8.475, "newImpID": 800000029}, "builder": {"elapsedMs": 377.708, "builderMode": "UAV_TRACK"}, "builderDetail": {"allocate_ids": {"elapsedMs": 83.985, "donePathID": 500000012, "attackPathID": 500000013, "resumePathID": 500000014, "trackingIndividualID": 900000064, "resumeIndividualID": 900000065, "targetWaypointID": 212}, "split_done_resume": {"elapsedMs": 135.593, "sourceSinglePoint": false, "doneWaypointCount": 2, "resumeWaypointCount": 1, "removedWaypointID": 97}, "clone_followups": {"elapsedMs": 63.047, "followUpMissionCount": 1, "followUpPathCount": 1}, "release_resume": {"elapsedMs": 40.716, "releaseWaypointCount": 2, "targetFinishEtaS": 94}, "write_json": {"elapsedMs": 43.974, "fileCount": 5}, "totalMs": 373.978}, "trackingState": {"elapsedMs": 1.926}, "status": "ok", "elapsedMs": 389.062}, {"aircraftID": 4, "label": "uav_tracking_4", "mode": "UAV_TRACK", "resolveArtifacts": {"elapsedMs": 0.023, "currentWaypointID": 94, "sourcePathID": 400000004, "sourceImpID": 800000010}, "loadArtifacts": {"elapsedMs": 0.004, "impLoaded": true, "fpLoaded": true}, "cloneAndLocateMission": {"elapsedMs": 0.18, "missionCount": 3, "targetIndex": 1}, "allocateAndPlanUpdate": {"elapsedMs": 7.045, "newImpID": 800000030}, "builder": {"elapsedMs": 419.406, "builderMode": "UAV_TRACK"}, "builderDetail": {"allocate_ids": {"elapsedMs": 77.831, "donePathID": 400000015, "attackPathID": 400000016, "resumePathID": 400000017, "trackingIndividualID": 900000067, "resumeIndividualID": 900000068, "targetWaypointID": 221}, "split_done_resume": {"elapsedMs": 151.658, "sourceSinglePoint": false, "doneWaypointCount": 2, "resumeWaypointCount": 1, "removedWaypointID": 93}, "clone_followups": {"elapsedMs": 90.33, "followUpMissionCount": 1, "followUpPathCount": 1}, "release_resume": {"elapsedMs": 45.289, "releaseWaypointCount": 2, "targetFinishEtaS": 94}, "write_json": {"elapsedMs": 46.646, "fileCount": 5}, "totalMs": 416.919}, "trackingState": {"elapsedMs": 10.222}, "status": "ok", "elapsedMs": 437.581}, {"aircraftID": 6, "label": "uav_resume_6", "mode": "UAV_RESUME", "resolveArtifacts": {"elapsedMs": 0.03, "currentWaypointID": 102, "sourcePathID": 600000004, "sourceImpID": 800000012}, "loadArtifacts": {"elapsedMs": 0.004, "impLoaded": true, "fpLoaded": true}, "cloneAndLocateMission": {"elapsedMs": 0.279, "missionCount": 3, "targetIndex": 1}, "status": "handled_by_collab", "elapsedMs": 0.961}], "totalMs": 3151}
+[ATTACK] [ATTACK][TIME] override_total=3151ms
+[ATTACK] [TIME] apply_attack_plan_overrides=3158ms
+[ATTACK] [TIME] timingMs={"read_source": 14.417, "descriptor_build": 14.696, "write_artifacts": 3167.131, "delivery_wait": 7.654}
+[ATTACK] [TIME] total=3205ms
+[ATTACK] 분석 로그 저장: C:\Users\TRL98\Desktop\LAH_MUMT\Logs\Scenario_2026-05-21T105639\SBC3\DSS_Internal\log_attack_algorithm_20260521T020439_103414.json
+[ATTACK] mark target used: targetIDs=75, 74
+[ATTACK-EXCLUDE] ATTACK-EXCLUDE using requested missionPlanID 700000006 (sourcePlanID=700000002)
+[ATTACK-EXCLUDE] [PRIOR][UAV] Resume trimmed by currentWP (lastRemovedWP=93).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Added replan anchor waypoint to done path (anchorWP=164).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Resume sweep trim applied (cutPoints=45, rawCutPoints=45, doneSweepPoints=0, pathID=400000004).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Resume searchSpeed scaled (factor=1.30, waypoints=1).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Generated done/resume mission -> aircraft=4 IMP:800000022.json PATHS:400000012.json/400000013.json
+[ATTACK-EXCLUDE] [PRIOR][UAV] Resume trimmed by currentWP (lastRemovedWP=97).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Added replan anchor waypoint to done path (anchorWP=177).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Resume sweep trim applied (cutPoints=68, rawCutPoints=68, doneSweepPoints=0, pathID=500000004).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Resume searchSpeed scaled (factor=1.30, waypoints=1).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Generated done/resume mission -> aircraft=5 IMP:800000024.json PATHS:500000009.json/500000010.json
+[ATTACK-EXCLUDE] [PRIOR][UAV] Resume trimmed by currentWP (lastRemovedWP=101).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Added replan anchor waypoint to done path (anchorWP=195).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Resume sweep trim applied (cutPoints=57, rawCutPoints=57, doneSweepPoints=0, pathID=600000004).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Resume searchSpeed scaled (factor=1.30, waypoints=1).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Generated done/resume mission -> aircraft=6 IMP:800000026.json PATHS:600000010.json/600000011.json
+[ATTACK-EXCLUDE] 공격 배제 MissionPlan 저장 -> 700000006.json (planID=700000006)
+[ATTACK-EXCLUDE] ATTACK-EXCLUDE carried area remaining snapshot -> mission_area_snapshot_700000006.json (sourcePlanID=700000002, planID=700000006)
+[ATTACK] 공격 임무 계획 완료 (planIds=700000005)
+[INFO] UAV params loaded (cruise=40.00, turn_step=15.0)
+[INFO] Latest input snapshot → 0201:ID=1,ts=832643986983,src=-, 0203:ID=1,ts=832643987048,src=-
+[STEP 0] Using latest 0201 ID 1 (1.json)
+[STEP 0] Using latest 0203 ID 1 (1.json)
+[CHECK] 0201/0203 필수 데이터 확인 시작
+[OK] 0201 inputMissionList 확인됨 (count=3) → 진행
+[OK] 0201 availableAircraftList 확인됨 (count=6) → 진행
+[OK] 0201 inputMissionPackageType=1 확인
+[OK] 0201 mainSensor=1 확인
+[CHECK] 0201 기체 수=6 (UAV=3, LAH=3)
+[CHECK] 0201 임무: total=3 missingID=0 missingDetail=0 missingShape=0 unknownType=0 typeZeroAuto=0 typeZeroInvalid=0 lineOnlyViolation=0 skippedSinglePoint=0
+[OK] 0203 takeOverInfoList 확인됨 (count=3) → 진행
+[OK] 0203 handOverInfoList 확인됨 (count=3) → 진행
+[OK] 0203 flightAreaList 확인됨 (count=1) → 진행
+[CHECK] 0203 flightAreaList count=1
+[INFO] 임무 진행영역 스냅샷 적용: sourcePlan=700000002, updated=2, done=0
+[INFO] 임무 진행영역 재계획 collapse 적용: groups=2, normalized=2, 3
+[INFO] Filtered completed input missions (removed=1, converted=-, widthAdjusted=-, skippedSinglePoint=-, snapshot=updated=2, done=0, collapse=groups=2, normalized=2,3)
+[REPLAN][TIME] variant_started_ms=3233.5 wall_ms=1779329079121 variant=1 option=3 mode=attack_exclusion
+[variant 1] 공격 배제 병렬 결과 병합
+[REPLAN][TIME] attack_exclusion_parallel_joined_ms=3244.2 wall_ms=1779329079132 variant=1 duration_ms=1886.538 wait_ms=0.009
+[OK] 공격 배제 variant 저장: MissionPlanID=700000006 (elapsed=1886.5 ms)
+[INFO] Option mapping #1: planID=700000006, optionCode=3(공격배제)
+[REPLAN][TIME] variant_finished_ms=3244.4 wall_ms=1779329079132 variant=1 option=3 mode=attack_exclusion status=success duration_ms=1886.538
+[OK] Stored mission data: MissionPlan=1, IndividualMission=0, FlightPath=0
+[REPLAN][TIME] id_tab_update_deferred_ms=3245.2 wall_ms=1779329079133
+[REPLAN][TIME] pipeline_done_ms=3245.2 wall_ms=1779329079133 plans=2 force_direct=False
+[REPLAN][TIME] 0301_queued_ms=3245.3 wall_ms=1779329079133 plans=2
+[STEP 4] 0301 push queued (planIds=700000005, 700000006)
+[0301] missionPlanID=700000005 전송
+[0301] missionPlanID=700000006 전송
+[PUSH] 0301 direct batch send
+[REPLAN][TIME] 0301_sent_ms=3468.2 wall_ms=1779329079356 plans=2
+[REPLAN][TIME] post_0301_delivery_queued_ms=3469.2 wall_ms=1779329079357 grace_ms=0 timeout_ms=20 force_direct=0 mode=option_or_0901
+[INFO] Post-0301 apply queued (mode=option_or_0901, grace=0ms, timeout=20ms, plans=2)
+[REPLAN][TIME] 0305_status_2_ms=3473.0 wall_ms=1779329079361 reason=표적75 등 2개 발견
+[0305] status=2, reason=표적75 등 2개 발견, elapsed=3.47s 전송
+[REPLAN][TIME] post_0301_completion_ready_ms=3474.5 wall_ms=1779329079362 mode=option_or_0901
+[REPLAN][METRIC] source_artifact_cache entries=27 hits=42 misses=27
+[INFO] Post-0301 ready (timeout) -> sending 0901
+[REPLAN][TIME] post_0301_flushed_ms=3491.1 wall_ms=1779329079379 delivery=0901 trigger=timeout
+[REPLAN][TIME] 0901_sent_ms=3494.5 wall_ms=1779329079383 options=2
+[0901] option request sent (count=2, codes=2(공격특화), 3(공격배제))
+[REPLAN][TIME] id_tab_update_flushed_ms=3496.2 wall_ms=1779329079384
+[REPLAN][TIME] 0902_received_ms=0.3 wall_ms=1779329121309 trigger=attack_2_option replanLevel=2 optionCount=2 forceDirect=0
+[REPLAN][TIME] 0902_archived_ms=1.5 wall_ms=1779329121310 path=replan_request_832644284620.json
+[AUTO] 0902 received (planIds=700000007, 700000008)
+[REPLAN][TIME] pipeline_scheduled_ms=3.3 wall_ms=1779329121312 delay_ms=0
+[REPLAN][TIME] scheduled_start_ms=4.5 wall_ms=1779329121313
+[REPLAN][TIME] 0305_status_1_ms=6.6 wall_ms=1779329121315 reason=표적76 등 3개 발견
+[0305] status=1, reason=표적76 등 3개 발견 전송
+[INFO] Using latest 0203 ID 1 for missionReferencePackageID (fallback)
+[STEP 0] Replan pipeline start (reason=표적76 등 3개 발견)
+[REPLAN][TIME] attack_exclusion_parallel_started_ms=11.7 wall_ms=1779329121320 option_index=2 sourcePlanID=700000002
+[ATTACK-EXCLUDE] parallel generation started (sourcePlanID=700000002, optionIndex=2)
+[ATTACK] 공격 특화 재계획 요청 감지 → 전용 파이프라인 실행
+[ATTACK] [TIME] select_manned_aircraft=11ms
+[ATTACK] STEP1 Selected manned aircraft: aircraft 2 (fuel=1200.0, coord=(37.79991149902344, 128.17787170410156, alt=1199))
+[ATTACK] [TIME] load_target_entries=1ms
+[ATTACK] STEP2 UAV tracking summary: watcher 4?’target 74, watcher 5?’target 75, watcher 6?’target 76, watcher 4?’target unknown-1, watcher 4?’target unknown-2, watcher 4?’target unknown-4, watcher 4?’target unknown-5, watcher 5?’target unknown-10, watcher 5?’target unknown-3, watcher 5?’target unknown-6, watcher 5?’target unknown-7, watcher 6?’target unknown-8, watcher 6?’target unknown-9
+[ATTACK] STEP2.5 Using bundled 0402 targets: target=76 watcher=6, target=75 watcher=5, target=74 watcher=4
+[ATTACK] STEP2.6 Multi-target manned selection: 2, 3
+[ATTACK] [ATTACK] Selected target id=76 type=4 weaponType=3 (preferred=3, ammo={'type1': 500, 'type2': 7, 'type3': 2})
+[ATTACK] [TIME] compute_attack_point=10ms
+[ATTACK] STEP3 Attack plan completed: lat=37.890638, lon=128.189097, alt=994m
+[ATTACK] [ATTACK] Using remembered waypoint 102 for watcher 6 while auto-tracking.
+[ATTACK] [ATTACK] Weapon choice aircraft=2 preferred=3 selected=3 ammo={'type1': 500, 'type2': 7, 'type3': 2}
+[ATTACK] [ATTACK][ETA] Tracking ETA computed with LAH max attack speed (dist=10136.3m, speed=73.61m/s, +30s) -> 168s
+[ATTACK] [ATTACK] Using requested missionPlanID 700000007 (sourcePlanID=700000002)
+[ATTACK] [ATTACK][POINT] Primary target adaptive standoff mode=candidate_within_standoff currentDist=12136.332371282986m candidateDist=1999.9999999999823m standoff=300.0/2000.0m.
+[ATTACK] [ATTACK][ETA] All UAVs tracking; using average ETA: 177s (from 3 values: [168, 181, 181])
+[ATTACK] [ATTACK][ETA] All tracking ETAs unified to 177s
+[ATTACK] [ATTACK][COLLAB] Remaining UAV entry lookahead applied: 9.0s (pathFollow=3, linearFallback=3, currentOnly=0)
+[ATTACK] [PRIOR] Falling back to first mission for aircraft 2 (current waypoint not found in plan).
+[ATTACK] [ATTACK][LAH] Using max attack speed 73.61m/s (265.0km/h) for aircraft 2.
+[ATTACK] [ATTACK][LAH] Inferred current waypoint from position -> 79.
+[ATTACK] [ATTACK][LAH] Dropped current waypoint from resume path (currentWP=79, nextWP=80).
+[ATTACK] [ATTACK][LAH] Preserved completed prefix, inserted attack, and reattached 2 follow-up mission(s).
+[ATTACK] [ATTACK][LAH] Generated attack/resume missions -> IMP:800000032.json PATHS:200000013.json/200000014.json (followUps=2)
+[ATTACK] [PRIOR] Falling back to first mission for aircraft 3 (current waypoint not found in plan).
+[ATTACK] [ATTACK][LAH] Inferred current waypoint from position -> 85.
+[ATTACK] [ATTACK][LAH] Dropped current waypoint from resume path (currentWP=85, nextWP=86).
+[ATTACK] [ATTACK][LAH] Using max attack speed 73.61m/s (265.0km/h) for aircraft 3.
+[ATTACK] [ATTACK][LAH] Preserved completed prefix, built sequential attack missions, and reattached 2 follow-up mission(s) for aircraft 3.
+[ATTACK] [ATTACK][LAH] Generated sequential attack/resume missions -> IMP:800000034.json attacks=2 resume=300000015.json (followUps=2)
+[ATTACK] [PRIOR] Falling back to first mission for aircraft 1 (current waypoint not found in plan).
+[ATTACK] [ATTACK][LAH] Inferred current waypoint from position -> 73.
+[ATTACK] [ATTACK][LAH] Dropped current waypoint from resume path (currentWP=73, nextWP=74).
+[ATTACK] [ATTACK][LAH] Preserved completed prefix, inserted hold, and reattached 2 follow-up mission(s).
+[ATTACK] [ATTACK][LAH] Generated hold/resume missions -> IMP:800000036.json PATHS:100000013.json/100000014.json (followUps=2)
+[ATTACK] [ATTACK][COLLAB] Collaborative replan skipped: no remaining source UAVs for current input.
+[ATTACK] [ATTACK][UAV] Tracking target altitude kept for sensor only; flight altitude replaced 694m -> 1967m.
+[ATTACK] [ATTACK][UAV] Resume trimmed by currentWP (lastRemovedWP=101).
+[ATTACK] [ATTACK][UAV] Added replan anchor waypoint to done path (anchorWP=279).
+[ATTACK] [ATTACK][UAV] Resume sweep trim applied (cutPoints=62, rawCutPoints=62, doneSweepPoints=0, pathID=600000004).
+[ATTACK] [ATTACK][UAV] Resume searchSpeed scaled (factor=1.30, waypoints=1).
+[ATTACK] [ATTACK][UAV] Preserved completed prefix, inserted tracking, and reattached 1 follow-up mission(s).
+[ATTACK] [ATTACK][UAV] Generated tracking/resume missions -> IMP:800000037.json PATHS:600000017.json/600000018.json (followUps=1)
+[ATTACK] [ATTACK][UAV] Tracking assignment state saved (aircraft=6, sourcePlan=700000002, attackPlan=700000007).
+[ATTACK] [ATTACK][UAV] Tracking target altitude kept for sensor only; flight altitude replaced 683m -> 1952m.
+[ATTACK] [ATTACK][UAV] Resume trimmed by currentWP (lastRemovedWP=97).
+[ATTACK] [ATTACK][UAV] Added replan anchor waypoint to done path (anchorWP=286).
+[ATTACK] [ATTACK][UAV] Resume sweep trim applied (cutPoints=68, rawCutPoints=68, doneSweepPoints=0, pathID=500000004).
+[ATTACK] [ATTACK][UAV] Resume searchSpeed scaled (factor=1.30, waypoints=1).
+[ATTACK] [ATTACK][UAV] Preserved completed prefix, inserted tracking, and reattached 1 follow-up mission(s).
+[ATTACK] [ATTACK][UAV] Generated tracking/resume missions -> IMP:800000038.json PATHS:500000020.json/500000021.json (followUps=1)
+[ATTACK] [ATTACK][UAV] Tracking assignment state saved (aircraft=5, sourcePlan=700000002, attackPlan=700000007).
+[ATTACK] [ATTACK][UAV] Resume trimmed by currentWP (lastRemovedWP=93).
+[ATTACK] [ATTACK][UAV] Added replan anchor waypoint to done path (anchorWP=293).
+[ATTACK] [ATTACK][UAV] Resume sweep trim applied (cutPoints=45, rawCutPoints=45, doneSweepPoints=0, pathID=400000004).
+[ATTACK] [ATTACK][UAV] Resume searchSpeed scaled (factor=1.30, waypoints=1).
+[ATTACK] [ATTACK][UAV] Preserved completed prefix, inserted tracking, and reattached 1 follow-up mission(s).
+[ATTACK] [ATTACK][UAV] Generated tracking/resume missions -> IMP:800000039.json PATHS:400000023.json/400000024.json (followUps=1)
+[ATTACK] [ATTACK][UAV] Tracking assignment state saved (aircraft=4, sourcePlan=700000002, attackPlan=700000007).
+[ATTACK] [ATTACK][PLAN] carried area remaining snapshot -> mission_area_snapshot_700000007.json (sourcePlanID=700000002, planID=700000007)
+[ATTACK] [ATTACK][PLAN] MissionPlan saved -> 700000007.json (planID=700000007)
+[ATTACK] [ATTACK][TIME] override_detail={"phases": {"metadata_normalize": {"elapsedMs": 0.007, "attackTargetCount": 3, "selectedMannedCount": 2}, "agent_index": {"elapsedMs": 0.081, "aircraftCount": 6}, "weapon_choice": {"elapsedMs": 3.023, "selectedWeaponType": 3, "ammoAvailable": true}, "initial_tracking_eta": {"elapsedMs": 0.524, "useDetectionTracking": true, "trackingEtaS": 168}, "resolve_source_plan": {"elapsedMs": 0.862, "sourcePlanID": 700000002}, "source_plan_load": {"elapsedMs": 0.428, "sourcePlanID": 700000002, "aircraftCount": 6}, "sweep_progress_load": {"elapsedMs": 0.442, "entries": 12}, "plan_id_resolve": {"elapsedMs": 0.018, "requested": true, "missionPlanID": 700000007}, "source_artifact_cache_build": {"elapsedMs": 0.01, "aircraftEntries": 6}, "done_input_ids_load": {"elapsedMs": 1.261, "count": 1}, "plan_deepcopy": {"elapsedMs": 0.05}, "target_uav_assignment": {"elapsedMs": 0.809, "assignedTargetCount": 3, "usedTrackingUavCount": 3}, "manned_sequence_assignment": {"elapsedMs": 18.729, "aircraftCount": 2, "error": null}, "attack_coordinate_resolution": {"elapsedMs": 17.434, "resolvedCount": 3, "mannedSequenceCount": 3}, "remaining_eta": {"elapsedMs": 0.748, "allUavCount": 3, "trackingUavCount": 3, "computedEtaCount": 3, "adjustedEtaS": 177}, "descriptor_list_build": {"elapsedMs": 0.036, "descriptorCount": 6, "activeMannedCount": 2, "otherLahCount": 1, "otherUavCount": 0}, "collab_tracking_scan": {"elapsedMs": 34.721, "inputCount": 1, "unavailableUavCount": 3}, "collab_agent_state_map": {"elapsedMs": 30.31, "aircraftCount": 6}, "collab_parallel_started": {"elapsedMs": 1.782, "inputCount": 1, "workers": 1}, "collab_parallel_join": {"elapsedMs": 0.49, "waitReason": "UAV_TRACK", "inputCount": 1}, "descriptor_loop": {"elapsedMs": 3770.449, "descriptorCount": 6, "updateCount": 6}, "mission_plan_write": {"elapsedMs": 13.65, "missionPlanID": 700000007}, "option_meta_build": {"elapsedMs": 0.048, "targetCount": 3, "collabInputCount": 0}}, "collabRuns": [{"inputMissionID": 2, "unavailableAircraftIDs": [4, 5, 6], "elapsedMs": 26.509, "status": "skipped"}], "descriptorDetails": [{"aircraftID": 2, "label": "manned", "mode": "LAH_ATTACK", "resolveArtifacts": {"elapsedMs": 1.552, "currentWaypointID": null, "sourcePathID": 200000001, "sourceImpID": 800000008}, "loadArtifacts": {"elapsedMs": 0.004, "impLoaded": true, "fpLoaded": true}, "cloneAndLocateMission": {"elapsedMs": 0.104, "missionCount": 3, "targetIndex": 0}, "allocateAndPlanUpdate": {"elapsedMs": 40.408, "newImpID": 800000032}, "builder": {"elapsedMs": 847.543, "builderMode": "LAH_ATTACK"}, "builderDetail": {"allocate_ids": {"elapsedMs": 288.831, "attackPathID": 200000013, "resumePathID": 200000014, "attackIndividualID": 900000072, "resumeIndividualID": 900000073, "entryWaypointID": 235, "attackWaypointID": 237}, "split_lah_resume": {"elapsedMs": 202.619, "resumeWaypointCount": 1, "removedWaypointID": 79}, "clone_followups": {"elapsedMs": 247.122, "followUpMissionCount": 2, "followUpPathCount": 2}, "payload_build": {"elapsedMs": 94.424, "hasResume": true, "followUpMissionCount": 2, "attackSpeedMps": 73.61}, "write_json": {"elapsedMs": 5.472, "fileCount": 5}, "totalMs": 845.312}, "status": "ok", "elapsedMs": 889.741}, {"aircraftID": 3, "label": "manned", "mode": "LAH_ATTACK", "resolveArtifacts": {"elapsedMs": 0.798, "currentWaypointID": null, "sourcePathID": 300000001, "sourceImpID": 800000009}, "loadArtifacts": {"elapsedMs": 0.004, "impLoaded": true, "fpLoaded": true}, "cloneAndLocateMission": {"elapsedMs": 0.122, "missionCount": 3, "targetIndex": 0}, "allocateAndPlanUpdate": {"elapsedMs": 76.412, "newImpID": 800000034}, "builder": {"elapsedMs": 1058.791, "builderMode": "LAH_ATTACK"}, "status": "ok", "elapsedMs": 1136.253}, {"aircraftID": 1, "label": "lah_hold_1", "mode": "LAH_HOLD_RESUME", "resolveArtifacts": {"elapsedMs": 0.661, "currentWaypointID": null, "sourcePathID": 100000001, "sourceImpID": 800000007}, "loadArtifacts": {"elapsedMs": 0.005, "impLoaded": true, "fpLoaded": true}, "cloneAndLocateMission": {"elapsedMs": 0.13, "missionCount": 3, "targetIndex": 0}, "allocateAndPlanUpdate": {"elapsedMs": 9.632, "newImpID": 800000036}, "builder": {"elapsedMs": 436.302, "builderMode": "LAH_HOLD_RESUME"}, "builderDetail": {"allocate_ids": {"elapsedMs": 23.201, "holdPathID": 100000013, "resumePathID": 100000014, "holdIndividualID": 900000085, "resumeIndividualID": 900000086}, "split_lah_resume": {"elapsedMs": 200.794, "resumeWaypointCount": 1, "removedWaypointID": 73}, "clone_followups": {"elapsedMs": 153.892, "followUpMissionCount": 2, "followUpPathCount": 2}, "payload_build": {"elapsedMs": 204.909, "hasResume": true, "followUpMissionCount": 2}, "write_json": {"elapsedMs": 4.114, "fileCount": 5}, "totalMs": 436.26}, "status": "ok", "elapsedMs": 446.87}, {"aircraftID": 6, "label": "uav_tracking_6", "mode": "UAV_TRACK", "resolveArtifacts": {"elapsedMs": 0.023, "currentWaypointID": 102, "sourcePathID": 600000004, "sourceImpID": 800000012}, "loadArtifacts": {"elapsedMs": 0.003, "impLoaded": true, "fpLoaded": true}, "cloneAndLocateMission": {"elapsedMs": 0.165, "missionCount": 3, "targetIndex": 1}, "allocateAndPlanUpdate": {"elapsedMs": 8.349, "newImpID": 800000037}, "builder": {"elapsedMs": 400.514, "builderMode": "UAV_TRACK"}, "builderDetail": {"allocate_ids": {"elapsedMs": 91.524, "donePathID": 600000016, "attackPathID": 600000017, "resumePathID": 600000018, "trackingIndividualID": 900000089, "resumeIndividualID": 900000090, "targetWaypointID": 278}, "split_done_resume": {"elapsedMs": 165.349, "sourceSinglePoint": false, "doneWaypointCount": 2, "resumeWaypointCount": 1, "removedWaypointID": 101}, "clone_followups": {"elapsedMs": 86.961, "followUpMissionCount": 1, "followUpPathCount": 1}, "write_json": {"elapsedMs": 46.813, "fileCount": 5}, "totalMs": 396.799}, "trackingState": {"elapsedMs": 2.484}, "status": "ok", "elapsedMs": 412.318}, {"aircraftID": 5, "label": "uav_tracking_5", "mode": "UAV_TRACK", "resolveArtifacts": {"elapsedMs": 0.032, "currentWaypointID": 98, "sourcePathID": 500000004, "sourceImpID": 800000011}, "loadArtifacts": {"elapsedMs": 0.005, "impLoaded": true, "fpLoaded": true}, "cloneAndLocateMission": {"elapsedMs": 0.277, "missionCount": 3, "targetIndex": 1}, "allocateAndPlanUpdate": {"elapsedMs": 8.758, "newImpID": 800000038}, "builder": {"elapsedMs": 413.614, "builderMode": "UAV_TRACK"}, "builderDetail": {"allocate_ids": {"elapsedMs": 101.214, "donePathID": 500000019, "attackPathID": 500000020, "resumePathID": 500000021, "trackingIndividualID": 900000092, "resumeIndividualID": 900000093, "targetWaypointID": 285}, "split_done_resume": {"elapsedMs": 164.716, "sourceSinglePoint": false, "doneWaypointCount": 2, "resumeWaypointCount": 1, "removedWaypointID": 97}, "clone_followups": {"elapsedMs": 95.622, "followUpMissionCount": 1, "followUpPathCount": 1}, "write_json": {"elapsedMs": 41.842, "fileCount": 5}, "totalMs": 409.802}, "trackingState": {"elapsedMs": 9.367}, "status": "ok", "elapsedMs": 432.845}, {"aircraftID": 4, "label": "uav_tracking_4", "mode": "UAV_TRACK", "resolveArtifacts": {"elapsedMs": 0.026, "currentWaypointID": 94, "sourcePathID": 400000004, "sourceImpID": 800000010}, "loadArtifacts": {"elapsedMs": 0.003, "impLoaded": true, "fpLoaded": true}, "cloneAndLocateMission": {"elapsedMs": 0.174, "missionCount": 3, "targetIndex": 1}, "allocateAndPlanUpdate": {"elapsedMs": 7.132, "newImpID": 800000039}, "builder": {"elapsedMs": 433.638, "builderMode": "UAV_TRACK"}, "builderDetail": {"allocate_ids": {"elapsedMs": 128.943, "donePathID": 400000022, "attackPathID": 400000023, "resumePathID": 400000024, "trackingIndividualID": 900000095, "resumeIndividualID": 900000096, "targetWaypointID": 292}, "split_done_resume": {"elapsedMs": 169.306, "sourceSinglePoint": false, "doneWaypointCount": 2, "resumeWaypointCount": 1, "removedWaypointID": 93}, "clone_followups": {"elapsedMs": 80.824, "followUpMissionCount": 1, "followUpPathCount": 1}, "write_json": {"elapsedMs": 47.084, "fileCount": 5}, "totalMs": 431.684}, "trackingState": {"elapsedMs": 9.536}, "status": "ok", "elapsedMs": 451.291}], "totalMs": 3893}
+[ATTACK] [ATTACK][TIME] override_total=3893ms
+[ATTACK] [TIME] apply_attack_plan_overrides=3901ms
+[ATTACK] [TIME] timingMs={"read_source": 13.47, "descriptor_build": 13.321, "write_artifacts": 3913.688, "delivery_wait": 4.717}
+[ATTACK] [TIME] total=3946ms
+[ATTACK] 분석 로그 저장: C:\Users\TRL98\Desktop\LAH_MUMT\Logs\Scenario_2026-05-21T105639\SBC3\DSS_Internal\log_attack_algorithm_20260521T020525_267811.json
+[ATTACK] mark target used: targetIDs=76, 75, 74
+[ATTACK-EXCLUDE] ATTACK-EXCLUDE using requested missionPlanID 700000008 (sourcePlanID=700000002)
+[ATTACK-EXCLUDE] [PRIOR][UAV] Resume trimmed by currentWP (lastRemovedWP=93).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Added replan anchor waypoint to done path (anchorWP=232).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Resume sweep trim applied (cutPoints=45, rawCutPoints=45, doneSweepPoints=0, pathID=400000004).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Resume searchSpeed scaled (factor=1.30, waypoints=1).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Generated done/resume mission -> aircraft=4 IMP:800000031.json PATHS:400000019.json/400000020.json
+[ATTACK-EXCLUDE] [PRIOR][UAV] Resume trimmed by currentWP (lastRemovedWP=97).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Added replan anchor waypoint to done path (anchorWP=247).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Resume sweep trim applied (cutPoints=68, rawCutPoints=68, doneSweepPoints=0, pathID=500000004).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Resume searchSpeed scaled (factor=1.30, waypoints=1).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Generated done/resume mission -> aircraft=5 IMP:800000033.json PATHS:500000016.json/500000017.json
+[ATTACK-EXCLUDE] [PRIOR][UAV] Resume trimmed by currentWP (lastRemovedWP=101).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Added replan anchor waypoint to done path (anchorWP=258).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Resume sweep trim applied (cutPoints=62, rawCutPoints=62, doneSweepPoints=0, pathID=600000004).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Resume searchSpeed scaled (factor=1.30, waypoints=1).
+[ATTACK-EXCLUDE] [PRIOR][UAV] Generated done/resume mission -> aircraft=6 IMP:800000035.json PATHS:600000013.json/600000014.json
+[ATTACK-EXCLUDE] 공격 배제 MissionPlan 저장 -> 700000008.json (planID=700000008)
+[ATTACK-EXCLUDE] ATTACK-EXCLUDE carried area remaining snapshot -> mission_area_snapshot_700000008.json (sourcePlanID=700000002, planID=700000008)
+[ATTACK] 공격 임무 계획 완료 (planIds=700000007)
+[INFO] UAV params loaded (cruise=40.00, turn_step=15.0)
+[INFO] Latest input snapshot → 0201:ID=1,ts=832643986983,src=-, 0203:ID=1,ts=832643987048,src=-
+[STEP 0] Using latest 0201 ID 1 (1.json)
+[STEP 0] Using latest 0203 ID 1 (1.json)
+[CHECK] 0201/0203 필수 데이터 확인 시작
+[OK] 0201 inputMissionList 확인됨 (count=3) → 진행
+[OK] 0201 availableAircraftList 확인됨 (count=6) → 진행
+[OK] 0201 inputMissionPackageType=1 확인
+[OK] 0201 mainSensor=1 확인
+[CHECK] 0201 기체 수=6 (UAV=3, LAH=3)
+[CHECK] 0201 임무: total=3 missingID=0 missingDetail=0 missingShape=0 unknownType=0 typeZeroAuto=0 typeZeroInvalid=0 lineOnlyViolation=0 skippedSinglePoint=0
+[OK] 0203 takeOverInfoList 확인됨 (count=3) → 진행
+[OK] 0203 handOverInfoList 확인됨 (count=3) → 진행
+[OK] 0203 flightAreaList 확인됨 (count=1) → 진행
+[CHECK] 0203 flightAreaList count=1
+[INFO] 임무 진행영역 스냅샷 적용: sourcePlan=700000002, updated=2, done=0
+[INFO] 임무 진행영역 재계획 collapse 적용: groups=2, normalized=2, 3
+[INFO] Filtered completed input missions (removed=1, converted=-, widthAdjusted=-, skippedSinglePoint=-, snapshot=updated=2, done=0, collapse=groups=2, normalized=2,3)
+[REPLAN][TIME] variant_started_ms=3983.3 wall_ms=1779329125292 variant=1 option=3 mode=attack_exclusion
+[variant 1] 공격 배제 병렬 결과 병합
+[REPLAN][TIME] attack_exclusion_parallel_joined_ms=3996.6 wall_ms=1779329125305 variant=1 duration_ms=1940.574 wait_ms=0.009
+[OK] 공격 배제 variant 저장: MissionPlanID=700000008 (elapsed=1940.6 ms)
+[INFO] Option mapping #1: planID=700000008, optionCode=3(공격배제)
+[REPLAN][TIME] variant_finished_ms=3996.7 wall_ms=1779329125305 variant=1 option=3 mode=attack_exclusion status=success duration_ms=1940.574
+[OK] Stored mission data: MissionPlan=1, IndividualMission=0, FlightPath=0
+[REPLAN][TIME] id_tab_update_deferred_ms=3998.0 wall_ms=1779329125307
+[REPLAN][TIME] pipeline_done_ms=3998.1 wall_ms=1779329125307 plans=2 force_direct=False
+[REPLAN][TIME] 0301_queued_ms=3998.1 wall_ms=1779329125307 plans=2
+[STEP 4] 0301 push queued (planIds=700000007, 700000008)
+[0301] missionPlanID=700000007 전송
+[0301] missionPlanID=700000008 전송
+[PUSH] 0301 direct batch send
+[REPLAN][TIME] 0301_sent_ms=4218.9 wall_ms=1779329125527 plans=2
+[REPLAN][TIME] post_0301_delivery_queued_ms=4219.6 wall_ms=1779329125528 grace_ms=0 timeout_ms=20 force_direct=0 mode=option_or_0901
+[INFO] Post-0301 apply queued (mode=option_or_0901, grace=0ms, timeout=20ms, plans=2)
+[REPLAN][TIME] 0305_status_2_ms=4222.8 wall_ms=1779329125531 reason=표적76 등 3개 발견
+[0305] status=2, reason=표적76 등 3개 발견, elapsed=4.22s 전송
+[REPLAN][TIME] post_0301_completion_ready_ms=4224.0 wall_ms=1779329125532 mode=option_or_0901
+[REPLAN][METRIC] source_artifact_cache entries=27 hits=42 misses=27
+[INFO] Post-0301 ready (timeout) -> sending 0901
+[REPLAN][TIME] post_0301_flushed_ms=4238.9 wall_ms=1779329125547 delivery=0901 trigger=timeout
+[REPLAN][TIME] 0901_sent_ms=4242.0 wall_ms=1779329125550 options=2
+[0901] option request sent (count=2, codes=2(공격특화), 3(공격배제))
+[REPLAN][TIME] id_tab_update_flushed_ms=4243.8 wall_ms=1779329125552

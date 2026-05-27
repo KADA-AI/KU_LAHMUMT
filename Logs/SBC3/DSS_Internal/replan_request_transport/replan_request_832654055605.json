@@ -1,0 +1,94 @@
+[
+  {
+    "timestamp": 832654055605,
+    "source": "MSM",
+    "inputMissionPackageID": 5,
+    "replanRequestTime": {
+      "replanRequestTimestamp": 832654055605
+    },
+    "replanLevel": 1,
+    "replanRequest": "협업기저임무 재수행 요청",
+    "inputMissionIDList": [
+      {
+        "inputMissionID": 7
+      },
+      {
+        "inputMissionID": 3
+      }
+    ],
+    "pendingOptionList": [
+      {
+        "optionID": 10,
+        "optionName": "정찰/시간 균형",
+        "missionPlanID": 700000062
+      },
+      {
+        "optionID": 11,
+        "optionName": "정찰특화",
+        "missionPlanID": 700000063
+      },
+      {
+        "optionID": 12,
+        "optionName": "최소시간",
+        "missionPlanID": 700000064
+      }
+    ],
+    "replanDetail": {
+      "trigger": "0201",
+      "triggerType": "collabReexecuteInputRefresh",
+      "inputMissionPackageID": 5,
+      "reexecuteSourceInputMissionID": 6,
+      "currentRemainingCollaborativeReplan": true,
+      "currentInputMissionID": 7,
+      "entryStrategy": "turn_projection",
+      "entryLeadTimeS": 5.0,
+      "turnRadiusScale": 1.4,
+      "entryAircraftList": [
+        {
+          "aircraftID": 4,
+          "coordinate": {
+            "latitude": 37.90238874647737,
+            "longitude": 128.15976052764327,
+            "altitude": 2000
+          },
+          "source": "snapshotForwardProjection5s",
+          "headingDeg": 60.64453125,
+          "etaS": 5.0
+        },
+        {
+          "aircraftID": 5,
+          "coordinate": {
+            "latitude": 37.903533183613995,
+            "longitude": 128.175192842121,
+            "altitude": 1953
+          },
+          "source": "snapshotForwardProjection5s",
+          "headingDeg": 195.040283203125,
+          "etaS": 5.0
+        },
+        {
+          "aircraftID": 6,
+          "coordinate": {
+            "latitude": 37.891303778045014,
+            "longitude": 128.18897033085662,
+            "altitude": 1901
+          },
+          "source": "snapshotForwardProjection5s",
+          "headingDeg": 182.2357177734375,
+          "etaS": 5.0
+        }
+      ],
+      "sourceMissionPlanID": 700000061,
+      "currentMissionPlanID": 700000061,
+      "representativeEntryCoordinate": {
+        "latitude": 37.89907523604546,
+        "longitude": 128.1746412335403,
+        "altitude": 1951
+      }
+    },
+    "sourceMissionPlanID": 700000061,
+    "currentMissionPlanID": 700000061,
+    "replanReason": "협업기저임무 재수행 요청",
+    "savedAt": "2026-05-21T04:47:35.878400+00:00"
+  }
+]

@@ -1,0 +1,87 @@
+[
+  {
+    "timestamp": 832644058116,
+    "source": "MSM",
+    "inputMissionPackageID": 1,
+    "replanRequestTime": {
+      "replanRequestTimestamp": 832644058116
+    },
+    "replanLevel": 3,
+    "replanRequest": "_협업 기저 전환으로 인한 재계획",
+    "replanReason": "_협업 기저 전환으로 인한 재계획",
+    "inputMissionIDList": [
+      {
+        "inputMissionID": 2
+      }
+    ],
+    "pendingOptionList": [
+      {
+        "optionID": 1,
+        "optionName": "비행/촬영",
+        "missionPlanID": 700000002
+      }
+    ],
+    "replanDetail": {
+      "trigger": "0803",
+      "triggerType": "nextCollaborativeMission",
+      "sourceMissionPlanID": 700000001,
+      "inputMissionPackageID": 1,
+      "currentInputMissionID": 1,
+      "targetInputMissionID": 2,
+      "entryLeadTimeS": 5.0,
+      "turnRadiusScale": 1.4,
+      "entryStrategy": "turn_projection",
+      "entryAircraftList": [
+        {
+          "aircraftID": 4,
+          "coordinate": {
+            "latitude": 37.864482832590284,
+            "longitude": 128.15305052437938,
+            "altitude": 1492.0
+          },
+          "source": "forwardProjection5s",
+          "headingDeg": 314.7637939453125,
+          "etaS": 5.0
+        },
+        {
+          "aircraftID": 5,
+          "coordinate": {
+            "latitude": 37.853686273156924,
+            "longitude": 128.15011049818418,
+            "altitude": 2005
+          },
+          "source": "forwardProjection5s",
+          "headingDeg": 358.6981201171875,
+          "etaS": 5.0
+        },
+        {
+          "aircraftID": 6,
+          "coordinate": {
+            "latitude": 37.844730944266416,
+            "longitude": 128.1518326621283,
+            "altitude": 1901
+          },
+          "source": "forwardProjection5s",
+          "headingDeg": 10.65673828125,
+          "etaS": 5.0
+        }
+      ],
+      "keepCurrentMissionDone": true,
+      "forceDirectUpdate": true,
+      "suppress0702Fallback": true,
+      "selectedReplanReason": "_협업 기저 전환으로 인한 재계획",
+      "timestamp": 832644058116,
+      "representativeEntryCoordinate": {
+        "latitude": 37.85430001667121,
+        "longitude": 128.15166456156396,
+        "altitude": 1799
+      },
+      "representativeTargetEntryCoordinate": {
+        "latitude": 37.901738,
+        "longitude": 128.16909333333334,
+        "altitude": 1967
+      }
+    },
+    "savedAt": "2026-05-21T02:00:58.520184+00:00"
+  }
+]

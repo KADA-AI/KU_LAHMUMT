@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DSS Log Analyzer</title>
+    <link rel="stylesheet" href="/vendor/maplibre-gl.css" />
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body
+    data-tile-url="__TILE_URL__"
+    data-min-zoom="__MIN_ZOOM__"
+    data-max-zoom="__MAX_ZOOM__"
+    data-center-lat="__CENTER_LAT__"
+    data-center-lon="__CENTER_LON__"
+    data-start-zoom="__START_ZOOM__"
+    data-bounds="__BOUNDS_JSON__"
+  >
+    <!-- Full-viewport map -->
+    <div id="map"></div>
+
+    <!-- Top toolbar -->
+    <div class="toolbar">
+      <div class="toolbar-title">LOG ANALYZER</div>
+      <div class="toolbar-divider"></div>
+      <label class="toolbar-label" for="scenario-select">Scenario</label>
+      <select id="scenario-select" class="toolbar-select">
+        <option value="">-- 시나리오 선택 --</option>
+      </select>
+      <button id="toolbar-analysis-btn" class="toolbar-btn" type="button" disabled>분석</button>
+      <button id="toolbar-dynamics-btn" class="toolbar-btn" type="button" disabled>Dynamics</button>
+      <div class="toolbar-status" id="toolbar-status"></div>
+    </div>
+
+    <!-- Left detail panel -->
+    <div id="detail-panel" class="detail-panel" aria-hidden="true">
+      <button id="detail-panel-toggle" class="detail-panel-toggle" type="button" aria-label="패널 접기">
+        <span class="detail-panel-toggle-icon"></span>
+      </button>
+      <div class="detail-panel-header">
+        <div class="detail-panel-title" id="detail-title">Mission Plan</div>
+        <div class="detail-panel-subtitle" id="detail-subtitle"></div>
+      </div>
+      <div class="detail-panel-body" id="detail-body">
+        <div class="detail-empty">시나리오를 선택하세요</div>
+      </div>
+    </div>
+
+    <!-- Bottom timeline strip -->
+    <div id="timeline-strip" class="timeline-strip">
+      <div class="timeline-track" id="timeline-track"></div>
+    </div>
+
+    <!-- Bottom-left aircraft filter -->
+    <div id="aircraft-filter" class="aircraft-filter"></div>
+
+    <!-- Right analysis panel -->
+    <div id="analysis-panel" class="analysis-panel" aria-hidden="true"></div>
+
+    <!-- Footprint coverage panel -->
+    <div id="coverage-panel" class="coverage-panel" aria-hidden="true"></div>
+
+    <!-- Replan modal -->
+    <div id="replan-modal" class="replan-modal" aria-hidden="true">
+      <div class="replan-modal-backdrop"></div>
+      <div class="replan-modal-card" role="dialog" aria-modal="true">
+        <div class="replan-modal-header">
+          <div class="replan-modal-title" id="replan-title">Replan Detail</div>
+          <button id="replan-close" type="button" class="replan-modal-close" aria-label="닫기">&times;</button>
+        </div>
+        <div class="replan-modal-body" id="replan-body"></div>
+      </div>
+    </div>
+
+    <!-- Track playback bar -->
+    <div id="track-bar" class="track-bar" aria-hidden="true">
+      <button id="track-play" class="track-btn" type="button" title="재생/정지">&#9654;</button>
+      <button id="track-all-toggle" class="track-mode-btn" type="button" title="Show full 0401 playback">ALL</button>
+      <input id="track-slider" class="track-slider" type="range" min="0" max="0" value="0" />
+      <span id="track-time" class="track-time">--:--</span>
+    </div>
+
+    <!-- Status toast area -->
+    <div id="status" class="status"></div>
+
+    <script src="/vendor/maplibre-gl.js"></script>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,107 @@
+{
+  "timestamp": 832654521346,
+  "source": "MMR",
+  "pathID": 600000179,
+  "aircraftID": 6,
+  "isFormationFlight": false,
+  "waypointList": [
+    {
+      "waypointID": 1201742,
+      "coordinate": {
+        "latitude": 37.918422,
+        "longitude": 128.173031,
+        "altitude": 1886
+      },
+      "speed": 30.0,
+      "eta": 0,
+      "ecf": 0.0,
+      "nextWaypointID": 1201743,
+      "waypointPassType": 1,
+      "isDone": false,
+      "filmingProperty": {
+        "fieldOfView": 4.2,
+        "sensorType": 1,
+        "operationMode": 1,
+        "coordinateOrientation": {
+          "coordinate": {
+            "latitude": 37.91256517877695,
+            "longitude": 128.1902352746367,
+            "altitude": 698
+          }
+        }
+      }
+    },
+    {
+      "waypointID": 1201743,
+      "coordinate": {
+        "latitude": 37.917705,
+        "longitude": 128.1749,
+        "altitude": 1761
+      },
+      "speed": 30.0,
+      "eta": 12,
+      "ecf": 1.0,
+      "nextWaypointID": 0,
+      "waypointPassType": 3,
+      "filmingProperty": {
+        "fieldOfView": 4.2,
+        "sensorType": 1,
+        "operationMode": 2,
+        "lineSearch": {
+          "coordinateList": [
+            {
+              "latitude": 37.91256517877695,
+              "longitude": 128.1902352746367,
+              "altitude": 698
+            },
+            {
+              "latitude": 37.91230138125031,
+              "longitude": 128.19007293113845,
+              "altitude": 695
+            },
+            {
+              "latitude": 37.91203758372367,
+              "longitude": 128.18991058764018,
+              "altitude": 694
+            },
+            {
+              "latitude": 37.91197698437616,
+              "longitude": 128.190893151917,
+              "altitude": 714
+            },
+            {
+              "latitude": 37.91252244968021,
+              "longitude": 128.19122883643522,
+              "altitude": 709
+            },
+            {
+              "latitude": 37.91306791498425,
+              "longitude": 128.19156452095342,
+              "altitude": 725
+            },
+            {
+              "latitude": 37.91233547717686,
+              "longitude": 128.1921336294741,
+              "altitude": 738
+            },
+            {
+              "latitude": 37.91212593110276,
+              "longitude": 128.19200467283397,
+              "altitude": 741
+            },
+            {
+              "latitude": 37.911916385028654,
+              "longitude": 128.1918757161938,
+              "altitude": 738
+            }
+          ],
+          "searchSpeed": 78.53190230117795,
+          "interpolationPoints": 3
+        }
+      },
+      "isDone": false
+    }
+  ],
+  "individualMissionID": 900000840,
+  "postAttackBoundaryHold": true
+}

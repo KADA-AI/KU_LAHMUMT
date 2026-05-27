@@ -1,0 +1,45 @@
+
+[2026-05-21 11:21:02] process-log attached: dashboard
+[OPS] Standby 활성화(신규 경로 적용) 2026-05-21T112102 @ C:\Users\LAHMUMT_2\Desktop\DSS_KU\Logs\Scenario_2026-05-21T112102\SBC3
+[OPS] New sortie detected -> mission IDs reset for active scenario
+[OPS] DB root snapshot requested from modules
+[OPS] SystemMode=1 수신 -> 대기모드 진입
+모든 SW 대기모드 진입
+[OPS] SystemMode=2 수신 -> 초기임무계획 모드 진입
+모든 SW 초기임무계획 모드
+[OPS] 0305 재계획 완료 (모드 전환은 0101 수신만 반영)
+[OPS] SystemMode=3 수신 -> 임무 수행 모드 진입
+모든 SW 임무 수행 모드 진입
+[RUN] show GUI requested: info
+
+[2026-05-21 12:13:13] process-log attached: dashboard
+[RUN] mission_planning_gui.py @ C:\Users\LAHMUMT_2\Desktop\DSS_KU\modules\mission_planning\mission_planning_gui.py
+[RUN] monitoring_gui.py @ C:\Users\LAHMUMT_2\Desktop\DSS_KU\modules\monitoring\monitoring_gui.py
+[RUN] decision_support_gui.py @ C:\Users\LAHMUMT_2\Desktop\DSS_KU\modules\decision_support\decision_support_gui.py
+[RUN] info_manage.py @ C:\Users\LAHMUMT_2\Desktop\DSS_KU\modules\info_manage\info_manage.py
+모든 SW 초기화 모드 진입
+
+[2026-05-21 12:52:49] process-log attached: dashboard
+Traceback (most recent call last):
+  File "c:\Users\LAHMUMT_2\Desktop\DSS_KU\run.py", line 1594, in <module>
+    main()
+  File "c:\Users\LAHMUMT_2\Desktop\DSS_KU\run.py", line 1586, in main
+    win = MainWindow()
+          ^^^^^^^^^^^^
+  File "C:\Users\LAHMUMT_2\Desktop\DSS_KU\app\ui\main_window.py", line 99, in __init__
+    self._build_ui()
+  File "C:\Users\LAHMUMT_2\Desktop\DSS_KU\app\ui\main_window.py", line 131, in _build_ui
+    shell.addWidget(self._build_header_bar(), 0)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\LAHMUMT_2\Desktop\DSS_KU\app\ui\main_window.py", line 377, in _build_header_bar
+    self.btn_fov_db_select.clicked.connect(self._browse_fov_db)
+                                           ^^^^^^^^^^^^^^^^^^^
+AttributeError: 'MainWindow' object has no attribute '_browse_fov_db'. Did you mean: '_browse_db'?
+
+[2026-05-21 12:56:31] process-log attached: dashboard
+[RUN] mission_planning_gui.py @ C:\Users\LAHMUMT_2\Desktop\DSS_KU\modules\mission_planning\mission_planning_gui.py
+[RUN] monitoring_gui.py @ C:\Users\LAHMUMT_2\Desktop\DSS_KU\modules\monitoring\monitoring_gui.py
+[RUN] decision_support_gui.py @ C:\Users\LAHMUMT_2\Desktop\DSS_KU\modules\decision_support\decision_support_gui.py
+[RUN] info_manage.py @ C:\Users\LAHMUMT_2\Desktop\DSS_KU\modules\info_manage\info_manage.py
+모든 SW 초기화 모드 진입
+[FOV_DB] selected C:\Users\LAHMUMT_2\Desktop\DSS_KU\resource\db\fov_db_곡사포.csv (921 rows)

@@ -1,0 +1,203 @@
+[
+  {
+    "timestamp": 832653499489,
+    "source": "MSM",
+    "inputMissionPackageID": 2,
+    "replanRequestTime": {
+      "replanRequestTimestamp": 832653499489
+    },
+    "replanLevel": 2,
+    "replanRequest": "표적87 등 2개 발견",
+    "inputMissionIDList": [
+      {
+        "inputMissionID": 4
+      },
+      {
+        "inputMissionID": 3
+      }
+    ],
+    "pendingOptionList": [
+      {
+        "optionID": 2,
+        "optionName": "공격 특화",
+        "missionPlanID": 700000026
+      },
+      {
+        "optionID": 3,
+        "optionName": "공격 배제",
+        "missionPlanID": 700000027
+      }
+    ],
+    "replanDetail": {
+      "trigger": "0402",
+      "sourceMissionPlanID": 700000023,
+      "currentMissionPlanID": 700000023,
+      "targetKey": "87-5",
+      "targetID": 87,
+      "watcherID": 5,
+      "targetType": 1,
+      "threat": 0.8999999761581421,
+      "targetInFrame": true,
+      "coordinate": {
+        "latitude": 37.91666793823242,
+        "longitude": 128.1751251220703,
+        "altitude": 668
+      },
+      "preferredOptionCount": 2,
+      "attackTargetList": [
+        {
+          "key": "87-5",
+          "targetID": 87,
+          "targetType": 1,
+          "watcherID": 5,
+          "coordinate": {
+            "latitude": 37.91666793823242,
+            "longitude": 128.1751251220703,
+            "altitude": 668.0
+          },
+          "isUsed": 1,
+          "isIgnored": 0,
+          "isDestroyed": false,
+          "targetInFrame": true,
+          "threat": 0.8999999761581421,
+          "firstDetected": 832653499442,
+          "lastUpdated": 832653499442,
+          "sourceKey": "87-5"
+        },
+        {
+          "key": "86-4",
+          "targetID": 86,
+          "targetType": 4,
+          "watcherID": 4,
+          "coordinate": {
+            "latitude": 37.91281509399414,
+            "longitude": 128.16159057617188,
+            "altitude": 779.0
+          },
+          "isUsed": 1,
+          "isIgnored": 0,
+          "isDestroyed": false,
+          "targetInFrame": true,
+          "threat": 0.8500000238418579,
+          "firstDetected": 832653498898,
+          "lastUpdated": 832653499442,
+          "sourceKey": "86-4"
+        }
+      ],
+      "attackTargetCount": 2,
+      "attackTargetTotalCount": 2,
+      "attackTargetOverflow": false,
+      "attackTargetIDs": [
+        87,
+        86
+      ],
+      "targetBundle": [
+        {
+          "key": "87-5",
+          "targetID": 87,
+          "targetType": 1,
+          "watcherID": 5,
+          "coordinate": {
+            "latitude": 37.91666793823242,
+            "longitude": 128.1751251220703,
+            "altitude": 668.0
+          },
+          "isUsed": 1,
+          "isIgnored": 0,
+          "isDestroyed": false,
+          "targetInFrame": true,
+          "threat": 0.8999999761581421,
+          "firstDetected": 832653499442,
+          "lastUpdated": 832653499442,
+          "sourceKey": "87-5"
+        },
+        {
+          "key": "86-4",
+          "targetID": 86,
+          "targetType": 4,
+          "watcherID": 4,
+          "coordinate": {
+            "latitude": 37.91281509399414,
+            "longitude": 128.16159057617188,
+            "altitude": 779.0
+          },
+          "isUsed": 1,
+          "isIgnored": 0,
+          "isDestroyed": false,
+          "targetInFrame": true,
+          "threat": 0.8500000238418579,
+          "firstDetected": 832653498898,
+          "lastUpdated": 832653499442,
+          "sourceKey": "86-4"
+        }
+      ],
+      "targetBundleCount": 2,
+      "targetBundleMode": "follow_up",
+      "followUpAttackMode": true,
+      "maxTrackedTargets": 3,
+      "snapshot": {
+        "targetID": 87,
+        "watcherID": 5,
+        "targetType": 1,
+        "coordinate": {
+          "latitude": 37.91666793823242,
+          "longitude": 128.1751251220703,
+          "altitude": 668
+        },
+        "isDestroyed": false,
+        "targetInFrame": true,
+        "threat": 0.8999999761581421,
+        "isUsed": 1,
+        "isIgnored": 0,
+        "firstDetected": 832653499442,
+        "lastUpdated": 832653499442,
+        "sinceFirstDetectedMs": 0,
+        "key": "87-5"
+      }
+    },
+    "sourceMissionPlanID": 700000023,
+    "currentMissionPlanID": 700000023,
+    "targetBundle": [
+      {
+        "key": "87-5",
+        "targetID": 87,
+        "targetType": 1,
+        "watcherID": 5,
+        "coordinate": {
+          "latitude": 37.91666793823242,
+          "longitude": 128.1751251220703,
+          "altitude": 668.0
+        },
+        "isUsed": 1,
+        "isIgnored": 0,
+        "isDestroyed": false,
+        "targetInFrame": true,
+        "threat": 0.8999999761581421,
+        "firstDetected": 832653499442,
+        "lastUpdated": 832653499442,
+        "sourceKey": "87-5"
+      },
+      {
+        "key": "86-4",
+        "targetID": 86,
+        "targetType": 4,
+        "watcherID": 4,
+        "coordinate": {
+          "latitude": 37.91281509399414,
+          "longitude": 128.16159057617188,
+          "altitude": 779.0
+        },
+        "isUsed": 1,
+        "isIgnored": 0,
+        "isDestroyed": false,
+        "targetInFrame": true,
+        "threat": 0.8500000238418579,
+        "firstDetected": 832653498898,
+        "lastUpdated": 832653499442,
+        "sourceKey": "86-4"
+      }
+    ],
+    "replanReason": "표적87 등 2개 발견",
+    "savedAt": "2026-05-21T04:38:19.955391+00:00"
+  }
+]

@@ -1,0 +1,91 @@
+{
+  "timestamp": 832654055195,
+  "inputMissionPackageID": 5,
+  "inputMissionPackageType": 1,
+  "mainSensor": 1,
+  "availableAircraftList": [
+    {
+      "aircraftID": 1
+    },
+    {
+      "aircraftID": 2
+    },
+    {
+      "aircraftID": 3
+    },
+    {
+      "aircraftID": 4
+    },
+    {
+      "aircraftID": 5
+    },
+    {
+      "aircraftID": 6
+    }
+  ],
+  "inputMissionList": [
+    {
+      "inputMissionID": 7,
+      "inputMissionType": 2,
+      "regionType": 0,
+      "isDone": false,
+      "missionDetail": {
+        "coordinateList": [],
+        "areaList": [
+          {
+            "isHole": false,
+            "coordinateList": [
+              {
+                "latitude": 37.911860812023185,
+                "longitude": 128.19277678282535,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.91206788339742,
+                "longitude": 128.1894193055018,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.915693768969554,
+                "longitude": 128.19536870868427,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.91162141115169,
+                "longitude": 128.19275325452793,
+                "altitude": 0
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "inputMissionID": 3,
+      "inputMissionType": 1,
+      "regionType": 0,
+      "isDone": false,
+      "missionDetail": {
+        "coordinateList": null,
+        "lineList": [
+          {
+            "width": 1000,
+            "coordinateList": [
+              {
+                "latitude": 37.89855,
+                "longitude": 128.1926,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.869625,
+                "longitude": 128.21355,
+                "altitude": 0
+              }
+            ]
+          }
+        ],
+        "areaList": null
+      }
+    }
+  ]
+}

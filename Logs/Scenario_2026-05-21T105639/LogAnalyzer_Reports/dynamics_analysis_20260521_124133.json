@@ -1,0 +1,3291 @@
+{
+  "kind": "logAnalyzerDynamicsReport",
+  "schemaVersion": "logAnalyzer.dynamics.v1",
+  "savedAt": "2026-05-21T12:41:33+09:00",
+  "scenario": "Scenario_2026-05-21T105639",
+  "analysis": {
+    "ok": true,
+    "scenario": "Scenario_2026-05-21T105639",
+    "source": {
+      "scenarioPath": "C:\\Users\\LAHMUMT_2\\Desktop\\DSS_KU\\Logs\\Scenario_2026-05-21T105639",
+      "basePath": "C:\\Users\\LAHMUMT_2\\Desktop\\DSS_KU\\Logs\\Scenario_2026-05-21T105639\\SBC3",
+      "files0401": [
+        "C:\\Users\\LAHMUMT_2\\Desktop\\DSS_KU\\Logs\\Scenario_2026-05-21T105639\\SBC3\\0401\\0401.json",
+        "C:\\Users\\LAHMUMT_2\\Desktop\\DSS_KU\\Logs\\Scenario_2026-05-21T105639\\SBC3\\0401\\0401_1.json",
+        "C:\\Users\\LAHMUMT_2\\Desktop\\DSS_KU\\Logs\\Scenario_2026-05-21T105639\\SBC3\\0401\\0401_2.json",
+        "C:\\Users\\LAHMUMT_2\\Desktop\\DSS_KU\\Logs\\Scenario_2026-05-21T105639\\SBC3\\0401\\0401_3.json",
+        "C:\\Users\\LAHMUMT_2\\Desktop\\DSS_KU\\Logs\\Scenario_2026-05-21T105639\\SBC3\\0401\\0401_4.json",
+        "C:\\Users\\LAHMUMT_2\\Desktop\\DSS_KU\\Logs\\Scenario_2026-05-21T105639\\SBC3\\0401\\0401_5.json"
+      ],
+      "fileCount0401": 6,
+      "sampleCount0401": 21726
+    },
+    "cohort": {
+      "aircraftCount": 6,
+      "uavCount": 3,
+      "usableUavCount": 3,
+      "durationS": {
+        "count": 6,
+        "min": 724.0,
+        "p25": 724.0,
+        "p50": 724.0,
+        "p75": 724.0,
+        "p90": 724.0,
+        "p95": 724.0,
+        "max": 724.0
+      },
+      "speedMps": {
+        "count": 3,
+        "min": 44.86,
+        "p25": 44.86,
+        "p50": 44.86,
+        "p75": 44.86,
+        "p90": 44.86,
+        "p95": 44.86,
+        "max": 44.86
+      },
+      "turnRadiusM": {
+        "count": 3,
+        "min": 530.1,
+        "p25": 534.4,
+        "p50": 538.8,
+        "p75": 540.2,
+        "p90": 541.0,
+        "p95": 541.3,
+        "max": 541.5
+      },
+      "absYawRateDps": {
+        "count": 3,
+        "min": 6.347,
+        "p25": 6.434,
+        "p50": 6.522,
+        "p75": 6.752,
+        "p90": 6.89,
+        "p95": 6.936,
+        "max": 6.982
+      },
+      "bankProxyDeg": {
+        "count": 3,
+        "min": 28.11,
+        "p25": 28.14,
+        "p50": 28.17,
+        "p75": 28.3,
+        "p90": 28.38,
+        "p95": 28.41,
+        "max": 28.43
+      },
+      "rollObservedAircraft": []
+    },
+    "agents": {
+      "1": {
+        "aircraftId": 1,
+        "label": "LAH1",
+        "isUav": false,
+        "sampleCount": 3621,
+        "durationS": 723.997,
+        "distanceM": 0.0,
+        "usable": false,
+        "timeStepS": {
+          "count": 3620,
+          "min": 0.125,
+          "p25": 0.199,
+          "p50": 0.202,
+          "p75": 0.204,
+          "p90": 0.206,
+          "p95": 0.209,
+          "max": 0.275
+        },
+        "speedMps": {
+          "count": 3620,
+          "min": 0.0,
+          "p25": 0.0,
+          "p50": 0.0,
+          "p75": 0.0,
+          "p90": 0.0,
+          "p95": 0.0,
+          "max": 0.0
+        },
+        "groundSpeedMps": {
+          "count": 3620,
+          "min": 0.0,
+          "p25": 0.0,
+          "p50": 0.0,
+          "p75": 0.0,
+          "p90": 0.0,
+          "p95": 0.0,
+          "max": 0.0
+        },
+        "accelMps2": {
+          "count": 3620,
+          "min": -0.0,
+          "p25": -0.0,
+          "p50": 0.0,
+          "p75": 0.0,
+          "p90": 0.0,
+          "p95": 0.0,
+          "max": 0.0
+        },
+        "verticalRateMps": {
+          "count": 3620,
+          "min": 0.0,
+          "p25": 0.0,
+          "p50": 0.0,
+          "p75": 0.0,
+          "p90": 0.0,
+          "p95": 0.0,
+          "max": 0.0
+        },
+        "yawRateDps": {
+          "count": 3620,
+          "min": -0.0,
+          "p25": 0.0,
+          "p50": 0.0,
+          "p75": 0.0,
+          "p90": 0.0,
+          "p95": 0.0,
+          "max": 0.0
+        },
+        "absYawRateDps": {
+          "count": 3620,
+          "min": 0.0,
+          "p25": 0.0,
+          "p50": 0.0,
+          "p75": 0.0,
+          "p90": 0.0,
+          "p95": 0.0,
+          "max": 0.0
+        },
+        "yawAccelDps2": {
+          "count": 3619,
+          "min": -0.003,
+          "p25": -0.001,
+          "p50": 0.0,
+          "p75": 0.001,
+          "p90": 0.001,
+          "p95": 0.001,
+          "max": 0.003
+        },
+        "turnRadiusM": {
+          "count": 0
+        },
+        "geometryRadiusM": {
+          "count": 0
+        },
+        "bankProxyDeg": {
+          "count": 0
+        },
+        "directRollDeg": {
+          "count": 0
+        },
+        "directPitchDeg": {
+          "count": 0
+        },
+        "oppositeTurnGapS": {
+          "count": 0
+        },
+        "speedBuckets": [],
+        "phaseMetrics": [
+          {
+            "phase": "unknown",
+            "sampleCount": 3620,
+            "speedMps": {
+              "count": 3620,
+              "min": 0.0,
+              "p25": 0.0,
+              "p50": 0.0,
+              "p75": 0.0,
+              "p90": 0.0,
+              "p95": 0.0,
+              "max": 0.0
+            },
+            "absYawRateDps": {
+              "count": 3620,
+              "min": 0.0,
+              "p25": 0.0,
+              "p50": 0.0,
+              "p75": 0.0,
+              "p90": 0.0,
+              "p95": 0.0,
+              "max": 0.0
+            },
+            "turnRadiusM": {
+              "count": 0
+            },
+            "bankProxyDeg": {
+              "count": 0
+            },
+            "absAccelMps2": {
+              "count": 3620,
+              "min": 0.0,
+              "p25": 0.0,
+              "p50": 0.0,
+              "p75": 0.0,
+              "p90": 0.0,
+              "p95": 0.0,
+              "max": 0.0
+            }
+          }
+        ],
+        "aggressiveEvents": [],
+        "rollObserved": false
+      },
+      "2": {
+        "aircraftId": 2,
+        "label": "LAH2",
+        "isUav": false,
+        "sampleCount": 3621,
+        "durationS": 723.997,
+        "distanceM": 16480.0,
+        "usable": false,
+        "timeStepS": {
+          "count": 3620,
+          "min": 0.125,
+          "p25": 0.199,
+          "p50": 0.202,
+          "p75": 0.204,
+          "p90": 0.206,
+          "p95": 0.209,
+          "max": 0.275
+        },
+        "speedMps": {
+          "count": 3620,
+          "min": 0.0,
+          "p25": 0.0,
+          "p50": 102.65,
+          "p75": 102.737,
+          "p90": 103.345,
+          "p95": 103.345,
+          "max": 103.345
+        },
+        "groundSpeedMps": {
+          "count": 3620,
+          "min": 0.0,
+          "p25": 0.0,
+          "p50": 30.153,
+          "p75": 32.909,
+          "p90": 35.011,
+          "p95": 37.429,
+          "max": 93.928
+        },
+        "accelMps2": {
+          "count": 3620,
+          "min": -116.429,
+          "p25": 0.0,
+          "p50": 0.0,
+          "p75": 0.08,
+          "p90": 6.231,
+          "p95": 6.545,
+          "max": 10.366
+        },
+        "verticalRateMps": {
+          "count": 3620,
+          "min": 0.0,
+          "p25": 0.0,
+          "p50": 0.0,
+          "p75": 0.0,
+          "p90": 0.0,
+          "p95": 0.0,
+          "max": 4.902
+        },
+        "yawRateDps": {
+          "count": 3620,
+          "min": -32.9,
+          "p25": 0.0,
+          "p50": 0.0,
+          "p75": 0.0,
+          "p90": 0.0,
+          "p95": 0.0,
+          "max": 0.001
+        },
+        "absYawRateDps": {
+          "count": 3620,
+          "min": 0.0,
+          "p25": 0.0,
+          "p50": 0.0,
+          "p75": 0.0,
+          "p90": 0.0,
+          "p95": 0.0,
+          "max": 32.9
+        },
+        "yawAccelDps2": {
+          "count": 3619,
+          "min": -99.704,
+          "p25": 0.0,
+          "p50": 0.0,
+          "p75": 0.0,
+          "p90": 0.0,
+          "p95": 0.0,
+          "max": 50.166
+        },
+        "turnRadiusM": {
+          "count": 0
+        },
+        "geometryRadiusM": {
+          "count": 2222,
+          "min": 20.23,
+          "p25": 42.42,
+          "p50": 60.26,
+          "p75": 98.05,
+          "p90": 206.45,
+          "p95": 314.07,
+          "max": 4245.57
+        },
+        "bankProxyDeg": {
+          "count": 0
+        },
+        "directRollDeg": {
+          "count": 0
+        },
+        "directPitchDeg": {
+          "count": 0
+        },
+        "oppositeTurnGapS": {
+          "count": 0
+        },
+        "speedBuckets": [],
+        "phaseMetrics": [
+          {
+            "phase": "unknown",
+            "sampleCount": 3620,
+            "speedMps": {
+              "count": 3620,
+              "min": 0.0,
+              "p25": 0.0,
+              "p50": 102.65,
+              "p75": 102.74,
+              "p90": 103.35,
+              "p95": 103.35,
+              "max": 103.35
+            },
+            "absYawRateDps": {
+              "count": 3620,
+              "min": 0.0,
+              "p25": 0.0,
+              "p50": 0.0,
+              "p75": 0.0,
+              "p90": 0.0,
+              "p95": 0.0,
+              "max": 32.9
+            },
+            "turnRadiusM": {
+              "count": 0
+            },
+            "bankProxyDeg": {
+              "count": 0
+            },
+            "absAccelMps2": {
+              "count": 3620,
+              "min": 0.0,
+              "p25": 0.0,
+              "p50": 0.037,
+              "p75": 6.08,
+              "p90": 6.578,
+              "p95": 6.835,
+              "max": 116.429
+            }
+          }
+        ],
+        "aggressiveEvents": [
+          {
+            "aircraftId": 2,
+            "label": "LAH2",
+            "startMs": 832644576419,
+            "endMs": 832644578218,
+            "durationS": 1.799,
+            "phase": "unknown",
+            "maxYawRateDps": 32.90008376963353,
+            "minRadiusM": null,
+            "maxBankProxyDeg": null,
+            "turnAngleDeg": 33.71904940000002,
+            "meanSpeedMps": 0.0
+          }
+        ],
+        "rollObserved": false
+      },
+      "3": {
+        "aircraftId": 3,
+        "label": "LAH3",
+        "isUav": false,
+        "sampleCount": 3621,
+        "durationS": 723.997,
+        "distanceM": 15178.4,
+        "usable": false,
+        "timeStepS": {
+          "count": 3620,
+          "min": 0.125,
+          "p25": 0.199,
+          "p50": 0.202,
+          "p75": 0.204,
+          "p90": 0.206,
+          "p95": 0.209,
+          "max": 0.275
+        },
+        "speedMps": {
+          "count": 3620,
+          "min": 0.0,
+          "p25": 0.0,
+          "p50": 102.184,
+          "p75": 102.729,
+          "p90": 103.345,
+          "p95": 103.345,
+          "max": 103.345
+        },
+        "groundSpeedMps": {
+          "count": 3620,
+          "min": 0.0,
+          "p25": 0.0,
+          "p50": 29.109,
+          "p75": 32.834,
+          "p90": 35.266,
+          "p95": 43.563,
+          "max": 214.753
+        },
+        "accelMps2": {
+          "count": 3620,
+          "min": -223.62,
+          "p25": 0.0,
+          "p50": 0.0,
+          "p75": 0.0,
+          "p90": 6.19,
+          "p95": 6.507,
+          "max": 10.366
+        },
+        "verticalRateMps": {
+          "count": 3620,
+          "min": 0.0,
+          "p25": 0.0,
+          "p50": 0.0,
+          "p75": 0.0,
+          "p90": 0.0,
+          "p95": 0.0,
+          "max": 4.902
+        },
+        "yawRateDps": {
+          "count": 3620,
+          "min": -27.559,
+          "p25": 0.0,
+          "p50": 0.0,
+          "p75": 0.0,
+          "p90": 0.0,
+          "p95": 0.0,
+          "max": 0.001
+        },
+        "absYawRateDps": {
+          "count": 3620,
+          "min": 0.0,
+          "p25": 0.0,
+          "p50": 0.0,
+          "p75": 0.0,
+          "p90": 0.0,
+          "p95": 0.0,
+          "max": 27.559
+        },
+        "yawAccelDps2": {
+          "count": 3619,
+          "min": -113.308,
+          "p25": 0.0,
+          "p50": 0.0,
+          "p75": 0.0,
+          "p90": 0.0,
+          "p95": 0.0,
+          "max": 26.671
+        },
+        "turnRadiusM": {
+          "count": 0
+        },
+        "geometryRadiusM": {
+          "count": 1924,
+          "min": 20.23,
+          "p25": 34.74,
+          "p50": 52.03,
+          "p75": 85.08,
+          "p90": 213.33,
+          "p95": 314.07,
+          "max": 7850.95
+        },
+        "bankProxyDeg": {
+          "count": 0
+        },
+        "directRollDeg": {
+          "count": 0
+        },
+        "directPitchDeg": {
+          "count": 0
+        },
+        "oppositeTurnGapS": {
+          "count": 0
+        },
+        "speedBuckets": [],
+        "phaseMetrics": [
+          {
+            "phase": "unknown",
+            "sampleCount": 3620,
+            "speedMps": {
+              "count": 3620,
+              "min": 0.0,
+              "p25": 0.0,
+              "p50": 102.18,
+              "p75": 102.73,
+              "p90": 103.35,
+              "p95": 103.35,
+              "max": 103.35
+            },
+            "absYawRateDps": {
+              "count": 3620,
+              "min": 0.0,
+              "p25": 0.0,
+              "p50": 0.0,
+              "p75": 0.0,
+              "p90": 0.0,
+              "p95": 0.0,
+              "max": 27.559
+            },
+            "turnRadiusM": {
+              "count": 0
+            },
+            "bankProxyDeg": {
+              "count": 0
+            },
+            "absAccelMps2": {
+              "count": 3620,
+              "min": 0.0,
+              "p25": 0.0,
+              "p50": 0.0,
+              "p75": 5.981,
+              "p90": 6.545,
+              "p95": 6.831,
+              "max": 223.62
+            }
+          }
+        ],
+        "aggressiveEvents": [
+          {
+            "aircraftId": 3,
+            "label": "LAH3",
+            "startMs": 832644534407,
+            "endMs": 832644536207,
+            "durationS": 1.8,
+            "phase": "unknown",
+            "maxYawRateDps": 27.559409756097523,
+            "minRadiusM": null,
+            "maxBankProxyDeg": null,
+            "turnAngleDeg": 31.030654499999997,
+            "meanSpeedMps": 0.0
+          }
+        ],
+        "rollObserved": false
+      },
+      "4": {
+        "aircraftId": 4,
+        "label": "UAV1",
+        "isUav": true,
+        "sampleCount": 3621,
+        "durationS": 723.997,
+        "distanceM": 30492.7,
+        "usable": true,
+        "timeStepS": {
+          "count": 3620,
+          "min": 0.125,
+          "p25": 0.199,
+          "p50": 0.202,
+          "p75": 0.204,
+          "p90": 0.206,
+          "p95": 0.209,
+          "max": 0.275
+        },
+        "speedMps": {
+          "count": 3620,
+          "min": 38.65,
+          "p25": 44.752,
+          "p50": 44.861,
+          "p75": 44.865,
+          "p90": 44.866,
+          "p95": 44.867,
+          "max": 44.919
+        },
+        "groundSpeedMps": {
+          "count": 3620,
+          "min": 0.0,
+          "p25": 38.581,
+          "p50": 42.957,
+          "p75": 46.213,
+          "p90": 50.097,
+          "p95": 57.107,
+          "max": 133.922
+        },
+        "accelMps2": {
+          "count": 3620,
+          "min": -2.472,
+          "p25": 0.0,
+          "p50": 0.0,
+          "p75": 0.0,
+          "p90": 0.0,
+          "p95": 0.005,
+          "max": 5.062
+        },
+        "verticalRateMps": {
+          "count": 3620,
+          "min": -5.714,
+          "p25": 0.0,
+          "p50": 0.0,
+          "p75": 0.0,
+          "p90": 4.297,
+          "p95": 4.95,
+          "max": 10.695
+        },
+        "yawRateDps": {
+          "count": 3620,
+          "min": -15.537,
+          "p25": -5.301,
+          "p50": -4.548,
+          "p75": -1.131,
+          "p90": 0.245,
+          "p95": 1.388,
+          "max": 15.893
+        },
+        "absYawRateDps": {
+          "count": 3620,
+          "min": 0.0,
+          "p25": 3.41,
+          "p50": 4.623,
+          "p75": 5.359,
+          "p90": 6.013,
+          "p95": 6.982,
+          "max": 15.893
+        },
+        "yawAccelDps2": {
+          "count": 3619,
+          "min": -76.162,
+          "p25": -2.402,
+          "p50": 0.019,
+          "p75": 2.305,
+          "p90": 5.658,
+          "p95": 22.548,
+          "max": 76.537
+        },
+        "turnRadiusM": {
+          "count": 3293,
+          "min": 140.51,
+          "p25": 470.31,
+          "p50": 538.77,
+          "p75": 640.66,
+          "p90": 2358.22,
+          "p95": 4955.89,
+          "max": 11042.48
+        },
+        "geometryRadiusM": {
+          "count": 3017,
+          "min": 21.7,
+          "p25": 65.57,
+          "p50": 108.97,
+          "p75": 229.92,
+          "p90": 591.99,
+          "p95": 1067.86,
+          "max": 16908.01
+        },
+        "bankProxyDeg": {
+          "count": 3293,
+          "min": 0.796,
+          "p25": 17.538,
+          "p50": 20.728,
+          "p75": 23.369,
+          "p90": 25.65,
+          "p95": 28.115,
+          "max": 51.129
+        },
+        "directRollDeg": {
+          "count": 0
+        },
+        "directPitchDeg": {
+          "count": 0
+        },
+        "oppositeTurnGapS": {
+          "count": 8,
+          "min": 1.001,
+          "p25": 1.202,
+          "p50": 4.809,
+          "p75": 20.65,
+          "p90": 32.561,
+          "p95": 34.373,
+          "max": 36.186
+        },
+        "speedBuckets": [
+          {
+            "bucket": "35-50",
+            "turnRadiusM": {
+              "count": 3293,
+              "min": 140.5,
+              "p25": 470.3,
+              "p50": 538.8,
+              "p75": 640.7,
+              "p90": 2358.2,
+              "p95": 4955.9,
+              "max": 11042.5
+            }
+          }
+        ],
+        "phaseMetrics": [
+          {
+            "phase": "imaging",
+            "sampleCount": 841,
+            "speedMps": {
+              "count": 841,
+              "min": 38.65,
+              "p25": 38.7,
+              "p50": 38.8,
+              "p75": 38.9,
+              "p90": 38.92,
+              "p95": 39.87,
+              "max": 39.92
+            },
+            "absYawRateDps": {
+              "count": 841,
+              "min": 0.0,
+              "p25": 0.267,
+              "p50": 0.68,
+              "p75": 2.251,
+              "p90": 6.445,
+              "p95": 7.155,
+              "max": 15.893
+            },
+            "turnRadiusM": {
+              "count": 675,
+              "min": 140.5,
+              "p25": 627.6,
+              "p50": 2232.0,
+              "p75": 4769.4,
+              "p90": 7564.1,
+              "p95": 9049.9,
+              "max": 11042.5
+            },
+            "bankProxyDeg": {
+              "count": 675,
+              "min": 0.8,
+              "p25": 1.84,
+              "p50": 3.93,
+              "p75": 13.75,
+              "p90": 25.56,
+              "p95": 27.09,
+              "max": 47.79
+            },
+            "absAccelMps2": {
+              "count": 841,
+              "min": 0.0,
+              "p25": 0.0,
+              "p50": 0.0,
+              "p75": 0.0,
+              "p90": 0.004,
+              "p95": 0.015,
+              "max": 2.472
+            }
+          },
+          {
+            "phase": "imaging:hold",
+            "sampleCount": 9,
+            "speedMps": {
+              "count": 9,
+              "min": 39.91,
+              "p25": 39.91,
+              "p50": 39.91,
+              "p75": 39.96,
+              "p90": 39.96,
+              "p95": 39.96,
+              "max": 39.96
+            },
+            "absYawRateDps": {
+              "count": 9,
+              "min": 0.0,
+              "p25": 4.783,
+              "p50": 5.083,
+              "p75": 5.198,
+              "p90": 5.45,
+              "p95": 5.526,
+              "max": 5.603
+            },
+            "turnRadiusM": {
+              "count": 8,
+              "min": 408.6,
+              "p25": 436.1,
+              "p50": 446.4,
+              "p75": 469.7,
+              "p90": 496.6,
+              "p95": 518.2,
+              "max": 539.8
+            },
+            "bankProxyDeg": {
+              "count": 8,
+              "min": 16.75,
+              "p25": 19.08,
+              "p50": 20.01,
+              "p75": 20.48,
+              "p90": 21.25,
+              "p95": 21.49,
+              "max": 21.73
+            },
+            "absAccelMps2": {
+              "count": 9,
+              "min": 0.0,
+              "p25": 0.0,
+              "p50": 0.0,
+              "p75": 0.005,
+              "p90": 0.054,
+              "p95": 0.152,
+              "max": 0.249
+            }
+          },
+          {
+            "phase": "target-track",
+            "sampleCount": 2770,
+            "speedMps": {
+              "count": 2770,
+              "min": 38.75,
+              "p25": 44.86,
+              "p50": 44.86,
+              "p75": 44.86,
+              "p90": 44.87,
+              "p95": 44.89,
+              "max": 44.92
+            },
+            "absYawRateDps": {
+              "count": 2770,
+              "min": 0.0,
+              "p25": 4.255,
+              "p50": 4.866,
+              "p75": 5.439,
+              "p90": 5.986,
+              "p95": 6.734,
+              "max": 15.537
+            },
+            "turnRadiusM": {
+              "count": 2610,
+              "min": 165.4,
+              "p25": 468.0,
+              "p50": 522.0,
+              "p75": 592.9,
+              "p90": 653.8,
+              "p95": 706.8,
+              "max": 7157.1
+            },
+            "bankProxyDeg": {
+              "count": 2610,
+              "min": 1.59,
+              "p25": 19.09,
+              "p50": 21.47,
+              "p75": 23.68,
+              "p90": 25.66,
+              "p95": 28.99,
+              "max": 51.13
+            },
+            "absAccelMps2": {
+              "count": 2770,
+              "min": 0.0,
+              "p25": 0.0,
+              "p50": 0.0,
+              "p75": 0.0,
+              "p90": 0.005,
+              "p95": 0.006,
+              "max": 5.062
+            }
+          }
+        ],
+        "aggressiveEvents": [
+          {
+            "aircraftId": 4,
+            "label": "UAV1",
+            "startMs": 832644069034,
+            "endMs": 832644075033,
+            "durationS": 5.999,
+            "phase": "imaging",
+            "maxYawRateDps": 15.89283495145642,
+            "minRadiusM": 140.51058906168706,
+            "maxBankProxyDeg": 47.78889536830235,
+            "turnAngleDeg": 47.99926800000003,
+            "meanSpeedMps": 38.92
+          },
+          {
+            "aircraftId": 4,
+            "label": "UAV1",
+            "startMs": 832644055220,
+            "endMs": 832644059826,
+            "durationS": 4.606,
+            "phase": "imaging",
+            "maxYawRateDps": 13.952639999999974,
+            "minRadiusM": 163.9276271340734,
+            "maxBankProxyDeg": 44.74927259402722,
+            "turnAngleDeg": 32.27233799999999,
+            "meanSpeedMps": 39.92
+          },
+          {
+            "aircraftId": 4,
+            "label": "UAV1",
+            "startMs": 832644076223,
+            "endMs": 832644082422,
+            "durationS": 6.199,
+            "phase": "imaging",
+            "maxYawRateDps": 13.935862068965523,
+            "minRadiusM": 160.11852789822657,
+            "maxBankProxyDeg": 44.00699743620091,
+            "turnAngleDeg": 43.82446299999998,
+            "meanSpeedMps": 38.92
+          },
+          {
+            "aircraftId": 4,
+            "label": "UAV1",
+            "startMs": 832644075422,
+            "endMs": 832644075831,
+            "durationS": 0.409,
+            "phase": "imaging",
+            "maxYawRateDps": 13.706242718446616,
+            "minRadiusM": 162.7032328786725,
+            "maxBankProxyDeg": 43.51430019719666,
+            "turnAngleDeg": 5.668945000000008,
+            "meanSpeedMps": 38.92
+          },
+          {
+            "aircraftId": 4,
+            "label": "UAV1",
+            "startMs": 832644254619,
+            "endMs": 832644259615,
+            "durationS": 4.996,
+            "phase": "target-track",
+            "maxYawRateDps": 12.895721925133634,
+            "minRadiusM": 199.12417050440303,
+            "maxBankProxyDeg": 45.8079120826423,
+            "turnAngleDeg": 31.69007000000002,
+            "meanSpeedMps": 44.87
+          },
+          {
+            "aircraftId": 4,
+            "label": "UAV1",
+            "startMs": 832644060234,
+            "endMs": 832644061432,
+            "durationS": 1.198,
+            "phase": "imaging",
+            "maxYawRateDps": 12.790450980392286,
+            "minRadiusM": 178.8227147707503,
+            "maxBankProxyDeg": 42.261944510407915,
+            "turnAngleDeg": 10.79956199999998,
+            "meanSpeedMps": 39.92
+          },
+          {
+            "aircraftId": 4,
+            "label": "UAV1",
+            "startMs": 832644775410,
+            "endMs": 832644775810,
+            "durationS": 0.4,
+            "phase": "target-track",
+            "maxYawRateDps": 11.896628571428534,
+            "minRadiusM": 216.06288377071732,
+            "maxBankProxyDeg": 43.527143068948945,
+            "turnAngleDeg": 4.136349999999993,
+            "meanSpeedMps": 44.86
+          },
+          {
+            "aircraftId": 4,
+            "label": "UAV1",
+            "startMs": 832644248420,
+            "endMs": 832644253228,
+            "durationS": 4.808,
+            "phase": "target-track",
+            "maxYawRateDps": 11.833532338308391,
+            "minRadiusM": 217.48174604485675,
+            "maxBankProxyDeg": 43.41013445081625,
+            "turnAngleDeg": 30.16846000000004,
+            "meanSpeedMps": 44.89
+          },
+          {
+            "aircraftId": 4,
+            "label": "UAV1",
+            "startMs": 832644297027,
+            "endMs": 832644298021,
+            "durationS": 0.994,
+            "phase": "target-track",
+            "maxYawRateDps": 11.679909090909113,
+            "minRadiusM": 220.08393605940665,
+            "maxBankProxyDeg": 43.002991613139066,
+            "turnAngleDeg": 8.031007000000074,
+            "meanSpeedMps": 44.87
+          },
+          {
+            "aircraftId": 4,
+            "label": "UAV1",
+            "startMs": 832644234025,
+            "endMs": 832644239028,
+            "durationS": 5.003,
+            "phase": "target-track",
+            "maxYawRateDps": 11.605651960784527,
+            "minRadiusM": 221.50531337181033,
+            "maxBankProxyDeg": 42.8224639764543,
+            "turnAngleDeg": 31.673583000000008,
+            "meanSpeedMps": 44.87
+          },
+          {
+            "aircraftId": 4,
+            "label": "UAV1",
+            "startMs": 832644691607,
+            "endMs": 832644692610,
+            "durationS": 1.003,
+            "phase": "target-track",
+            "maxYawRateDps": 10.797843137254961,
+            "minRadiusM": 238.06933252749926,
+            "maxBankProxyDeg": 40.76814177470809,
+            "turnAngleDeg": 7.591551999999979,
+            "meanSpeedMps": 44.87
+          },
+          {
+            "aircraftId": 4,
+            "label": "UAV1",
+            "startMs": 832644502813,
+            "endMs": 832644503839,
+            "durationS": 1.026,
+            "phase": "target-track",
+            "maxYawRateDps": 10.767711442786071,
+            "minRadiusM": 238.7285709876164,
+            "maxBankProxyDeg": 40.68814973627227,
+            "turnAngleDeg": 8.486940000000004,
+            "meanSpeedMps": 44.87
+          },
+          {
+            "aircraftId": 4,
+            "label": "UAV1",
+            "startMs": 832644427010,
+            "endMs": 832644427814,
+            "durationS": 0.804,
+            "phase": "target-track",
+            "maxYawRateDps": 10.74401960784311,
+            "minRadiusM": 239.2619710547037,
+            "maxBankProxyDeg": 40.62659653830426,
+            "turnAngleDeg": 6.388550000000009,
+            "meanSpeedMps": 44.86
+          },
+          {
+            "aircraftId": 4,
+            "label": "UAV1",
+            "startMs": 832644350817,
+            "endMs": 832644351411,
+            "durationS": 0.594,
+            "phase": "target-track",
+            "maxYawRateDps": 10.524009900990167,
+            "minRadiusM": 244.25674146329612,
+            "maxBankProxyDeg": 40.04090423650222,
+            "turnAngleDeg": 5.207520000000017,
+            "meanSpeedMps": 44.86
+          },
+          {
+            "aircraftId": 4,
+            "label": "UAV1",
+            "startMs": 832644583609,
+            "endMs": 832644584407,
+            "durationS": 0.798,
+            "phase": "target-track",
+            "maxYawRateDps": 10.396800000000063,
+            "minRadiusM": 247.24534140728957,
+            "maxBankProxyDeg": 39.698084667550546,
+            "turnAngleDeg": 6.641230000000007,
+            "meanSpeedMps": 44.86
+          },
+          {
+            "aircraftId": 4,
+            "label": "UAV1",
+            "startMs": 832644448211,
+            "endMs": 832644448615,
+            "durationS": 0.404,
+            "phase": "target-track",
+            "maxYawRateDps": 10.27221499999996,
+            "minRadiusM": 250.51931409505949,
+            "maxBankProxyDeg": 39.389898165770546,
+            "turnAngleDeg": 4.235229000000004,
+            "meanSpeedMps": 44.91
+          },
+          {
+            "aircraftId": 4,
+            "label": "UAV1",
+            "startMs": 832644616813,
+            "endMs": 832644617808,
+            "durationS": 0.995,
+            "phase": "target-track",
+            "maxYawRateDps": 10.22490099009897,
+            "minRadiusM": 251.40931055588104,
+            "maxBankProxyDeg": 39.23018060705538,
+            "turnAngleDeg": 7.640990999999985,
+            "meanSpeedMps": 44.87
+          },
+          {
+            "aircraftId": 4,
+            "label": "UAV1",
+            "startMs": 832644562019,
+            "endMs": 832644563016,
+            "durationS": 0.997,
+            "phase": "target-track",
+            "maxYawRateDps": 10.147487684728981,
+            "minRadiusM": 253.59855916944645,
+            "maxBankProxyDeg": 39.04702575199772,
+            "turnAngleDeg": 7.487179999999995,
+            "meanSpeedMps": 44.86
+          }
+        ],
+        "rollObserved": false
+      },
+      "5": {
+        "aircraftId": 5,
+        "label": "UAV2",
+        "isUav": true,
+        "sampleCount": 3621,
+        "durationS": 723.997,
+        "distanceM": 30418.3,
+        "usable": true,
+        "timeStepS": {
+          "count": 3620,
+          "min": 0.125,
+          "p25": 0.199,
+          "p50": 0.202,
+          "p75": 0.204,
+          "p90": 0.206,
+          "p95": 0.209,
+          "max": 0.275
+        },
+        "speedMps": {
+          "count": 3620,
+          "min": 38.65,
+          "p25": 38.9,
+          "p50": 44.86,
+          "p75": 44.863,
+          "p90": 44.866,
+          "p95": 44.867,
+          "max": 44.97
+        },
+        "groundSpeedMps": {
+          "count": 3620,
+          "min": 0.0,
+          "p25": 38.175,
+          "p50": 42.762,
+          "p75": 46.336,
+          "p90": 50.237,
+          "p95": 56.344,
+          "max": 127.415
+        },
+        "accelMps2": {
+          "count": 3620,
+          "min": -2.45,
+          "p25": 0.0,
+          "p50": 0.0,
+          "p75": 0.0,
+          "p90": 0.0,
+          "p95": 0.005,
+          "max": 4.733
+        },
+        "verticalRateMps": {
+          "count": 3620,
+          "min": -6.061,
+          "p25": 0.0,
+          "p50": 0.0,
+          "p75": 0.0,
+          "p90": 4.975,
+          "p95": 5.319,
+          "max": 15.957
+        },
+        "yawRateDps": {
+          "count": 3620,
+          "min": -15.52,
+          "p25": -5.251,
+          "p50": -4.318,
+          "p75": 0.0,
+          "p90": 0.109,
+          "p95": 0.727,
+          "max": 13.246
+        },
+        "absYawRateDps": {
+          "count": 3620,
+          "min": 0.0,
+          "p25": 0.229,
+          "p50": 4.368,
+          "p75": 5.303,
+          "p90": 5.971,
+          "p95": 6.522,
+          "max": 15.52
+        },
+        "yawAccelDps2": {
+          "count": 3619,
+          "min": -75.337,
+          "p25": -1.293,
+          "p50": 0.0,
+          "p75": 1.572,
+          "p90": 5.119,
+          "p95": 20.354,
+          "max": 83.438
+        },
+        "turnRadiusM": {
+          "count": 2738,
+          "min": 165.63,
+          "p25": 467.92,
+          "p50": 530.12,
+          "p75": 621.76,
+          "p90": 1906.52,
+          "p95": 4854.38,
+          "max": 11966.34
+        },
+        "geometryRadiusM": {
+          "count": 3009,
+          "min": 20.56,
+          "p25": 69.0,
+          "p50": 120.11,
+          "p75": 269.63,
+          "p90": 655.95,
+          "p95": 1018.22,
+          "max": 18091.13
+        },
+        "bankProxyDeg": {
+          "count": 2738,
+          "min": 0.799,
+          "p25": 18.179,
+          "p50": 21.138,
+          "p75": 23.684,
+          "p90": 26.077,
+          "p95": 28.433,
+          "max": 51.097
+        },
+        "directRollDeg": {
+          "count": 0
+        },
+        "directPitchDeg": {
+          "count": 0
+        },
+        "oppositeTurnGapS": {
+          "count": 8,
+          "min": 1.202,
+          "p25": 1.405,
+          "p50": 3.593,
+          "p75": 10.044,
+          "p90": 54.237,
+          "p95": 104.918,
+          "max": 155.599
+        },
+        "speedBuckets": [
+          {
+            "bucket": "35-50",
+            "turnRadiusM": {
+              "count": 2738,
+              "min": 165.6,
+              "p25": 467.9,
+              "p50": 530.1,
+              "p75": 621.8,
+              "p90": 1906.5,
+              "p95": 4854.4,
+              "max": 11966.3
+            }
+          }
+        ],
+        "phaseMetrics": [
+          {
+            "phase": "imaging",
+            "sampleCount": 1117,
+            "speedMps": {
+              "count": 1117,
+              "min": 38.65,
+              "p25": 38.77,
+              "p50": 38.8,
+              "p75": 38.85,
+              "p90": 38.95,
+              "p95": 39.1,
+              "max": 39.75
+            },
+            "absYawRateDps": {
+              "count": 1117,
+              "min": 0.0,
+              "p25": 0.027,
+              "p50": 0.082,
+              "p75": 0.402,
+              "p90": 1.466,
+              "p95": 2.873,
+              "max": 8.813
+            },
+            "turnRadiusM": {
+              "count": 382,
+              "min": 252.3,
+              "p25": 1350.3,
+              "p50": 3253.8,
+              "p75": 5841.9,
+              "p90": 8490.7,
+              "p95": 10180.4,
+              "max": 11071.0
+            },
+            "bankProxyDeg": {
+              "count": 382,
+              "min": 0.8,
+              "p25": 1.5,
+              "p50": 2.7,
+              "p75": 6.48,
+              "p90": 13.45,
+              "p95": 18.1,
+              "max": 31.33
+            },
+            "absAccelMps2": {
+              "count": 1117,
+              "min": 0.0,
+              "p25": 0.0,
+              "p50": 0.0,
+              "p75": 0.0,
+              "p90": 0.0,
+              "p95": 0.004,
+              "max": 2.45
+            }
+          },
+          {
+            "phase": "target-track",
+            "sampleCount": 2503,
+            "speedMps": {
+              "count": 2503,
+              "min": 38.8,
+              "p25": 44.86,
+              "p50": 44.86,
+              "p75": 44.86,
+              "p90": 44.87,
+              "p95": 44.91,
+              "max": 44.97
+            },
+            "absYawRateDps": {
+              "count": 2503,
+              "min": 0.0,
+              "p25": 4.289,
+              "p50": 4.936,
+              "p75": 5.547,
+              "p90": 6.199,
+              "p95": 6.988,
+              "max": 15.52
+            },
+            "turnRadiusM": {
+              "count": 2356,
+              "min": 165.6,
+              "p25": 461.0,
+              "p50": 513.7,
+              "p75": 584.2,
+              "p90": 648.0,
+              "p95": 714.2,
+              "max": 11966.3
+            },
+            "bankProxyDeg": {
+              "count": 2356,
+              "min": 0.98,
+              "p25": 19.36,
+              "p50": 21.78,
+              "p75": 24.02,
+              "p90": 26.5,
+              "p95": 29.84,
+              "max": 51.1
+            },
+            "absAccelMps2": {
+              "count": 2503,
+              "min": 0.0,
+              "p25": 0.0,
+              "p50": 0.0,
+              "p75": 0.0,
+              "p90": 0.006,
+              "p95": 0.006,
+              "max": 4.733
+            }
+          }
+        ],
+        "aggressiveEvents": [
+          {
+            "aircraftId": 5,
+            "label": "UAV2",
+            "startMs": 832644279430,
+            "endMs": 832644283619,
+            "durationS": 4.189,
+            "phase": "target-track",
+            "maxYawRateDps": 13.456796296296373,
+            "minRadiusM": 189.97055161534442,
+            "maxBankProxyDeg": 46.89862172338646,
+            "turnAngleDeg": 29.218139000000036,
+            "meanSpeedMps": 44.62
+          },
+          {
+            "aircraftId": 5,
+            "label": "UAV2",
+            "startMs": 832644354813,
+            "endMs": 832644356622,
+            "durationS": 1.809,
+            "phase": "target-track",
+            "maxYawRateDps": 13.101358288770006,
+            "minRadiusM": 196.42993457318832,
+            "maxBankProxyDeg": 46.32371913851853,
+            "turnAngleDeg": 12.84301400000001,
+            "meanSpeedMps": 44.86
+          },
+          {
+            "aircraftId": 5,
+            "label": "UAV2",
+            "startMs": 832644292620,
+            "endMs": 832644297212,
+            "durationS": 4.592,
+            "phase": "target-track",
+            "maxYawRateDps": 12.730211640211838,
+            "minRadiusM": 201.26316181456,
+            "maxBankProxyDeg": 45.373979926543775,
+            "turnAngleDeg": 29.789428999999984,
+            "meanSpeedMps": 44.75
+          },
+          {
+            "aircraftId": 5,
+            "label": "UAV2",
+            "startMs": 832644284025,
+            "endMs": 832644284621,
+            "durationS": 0.596,
+            "phase": "target-track",
+            "maxYawRateDps": 12.526740740740657,
+            "minRadiusM": 204.0750318291968,
+            "maxBankProxyDeg": 44.84829035048011,
+            "turnAngleDeg": 6.141358000000025,
+            "meanSpeedMps": 44.63
+          },
+          {
+            "aircraftId": 5,
+            "label": "UAV2",
+            "startMs": 832644330424,
+            "endMs": 832644335021,
+            "durationS": 4.597,
+            "phase": "target-track",
+            "maxYawRateDps": 12.524399999999929,
+            "minRadiusM": 205.25642541421198,
+            "maxBankProxyDeg": 45.0029472763233,
+            "turnAngleDeg": 30.509034000000014,
+            "meanSpeedMps": 44.87
+          },
+          {
+            "aircraftId": 5,
+            "label": "UAV2",
+            "startMs": 832644314214,
+            "endMs": 832644317613,
+            "durationS": 3.399,
+            "phase": "target-track",
+            "maxYawRateDps": 12.374052631578909,
+            "minRadiusM": 208.22316861646593,
+            "maxBankProxyDeg": 44.722099044106315,
+            "turnAngleDeg": 23.961180000000013,
+            "meanSpeedMps": 44.97
+          },
+          {
+            "aircraftId": 5,
+            "label": "UAV2",
+            "startMs": 832644351828,
+            "endMs": 832644354422,
+            "durationS": 2.594,
+            "phase": "target-track",
+            "maxYawRateDps": 11.392236453201967,
+            "minRadiusM": 225.9028000094709,
+            "maxBankProxyDeg": 42.32401544247224,
+            "turnAngleDeg": 17.962646000000035,
+            "meanSpeedMps": 44.92
+          },
+          {
+            "aircraftId": 5,
+            "label": "UAV2",
+            "startMs": 832644687409,
+            "endMs": 832644690607,
+            "durationS": 3.198,
+            "phase": "target-track",
+            "maxYawRateDps": 11.311064039408972,
+            "minRadiusM": 227.2640158367846,
+            "maxBankProxyDeg": 42.08754264992194,
+            "turnAngleDeg": 20.44006300000001,
+            "meanSpeedMps": 44.87
+          },
+          {
+            "aircraftId": 5,
+            "label": "UAV2",
+            "startMs": 832644425208,
+            "endMs": 832644426212,
+            "durationS": 1.004,
+            "phase": "target-track",
+            "maxYawRateDps": 11.095621890547276,
+            "minRadiusM": 231.6801467985256,
+            "maxBankProxyDeg": 41.54044896882271,
+            "turnAngleDeg": 7.794800000000009,
+            "meanSpeedMps": 44.87
+          },
+          {
+            "aircraftId": 5,
+            "label": "UAV2",
+            "startMs": 832644464618,
+            "endMs": 832644467410,
+            "durationS": 2.792,
+            "phase": "target-track",
+            "maxYawRateDps": 11.067920792079281,
+            "minRadiusM": 232.253231102172,
+            "maxBankProxyDeg": 41.46854125753829,
+            "turnAngleDeg": 18.050540000000012,
+            "meanSpeedMps": 44.87
+          },
+          {
+            "aircraftId": 5,
+            "label": "UAV2",
+            "startMs": 832644616813,
+            "endMs": 832644617405,
+            "durationS": 0.592,
+            "phase": "target-track",
+            "maxYawRateDps": 11.041557788944454,
+            "minRadiusM": 232.80125037372716,
+            "maxBankProxyDeg": 41.39995597999376,
+            "turnAngleDeg": 5.548099999999977,
+            "meanSpeedMps": 44.86
+          },
+          {
+            "aircraftId": 5,
+            "label": "UAV2",
+            "startMs": 832644302620,
+            "endMs": 832644304823,
+            "durationS": 2.203,
+            "phase": "target-track",
+            "maxYawRateDps": 10.986330049261035,
+            "minRadiusM": 233.73136615082825,
+            "maxBankProxyDeg": 41.22831470060502,
+            "turnAngleDeg": 15.650019999999984,
+            "meanSpeedMps": 44.82
+          },
+          {
+            "aircraftId": 5,
+            "label": "UAV2",
+            "startMs": 832644386018,
+            "endMs": 832644387422,
+            "durationS": 1.404,
+            "phase": "target-track",
+            "maxYawRateDps": 10.87755445544561,
+            "minRadiusM": 236.32474734575976,
+            "maxBankProxyDeg": 40.976664329541705,
+            "turnAngleDeg": 9.821777999999995,
+            "meanSpeedMps": 44.87
+          },
+          {
+            "aircraftId": 5,
+            "label": "UAV2",
+            "startMs": 832644572011,
+            "endMs": 832644572416,
+            "durationS": 0.405,
+            "phase": "target-track",
+            "maxYawRateDps": 10.76660000000004,
+            "minRadiusM": 238.75321508585017,
+            "maxBankProxyDeg": 40.685226004785775,
+            "turnAngleDeg": 4.323120000000017,
+            "meanSpeedMps": 44.86
+          },
+          {
+            "aircraftId": 5,
+            "label": "UAV2",
+            "startMs": 832644502813,
+            "endMs": 832644503839,
+            "durationS": 1.026,
+            "phase": "target-track",
+            "maxYawRateDps": 10.494378109452798,
+            "minRadiusM": 244.94999228850568,
+            "maxBankProxyDeg": 39.96176620731366,
+            "turnAngleDeg": 8.73962000000003,
+            "meanSpeedMps": 44.86
+          },
+          {
+            "aircraftId": 5,
+            "label": "UAV2",
+            "startMs": 832644726202,
+            "endMs": 832644727810,
+            "durationS": 1.608,
+            "phase": "target-track",
+            "maxYawRateDps": 10.363940886699526,
+            "minRadiusM": 248.02923845718095,
+            "maxBankProxyDeg": 39.60897428223817,
+            "turnAngleDeg": 11.041260000000023,
+            "meanSpeedMps": 44.86
+          },
+          {
+            "aircraftId": 5,
+            "label": "UAV2",
+            "startMs": 832644458223,
+            "endMs": 832644458818,
+            "durationS": 0.595,
+            "phase": "target-track",
+            "maxYawRateDps": 10.182453658536561,
+            "minRadiusM": 252.44999405308064,
+            "maxBankProxyDeg": 39.112645338241585,
+            "turnAngleDeg": 5.2130129999999895,
+            "meanSpeedMps": 44.86
+          },
+          {
+            "aircraftId": 5,
+            "label": "UAV2",
+            "startMs": 832644617808,
+            "endMs": 832644619203,
+            "durationS": 1.395,
+            "phase": "target-track",
+            "maxYawRateDps": 10.066305418719402,
+            "minRadiusM": 255.35569927770413,
+            "maxBankProxyDeg": 38.79050545608094,
+            "turnAngleDeg": 9.442750000000046,
+            "meanSpeedMps": 44.86
+          }
+        ],
+        "rollObserved": false
+      },
+      "6": {
+        "aircraftId": 6,
+        "label": "UAV3",
+        "isUav": true,
+        "sampleCount": 3621,
+        "durationS": 723.997,
+        "distanceM": 29979.3,
+        "usable": true,
+        "timeStepS": {
+          "count": 3620,
+          "min": 0.125,
+          "p25": 0.199,
+          "p50": 0.202,
+          "p75": 0.204,
+          "p90": 0.206,
+          "p95": 0.209,
+          "max": 0.275
+        },
+        "speedMps": {
+          "count": 3620,
+          "min": 13.916,
+          "p25": 38.85,
+          "p50": 44.86,
+          "p75": 44.863,
+          "p90": 44.866,
+          "p95": 44.866,
+          "max": 44.969
+        },
+        "groundSpeedMps": {
+          "count": 3620,
+          "min": 0.0,
+          "p25": 37.748,
+          "p50": 42.174,
+          "p75": 45.992,
+          "p90": 49.94,
+          "p95": 55.935,
+          "max": 102.238
+        },
+        "accelMps2": {
+          "count": 3620,
+          "min": -1.961,
+          "p25": 0.0,
+          "p50": 0.0,
+          "p75": 0.0,
+          "p90": 0.0,
+          "p95": 0.006,
+          "max": 15.518
+        },
+        "verticalRateMps": {
+          "count": 3620,
+          "min": -5.435,
+          "p25": 0.0,
+          "p50": 0.0,
+          "p75": 0.0,
+          "p90": 4.975,
+          "p95": 5.376,
+          "max": 19.704
+        },
+        "yawRateDps": {
+          "count": 3620,
+          "min": -11.906,
+          "p25": -5.141,
+          "p50": -4.261,
+          "p75": 0.0,
+          "p90": 0.054,
+          "p95": 0.487,
+          "max": 14.972
+        },
+        "absYawRateDps": {
+          "count": 3620,
+          "min": 0.0,
+          "p25": 0.189,
+          "p50": 4.294,
+          "p75": 5.167,
+          "p90": 5.81,
+          "p95": 6.347,
+          "max": 14.972
+        },
+        "yawAccelDps2": {
+          "count": 3619,
+          "min": -59.526,
+          "p25": -1.654,
+          "p50": 0.0,
+          "p75": 1.701,
+          "p90": 5.229,
+          "p95": 19.989,
+          "max": 64.572
+        },
+        "turnRadiusM": {
+          "count": 2705,
+          "min": 145.09,
+          "p25": 474.96,
+          "p50": 541.54,
+          "p75": 632.17,
+          "p90": 1777.0,
+          "p95": 4240.65,
+          "max": 11751.57
+        },
+        "geometryRadiusM": {
+          "count": 3066,
+          "min": 20.01,
+          "p25": 66.71,
+          "p50": 113.66,
+          "p75": 244.86,
+          "p90": 570.8,
+          "p95": 927.8,
+          "max": 6780.57
+        },
+        "bankProxyDeg": {
+          "count": 2705,
+          "min": 0.792,
+          "p25": 17.843,
+          "p50": 20.697,
+          "p75": 23.3,
+          "p90": 25.561,
+          "p95": 28.169,
+          "max": 45.29
+        },
+        "directRollDeg": {
+          "count": 0
+        },
+        "directPitchDeg": {
+          "count": 0
+        },
+        "oppositeTurnGapS": {
+          "count": 9,
+          "min": 0.807,
+          "p25": 1.399,
+          "p50": 4.993,
+          "p75": 8.997,
+          "p90": 41.229,
+          "p95": 104.107,
+          "max": 166.985
+        },
+        "speedBuckets": [
+          {
+            "bucket": "<20",
+            "turnRadiusM": {
+              "count": 8,
+              "min": 160.3,
+              "p25": 203.3,
+              "p50": 225.9,
+              "p75": 401.4,
+              "p90": 785.7,
+              "p95": 855.7,
+              "max": 925.6
+            }
+          },
+          {
+            "bucket": "20-35",
+            "turnRadiusM": {
+              "count": 12,
+              "min": 161.1,
+              "p25": 618.4,
+              "p50": 1713.3,
+              "p75": 3997.7,
+              "p90": 5753.0,
+              "p95": 6852.6,
+              "max": 7993.3
+            }
+          },
+          {
+            "bucket": "35-50",
+            "turnRadiusM": {
+              "count": 2685,
+              "min": 145.1,
+              "p25": 475.0,
+              "p50": 541.5,
+              "p75": 631.1,
+              "p90": 1750.1,
+              "p95": 4170.6,
+              "max": 11751.6
+            }
+          }
+        ],
+        "phaseMetrics": [
+          {
+            "phase": "imaging",
+            "sampleCount": 1165,
+            "speedMps": {
+              "count": 1165,
+              "min": 13.92,
+              "p25": 38.7,
+              "p50": 38.8,
+              "p75": 38.8,
+              "p90": 38.95,
+              "p95": 38.95,
+              "max": 39.0
+            },
+            "absYawRateDps": {
+              "count": 1165,
+              "min": 0.0,
+              "p25": 0.0,
+              "p50": 0.055,
+              "p75": 0.441,
+              "p90": 1.577,
+              "p95": 3.126,
+              "max": 14.972
+            },
+            "turnRadiusM": {
+              "count": 391,
+              "min": 145.1,
+              "p25": 1105.2,
+              "p50": 2302.9,
+              "p75": 5055.9,
+              "p90": 8588.7,
+              "p95": 9851.5,
+              "max": 11100.4
+            },
+            "bankProxyDeg": {
+              "count": 391,
+              "min": 0.79,
+              "p25": 1.68,
+              "p50": 3.47,
+              "p75": 6.99,
+              "p90": 13.38,
+              "p95": 17.97,
+              "max": 45.29
+            },
+            "absAccelMps2": {
+              "count": 1165,
+              "min": 0.0,
+              "p25": 0.0,
+              "p50": 0.0,
+              "p75": 0.0,
+              "p90": 0.003,
+              "p95": 0.248,
+              "max": 15.518
+            }
+          },
+          {
+            "phase": "target-track",
+            "sampleCount": 2455,
+            "speedMps": {
+              "count": 2455,
+              "min": 38.9,
+              "p25": 44.86,
+              "p50": 44.86,
+              "p75": 44.86,
+              "p90": 44.87,
+              "p95": 44.87,
+              "max": 44.97
+            },
+            "absYawRateDps": {
+              "count": 2455,
+              "min": 0.0,
+              "p25": 4.228,
+              "p50": 4.82,
+              "p75": 5.454,
+              "p90": 6.055,
+              "p95": 6.882,
+              "max": 11.906
+            },
+            "turnRadiusM": {
+              "count": 2314,
+              "min": 215.4,
+              "p25": 468.0,
+              "p50": 527.1,
+              "p75": 592.1,
+              "p90": 651.2,
+              "p95": 705.3,
+              "max": 11751.6
+            },
+            "bankProxyDeg": {
+              "count": 2314,
+              "min": 0.97,
+              "p25": 19.11,
+              "p50": 21.28,
+              "p75": 23.68,
+              "p90": 26.02,
+              "p95": 29.7,
+              "max": 43.49
+            },
+            "absAccelMps2": {
+              "count": 2455,
+              "min": 0.0,
+              "p25": 0.0,
+              "p50": 0.0,
+              "p75": 0.0,
+              "p90": 0.006,
+              "p95": 0.006,
+              "max": 4.781
+            }
+          }
+        ],
+        "aggressiveEvents": [
+          {
+            "aircraftId": 6,
+            "label": "UAV3",
+            "startMs": 832644065822,
+            "endMs": 832644068630,
+            "durationS": 2.808,
+            "phase": "imaging",
+            "maxYawRateDps": 14.971563725490252,
+            "minRadiusM": 145.08798108507855,
+            "maxBankProxyDeg": 45.29022588891324,
+            "turnAngleDeg": 21.428832999999997,
+            "meanSpeedMps": 37.87
+          },
+          {
+            "aircraftId": 6,
+            "label": "UAV3",
+            "startMs": 832644301223,
+            "endMs": 832644302232,
+            "durationS": 1.009,
+            "phase": "target-track",
+            "maxYawRateDps": 11.906369458128033,
+            "minRadiusM": 215.42975777444855,
+            "maxBankProxyDeg": 43.49001793779414,
+            "turnAngleDeg": 8.146363000000008,
+            "meanSpeedMps": 44.77
+          },
+          {
+            "aircraftId": 6,
+            "label": "UAV3",
+            "startMs": 832644288624,
+            "endMs": 832644292227,
+            "durationS": 3.603,
+            "phase": "target-track",
+            "maxYawRateDps": 11.567335096153888,
+            "minRadiusM": 221.2558627137937,
+            "maxBankProxyDeg": 42.60141218565616,
+            "turnAngleDeg": 24.47204600000012,
+            "meanSpeedMps": 44.67
+          },
+          {
+            "aircraftId": 6,
+            "label": "UAV3",
+            "startMs": 832644458223,
+            "endMs": 832644459212,
+            "durationS": 0.989,
+            "phase": "target-track",
+            "maxYawRateDps": 11.437051282051376,
+            "minRadiusM": 224.76381761592066,
+            "maxBankProxyDeg": 42.4038190514449,
+            "turnAngleDeg": 7.712402999999995,
+            "meanSpeedMps": 44.87
+          },
+          {
+            "aircraftId": 6,
+            "label": "UAV3",
+            "startMs": 832644346819,
+            "endMs": 832644350817,
+            "durationS": 3.998,
+            "phase": "target-track",
+            "maxYawRateDps": 11.203861386138641,
+            "minRadiusM": 229.43200775599732,
+            "maxBankProxyDeg": 41.81546277590524,
+            "turnAngleDeg": 25.33996000000002,
+            "meanSpeedMps": 44.87
+          },
+          {
+            "aircraftId": 6,
+            "label": "UAV3",
+            "startMs": 832644418209,
+            "endMs": 832644418611,
+            "durationS": 0.402,
+            "phase": "target-track",
+            "maxYawRateDps": 11.190851063829808,
+            "minRadiusM": 229.70195482733996,
+            "maxBankProxyDeg": 41.7827822429473,
+            "turnAngleDeg": 4.224240000000009,
+            "meanSpeedMps": 44.86
+          },
+          {
+            "aircraftId": 6,
+            "label": "UAV3",
+            "startMs": 832644298618,
+            "endMs": 832644300816,
+            "durationS": 2.198,
+            "phase": "target-track",
+            "maxYawRateDps": 11.120965686274634,
+            "minRadiusM": 230.64420489160312,
+            "maxBankProxyDeg": 41.5427691671012,
+            "turnAngleDeg": 15.325926999999979,
+            "meanSpeedMps": 44.72
+          },
+          {
+            "aircraftId": 6,
+            "label": "UAV3",
+            "startMs": 832644308027,
+            "endMs": 832644309820,
+            "durationS": 1.793,
+            "phase": "target-track",
+            "maxYawRateDps": 10.986323529411603,
+            "minRadiusM": 233.73150485904222,
+            "maxBankProxyDeg": 41.2282978466111,
+            "turnAngleDeg": 12.848510999999974,
+            "meanSpeedMps": 44.82
+          },
+          {
+            "aircraftId": 6,
+            "label": "UAV3",
+            "startMs": 832644427010,
+            "endMs": 832644427814,
+            "durationS": 0.804,
+            "phase": "target-track",
+            "maxYawRateDps": 10.986322580645117,
+            "minRadiusM": 233.9716898417428,
+            "maxBankProxyDeg": 41.257464021156686,
+            "turnAngleDeg": 6.317139999999995,
+            "meanSpeedMps": 44.86
+          },
+          {
+            "aircraftId": 6,
+            "label": "UAV3",
+            "startMs": 832644684415,
+            "endMs": 832644685003,
+            "durationS": 0.588,
+            "phase": "target-track",
+            "maxYawRateDps": 10.827101449275478,
+            "minRadiusM": 237.4259925859425,
+            "maxBankProxyDeg": 40.844833304485164,
+            "turnAngleDeg": 5.663450000000012,
+            "meanSpeedMps": 44.87
+          },
+          {
+            "aircraftId": 6,
+            "label": "UAV3",
+            "startMs": 832644729016,
+            "endMs": 832644730002,
+            "durationS": 0.986,
+            "phase": "target-track",
+            "maxYawRateDps": 10.577260638297926,
+            "minRadiusM": 243.01700182265995,
+            "maxBankProxyDeg": 40.182228530227476,
+            "turnAngleDeg": 7.196049999999985,
+            "meanSpeedMps": 44.86
+          },
+          {
+            "aircraftId": 6,
+            "label": "UAV3",
+            "startMs": 832644765426,
+            "endMs": 832644766201,
+            "durationS": 0.775,
+            "phase": "target-track",
+            "maxYawRateDps": 10.444746478873332,
+            "minRadiusM": 246.10692252235117,
+            "maxBankProxyDeg": 39.827304544354945,
+            "turnAngleDeg": 6.470946000000026,
+            "meanSpeedMps": 44.86
+          },
+          {
+            "aircraftId": 6,
+            "label": "UAV3",
+            "startMs": 832644591811,
+            "endMs": 832644592608,
+            "durationS": 0.797,
+            "phase": "target-track",
+            "maxYawRateDps": 10.391000000000025,
+            "minRadiusM": 247.65895850125105,
+            "maxBankProxyDeg": 39.71372660780001,
+            "turnAngleDeg": 6.608275000000049,
+            "meanSpeedMps": 44.91
+          },
+          {
+            "aircraftId": 6,
+            "label": "UAV3",
+            "startMs": 832644310236,
+            "endMs": 832644311627,
+            "durationS": 1.391,
+            "phase": "target-track",
+            "maxYawRateDps": 10.37597685185195,
+            "minRadiusM": 247.4803064869364,
+            "maxBankProxyDeg": 39.61194857235107,
+            "turnAngleDeg": 10.43701500000003,
+            "meanSpeedMps": 44.82
+          },
+          {
+            "aircraftId": 6,
+            "label": "UAV3",
+            "startMs": 832644612614,
+            "endMs": 832644614412,
+            "durationS": 1.798,
+            "phase": "target-track",
+            "maxYawRateDps": 10.30982758620689,
+            "minRadiusM": 249.3310721298943,
+            "maxBankProxyDeg": 39.46172340750829,
+            "turnAngleDeg": 11.969603000000006,
+            "meanSpeedMps": 44.86
+          },
+          {
+            "aircraftId": 6,
+            "label": "UAV3",
+            "startMs": 832644502813,
+            "endMs": 832644503412,
+            "durationS": 0.599,
+            "phase": "target-track",
+            "maxYawRateDps": 10.057139303482508,
+            "minRadiusM": 255.5884314389427,
+            "maxBankProxyDeg": 38.76502071410634,
+            "turnAngleDeg": 5.207519999999988,
+            "meanSpeedMps": 44.86
+          },
+          {
+            "aircraftId": 6,
+            "label": "UAV3",
+            "startMs": 832644756204,
+            "endMs": 832644756806,
+            "durationS": 0.602,
+            "phase": "target-track",
+            "maxYawRateDps": 9.893159203980007,
+            "minRadiusM": 259.8321034305392,
+            "maxBankProxyDeg": 38.306795843646924,
+            "turnAngleDeg": 5.213011999999992,
+            "meanSpeedMps": 44.86
+          },
+          {
+            "aircraftId": 6,
+            "label": "UAV3",
+            "startMs": 832644719404,
+            "endMs": 832644720404,
+            "durationS": 1.0,
+            "phase": "target-track",
+            "maxYawRateDps": 9.822758620689685,
+            "minRadiusM": 261.69434318878103,
+            "maxBankProxyDeg": 38.10793073502616,
+            "turnAngleDeg": 7.322390000000013,
+            "meanSpeedMps": 44.86
+          }
+        ],
+        "rollObserved": false
+      }
+    },
+    "commands": {
+      "commandCount": 42,
+      "matchedCount": 42,
+      "latencyS": {
+        "count": 42,
+        "min": 0.015,
+        "p25": 0.144,
+        "p50": 0.273,
+        "p75": 0.493,
+        "p90": 0.608,
+        "p95": 0.618,
+        "max": 0.719
+      },
+      "rows": [
+        {
+          "aircraftId": 5,
+          "label": "UAV2",
+          "type": "flightMode",
+          "timestamp": 832644053408,
+          "expected": {
+            "flightMode": 7,
+            "startWaypointId": 58
+          },
+          "latencyS": 0.618,
+          "matched": true
+        },
+        {
+          "aircraftId": 6,
+          "label": "UAV3",
+          "type": "flightMode",
+          "timestamp": 832644053414,
+          "expected": {
+            "flightMode": 7,
+            "startWaypointId": 65
+          },
+          "latencyS": 0.612,
+          "matched": true
+        },
+        {
+          "aircraftId": 4,
+          "label": "UAV1",
+          "type": "flightMode",
+          "timestamp": 832644053416,
+          "expected": {
+            "flightMode": 7,
+            "startWaypointId": 50
+          },
+          "latencyS": 0.61,
+          "matched": true
+        },
+        {
+          "aircraftId": 5,
+          "label": "UAV2",
+          "type": "filming",
+          "timestamp": 832644053519,
+          "expected": {
+            "sensorMode": 1,
+            "fov": 11.7
+          },
+          "latencyS": 0.507,
+          "matched": true
+        },
+        {
+          "aircraftId": 6,
+          "label": "UAV3",
+          "type": "filming",
+          "timestamp": 832644053532,
+          "expected": {
+            "sensorMode": 1,
+            "fov": 11.7
+          },
+          "latencyS": 0.494,
+          "matched": true
+        },
+        {
+          "aircraftId": 4,
+          "label": "UAV1",
+          "type": "filming",
+          "timestamp": 832644053534,
+          "expected": {
+            "sensorMode": 1,
+            "fov": 11.7
+          },
+          "latencyS": 0.492,
+          "matched": true
+        },
+        {
+          "aircraftId": 6,
+          "label": "UAV3",
+          "type": "flightMode",
+          "timestamp": 832644062416,
+          "expected": {
+            "flightMode": 7,
+            "startWaypointId": 101
+          },
+          "latencyS": 0.015,
+          "matched": true
+        },
+        {
+          "aircraftId": 4,
+          "label": "UAV1",
+          "type": "flightMode",
+          "timestamp": 832644062462,
+          "expected": {
+            "flightMode": 7,
+            "startWaypointId": 93
+          },
+          "latencyS": 0.172,
+          "matched": true
+        },
+        {
+          "aircraftId": 5,
+          "label": "UAV2",
+          "type": "flightMode",
+          "timestamp": 832644062494,
+          "expected": {
+            "flightMode": 7,
+            "startWaypointId": 97
+          },
+          "latencyS": 0.14,
+          "matched": true
+        },
+        {
+          "aircraftId": 6,
+          "label": "UAV3",
+          "type": "filming",
+          "timestamp": 832644062524,
+          "expected": {
+            "sensorMode": 1,
+            "fov": 7.7
+          },
+          "latencyS": 0.11,
+          "matched": true
+        },
+        {
+          "aircraftId": 4,
+          "label": "UAV1",
+          "type": "filming",
+          "timestamp": 832644062571,
+          "expected": {
+            "sensorMode": 1,
+            "fov": 7.7
+          },
+          "latencyS": 0.063,
+          "matched": true
+        },
+        {
+          "aircraftId": 5,
+          "label": "UAV2",
+          "type": "filming",
+          "timestamp": 832644062602,
+          "expected": {
+            "sensorMode": 1,
+            "fov": 7.7
+          },
+          "latencyS": 0.032,
+          "matched": true
+        },
+        {
+          "aircraftId": 4,
+          "label": "UAV1",
+          "type": "filming",
+          "timestamp": 832644107179,
+          "expected": {
+            "sensorMode": 1,
+            "fov": 0.61
+          },
+          "latencyS": 0.045,
+          "matched": true
+        },
+        {
+          "aircraftId": 4,
+          "label": "UAV1",
+          "type": "filming",
+          "timestamp": 832644112503,
+          "expected": {
+            "sensorMode": 1,
+            "fov": 7.7
+          },
+          "latencyS": 0.124,
+          "matched": true
+        },
+        {
+          "aircraftId": 4,
+          "label": "UAV1",
+          "type": "filming",
+          "timestamp": 832644123096,
+          "expected": {
+            "sensorMode": 1,
+            "fov": 0.61
+          },
+          "latencyS": 0.124,
+          "matched": true
+        },
+        {
+          "aircraftId": 4,
+          "label": "UAV1",
+          "type": "filming",
+          "timestamp": 832644128466,
+          "expected": {
+            "sensorMode": 1,
+            "fov": 7.7
+          },
+          "latencyS": 0.151,
+          "matched": true
+        },
+        {
+          "aircraftId": 4,
+          "label": "UAV1",
+          "type": "filming",
+          "timestamp": 832644178040,
+          "expected": {
+            "sensorMode": 2,
+            "fov": 7.7
+          },
+          "latencyS": 0.186,
+          "matched": true
+        },
+        {
+          "aircraftId": 5,
+          "label": "UAV2",
+          "type": "filming",
+          "timestamp": 832644192077,
+          "expected": {
+            "sensorMode": 2,
+            "fov": 7.7
+          },
+          "latencyS": 0.142,
+          "matched": true
+        },
+        {
+          "aircraftId": 5,
+          "label": "UAV2",
+          "type": "filming",
+          "timestamp": 832644198856,
+          "expected": {
+            "sensorMode": 1,
+            "fov": 1.4847131
+          },
+          "latencyS": 0.212,
+          "matched": true
+        },
+        {
+          "aircraftId": 4,
+          "label": "UAV1",
+          "type": "filming",
+          "timestamp": 832644203215,
+          "expected": {
+            "sensorMode": 1,
+            "fov": 2.4
+          },
+          "latencyS": 0.407,
+          "matched": true
+        },
+        {
+          "aircraftId": 5,
+          "label": "UAV2",
+          "type": "filming",
+          "timestamp": 832644204232,
+          "expected": {
+            "sensorMode": 2,
+            "fov": 7.7
+          },
+          "latencyS": 0.592,
+          "matched": true
+        },
+        {
+          "aircraftId": 4,
+          "label": "UAV1",
+          "type": "filming",
+          "timestamp": 832644208560,
+          "expected": {
+            "sensorMode": 2,
+            "fov": 7.7
+          },
+          "latencyS": 0.476,
+          "matched": true
+        },
+        {
+          "aircraftId": 4,
+          "label": "UAV1",
+          "type": "filming",
+          "timestamp": 832644219166,
+          "expected": {
+            "sensorMode": 1,
+            "fov": 2.3328688
+          },
+          "latencyS": 0.25,
+          "matched": true
+        },
+        {
+          "aircraftId": 4,
+          "label": "UAV1",
+          "type": "filming",
+          "timestamp": 832644221805,
+          "expected": {
+            "sensorMode": 3,
+            "fov": 1.8
+          },
+          "latencyS": 0.023,
+          "matched": true
+        },
+        {
+          "aircraftId": 4,
+          "label": "UAV1",
+          "type": "flightMode",
+          "timestamp": 832644221815,
+          "expected": {
+            "flightMode": 9,
+            "targetId": 74
+          },
+          "latencyS": 0.402,
+          "matched": true
+        },
+        {
+          "aircraftId": 5,
+          "label": "UAV2",
+          "type": "filming",
+          "timestamp": 832644226306,
+          "expected": {
+            "sensorMode": 1,
+            "fov": 1.6779348
+          },
+          "latencyS": 0.313,
+          "matched": true
+        },
+        {
+          "aircraftId": 5,
+          "label": "UAV2",
+          "type": "filming",
+          "timestamp": 832644231663,
+          "expected": {
+            "sensorMode": 2,
+            "fov": 7.7
+          },
+          "latencyS": 0.559,
+          "matched": true
+        },
+        {
+          "aircraftId": 6,
+          "label": "UAV3",
+          "type": "filming",
+          "timestamp": 832644239466,
+          "expected": {
+            "sensorMode": 2,
+            "fov": 7.7
+          },
+          "latencyS": 0.158,
+          "matched": true
+        },
+        {
+          "aircraftId": 5,
+          "label": "UAV2",
+          "type": "filming",
+          "timestamp": 832644239984,
+          "expected": {
+            "sensorMode": 1,
+            "fov": 1.7440007
+          },
+          "latencyS": 0.233,
+          "matched": true
+        },
+        {
+          "aircraftId": 5,
+          "label": "UAV2",
+          "type": "filming",
+          "timestamp": 832644245346,
+          "expected": {
+            "sensorMode": 2,
+            "fov": 7.7
+          },
+          "latencyS": 0.481,
+          "matched": true
+        },
+        {
+          "aircraftId": 5,
+          "label": "UAV2",
+          "type": "filming",
+          "timestamp": 832644247535,
+          "expected": {
+            "sensorMode": 1,
+            "fov": 1.3777082
+          },
+          "latencyS": 0.54,
+          "matched": true
+        },
+        {
+          "aircraftId": 5,
+          "label": "UAV2",
+          "type": "filming",
+          "timestamp": 832644252899,
+          "expected": {
+            "sensorMode": 2,
+            "fov": 7.7
+          },
+          "latencyS": 0.329,
+          "matched": true
+        },
+        {
+          "aircraftId": 6,
+          "label": "UAV3",
+          "type": "filming",
+          "timestamp": 832644256213,
+          "expected": {
+            "sensorMode": 1,
+            "fov": 1.6498593
+          },
+          "latencyS": 0.201,
+          "matched": true
+        },
+        {
+          "aircraftId": 6,
+          "label": "UAV3",
+          "type": "filming",
+          "timestamp": 832644261573,
+          "expected": {
+            "sensorMode": 2,
+            "fov": 7.7
+          },
+          "latencyS": 0.669,
+          "matched": true
+        },
+        {
+          "aircraftId": 6,
+          "label": "UAV3",
+          "type": "filming",
+          "timestamp": 832644268350,
+          "expected": {
+            "sensorMode": 1,
+            "fov": 1.912693
+          },
+          "latencyS": 0.469,
+          "matched": true
+        },
+        {
+          "aircraftId": 5,
+          "label": "UAV2",
+          "type": "filming",
+          "timestamp": 832644271927,
+          "expected": {
+            "sensorMode": 1,
+            "fov": 1.3383048
+          },
+          "latencyS": 0.296,
+          "matched": true
+        },
+        {
+          "aircraftId": 6,
+          "label": "UAV3",
+          "type": "filming",
+          "timestamp": 832644273706,
+          "expected": {
+            "sensorMode": 2,
+            "fov": 7.7
+          },
+          "latencyS": 0.719,
+          "matched": true
+        },
+        {
+          "aircraftId": 5,
+          "label": "UAV2",
+          "type": "filming",
+          "timestamp": 832644275205,
+          "expected": {
+            "sensorMode": 3,
+            "fov": 1.8
+          },
+          "latencyS": 0.058,
+          "matched": true
+        },
+        {
+          "aircraftId": 5,
+          "label": "UAV2",
+          "type": "flightMode",
+          "timestamp": 832644275206,
+          "expected": {
+            "flightMode": 9,
+            "targetId": 75
+          },
+          "latencyS": 0.418,
+          "matched": true
+        },
+        {
+          "aircraftId": 6,
+          "label": "UAV3",
+          "type": "filming",
+          "timestamp": 832644280477,
+          "expected": {
+            "sensorMode": 1,
+            "fov": 1.616853
+          },
+          "latencyS": 0.544,
+          "matched": true
+        },
+        {
+          "aircraftId": 6,
+          "label": "UAV3",
+          "type": "filming",
+          "timestamp": 832644285071,
+          "expected": {
+            "sensorMode": 3,
+            "fov": 1.8
+          },
+          "latencyS": 0.156,
+          "matched": true
+        },
+        {
+          "aircraftId": 6,
+          "label": "UAV3",
+          "type": "flightMode",
+          "timestamp": 832644285072,
+          "expected": {
+            "flightMode": 9,
+            "targetId": 76
+          },
+          "latencyS": 0.155,
+          "matched": true
+        }
+      ]
+    },
+    "events": [
+      {
+        "aircraftId": 2,
+        "label": "LAH2",
+        "startMs": 832644576419,
+        "endMs": 832644578218,
+        "durationS": 1.799,
+        "phase": "unknown",
+        "maxYawRateDps": 32.90008376963353,
+        "minRadiusM": null,
+        "maxBankProxyDeg": null,
+        "turnAngleDeg": 33.71904940000002,
+        "meanSpeedMps": 0.0
+      },
+      {
+        "aircraftId": 3,
+        "label": "LAH3",
+        "startMs": 832644534407,
+        "endMs": 832644536207,
+        "durationS": 1.8,
+        "phase": "unknown",
+        "maxYawRateDps": 27.559409756097523,
+        "minRadiusM": null,
+        "maxBankProxyDeg": null,
+        "turnAngleDeg": 31.030654499999997,
+        "meanSpeedMps": 0.0
+      },
+      {
+        "aircraftId": 4,
+        "label": "UAV1",
+        "startMs": 832644069034,
+        "endMs": 832644075033,
+        "durationS": 5.999,
+        "phase": "imaging",
+        "maxYawRateDps": 15.89283495145642,
+        "minRadiusM": 140.51058906168706,
+        "maxBankProxyDeg": 47.78889536830235,
+        "turnAngleDeg": 47.99926800000003,
+        "meanSpeedMps": 38.92
+      },
+      {
+        "aircraftId": 6,
+        "label": "UAV3",
+        "startMs": 832644065822,
+        "endMs": 832644068630,
+        "durationS": 2.808,
+        "phase": "imaging",
+        "maxYawRateDps": 14.971563725490252,
+        "minRadiusM": 145.08798108507855,
+        "maxBankProxyDeg": 45.29022588891324,
+        "turnAngleDeg": 21.428832999999997,
+        "meanSpeedMps": 37.87
+      },
+      {
+        "aircraftId": 4,
+        "label": "UAV1",
+        "startMs": 832644055220,
+        "endMs": 832644059826,
+        "durationS": 4.606,
+        "phase": "imaging",
+        "maxYawRateDps": 13.952639999999974,
+        "minRadiusM": 163.9276271340734,
+        "maxBankProxyDeg": 44.74927259402722,
+        "turnAngleDeg": 32.27233799999999,
+        "meanSpeedMps": 39.92
+      },
+      {
+        "aircraftId": 4,
+        "label": "UAV1",
+        "startMs": 832644076223,
+        "endMs": 832644082422,
+        "durationS": 6.199,
+        "phase": "imaging",
+        "maxYawRateDps": 13.935862068965523,
+        "minRadiusM": 160.11852789822657,
+        "maxBankProxyDeg": 44.00699743620091,
+        "turnAngleDeg": 43.82446299999998,
+        "meanSpeedMps": 38.92
+      },
+      {
+        "aircraftId": 4,
+        "label": "UAV1",
+        "startMs": 832644075422,
+        "endMs": 832644075831,
+        "durationS": 0.409,
+        "phase": "imaging",
+        "maxYawRateDps": 13.706242718446616,
+        "minRadiusM": 162.7032328786725,
+        "maxBankProxyDeg": 43.51430019719666,
+        "turnAngleDeg": 5.668945000000008,
+        "meanSpeedMps": 38.92
+      },
+      {
+        "aircraftId": 5,
+        "label": "UAV2",
+        "startMs": 832644279430,
+        "endMs": 832644283619,
+        "durationS": 4.189,
+        "phase": "target-track",
+        "maxYawRateDps": 13.456796296296373,
+        "minRadiusM": 189.97055161534442,
+        "maxBankProxyDeg": 46.89862172338646,
+        "turnAngleDeg": 29.218139000000036,
+        "meanSpeedMps": 44.62
+      },
+      {
+        "aircraftId": 5,
+        "label": "UAV2",
+        "startMs": 832644354813,
+        "endMs": 832644356622,
+        "durationS": 1.809,
+        "phase": "target-track",
+        "maxYawRateDps": 13.101358288770006,
+        "minRadiusM": 196.42993457318832,
+        "maxBankProxyDeg": 46.32371913851853,
+        "turnAngleDeg": 12.84301400000001,
+        "meanSpeedMps": 44.86
+      },
+      {
+        "aircraftId": 4,
+        "label": "UAV1",
+        "startMs": 832644254619,
+        "endMs": 832644259615,
+        "durationS": 4.996,
+        "phase": "target-track",
+        "maxYawRateDps": 12.895721925133634,
+        "minRadiusM": 199.12417050440303,
+        "maxBankProxyDeg": 45.8079120826423,
+        "turnAngleDeg": 31.69007000000002,
+        "meanSpeedMps": 44.87
+      },
+      {
+        "aircraftId": 4,
+        "label": "UAV1",
+        "startMs": 832644060234,
+        "endMs": 832644061432,
+        "durationS": 1.198,
+        "phase": "imaging",
+        "maxYawRateDps": 12.790450980392286,
+        "minRadiusM": 178.8227147707503,
+        "maxBankProxyDeg": 42.261944510407915,
+        "turnAngleDeg": 10.79956199999998,
+        "meanSpeedMps": 39.92
+      },
+      {
+        "aircraftId": 5,
+        "label": "UAV2",
+        "startMs": 832644292620,
+        "endMs": 832644297212,
+        "durationS": 4.592,
+        "phase": "target-track",
+        "maxYawRateDps": 12.730211640211838,
+        "minRadiusM": 201.26316181456,
+        "maxBankProxyDeg": 45.373979926543775,
+        "turnAngleDeg": 29.789428999999984,
+        "meanSpeedMps": 44.75
+      },
+      {
+        "aircraftId": 5,
+        "label": "UAV2",
+        "startMs": 832644284025,
+        "endMs": 832644284621,
+        "durationS": 0.596,
+        "phase": "target-track",
+        "maxYawRateDps": 12.526740740740657,
+        "minRadiusM": 204.0750318291968,
+        "maxBankProxyDeg": 44.84829035048011,
+        "turnAngleDeg": 6.141358000000025,
+        "meanSpeedMps": 44.63
+      },
+      {
+        "aircraftId": 5,
+        "label": "UAV2",
+        "startMs": 832644330424,
+        "endMs": 832644335021,
+        "durationS": 4.597,
+        "phase": "target-track",
+        "maxYawRateDps": 12.524399999999929,
+        "minRadiusM": 205.25642541421198,
+        "maxBankProxyDeg": 45.0029472763233,
+        "turnAngleDeg": 30.509034000000014,
+        "meanSpeedMps": 44.87
+      },
+      {
+        "aircraftId": 5,
+        "label": "UAV2",
+        "startMs": 832644314214,
+        "endMs": 832644317613,
+        "durationS": 3.399,
+        "phase": "target-track",
+        "maxYawRateDps": 12.374052631578909,
+        "minRadiusM": 208.22316861646593,
+        "maxBankProxyDeg": 44.722099044106315,
+        "turnAngleDeg": 23.961180000000013,
+        "meanSpeedMps": 44.97
+      },
+      {
+        "aircraftId": 6,
+        "label": "UAV3",
+        "startMs": 832644301223,
+        "endMs": 832644302232,
+        "durationS": 1.009,
+        "phase": "target-track",
+        "maxYawRateDps": 11.906369458128033,
+        "minRadiusM": 215.42975777444855,
+        "maxBankProxyDeg": 43.49001793779414,
+        "turnAngleDeg": 8.146363000000008,
+        "meanSpeedMps": 44.77
+      },
+      {
+        "aircraftId": 4,
+        "label": "UAV1",
+        "startMs": 832644775410,
+        "endMs": 832644775810,
+        "durationS": 0.4,
+        "phase": "target-track",
+        "maxYawRateDps": 11.896628571428534,
+        "minRadiusM": 216.06288377071732,
+        "maxBankProxyDeg": 43.527143068948945,
+        "turnAngleDeg": 4.136349999999993,
+        "meanSpeedMps": 44.86
+      },
+      {
+        "aircraftId": 4,
+        "label": "UAV1",
+        "startMs": 832644248420,
+        "endMs": 832644253228,
+        "durationS": 4.808,
+        "phase": "target-track",
+        "maxYawRateDps": 11.833532338308391,
+        "minRadiusM": 217.48174604485675,
+        "maxBankProxyDeg": 43.41013445081625,
+        "turnAngleDeg": 30.16846000000004,
+        "meanSpeedMps": 44.89
+      },
+      {
+        "aircraftId": 4,
+        "label": "UAV1",
+        "startMs": 832644297027,
+        "endMs": 832644298021,
+        "durationS": 0.994,
+        "phase": "target-track",
+        "maxYawRateDps": 11.679909090909113,
+        "minRadiusM": 220.08393605940665,
+        "maxBankProxyDeg": 43.002991613139066,
+        "turnAngleDeg": 8.031007000000074,
+        "meanSpeedMps": 44.87
+      },
+      {
+        "aircraftId": 4,
+        "label": "UAV1",
+        "startMs": 832644234025,
+        "endMs": 832644239028,
+        "durationS": 5.003,
+        "phase": "target-track",
+        "maxYawRateDps": 11.605651960784527,
+        "minRadiusM": 221.50531337181033,
+        "maxBankProxyDeg": 42.8224639764543,
+        "turnAngleDeg": 31.673583000000008,
+        "meanSpeedMps": 44.87
+      },
+      {
+        "aircraftId": 6,
+        "label": "UAV3",
+        "startMs": 832644288624,
+        "endMs": 832644292227,
+        "durationS": 3.603,
+        "phase": "target-track",
+        "maxYawRateDps": 11.567335096153888,
+        "minRadiusM": 221.2558627137937,
+        "maxBankProxyDeg": 42.60141218565616,
+        "turnAngleDeg": 24.47204600000012,
+        "meanSpeedMps": 44.67
+      },
+      {
+        "aircraftId": 6,
+        "label": "UAV3",
+        "startMs": 832644458223,
+        "endMs": 832644459212,
+        "durationS": 0.989,
+        "phase": "target-track",
+        "maxYawRateDps": 11.437051282051376,
+        "minRadiusM": 224.76381761592066,
+        "maxBankProxyDeg": 42.4038190514449,
+        "turnAngleDeg": 7.712402999999995,
+        "meanSpeedMps": 44.87
+      },
+      {
+        "aircraftId": 5,
+        "label": "UAV2",
+        "startMs": 832644351828,
+        "endMs": 832644354422,
+        "durationS": 2.594,
+        "phase": "target-track",
+        "maxYawRateDps": 11.392236453201967,
+        "minRadiusM": 225.9028000094709,
+        "maxBankProxyDeg": 42.32401544247224,
+        "turnAngleDeg": 17.962646000000035,
+        "meanSpeedMps": 44.92
+      },
+      {
+        "aircraftId": 5,
+        "label": "UAV2",
+        "startMs": 832644687409,
+        "endMs": 832644690607,
+        "durationS": 3.198,
+        "phase": "target-track",
+        "maxYawRateDps": 11.311064039408972,
+        "minRadiusM": 227.2640158367846,
+        "maxBankProxyDeg": 42.08754264992194,
+        "turnAngleDeg": 20.44006300000001,
+        "meanSpeedMps": 44.87
+      },
+      {
+        "aircraftId": 6,
+        "label": "UAV3",
+        "startMs": 832644346819,
+        "endMs": 832644350817,
+        "durationS": 3.998,
+        "phase": "target-track",
+        "maxYawRateDps": 11.203861386138641,
+        "minRadiusM": 229.43200775599732,
+        "maxBankProxyDeg": 41.81546277590524,
+        "turnAngleDeg": 25.33996000000002,
+        "meanSpeedMps": 44.87
+      },
+      {
+        "aircraftId": 6,
+        "label": "UAV3",
+        "startMs": 832644418209,
+        "endMs": 832644418611,
+        "durationS": 0.402,
+        "phase": "target-track",
+        "maxYawRateDps": 11.190851063829808,
+        "minRadiusM": 229.70195482733996,
+        "maxBankProxyDeg": 41.7827822429473,
+        "turnAngleDeg": 4.224240000000009,
+        "meanSpeedMps": 44.86
+      },
+      {
+        "aircraftId": 6,
+        "label": "UAV3",
+        "startMs": 832644298618,
+        "endMs": 832644300816,
+        "durationS": 2.198,
+        "phase": "target-track",
+        "maxYawRateDps": 11.120965686274634,
+        "minRadiusM": 230.64420489160312,
+        "maxBankProxyDeg": 41.5427691671012,
+        "turnAngleDeg": 15.325926999999979,
+        "meanSpeedMps": 44.72
+      },
+      {
+        "aircraftId": 5,
+        "label": "UAV2",
+        "startMs": 832644425208,
+        "endMs": 832644426212,
+        "durationS": 1.004,
+        "phase": "target-track",
+        "maxYawRateDps": 11.095621890547276,
+        "minRadiusM": 231.6801467985256,
+        "maxBankProxyDeg": 41.54044896882271,
+        "turnAngleDeg": 7.794800000000009,
+        "meanSpeedMps": 44.87
+      },
+      {
+        "aircraftId": 5,
+        "label": "UAV2",
+        "startMs": 832644464618,
+        "endMs": 832644467410,
+        "durationS": 2.792,
+        "phase": "target-track",
+        "maxYawRateDps": 11.067920792079281,
+        "minRadiusM": 232.253231102172,
+        "maxBankProxyDeg": 41.46854125753829,
+        "turnAngleDeg": 18.050540000000012,
+        "meanSpeedMps": 44.87
+      },
+      {
+        "aircraftId": 5,
+        "label": "UAV2",
+        "startMs": 832644616813,
+        "endMs": 832644617405,
+        "durationS": 0.592,
+        "phase": "target-track",
+        "maxYawRateDps": 11.041557788944454,
+        "minRadiusM": 232.80125037372716,
+        "maxBankProxyDeg": 41.39995597999376,
+        "turnAngleDeg": 5.548099999999977,
+        "meanSpeedMps": 44.86
+      }
+    ],
+    "logSignals": {
+      "totalFilesScanned": 261,
+      "sampledBytes": 39363923,
+      "filesByFolder": {
+        "0101": 1,
+        "0103": 1,
+        "0104": 1,
+        "0201": 1,
+        "0203": 1,
+        "0301": 1,
+        "0305": 1,
+        "0401": 6,
+        "0402": 1,
+        "0501": 1,
+        "0601": 1,
+        "0602": 1,
+        "0701": 1,
+        "0803": 1,
+        "0805": 1,
+        "0901": 1,
+        "0902": 1,
+        "0903": 1,
+        "0904": 1,
+        "17000": 1,
+        "51300": 1,
+        "51302": 1,
+        "51310": 1,
+        "51311": 1,
+        "51320": 2,
+        "51321": 4,
+        "51323": 1,
+        "51330": 1,
+        "52310": 1,
+        "52311": 1,
+        "53100": 1,
+        "53111": 1,
+        "53112": 1,
+        "53113": 1,
+        "53114": 1,
+        "53120": 1,
+        "53130": 1,
+        "53140": 1,
+        "DSS_Internal": 49,
+        "FlightPath": 111,
+        "IndividualMissionPlan": 39,
+        "InputMissionPlan": 1,
+        "MissionPlan": 8,
+        "MissionPlanOptionInfo": 3,
+        "MissionReferenceInfo": 1,
+        "VehicleStatus": 1,
+        "cache": 1
+      },
+      "signalCounts": {
+        "roll_or_bank": 4598,
+        "pitch": 4598,
+        "yaw": 4598,
+        "heading": 21299,
+        "turn_radius": 109,
+        "flight_mode": 13662,
+        "waypoint": 11362,
+        "target": 17389,
+        "sensor": 18030,
+        "replan": 321
+      },
+      "matchedFiles": {
+        "roll_or_bank": [
+          "51321/51321.json",
+          "51321/51321_1.json",
+          "51321/51321_2.json",
+          "51321/51321_3.json"
+        ],
+        "pitch": [
+          "51321/51321.json",
+          "51321/51321_1.json",
+          "51321/51321_2.json",
+          "51321/51321_3.json"
+        ],
+        "yaw": [
+          "51321/51321.json",
+          "51321/51321_1.json",
+          "51321/51321_2.json",
+          "51321/51321_3.json"
+        ],
+        "heading": [
+          "0401/0401.json",
+          "0401/0401_1.json",
+          "0401/0401_2.json",
+          "0401/0401_3.json",
+          "0401/0401_4.json",
+          "0401/0401_5.json",
+          "51320/51320.json",
+          "51320/51320_1.json",
+          "51321/51321.json",
+          "51321/51321_1.json",
+          "51321/51321_2.json",
+          "51321/51321_3.json"
+        ],
+        "turn_radius": [
+          "0602/0602.json",
+          "53112/53112.json",
+          "53120/53120.json",
+          "DSS_Internal/NextCollab_2_832644058655.json",
+          "FlightPath/400000009.json",
+          "FlightPath/400000010.json",
+          "FlightPath/400000016.json",
+          "FlightPath/400000017.json",
+          "FlightPath/400000023.json",
+          "FlightPath/500000013.json",
+          "FlightPath/500000014.json",
+          "FlightPath/500000020.json"
+        ],
+        "flight_mode": [
+          "0401/0401.json",
+          "0401/0401_1.json",
+          "0401/0401_2.json",
+          "0401/0401_3.json",
+          "0401/0401_4.json",
+          "0401/0401_5.json",
+          "0601/0601.json",
+          "0602/0602.json",
+          "51321/51321.json",
+          "51321/51321_1.json",
+          "51321/51321_2.json",
+          "51321/51321_3.json"
+        ],
+        "waypoint": [
+          "0401/0401.json",
+          "0401/0401_1.json",
+          "0401/0401_2.json",
+          "0401/0401_3.json",
+          "0401/0401_4.json",
+          "0401/0401_5.json",
+          "0602/0602.json",
+          "51321/51321.json",
+          "51321/51321_1.json",
+          "51321/51321_2.json",
+          "51321/51321_3.json",
+          "53111/53111.json"
+        ],
+        "target": [
+          "0401/0401.json",
+          "0401/0401_1.json",
+          "0401/0401_2.json",
+          "0401/0401_3.json",
+          "0401/0401_4.json",
+          "0401/0401_5.json",
+          "0402/0402.json",
+          "0602/0602.json",
+          "51321/51321.json",
+          "51321/51321_1.json",
+          "51321/51321_2.json",
+          "51321/51321_3.json"
+        ],
+        "sensor": [
+          "0401/0401.json",
+          "0401/0401_1.json",
+          "0401/0401_2.json",
+          "0401/0401_3.json",
+          "0401/0401_4.json",
+          "0401/0401_5.json",
+          "0402/0402.json",
+          "0602/0602.json",
+          "51321/51321.json",
+          "51321/51321_1.json",
+          "51321/51321_2.json",
+          "51321/51321_3.json"
+        ],
+        "replan": [
+          "DSS_Internal/log_attack_algorithm_20260521T020345_045412.json",
+          "DSS_Internal/log_attack_algorithm_20260521T020439_103414.json",
+          "DSS_Internal/log_attack_algorithm_20260521T020525_267811.json",
+          "DSS_Internal/mission_planning_gui_20260521T015640_052348Z.log",
+          "DSS_Internal/missionPlan_700000001.json",
+          "DSS_Internal/missionPlan_700000002.json",
+          "DSS_Internal/missionPlan_700000004.json",
+          "DSS_Internal/missionPlan_700000006.json",
+          "DSS_Internal/missionPlan_700000008.json",
+          "DSS_Internal/module_logs/mission_planning.log",
+          "DSS_Internal/module_logs/monitoring.log"
+        ]
+      },
+      "rollSignalsAvailable": true
+    },
+    "recommendations": {
+      "quality": "ok",
+      "basis": {
+        "usableAircraft": 3,
+        "medianSpeedMps": 44.86,
+        "medianTurnRadiusM": 538.77,
+        "currentReferenceRadiusM": 503.46,
+        "absYawRateP95Dps": 6.752,
+        "bankProxyP95Deg": 28.301,
+        "oppositeTurnGapP50S": 4.809
+      },
+      "simDynamicsProfile": {
+        "banked_turn_enabled": true,
+        "bank_yaw_rate_blend": 0.85,
+        "reference_turn_radius_scale": 1.0701,
+        "max_yaw_rate_dps": 7.967,
+        "max_roll_rate_dps": 9.914,
+        "turn_bank_limit_deg": 31.697,
+        "roll_limit_deg": 36.697,
+        "turn_roll_gain": 2.2,
+        "use_reference_turn_radius": true
+      },
+      "missionPlanningHints": {
+        "plannerTurnRadiusScale": 1.0701,
+        "nominalTurnRadiusM": 538.8,
+        "conservativeTurnRadiusM": 540.2,
+        "aggressiveTurnRadiusM": 534.4,
+        "lookaheadM": 242.4,
+        "freezeYawDistanceM": 75.4,
+        "notes": [
+          "Use conservative radius for replan routes near hand-over, target-track, and post-attack reconnect.",
+          "Use speed-bucket radius table when planner emits mixed UAV speeds.",
+          "Direct roll is used when logs expose it; otherwise bankProxyDeg is derived from speed and turn radius."
+        ]
+      }
+    }
+  },
+  "intendedUse": {
+    "readOnly": true,
+    "notes": [
+      "Use this report as mission planning and replan tuning evidence.",
+      "This file does not apply or mutate SIM runtime PID/profile settings.",
+      "Read analysis.recommendations.simDynamicsProfile for runtime-compatible candidate values.",
+      "Read analysis.recommendations.missionPlanningHints for planner/replan radius guidance."
+    ]
+  }
+}

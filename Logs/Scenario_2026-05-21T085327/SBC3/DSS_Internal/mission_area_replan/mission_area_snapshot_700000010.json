@@ -1,0 +1,228 @@
+{
+  "missionPlanID": 700000010,
+  "timestamp": 832639633834,
+  "missionCount": 2,
+  "missions": [
+    {
+      "inputMissionID": 2,
+      "missionType": "area",
+      "individualMissionIDs": [
+        900000070,
+        900000075,
+        900000079
+      ],
+      "aircraftIDs": [
+        4,
+        5,
+        6
+      ],
+      "plannedAreaM2": 13880479.332400938,
+      "remainingAreaM2": 5385784.298981734,
+      "coveragePercent": 61,
+      "isDone": false,
+      "sourceLineWidthM": null,
+      "sourceCoordinateList": [],
+      "remainingDetail": {
+        "coordinateList": [
+          {
+            "latitude": 37.917909444724934,
+            "longitude": 128.17355038907658,
+            "altitude": 0
+          },
+          {
+            "latitude": 37.92519494123522,
+            "longitude": 128.17829613893173,
+            "altitude": 0
+          },
+          {
+            "latitude": 37.924719882470455,
+            "longitude": 128.20132227786348,
+            "altitude": 0
+          },
+          {
+            "latitude": 37.91023288313224,
+            "longitude": 128.19188655782605,
+            "altitude": 0
+          },
+          {
+            "latitude": 37.918130266525196,
+            "longitude": 128.17370456822127,
+            "altitude": 0
+          },
+          {
+            "latitude": 37.91790898023766,
+            "longitude": 128.17355145876454,
+            "altitude": 0
+          }
+        ],
+        "lineList": [],
+        "areaList": [
+          {
+            "isHole": false,
+            "coordinateList": [
+              {
+                "latitude": 37.917909444724934,
+                "longitude": 128.17355038907658,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.92519494123522,
+                "longitude": 128.17829613893173,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.924719882470455,
+                "longitude": 128.20132227786348,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.91023288313224,
+                "longitude": 128.19188655782605,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.918130266525196,
+                "longitude": 128.17370456822127,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.91790898023766,
+                "longitude": 128.17355145876454,
+                "altitude": 0
+              }
+            ]
+          },
+          {
+            "isHole": false,
+            "coordinateList": [
+              {
+                "latitude": 37.919012991116695,
+                "longitude": 128.15573638789144,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.91877642110499,
+                "longitude": 128.15562551937464,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.92567,
+                "longitude": 128.15527,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.92519494123522,
+                "longitude": 128.17829613893173,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.91421157719084,
+                "longitude": 128.17114201132986,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.91444813326683,
+                "longitude": 128.1712529232418,
+                "altitude": 0
+              }
+            ]
+          },
+          {
+            "isHole": false,
+            "coordinateList": [
+              {
+                "latitude": 37.91168258913609,
+                "longitude": 128.2097891142518,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.91816207030082,
+                "longitude": 128.19705050760928,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.924719882470455,
+                "longitude": 128.20132227786348,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.924499999999995,
+                "longitude": 128.21198,
+                "altitude": 0
+              }
+            ]
+          }
+        ]
+      },
+      "missionPlanID": 700000008
+    },
+    {
+      "inputMissionID": 3,
+      "missionType": "line",
+      "individualMissionIDs": [
+        900000071,
+        900000076,
+        900000080
+      ],
+      "aircraftIDs": [
+        4,
+        5,
+        6
+      ],
+      "plannedAreaM2": 3700578.665339816,
+      "remainingAreaM2": 3700578.6653398154,
+      "coveragePercent": 0,
+      "isDone": false,
+      "sourceLineWidthM": 1000.0,
+      "sourceCoordinateList": [
+        {
+          "latitude": 37.89855,
+          "longitude": 128.1926,
+          "altitude": 0
+        },
+        {
+          "latitude": 37.869625,
+          "longitude": 128.21355,
+          "altitude": 0
+        }
+      ],
+      "remainingDetail": {
+        "coordinateList": [
+          {
+            "latitude": 37.89855,
+            "longitude": 128.1926,
+            "altitude": 0
+          },
+          {
+            "latitude": 37.869625,
+            "longitude": 128.21355,
+            "altitude": 0
+          }
+        ],
+        "lineList": [
+          {
+            "width": 1000.0,
+            "coordinateList": [
+              {
+                "latitude": 37.89855,
+                "longitude": 128.1926,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.869625,
+                "longitude": 128.21355,
+                "altitude": 0
+              }
+            ]
+          }
+        ],
+        "areaList": []
+      }
+    }
+  ],
+  "savedAt": "2026-05-21T00:47:14.035580+00:00",
+  "carriedFromMissionPlanID": 700000008,
+  "carryForwardReason": "attack_exclusion",
+  "carriedAt": "2026-05-21T00:47:14.244003+00:00",
+  "carriedAtEpochMs": 1779324434244
+}

@@ -1,0 +1,169 @@
+{
+  "missionPlanID": 700000061,
+  "timestamp": 832654076231,
+  "missionCount": 2,
+  "missions": [
+    {
+      "inputMissionID": 3,
+      "missionType": "line",
+      "individualMissionIDs": [
+        900000666,
+        900000672,
+        900000675
+      ],
+      "aircraftIDs": [
+        4,
+        5,
+        6
+      ],
+      "plannedAreaM2": 3700578.665339816,
+      "remainingAreaM2": 3700578.6653398154,
+      "coveragePercent": 0,
+      "isDone": false,
+      "sourceLineWidthM": 1000.0,
+      "sourceCoordinateList": [
+        {
+          "latitude": 37.89855,
+          "longitude": 128.1926,
+          "altitude": 0
+        },
+        {
+          "latitude": 37.869625,
+          "longitude": 128.21355,
+          "altitude": 0
+        }
+      ],
+      "remainingDetail": {
+        "coordinateList": [
+          {
+            "latitude": 37.89855,
+            "longitude": 128.1926,
+            "altitude": 0
+          },
+          {
+            "latitude": 37.869625,
+            "longitude": 128.21355,
+            "altitude": 0
+          }
+        ],
+        "lineList": [
+          {
+            "width": 1000.0,
+            "coordinateList": [
+              {
+                "latitude": 37.89855,
+                "longitude": 128.1926,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.869625,
+                "longitude": 128.21355,
+                "altitude": 0
+              }
+            ]
+          }
+        ],
+        "areaList": []
+      }
+    },
+    {
+      "inputMissionID": 6,
+      "missionType": "area",
+      "individualMissionIDs": [
+        900000665,
+        900000671,
+        900000674
+      ],
+      "aircraftIDs": [
+        4,
+        5,
+        6
+      ],
+      "plannedAreaM2": 13880484.979368277,
+      "remainingAreaM2": 1278008.8057358637,
+      "coveragePercent": 91,
+      "isDone": false,
+      "sourceLineWidthM": null,
+      "sourceCoordinateList": [],
+      "remainingDetail": {
+        "coordinateList": [
+          {
+            "latitude": 37.90067473493644,
+            "longitude": 128.18651056429724,
+            "altitude": 0
+          },
+          {
+            "latitude": 37.8986201391382,
+            "longitude": 128.1854282640799,
+            "altitude": 0
+          },
+          {
+            "latitude": 37.89883727827638,
+            "longitude": 128.16333652815982,
+            "altitude": 0
+          },
+          {
+            "latitude": 37.90360487724678,
+            "longitude": 128.16584804881964,
+            "altitude": 0
+          }
+        ],
+        "lineList": [],
+        "areaList": [
+          {
+            "isHole": false,
+            "coordinateList": [
+              {
+                "latitude": 37.90067473493644,
+                "longitude": 128.18651056429724,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.8986201391382,
+                "longitude": 128.1854282640799,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.89883727827638,
+                "longitude": 128.16333652815982,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.90360487724678,
+                "longitude": 128.16584804881964,
+                "altitude": 0
+              }
+            ]
+          },
+          {
+            "isHole": false,
+            "coordinateList": [
+              {
+                "latitude": 37.90458584386258,
+                "longitude": 128.16636485476482,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.89883727827638,
+                "longitude": 128.16333652815982,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.898903,
+                "longitude": 128.15665,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.906085319459166,
+                "longitude": 128.15627982508374,
+                "altitude": 0
+              }
+            ]
+          }
+        ]
+      },
+      "missionPlanID": 700000061
+    }
+  ],
+  "savedAt": "2026-05-21T04:47:56.632504+00:00"
+}

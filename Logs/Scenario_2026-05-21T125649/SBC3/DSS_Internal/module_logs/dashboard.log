@@ -1,0 +1,33 @@
+
+[2026-05-21 12:56:49] process-log attached: dashboard
+[OPS] Standby 활성화(신규 경로 적용) 2026-05-21T125649 @ C:\Users\LAHMUMT_2\Desktop\DSS_KU\Logs\Scenario_2026-05-21T125649\SBC3
+[OPS] New sortie detected -> mission IDs reset for active scenario
+[OPS] DB root snapshot requested from modules
+[OPS] SystemMode=1 수신 -> 대기모드 진입
+모든 SW 대기모드 진입
+[OPS] SystemMode=2 수신 -> 초기임무계획 모드 진입
+모든 SW 초기임무계획 모드
+[OPS] 0305 재계획 완료 (모드 전환은 0101 수신만 반영)
+[FOV_DB] selected C:\Users\LAHMUMT_2\Desktop\DSS_KU\resource\db\fov_db.csv (7010 rows)
+[OPS] Standby re-entry - reuse existing DB @ C:\Users\LAHMUMT_2\Desktop\DSS_KU\Logs\Scenario_2026-05-21T125649\SBC3
+[OPS] SystemMode=1 수신 -> 대기모드 진입
+모든 SW 대기모드 진입
+[OPS] SystemMode=2 수신 -> 초기임무계획 모드 진입
+모든 SW 초기임무계획 모드
+[OPS] 0305 재계획 완료 (모드 전환은 0101 수신만 반영)
+[FOV_DB] selected C:\Users\LAHMUMT_2\Desktop\DSS_KU\resource\db\fov_db_탱크_38.csv (15313 rows)
+[OPS] Standby re-entry - reuse existing DB @ C:\Users\LAHMUMT_2\Desktop\DSS_KU\Logs\Scenario_2026-05-21T125649\SBC3
+[OPS] SystemMode=1 수신 -> 대기모드 진입
+모든 SW 대기모드 진입
+[OPS] SystemMode=2 수신 -> 초기임무계획 모드 진입
+모든 SW 초기임무계획 모드
+[OPS] 0305 재계획 완료 (모드 전환은 0101 수신만 반영)
+[FOV_DB] selected C:\Users\LAHMUMT_2\Desktop\DSS_KU\resource\db\fov_db_곡사포.csv (921 rows)
+
+[2026-05-21 13:04:48] process-log attached: dashboard
+[RUN] mission_planning_gui.py @ C:\Users\LAHMUMT_2\Desktop\DSS_KU\modules\mission_planning\mission_planning_gui.py
+[RUN] monitoring_gui.py @ C:\Users\LAHMUMT_2\Desktop\DSS_KU\modules\monitoring\monitoring_gui.py
+[RUN] decision_support_gui.py @ C:\Users\LAHMUMT_2\Desktop\DSS_KU\modules\decision_support\decision_support_gui.py
+[RUN] info_manage.py @ C:\Users\LAHMUMT_2\Desktop\DSS_KU\modules\info_manage\info_manage.py
+모든 SW 초기화 모드 진입
+[FOV_DB] selected C:\Users\LAHMUMT_2\Desktop\DSS_KU\resource\db\fov_db_탱크_72_38_6_3.2.csv (7010 rows)

@@ -1,0 +1,92 @@
+{
+  "timestamp": 832653532822,
+  "Source": "MMR",
+  "individualMissionPackageID": 800000144,
+  "aircraftID": 3,
+  "individualMissionList": [
+    {
+      "individualMissionID": 900000357,
+      "isDone": false,
+      "relatedMission": {
+        "relatedMissionType": 1,
+        "inputMissionID": 4,
+        "priorMissionID": 0
+      },
+      "individualMissionInfo": {
+        "individualMissionType": 2,
+        "patternType": 2,
+        "autoZoomIn": false,
+        "targetID": 89,
+        "coordinateList": [
+          {
+            "latitude": 37.83782318797341,
+            "longitude": 128.22481259277228,
+            "altitude": 1201
+          },
+          {
+            "latitude": 37.897730100567586,
+            "longitude": 128.18999657705305,
+            "altitude": 1201
+          }
+        ]
+      },
+      "pathID": 300000055
+    },
+    {
+      "individualMissionID": 900000358,
+      "isDone": false,
+      "relatedMission": {
+        "relatedMissionType": 1,
+        "inputMissionID": 4,
+        "priorMissionID": 0
+      },
+      "individualMissionInfo": {
+        "individualMissionType": 9,
+        "patternType": 12,
+        "autoZoomIn": false,
+        "coordinateList": [
+          {
+            "latitude": 37.89785646820558,
+            "longitude": 128.18983437648168,
+            "altitude": 1201
+          },
+          {
+            "latitude": 37.92477,
+            "longitude": 128.15527,
+            "altitude": 1798
+          }
+        ],
+        "targetID": null
+      },
+      "pathID": 300000056
+    },
+    {
+      "individualMissionID": 900000359,
+      "isDone": false,
+      "relatedMission": {
+        "relatedMissionType": 1,
+        "inputMissionID": 3,
+        "priorMissionID": 0
+      },
+      "individualMissionInfo": {
+        "individualMissionType": 7,
+        "patternType": 10,
+        "autoZoomIn": false,
+        "coordinateList": [
+          {
+            "latitude": 37.89855,
+            "longitude": 128.1926,
+            "altitude": 0
+          },
+          {
+            "latitude": 37.869625,
+            "longitude": 128.21355,
+            "altitude": 0
+          }
+        ],
+        "targetID": null
+      },
+      "pathID": 300000057
+    }
+  ]
+}

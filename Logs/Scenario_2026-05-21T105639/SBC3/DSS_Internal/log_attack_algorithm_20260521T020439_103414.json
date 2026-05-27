@@ -1,0 +1,2220 @@
+{
+  "timestamp": "2026-05-21T02:04:35.898192+00:00",
+  "context": {
+    "reason": "표적75 등 2개 발견",
+    "replan_level": 2,
+    "mission_ids": [
+      2,
+      3
+    ],
+    "option_names": [
+      "공격 특화"
+    ],
+    "replan_detail": {
+      "trigger": "0402",
+      "sourceMissionPlanID": 700000002,
+      "currentMissionPlanID": 700000002,
+      "targetKey": "75-5",
+      "targetID": 75,
+      "watcherID": 5,
+      "targetType": 1,
+      "threat": 0.8999999761581421,
+      "targetInFrame": true,
+      "coordinate": {
+        "latitude": 37.91624069213867,
+        "longitude": 128.1720733642578,
+        "altitude": 683
+      },
+      "preferredOptionCount": 2,
+      "attackTargetList": [
+        {
+          "key": "75-5",
+          "targetID": 75,
+          "targetType": 1,
+          "watcherID": 5,
+          "coordinate": {
+            "latitude": 37.91624069213867,
+            "longitude": 128.1720733642578,
+            "altitude": 683.0
+          },
+          "isUsed": 1,
+          "isIgnored": 0,
+          "isDestroyed": false,
+          "targetInFrame": true,
+          "threat": 0.8999999761581421,
+          "firstDetected": 832644274582,
+          "lastUpdated": 832644274978,
+          "sourceKey": "75-5"
+        },
+        {
+          "key": "74-4",
+          "targetID": 74,
+          "targetType": 4,
+          "watcherID": 4,
+          "coordinate": {
+            "latitude": 37.91281509399414,
+            "longitude": 128.16159057617188,
+            "altitude": 779.0
+          },
+          "isUsed": 1,
+          "isIgnored": 0,
+          "isDestroyed": false,
+          "targetInFrame": true,
+          "threat": 0.8500000238418579,
+          "firstDetected": 832644221289,
+          "lastUpdated": 832644274978,
+          "sourceKey": "74-4"
+        }
+      ],
+      "attackTargetCount": 2,
+      "attackTargetTotalCount": 2,
+      "attackTargetOverflow": false,
+      "attackTargetIDs": [
+        75,
+        74
+      ],
+      "targetBundle": [
+        {
+          "key": "75-5",
+          "targetID": 75,
+          "targetType": 1,
+          "watcherID": 5,
+          "coordinate": {
+            "latitude": 37.91624069213867,
+            "longitude": 128.1720733642578,
+            "altitude": 683.0
+          },
+          "isUsed": 1,
+          "isIgnored": 0,
+          "isDestroyed": false,
+          "targetInFrame": true,
+          "threat": 0.8999999761581421,
+          "firstDetected": 832644274582,
+          "lastUpdated": 832644274978,
+          "sourceKey": "75-5"
+        },
+        {
+          "key": "74-4",
+          "targetID": 74,
+          "targetType": 4,
+          "watcherID": 4,
+          "coordinate": {
+            "latitude": 37.91281509399414,
+            "longitude": 128.16159057617188,
+            "altitude": 779.0
+          },
+          "isUsed": 1,
+          "isIgnored": 0,
+          "isDestroyed": false,
+          "targetInFrame": true,
+          "threat": 0.8500000238418579,
+          "firstDetected": 832644221289,
+          "lastUpdated": 832644274978,
+          "sourceKey": "74-4"
+        }
+      ],
+      "targetBundleCount": 2,
+      "targetBundleMode": "bundle",
+      "followUpAttackMode": false,
+      "maxTrackedTargets": 3,
+      "snapshot": {
+        "targetID": 75,
+        "watcherID": 5,
+        "targetType": 1,
+        "coordinate": {
+          "latitude": 37.91624069213867,
+          "longitude": 128.1720733642578,
+          "altitude": 683
+        },
+        "isDestroyed": false,
+        "targetInFrame": true,
+        "threat": 0.8999999761581421,
+        "isUsed": 1,
+        "isIgnored": 0,
+        "firstDetected": 832644274582,
+        "lastUpdated": 832644274582,
+        "sinceFirstDetectedMs": 0,
+        "key": "75-5"
+      }
+    }
+  },
+  "steps": [
+    {
+      "name": "select_manned_aircraft",
+      "status": "ok",
+      "selected": {
+        "aircraft_id": 3,
+        "fuel": 1200.0,
+        "coordinate": {
+          "latitude": 37.788631439208984,
+          "longitude": 128.17909240722656,
+          "altitude": 1199
+        },
+        "heading": null,
+        "speed": null,
+        "weapon_inventory": {
+          "type1": 500,
+          "type2": 7,
+          "type3": 2
+        }
+      },
+      "candidates": [
+        {
+          "aircraft_id": 3,
+          "fuel": 1200.0,
+          "coordinate": {
+            "latitude": 37.788631439208984,
+            "longitude": 128.17909240722656,
+            "altitude": 1199
+          },
+          "heading": null,
+          "speed": null,
+          "weapon_inventory": {
+            "type1": 500,
+            "type2": 7,
+            "type3": 2
+          }
+        },
+        {
+          "aircraft_id": 2,
+          "fuel": 1200.0,
+          "coordinate": {
+            "latitude": 37.78976821899414,
+            "longitude": 128.16795349121094,
+            "altitude": 1199
+          },
+          "heading": null,
+          "speed": null,
+          "weapon_inventory": {
+            "type1": 500,
+            "type2": 7,
+            "type3": 2
+          }
+        }
+      ],
+      "durationMs": 12
+    },
+    {
+      "name": "analyze_uav_tracking",
+      "status": "ok",
+      "entries": [
+        {
+          "key": "74-4",
+          "target_id": 74,
+          "target_type": 4,
+          "watcher_id": 4,
+          "coordinate": {
+            "latitude": 37.91281509399414,
+            "longitude": 128.16159057617188,
+            "altitude": 779
+          },
+          "is_destroyed": false,
+          "is_used": 1,
+          "target_in_frame": true,
+          "threat": 0.8500000238418579,
+          "first_detected": 832644221289,
+          "last_updated": 832644274978,
+          "raw": {
+            "coordinate": {
+              "altitude": 779,
+              "latitude": 37.91281509399414,
+              "longitude": 128.16159057617188
+            },
+            "firstDetected": 832644221289,
+            "isDestroyed": false,
+            "isIgnored": 0,
+            "isUsed": 1,
+            "lastUpdated": 832644274978,
+            "sinceFirstDetectedMs": 53689,
+            "targetID": 74,
+            "targetInFrame": true,
+            "targetType": 4,
+            "threat": 0.8500000238418579,
+            "watcherID": 4
+          }
+        },
+        {
+          "key": "75-5",
+          "target_id": 75,
+          "target_type": 1,
+          "watcher_id": 5,
+          "coordinate": {
+            "latitude": 37.91624069213867,
+            "longitude": 128.1720733642578,
+            "altitude": 683
+          },
+          "is_destroyed": false,
+          "is_used": 1,
+          "target_in_frame": true,
+          "threat": 0.8999999761581421,
+          "first_detected": 832644274582,
+          "last_updated": 832644274978,
+          "raw": {
+            "coordinate": {
+              "altitude": 683,
+              "latitude": 37.91624069213867,
+              "longitude": 128.1720733642578
+            },
+            "firstDetected": 832644274582,
+            "isDestroyed": false,
+            "isIgnored": 0,
+            "isUsed": 1,
+            "lastUpdated": 832644274978,
+            "sinceFirstDetectedMs": 396,
+            "targetID": 75,
+            "targetInFrame": true,
+            "targetType": 1,
+            "threat": 0.8999999761581421,
+            "watcherID": 5
+          }
+        },
+        {
+          "key": "unknown-1",
+          "target_id": null,
+          "target_type": null,
+          "watcher_id": 4,
+          "coordinate": {
+            "latitude": 37.8963737487793,
+            "longitude": 128.1564483642578,
+            "altitude": 930
+          },
+          "is_destroyed": false,
+          "is_used": 0,
+          "target_in_frame": false,
+          "threat": null,
+          "first_detected": null,
+          "last_updated": null,
+          "raw": {
+            "coordinate": {
+              "altitude": 930,
+              "latitude": 37.8963737487793,
+              "longitude": 128.1564483642578
+            },
+            "fov": 0.6100000143051147,
+            "initDetectedTime": 832644106722,
+            "isIgnored": 0,
+            "isUsed": 0,
+            "watcherID": 4
+          }
+        },
+        {
+          "key": "unknown-2",
+          "target_id": null,
+          "target_type": null,
+          "watcher_id": 4,
+          "coordinate": {
+            "latitude": 37.90060806274414,
+            "longitude": 128.1559295654297,
+            "altitude": 836
+          },
+          "is_destroyed": false,
+          "is_used": 0,
+          "target_in_frame": false,
+          "threat": null,
+          "first_detected": null,
+          "last_updated": null,
+          "raw": {
+            "coordinate": {
+              "altitude": 836,
+              "latitude": 37.90060806274414,
+              "longitude": 128.1559295654297
+            },
+            "fov": 0.6100000143051147,
+            "initDetectedTime": 832644122923,
+            "isIgnored": 0,
+            "isUsed": 0,
+            "watcherID": 4
+          }
+        },
+        {
+          "key": "unknown-4",
+          "target_id": null,
+          "target_type": null,
+          "watcher_id": 4,
+          "coordinate": {
+            "latitude": 37.90937042236328,
+            "longitude": 128.1610870361328,
+            "altitude": 859
+          },
+          "is_destroyed": false,
+          "is_used": 0,
+          "target_in_frame": false,
+          "threat": null,
+          "first_detected": null,
+          "last_updated": null,
+          "raw": {
+            "coordinate": {
+              "altitude": 859,
+              "latitude": 37.90937042236328,
+              "longitude": 128.1610870361328
+            },
+            "fov": 2.4000000953674316,
+            "initDetectedTime": 832644203006,
+            "isIgnored": 0,
+            "isUsed": 0,
+            "watcherID": 4
+          }
+        },
+        {
+          "key": "unknown-5",
+          "target_id": null,
+          "target_type": null,
+          "watcher_id": 4,
+          "coordinate": {
+            "latitude": 37.91282272338867,
+            "longitude": 128.16159057617188,
+            "altitude": 779
+          },
+          "is_destroyed": false,
+          "is_used": 0,
+          "target_in_frame": false,
+          "threat": null,
+          "first_detected": null,
+          "last_updated": null,
+          "raw": {
+            "coordinate": {
+              "altitude": 779,
+              "latitude": 37.91282272338867,
+              "longitude": 128.16159057617188
+            },
+            "fov": 2.332868814468384,
+            "initDetectedTime": 832644219035,
+            "isIgnored": 0,
+            "isUsed": 0,
+            "watcherID": 4
+          }
+        },
+        {
+          "key": "unknown-10",
+          "target_id": null,
+          "target_type": null,
+          "watcher_id": 5,
+          "coordinate": {
+            "latitude": 37.9162483215332,
+            "longitude": 128.17208862304688,
+            "altitude": 683
+          },
+          "is_destroyed": false,
+          "is_used": 0,
+          "target_in_frame": false,
+          "threat": null,
+          "first_detected": null,
+          "last_updated": null,
+          "raw": {
+            "coordinate": {
+              "altitude": 683,
+              "latitude": 37.9162483215332,
+              "longitude": 128.17208862304688
+            },
+            "fov": 1.3383047580718994,
+            "initDetectedTime": 832644271667,
+            "isIgnored": 0,
+            "isUsed": 0,
+            "watcherID": 5
+          }
+        },
+        {
+          "key": "unknown-3",
+          "target_id": null,
+          "target_type": null,
+          "watcher_id": 5,
+          "coordinate": {
+            "latitude": 37.90221405029297,
+            "longitude": 128.16415405273438,
+            "altitude": 870
+          },
+          "is_destroyed": false,
+          "is_used": 0,
+          "target_in_frame": false,
+          "threat": null,
+          "first_detected": null,
+          "last_updated": null,
+          "raw": {
+            "coordinate": {
+              "altitude": 870,
+              "latitude": 37.90221405029297,
+              "longitude": 128.16415405273438
+            },
+            "fov": 1.484713077545166,
+            "initDetectedTime": 832644198706,
+            "isIgnored": 0,
+            "isUsed": 0,
+            "watcherID": 5
+          }
+        },
+        {
+          "key": "unknown-6",
+          "target_id": null,
+          "target_type": null,
+          "watcher_id": 5,
+          "coordinate": {
+            "latitude": 37.907806396484375,
+            "longitude": 128.16978454589844,
+            "altitude": 846
+          },
+          "is_destroyed": false,
+          "is_used": 0,
+          "target_in_frame": false,
+          "threat": null,
+          "first_detected": null,
+          "last_updated": null,
+          "raw": {
+            "coordinate": {
+              "altitude": 846,
+              "latitude": 37.907806396484375,
+              "longitude": 128.16978454589844
+            },
+            "fov": 1.6779347658157349,
+            "initDetectedTime": 832644225786,
+            "isIgnored": 0,
+            "isUsed": 0,
+            "watcherID": 5
+          }
+        },
+        {
+          "key": "unknown-7",
+          "target_id": null,
+          "target_type": null,
+          "watcher_id": 5,
+          "coordinate": {
+            "latitude": 37.90494155883789,
+            "longitude": 128.18312072753906,
+            "altitude": 772
+          },
+          "is_destroyed": false,
+          "is_used": 0,
+          "target_in_frame": false,
+          "threat": null,
+          "first_detected": null,
+          "last_updated": null,
+          "raw": {
+            "coordinate": {
+              "altitude": 772,
+              "latitude": 37.90494155883789,
+              "longitude": 128.18312072753906
+            },
+            "fov": 1.7440006732940674,
+            "initDetectedTime": 832644239720,
+            "isIgnored": 0,
+            "isUsed": 0,
+            "watcherID": 5
+          }
+        },
+        {
+          "key": "unknown-8",
+          "target_id": null,
+          "target_type": null,
+          "watcher_id": 6,
+          "coordinate": {
+            "latitude": 37.90003204345703,
+            "longitude": 128.20059204101562,
+            "altitude": 719
+          },
+          "is_destroyed": false,
+          "is_used": 0,
+          "target_in_frame": false,
+          "threat": null,
+          "first_detected": null,
+          "last_updated": null,
+          "raw": {
+            "coordinate": {
+              "altitude": 719,
+              "latitude": 37.90003204345703,
+              "longitude": 128.20059204101562
+            },
+            "fov": 1.6498593091964722,
+            "initDetectedTime": 832644255722,
+            "isIgnored": 0,
+            "isUsed": 0,
+            "watcherID": 6
+          }
+        },
+        {
+          "key": "unknown-9",
+          "target_id": null,
+          "target_type": null,
+          "watcher_id": 6,
+          "coordinate": {
+            "latitude": 37.90544128417969,
+            "longitude": 128.19354248046875,
+            "altitude": 800
+          },
+          "is_destroyed": false,
+          "is_used": 0,
+          "target_in_frame": false,
+          "threat": null,
+          "first_detected": null,
+          "last_updated": null,
+          "raw": {
+            "coordinate": {
+              "altitude": 800,
+              "latitude": 37.90544128417969,
+              "longitude": 128.19354248046875
+            },
+            "fov": 1.9126930236816406,
+            "initDetectedTime": 832644267971,
+            "isIgnored": 0,
+            "isUsed": 0,
+            "watcherID": 6
+          }
+        }
+      ],
+      "durationMs": 1
+    },
+    {
+      "name": "generate_attack_point",
+      "status": "ok",
+      "attack_point": {
+        "latitude": 37.898260215473556,
+        "longitude": 128.1714867826024,
+        "altitude": 983,
+        "friendly_distance_m": 12067.748467085818,
+        "enemy_distance_m": 2000.000000000512,
+        "current_distance_m": 14067.748467086065,
+        "candidate_distance_m": null,
+        "min_standoff_m": 300.0,
+        "preferred_standoff_m": 2000.0,
+        "raster_sources": [],
+        "selection_mode": "far_projected_to_preferred_standoff"
+      },
+      "durationMs": 6
+    }
+  ],
+  "timingMs": {
+    "select_manned_aircraft": 12,
+    "load_target_entries": 1,
+    "compute_attack_point": 6,
+    "apply_attack_plan_overrides": 3158,
+    "read_source": 14.417,
+    "descriptor_build": 14.696,
+    "write_artifacts": 3167.131,
+    "delivery_wait": 7.654,
+    "total": 3205
+  },
+  "logMessages": [
+    "[TIME] select_manned_aircraft=12ms",
+    "STEP1 Selected manned aircraft: aircraft 3 (fuel=1200.0, coord=(37.788631439208984, 128.17909240722656, alt=1199))",
+    "[TIME] load_target_entries=1ms",
+    "STEP2 UAV tracking summary: watcher 4?’target 74, watcher 5?’target 75, watcher 4?’target unknown-1, watcher 4?’target unknown-2, watcher 4?’target unknown-4, watcher 4?’target unknown-5, watcher 5?’target unknown-10, watcher 5?’target unknown-3, watcher 5?’target unknown-6, watcher 5?’target unknown-7, watcher 6?’target unknown-8, watcher 6?’target unknown-9",
+    "STEP2.5 Using bundled 0402 targets: target=75 watcher=5, target=74 watcher=4",
+    "STEP2.6 Multi-target manned selection: 2, 3",
+    "[ATTACK] Selected target id=75 type=1 weaponType=2 (preferred=2, ammo={'type1': 500, 'type2': 7, 'type3': 2})",
+    "[TIME] compute_attack_point=6ms",
+    "STEP3 Attack plan completed: lat=37.898260, lon=128.171487, alt=983m",
+    "[ATTACK] Weapon choice aircraft=2 preferred=2 selected=2 ammo={'type1': 500, 'type2': 7, 'type3': 2}",
+    "[ATTACK][ETA] Tracking ETA computed with LAH max attack speed (dist=12067.7m, speed=73.61m/s, +30s) -> 194s",
+    "[ATTACK] Using requested missionPlanID 700000005 (sourcePlanID=700000002)",
+    "[ATTACK][POINT] Primary target adaptive standoff mode=far_projected_to_preferred_standoff currentDist=14067.748467086065m candidateDist=2000.0000000001785m standoff=300.0/2000.0m.",
+    "[ATTACK][ETA] UAV 6 remaining mission time: 0.0s",
+    "[ATTACK][ETA] Non-tracking UAV ETA selected: UAV 6 with 0s remaining",
+    "[ATTACK][ETA] All tracking ETAs unified to 0s",
+    "[ATTACK][COLLAB] Remaining UAV entry lookahead applied: 9.0s (pathFollow=3, linearFallback=3, currentOnly=0)",
+    "[PRIOR] Falling back to first mission for aircraft 2 (current waypoint not found in plan).",
+    "[ATTACK][LAH] Using max attack speed 73.61m/s (265.0km/h) for aircraft 2.",
+    "[ATTACK][LAH] Inferred current waypoint from position -> 79.",
+    "[ATTACK][LAH] Dropped current waypoint from resume path (currentWP=79, nextWP=80).",
+    "[ATTACK][LAH] Preserved completed prefix, inserted attack, and reattached 2 follow-up mission(s).",
+    "[ATTACK][LAH] Generated attack/resume missions -> IMP:800000023.json PATHS:200000009.json/200000010.json (followUps=2)",
+    "[PRIOR] Falling back to first mission for aircraft 3 (current waypoint not found in plan).",
+    "[ATTACK][LAH] Using max attack speed 73.61m/s (265.0km/h) for aircraft 3.",
+    "[ATTACK][LAH] Inferred current waypoint from position -> 85.",
+    "[ATTACK][LAH] Dropped current waypoint from resume path (currentWP=85, nextWP=86).",
+    "[ATTACK][LAH] Preserved completed prefix, inserted attack, and reattached 2 follow-up mission(s).",
+    "[ATTACK][LAH] Generated attack/resume missions -> IMP:800000025.json PATHS:300000009.json/300000010.json (followUps=2)",
+    "[PRIOR] Falling back to first mission for aircraft 1 (current waypoint not found in plan).",
+    "[ATTACK][LAH] Inferred current waypoint from position -> 73.",
+    "[ATTACK][LAH] Dropped current waypoint from resume path (currentWP=73, nextWP=74).",
+    "[ATTACK][LAH] Preserved completed prefix, inserted hold, and reattached 2 follow-up mission(s).",
+    "[ATTACK][LAH] Generated hold/resume missions -> IMP:800000028.json PATHS:100000009.json/100000010.json (followUps=2)",
+    "[NEXTCOLLAB] division planner area-division pieces=1",
+    "[NEXTCOLLAB] division planner final workflow=no_split paths=1",
+    "[ATTACK][COLLAB] Collaborative replacement IMP written (aircraft=6, imp=800000027.json, missions=1).",
+    "[ATTACK][COLLAB] First sweep searchSpeed boosted (aircraft=6, pathID=600000009, waypointID=193, factor=1.30, old=841.21, new=1093.57).",
+    "[ATTACK][COLLAB] Collaborative remaining mission replanned (inputMissionID=2, unavailable=[4, 5], remaining=[6], workflow=no_split).",
+    "[ATTACK][UAV] Tracking target altitude kept for sensor only; flight altitude replaced 683m -> 1952m.",
+    "[ATTACK][UAV] Resume trimmed by currentWP (lastRemovedWP=97).",
+    "[ATTACK][UAV] Added replan anchor waypoint to done path (anchorWP=213).",
+    "[ATTACK][UAV] Resume sweep trim applied (cutPoints=68, rawCutPoints=68, doneSweepPoints=0, pathID=500000004).",
+    "[ATTACK][UAV] Resume searchSpeed scaled (factor=1.30, waypoints=1).",
+    "[ATTACK][COLLAB] Tracking UAV resume replaced with release transit (aircraft=5, targetFinishEta=94, speed=58.0m/s).",
+    "[ATTACK][UAV] Preserved completed prefix, inserted tracking, and reattached 1 follow-up mission(s).",
+    "[ATTACK][UAV] Generated tracking/resume missions -> IMP:800000029.json PATHS:500000013.json/500000014.json (followUps=1)",
+    "[ATTACK][UAV] Tracking assignment state saved (aircraft=5, sourcePlan=700000002, attackPlan=700000005).",
+    "[ATTACK][UAV] Resume trimmed by currentWP (lastRemovedWP=93).",
+    "[ATTACK][UAV] Added replan anchor waypoint to done path (anchorWP=222).",
+    "[ATTACK][UAV] Resume sweep trim applied (cutPoints=45, rawCutPoints=45, doneSweepPoints=0, pathID=400000004).",
+    "[ATTACK][UAV] Resume searchSpeed scaled (factor=1.30, waypoints=1).",
+    "[ATTACK][COLLAB] Tracking UAV resume replaced with release transit (aircraft=4, targetFinishEta=94, speed=58.0m/s).",
+    "[ATTACK][UAV] Preserved completed prefix, inserted tracking, and reattached 1 follow-up mission(s).",
+    "[ATTACK][UAV] Generated tracking/resume missions -> IMP:800000030.json PATHS:400000016.json/400000017.json (followUps=1)",
+    "[ATTACK][UAV] Tracking assignment state saved (aircraft=4, sourcePlan=700000002, attackPlan=700000005).",
+    "[ATTACK][COLLAB] Aircraft 6 handled by collaborative remaining replan (inputMissionID=2).",
+    "[ATTACK][PLAN] carried area remaining snapshot -> mission_area_snapshot_700000005.json (sourcePlanID=700000002, planID=700000005)",
+    "[ATTACK][PLAN] MissionPlan saved -> 700000005.json (planID=700000005)",
+    "[ATTACK][TIME] override_detail={\"phases\": {\"metadata_normalize\": {\"elapsedMs\": 0.009, \"attackTargetCount\": 2, \"selectedMannedCount\": 2}, \"agent_index\": {\"elapsedMs\": 0.432, \"aircraftCount\": 6}, \"weapon_choice\": {\"elapsedMs\": 2.712, \"selectedWeaponType\": 2, \"ammoAvailable\": true}, \"initial_tracking_eta\": {\"elapsedMs\": 0.556, \"useDetectionTracking\": true, \"trackingEtaS\": 194}, \"resolve_source_plan\": {\"elapsedMs\": 0.812, \"sourcePlanID\": 700000002}, \"source_plan_load\": {\"elapsedMs\": 0.446, \"sourcePlanID\": 700000002, \"aircraftCount\": 6}, \"sweep_progress_load\": {\"elapsedMs\": 0.547, \"entries\": 12}, \"plan_id_resolve\": {\"elapsedMs\": 0.019, \"requested\": true, \"missionPlanID\": 700000005}, \"source_artifact_cache_build\": {\"elapsedMs\": 0.017, \"aircraftEntries\": 6}, \"done_input_ids_load\": {\"elapsedMs\": 1.401, \"count\": 1}, \"plan_deepcopy\": {\"elapsedMs\": 0.053}, \"target_uav_assignment\": {\"elapsedMs\": 0.535, \"assignedTargetCount\": 2, \"usedTrackingUavCount\": 2}, \"manned_sequence_assignment\": {\"elapsedMs\": 13.397, \"aircraftCount\": 2, \"error\": null}, \"attack_coordinate_resolution\": {\"elapsedMs\": 8.51, \"resolvedCount\": 2, \"mannedSequenceCount\": 2}, \"remaining_eta\": {\"elapsedMs\": 10.689, \"allUavCount\": 3, \"trackingUavCount\": 2, \"computedEtaCount\": 2, \"adjustedEtaS\": 0}, \"descriptor_list_build\": {\"elapsedMs\": 0.04, \"descriptorCount\": 6, \"activeMannedCount\": 2, \"otherLahCount\": 1, \"otherUavCount\": 1}, \"collab_tracking_scan\": {\"elapsedMs\": 23.516, \"inputCount\": 1, \"unavailableUavCount\": 2}, \"collab_agent_state_map\": {\"elapsedMs\": 36.266, \"aircraftCount\": 6}, \"collab_parallel_started\": {\"elapsedMs\": 0.693, \"inputCount\": 1, \"workers\": 1}, \"collab_parallel_join\": {\"elapsedMs\": 3.258, \"waitReason\": \"UAV_TRACK\", \"inputCount\": 1}, \"descriptor_loop\": {\"elapsedMs\": 3041.396, \"descriptorCount\": 6, \"updateCount\": 5}, \"final_collab_plan_update\": {\"elapsedMs\": 0.01, \"collabInputCount\": 1}, \"mission_plan_write\": {\"elapsedMs\": 11.074, \"missionPlanID\": 700000005}, \"option_meta_build\": {\"elapsedMs\": 0.066, \"targetCount\": 2, \"collabInputCount\": 1}}, \"collabRuns\": [{\"inputMissionID\": 2, \"unavailableAircraftIDs\": [4, 5], \"elapsedMs\": 1563.172, \"status\": \"ok\", \"replacementAircraftIDs\": [6], \"generatedPathCount\": 1, \"finishEtaS\": 94, \"workflow\": \"no_split\"}], \"descriptorDetails\": [{\"aircraftID\": 2, \"label\": \"manned\", \"mode\": \"LAH_ATTACK\", \"resolveArtifacts\": {\"elapsedMs\": 1.553, \"currentWaypointID\": null, \"sourcePathID\": 200000001, \"sourceImpID\": 800000008}, \"loadArtifacts\": {\"elapsedMs\": 0.005, \"impLoaded\": true, \"fpLoaded\": true}, \"cloneAndLocateMission\": {\"elapsedMs\": 0.12, \"missionCount\": 3, \"targetIndex\": 0}, \"allocateAndPlanUpdate\": {\"elapsedMs\": 19.075, \"newImpID\": 800000023}, \"builder\": {\"elapsedMs\": 934.911, \"builderMode\": \"LAH_ATTACK\"}, \"builderDetail\": {\"allocate_ids\": {\"elapsedMs\": 349.102, \"attackPathID\": 200000009, \"resumePathID\": 200000010, \"attackIndividualID\": 900000047, \"resumeIndividualID\": 900000048, \"entryWaypointID\": 167, \"attackWaypointID\": 169}, \"split_lah_resume\": {\"elapsedMs\": 219.293, \"resumeWaypointCount\": 1, \"removedWaypointID\": 79}, \"clone_followups\": {\"elapsedMs\": 270.649, \"followUpMissionCount\": 2, \"followUpPathCount\": 2}, \"payload_build\": {\"elapsedMs\": 85.2, \"hasResume\": true, \"followUpMissionCount\": 2, \"attackSpeedMps\": 73.61}, \"write_json\": {\"elapsedMs\": 5.094, \"fileCount\": 5}, \"totalMs\": 932.579}, \"status\": \"ok\", \"elapsedMs\": 955.799}, {\"aircraftID\": 3, \"label\": \"manned\", \"mode\": \"LAH_ATTACK\", \"resolveArtifacts\": {\"elapsedMs\": 0.816, \"currentWaypointID\": null, \"sourcePathID\": 300000001, \"sourceImpID\": 800000009}, \"loadArtifacts\": {\"elapsedMs\": 0.007, \"impLoaded\": true, \"fpLoaded\": true}, \"cloneAndLocateMission\": {\"elapsedMs\": 0.13, \"missionCount\": 3, \"targetIndex\": 0}, \"allocateAndPlanUpdate\": {\"elapsedMs\": 113.639, \"newImpID\": 800000025}, \"builder\": {\"elapsedMs\": 782.797, \"builderMode\": \"LAH_ATTACK\"}, \"builderDetail\": {\"allocate_ids\": {\"elapsedMs\": 180.71, \"attackPathID\": 300000009, \"resumePathID\": 300000010, \"attackIndividualID\": 900000054, \"resumeIndividualID\": 900000055, \"entryWaypointID\": 186, \"attackWaypointID\": 187}, \"split_lah_resume\": {\"elapsedMs\": 243.516, \"resumeWaypointCount\": 1, \"removedWaypointID\": 85}, \"clone_followups\": {\"elapsedMs\": 306.628, \"followUpMissionCount\": 2, \"followUpPathCount\": 2}, \"payload_build\": {\"elapsedMs\": 41.593, \"hasResume\": true, \"followUpMissionCount\": 2, \"attackSpeedMps\": 73.61}, \"write_json\": {\"elapsedMs\": 5.469, \"fileCount\": 5}, \"totalMs\": 780.994}, \"status\": \"ok\", \"elapsedMs\": 897.521}, {\"aircraftID\": 1, \"label\": \"lah_hold_1\", \"mode\": \"LAH_HOLD_RESUME\", \"resolveArtifacts\": {\"elapsedMs\": 0.505, \"currentWaypointID\": null, \"sourcePathID\": 100000001, \"sourceImpID\": 800000007}, \"loadArtifacts\": {\"elapsedMs\": 0.004, \"impLoaded\": true, \"fpLoaded\": true}, \"cloneAndLocateMission\": {\"elapsedMs\": 0.154, \"missionCount\": 3, \"targetIndex\": 0}, \"allocateAndPlanUpdate\": {\"elapsedMs\": 8.603, \"newImpID\": 800000028}, \"builder\": {\"elapsedMs\": 347.261, \"builderMode\": \"LAH_HOLD_RESUME\"}, \"builderDetail\": {\"allocate_ids\": {\"elapsedMs\": 22.797, \"holdPathID\": 100000009, \"resumePathID\": 100000010, \"holdIndividualID\": 900000060, \"resumeIndividualID\": 900000061}, \"split_lah_resume\": {\"elapsedMs\": 143.358, \"resumeWaypointCount\": 1, \"removedWaypointID\": 73}, \"clone_followups\": {\"elapsedMs\": 109.789, \"followUpMissionCount\": 2, \"followUpPathCount\": 2}, \"payload_build\": {\"elapsedMs\": 171.226, \"hasResume\": true, \"followUpMissionCount\": 2}, \"write_json\": {\"elapsedMs\": 5.891, \"fileCount\": 5}, \"totalMs\": 347.216}, \"status\": \"ok\", \"elapsedMs\": 356.642}, {\"aircraftID\": 5, \"label\": \"uav_tracking_5\", \"mode\": \"UAV_TRACK\", \"resolveArtifacts\": {\"elapsedMs\": 0.032, \"currentWaypointID\": 98, \"sourcePathID\": 500000004, \"sourceImpID\": 800000011}, \"loadArtifacts\": {\"elapsedMs\": 0.005, \"impLoaded\": true, \"fpLoaded\": true}, \"cloneAndLocateMission\": {\"elapsedMs\": 0.243, \"missionCount\": 3, \"targetIndex\": 1}, \"allocateAndPlanUpdate\": {\"elapsedMs\": 8.475, \"newImpID\": 800000029}, \"builder\": {\"elapsedMs\": 377.708, \"builderMode\": \"UAV_TRACK\"}, \"builderDetail\": {\"allocate_ids\": {\"elapsedMs\": 83.985, \"donePathID\": 500000012, \"attackPathID\": 500000013, \"resumePathID\": 500000014, \"trackingIndividualID\": 900000064, \"resumeIndividualID\": 900000065, \"targetWaypointID\": 212}, \"split_done_resume\": {\"elapsedMs\": 135.593, \"sourceSinglePoint\": false, \"doneWaypointCount\": 2, \"resumeWaypointCount\": 1, \"removedWaypointID\": 97}, \"clone_followups\": {\"elapsedMs\": 63.047, \"followUpMissionCount\": 1, \"followUpPathCount\": 1}, \"release_resume\": {\"elapsedMs\": 40.716, \"releaseWaypointCount\": 2, \"targetFinishEtaS\": 94}, \"write_json\": {\"elapsedMs\": 43.974, \"fileCount\": 5}, \"totalMs\": 373.978}, \"trackingState\": {\"elapsedMs\": 1.926}, \"status\": \"ok\", \"elapsedMs\": 389.062}, {\"aircraftID\": 4, \"label\": \"uav_tracking_4\", \"mode\": \"UAV_TRACK\", \"resolveArtifacts\": {\"elapsedMs\": 0.023, \"currentWaypointID\": 94, \"sourcePathID\": 400000004, \"sourceImpID\": 800000010}, \"loadArtifacts\": {\"elapsedMs\": 0.004, \"impLoaded\": true, \"fpLoaded\": true}, \"cloneAndLocateMission\": {\"elapsedMs\": 0.18, \"missionCount\": 3, \"targetIndex\": 1}, \"allocateAndPlanUpdate\": {\"elapsedMs\": 7.045, \"newImpID\": 800000030}, \"builder\": {\"elapsedMs\": 419.406, \"builderMode\": \"UAV_TRACK\"}, \"builderDetail\": {\"allocate_ids\": {\"elapsedMs\": 77.831, \"donePathID\": 400000015, \"attackPathID\": 400000016, \"resumePathID\": 400000017, \"trackingIndividualID\": 900000067, \"resumeIndividualID\": 900000068, \"targetWaypointID\": 221}, \"split_done_resume\": {\"elapsedMs\": 151.658, \"sourceSinglePoint\": false, \"doneWaypointCount\": 2, \"resumeWaypointCount\": 1, \"removedWaypointID\": 93}, \"clone_followups\": {\"elapsedMs\": 90.33, \"followUpMissionCount\": 1, \"followUpPathCount\": 1}, \"release_resume\": {\"elapsedMs\": 45.289, \"releaseWaypointCount\": 2, \"targetFinishEtaS\": 94}, \"write_json\": {\"elapsedMs\": 46.646, \"fileCount\": 5}, \"totalMs\": 416.919}, \"trackingState\": {\"elapsedMs\": 10.222}, \"status\": \"ok\", \"elapsedMs\": 437.581}, {\"aircraftID\": 6, \"label\": \"uav_resume_6\", \"mode\": \"UAV_RESUME\", \"resolveArtifacts\": {\"elapsedMs\": 0.03, \"currentWaypointID\": 102, \"sourcePathID\": 600000004, \"sourceImpID\": 800000012}, \"loadArtifacts\": {\"elapsedMs\": 0.004, \"impLoaded\": true, \"fpLoaded\": true}, \"cloneAndLocateMission\": {\"elapsedMs\": 0.279, \"missionCount\": 3, \"targetIndex\": 1}, \"status\": \"handled_by_collab\", \"elapsedMs\": 0.961}], \"totalMs\": 3151}",
+    "[ATTACK][TIME] override_total=3151ms",
+    "[TIME] apply_attack_plan_overrides=3158ms",
+    "[TIME] timingMs={\"read_source\": 14.417, \"descriptor_build\": 14.696, \"write_artifacts\": 3167.131, \"delivery_wait\": 7.654}",
+    "[TIME] total=3205ms"
+  ],
+  "log_text": "[TIME] select_manned_aircraft=12ms\nSTEP1 Selected manned aircraft: aircraft 3 (fuel=1200.0, coord=(37.788631439208984, 128.17909240722656, alt=1199))\n[TIME] load_target_entries=1ms\nSTEP2 UAV tracking summary: watcher 4?’target 74, watcher 5?’target 75, watcher 4?’target unknown-1, watcher 4?’target unknown-2, watcher 4?’target unknown-4, watcher 4?’target unknown-5, watcher 5?’target unknown-10, watcher 5?’target unknown-3, watcher 5?’target unknown-6, watcher 5?’target unknown-7, watcher 6?’target unknown-8, watcher 6?’target unknown-9\nSTEP2.5 Using bundled 0402 targets: target=75 watcher=5, target=74 watcher=4\nSTEP2.6 Multi-target manned selection: 2, 3\n[ATTACK] Selected target id=75 type=1 weaponType=2 (preferred=2, ammo={'type1': 500, 'type2': 7, 'type3': 2})\n[TIME] compute_attack_point=6ms\nSTEP3 Attack plan completed: lat=37.898260, lon=128.171487, alt=983m\n[ATTACK] Weapon choice aircraft=2 preferred=2 selected=2 ammo={'type1': 500, 'type2': 7, 'type3': 2}\n[ATTACK][ETA] Tracking ETA computed with LAH max attack speed (dist=12067.7m, speed=73.61m/s, +30s) -> 194s\n[ATTACK] Using requested missionPlanID 700000005 (sourcePlanID=700000002)\n[ATTACK][POINT] Primary target adaptive standoff mode=far_projected_to_preferred_standoff currentDist=14067.748467086065m candidateDist=2000.0000000001785m standoff=300.0/2000.0m.\n[ATTACK][ETA] UAV 6 remaining mission time: 0.0s\n[ATTACK][ETA] Non-tracking UAV ETA selected: UAV 6 with 0s remaining\n[ATTACK][ETA] All tracking ETAs unified to 0s\n[ATTACK][COLLAB] Remaining UAV entry lookahead applied: 9.0s (pathFollow=3, linearFallback=3, currentOnly=0)\n[PRIOR] Falling back to first mission for aircraft 2 (current waypoint not found in plan).\n[ATTACK][LAH] Using max attack speed 73.61m/s (265.0km/h) for aircraft 2.\n[ATTACK][LAH] Inferred current waypoint from position -> 79.\n[ATTACK][LAH] Dropped current waypoint from resume path (currentWP=79, nextWP=80).\n[ATTACK][LAH] Preserved completed prefix, inserted attack, and reattached 2 follow-up mission(s).\n[ATTACK][LAH] Generated attack/resume missions -> IMP:800000023.json PATHS:200000009.json/200000010.json (followUps=2)\n[PRIOR] Falling back to first mission for aircraft 3 (current waypoint not found in plan).\n[ATTACK][LAH] Using max attack speed 73.61m/s (265.0km/h) for aircraft 3.\n[ATTACK][LAH] Inferred current waypoint from position -> 85.\n[ATTACK][LAH] Dropped current waypoint from resume path (currentWP=85, nextWP=86).\n[ATTACK][LAH] Preserved completed prefix, inserted attack, and reattached 2 follow-up mission(s).\n[ATTACK][LAH] Generated attack/resume missions -> IMP:800000025.json PATHS:300000009.json/300000010.json (followUps=2)\n[PRIOR] Falling back to first mission for aircraft 1 (current waypoint not found in plan).\n[ATTACK][LAH] Inferred current waypoint from position -> 73.\n[ATTACK][LAH] Dropped current waypoint from resume path (currentWP=73, nextWP=74).\n[ATTACK][LAH] Preserved completed prefix, inserted hold, and reattached 2 follow-up mission(s).\n[ATTACK][LAH] Generated hold/resume missions -> IMP:800000028.json PATHS:100000009.json/100000010.json (followUps=2)\n[NEXTCOLLAB] division planner area-division pieces=1\n[NEXTCOLLAB] division planner final workflow=no_split paths=1\n[ATTACK][COLLAB] Collaborative replacement IMP written (aircraft=6, imp=800000027.json, missions=1).\n[ATTACK][COLLAB] First sweep searchSpeed boosted (aircraft=6, pathID=600000009, waypointID=193, factor=1.30, old=841.21, new=1093.57).\n[ATTACK][COLLAB] Collaborative remaining mission replanned (inputMissionID=2, unavailable=[4, 5], remaining=[6], workflow=no_split).\n[ATTACK][UAV] Tracking target altitude kept for sensor only; flight altitude replaced 683m -> 1952m.\n[ATTACK][UAV] Resume trimmed by currentWP (lastRemovedWP=97).\n[ATTACK][UAV] Added replan anchor waypoint to done path (anchorWP=213).\n[ATTACK][UAV] Resume sweep trim applied (cutPoints=68, rawCutPoints=68, doneSweepPoints=0, pathID=500000004).\n[ATTACK][UAV] Resume searchSpeed scaled (factor=1.30, waypoints=1).\n[ATTACK][COLLAB] Tracking UAV resume replaced with release transit (aircraft=5, targetFinishEta=94, speed=58.0m/s).\n[ATTACK][UAV] Preserved completed prefix, inserted tracking, and reattached 1 follow-up mission(s).\n[ATTACK][UAV] Generated tracking/resume missions -> IMP:800000029.json PATHS:500000013.json/500000014.json (followUps=1)\n[ATTACK][UAV] Tracking assignment state saved (aircraft=5, sourcePlan=700000002, attackPlan=700000005).\n[ATTACK][UAV] Resume trimmed by currentWP (lastRemovedWP=93).\n[ATTACK][UAV] Added replan anchor waypoint to done path (anchorWP=222).\n[ATTACK][UAV] Resume sweep trim applied (cutPoints=45, rawCutPoints=45, doneSweepPoints=0, pathID=400000004).\n[ATTACK][UAV] Resume searchSpeed scaled (factor=1.30, waypoints=1).\n[ATTACK][COLLAB] Tracking UAV resume replaced with release transit (aircraft=4, targetFinishEta=94, speed=58.0m/s).\n[ATTACK][UAV] Preserved completed prefix, inserted tracking, and reattached 1 follow-up mission(s).\n[ATTACK][UAV] Generated tracking/resume missions -> IMP:800000030.json PATHS:400000016.json/400000017.json (followUps=1)\n[ATTACK][UAV] Tracking assignment state saved (aircraft=4, sourcePlan=700000002, attackPlan=700000005).\n[ATTACK][COLLAB] Aircraft 6 handled by collaborative remaining replan (inputMissionID=2).\n[ATTACK][PLAN] carried area remaining snapshot -> mission_area_snapshot_700000005.json (sourcePlanID=700000002, planID=700000005)\n[ATTACK][PLAN] MissionPlan saved -> 700000005.json (planID=700000005)\n[ATTACK][TIME] override_detail={\"phases\": {\"metadata_normalize\": {\"elapsedMs\": 0.009, \"attackTargetCount\": 2, \"selectedMannedCount\": 2}, \"agent_index\": {\"elapsedMs\": 0.432, \"aircraftCount\": 6}, \"weapon_choice\": {\"elapsedMs\": 2.712, \"selectedWeaponType\": 2, \"ammoAvailable\": true}, \"initial_tracking_eta\": {\"elapsedMs\": 0.556, \"useDetectionTracking\": true, \"trackingEtaS\": 194}, \"resolve_source_plan\": {\"elapsedMs\": 0.812, \"sourcePlanID\": 700000002}, \"source_plan_load\": {\"elapsedMs\": 0.446, \"sourcePlanID\": 700000002, \"aircraftCount\": 6}, \"sweep_progress_load\": {\"elapsedMs\": 0.547, \"entries\": 12}, \"plan_id_resolve\": {\"elapsedMs\": 0.019, \"requested\": true, \"missionPlanID\": 700000005}, \"source_artifact_cache_build\": {\"elapsedMs\": 0.017, \"aircraftEntries\": 6}, \"done_input_ids_load\": {\"elapsedMs\": 1.401, \"count\": 1}, \"plan_deepcopy\": {\"elapsedMs\": 0.053}, \"target_uav_assignment\": {\"elapsedMs\": 0.535, \"assignedTargetCount\": 2, \"usedTrackingUavCount\": 2}, \"manned_sequence_assignment\": {\"elapsedMs\": 13.397, \"aircraftCount\": 2, \"error\": null}, \"attack_coordinate_resolution\": {\"elapsedMs\": 8.51, \"resolvedCount\": 2, \"mannedSequenceCount\": 2}, \"remaining_eta\": {\"elapsedMs\": 10.689, \"allUavCount\": 3, \"trackingUavCount\": 2, \"computedEtaCount\": 2, \"adjustedEtaS\": 0}, \"descriptor_list_build\": {\"elapsedMs\": 0.04, \"descriptorCount\": 6, \"activeMannedCount\": 2, \"otherLahCount\": 1, \"otherUavCount\": 1}, \"collab_tracking_scan\": {\"elapsedMs\": 23.516, \"inputCount\": 1, \"unavailableUavCount\": 2}, \"collab_agent_state_map\": {\"elapsedMs\": 36.266, \"aircraftCount\": 6}, \"collab_parallel_started\": {\"elapsedMs\": 0.693, \"inputCount\": 1, \"workers\": 1}, \"collab_parallel_join\": {\"elapsedMs\": 3.258, \"waitReason\": \"UAV_TRACK\", \"inputCount\": 1}, \"descriptor_loop\": {\"elapsedMs\": 3041.396, \"descriptorCount\": 6, \"updateCount\": 5}, \"final_collab_plan_update\": {\"elapsedMs\": 0.01, \"collabInputCount\": 1}, \"mission_plan_write\": {\"elapsedMs\": 11.074, \"missionPlanID\": 700000005}, \"option_meta_build\": {\"elapsedMs\": 0.066, \"targetCount\": 2, \"collabInputCount\": 1}}, \"collabRuns\": [{\"inputMissionID\": 2, \"unavailableAircraftIDs\": [4, 5], \"elapsedMs\": 1563.172, \"status\": \"ok\", \"replacementAircraftIDs\": [6], \"generatedPathCount\": 1, \"finishEtaS\": 94, \"workflow\": \"no_split\"}], \"descriptorDetails\": [{\"aircraftID\": 2, \"label\": \"manned\", \"mode\": \"LAH_ATTACK\", \"resolveArtifacts\": {\"elapsedMs\": 1.553, \"currentWaypointID\": null, \"sourcePathID\": 200000001, \"sourceImpID\": 800000008}, \"loadArtifacts\": {\"elapsedMs\": 0.005, \"impLoaded\": true, \"fpLoaded\": true}, \"cloneAndLocateMission\": {\"elapsedMs\": 0.12, \"missionCount\": 3, \"targetIndex\": 0}, \"allocateAndPlanUpdate\": {\"elapsedMs\": 19.075, \"newImpID\": 800000023}, \"builder\": {\"elapsedMs\": 934.911, \"builderMode\": \"LAH_ATTACK\"}, \"builderDetail\": {\"allocate_ids\": {\"elapsedMs\": 349.102, \"attackPathID\": 200000009, \"resumePathID\": 200000010, \"attackIndividualID\": 900000047, \"resumeIndividualID\": 900000048, \"entryWaypointID\": 167, \"attackWaypointID\": 169}, \"split_lah_resume\": {\"elapsedMs\": 219.293, \"resumeWaypointCount\": 1, \"removedWaypointID\": 79}, \"clone_followups\": {\"elapsedMs\": 270.649, \"followUpMissionCount\": 2, \"followUpPathCount\": 2}, \"payload_build\": {\"elapsedMs\": 85.2, \"hasResume\": true, \"followUpMissionCount\": 2, \"attackSpeedMps\": 73.61}, \"write_json\": {\"elapsedMs\": 5.094, \"fileCount\": 5}, \"totalMs\": 932.579}, \"status\": \"ok\", \"elapsedMs\": 955.799}, {\"aircraftID\": 3, \"label\": \"manned\", \"mode\": \"LAH_ATTACK\", \"resolveArtifacts\": {\"elapsedMs\": 0.816, \"currentWaypointID\": null, \"sourcePathID\": 300000001, \"sourceImpID\": 800000009}, \"loadArtifacts\": {\"elapsedMs\": 0.007, \"impLoaded\": true, \"fpLoaded\": true}, \"cloneAndLocateMission\": {\"elapsedMs\": 0.13, \"missionCount\": 3, \"targetIndex\": 0}, \"allocateAndPlanUpdate\": {\"elapsedMs\": 113.639, \"newImpID\": 800000025}, \"builder\": {\"elapsedMs\": 782.797, \"builderMode\": \"LAH_ATTACK\"}, \"builderDetail\": {\"allocate_ids\": {\"elapsedMs\": 180.71, \"attackPathID\": 300000009, \"resumePathID\": 300000010, \"attackIndividualID\": 900000054, \"resumeIndividualID\": 900000055, \"entryWaypointID\": 186, \"attackWaypointID\": 187}, \"split_lah_resume\": {\"elapsedMs\": 243.516, \"resumeWaypointCount\": 1, \"removedWaypointID\": 85}, \"clone_followups\": {\"elapsedMs\": 306.628, \"followUpMissionCount\": 2, \"followUpPathCount\": 2}, \"payload_build\": {\"elapsedMs\": 41.593, \"hasResume\": true, \"followUpMissionCount\": 2, \"attackSpeedMps\": 73.61}, \"write_json\": {\"elapsedMs\": 5.469, \"fileCount\": 5}, \"totalMs\": 780.994}, \"status\": \"ok\", \"elapsedMs\": 897.521}, {\"aircraftID\": 1, \"label\": \"lah_hold_1\", \"mode\": \"LAH_HOLD_RESUME\", \"resolveArtifacts\": {\"elapsedMs\": 0.505, \"currentWaypointID\": null, \"sourcePathID\": 100000001, \"sourceImpID\": 800000007}, \"loadArtifacts\": {\"elapsedMs\": 0.004, \"impLoaded\": true, \"fpLoaded\": true}, \"cloneAndLocateMission\": {\"elapsedMs\": 0.154, \"missionCount\": 3, \"targetIndex\": 0}, \"allocateAndPlanUpdate\": {\"elapsedMs\": 8.603, \"newImpID\": 800000028}, \"builder\": {\"elapsedMs\": 347.261, \"builderMode\": \"LAH_HOLD_RESUME\"}, \"builderDetail\": {\"allocate_ids\": {\"elapsedMs\": 22.797, \"holdPathID\": 100000009, \"resumePathID\": 100000010, \"holdIndividualID\": 900000060, \"resumeIndividualID\": 900000061}, \"split_lah_resume\": {\"elapsedMs\": 143.358, \"resumeWaypointCount\": 1, \"removedWaypointID\": 73}, \"clone_followups\": {\"elapsedMs\": 109.789, \"followUpMissionCount\": 2, \"followUpPathCount\": 2}, \"payload_build\": {\"elapsedMs\": 171.226, \"hasResume\": true, \"followUpMissionCount\": 2}, \"write_json\": {\"elapsedMs\": 5.891, \"fileCount\": 5}, \"totalMs\": 347.216}, \"status\": \"ok\", \"elapsedMs\": 356.642}, {\"aircraftID\": 5, \"label\": \"uav_tracking_5\", \"mode\": \"UAV_TRACK\", \"resolveArtifacts\": {\"elapsedMs\": 0.032, \"currentWaypointID\": 98, \"sourcePathID\": 500000004, \"sourceImpID\": 800000011}, \"loadArtifacts\": {\"elapsedMs\": 0.005, \"impLoaded\": true, \"fpLoaded\": true}, \"cloneAndLocateMission\": {\"elapsedMs\": 0.243, \"missionCount\": 3, \"targetIndex\": 1}, \"allocateAndPlanUpdate\": {\"elapsedMs\": 8.475, \"newImpID\": 800000029}, \"builder\": {\"elapsedMs\": 377.708, \"builderMode\": \"UAV_TRACK\"}, \"builderDetail\": {\"allocate_ids\": {\"elapsedMs\": 83.985, \"donePathID\": 500000012, \"attackPathID\": 500000013, \"resumePathID\": 500000014, \"trackingIndividualID\": 900000064, \"resumeIndividualID\": 900000065, \"targetWaypointID\": 212}, \"split_done_resume\": {\"elapsedMs\": 135.593, \"sourceSinglePoint\": false, \"doneWaypointCount\": 2, \"resumeWaypointCount\": 1, \"removedWaypointID\": 97}, \"clone_followups\": {\"elapsedMs\": 63.047, \"followUpMissionCount\": 1, \"followUpPathCount\": 1}, \"release_resume\": {\"elapsedMs\": 40.716, \"releaseWaypointCount\": 2, \"targetFinishEtaS\": 94}, \"write_json\": {\"elapsedMs\": 43.974, \"fileCount\": 5}, \"totalMs\": 373.978}, \"trackingState\": {\"elapsedMs\": 1.926}, \"status\": \"ok\", \"elapsedMs\": 389.062}, {\"aircraftID\": 4, \"label\": \"uav_tracking_4\", \"mode\": \"UAV_TRACK\", \"resolveArtifacts\": {\"elapsedMs\": 0.023, \"currentWaypointID\": 94, \"sourcePathID\": 400000004, \"sourceImpID\": 800000010}, \"loadArtifacts\": {\"elapsedMs\": 0.004, \"impLoaded\": true, \"fpLoaded\": true}, \"cloneAndLocateMission\": {\"elapsedMs\": 0.18, \"missionCount\": 3, \"targetIndex\": 1}, \"allocateAndPlanUpdate\": {\"elapsedMs\": 7.045, \"newImpID\": 800000030}, \"builder\": {\"elapsedMs\": 419.406, \"builderMode\": \"UAV_TRACK\"}, \"builderDetail\": {\"allocate_ids\": {\"elapsedMs\": 77.831, \"donePathID\": 400000015, \"attackPathID\": 400000016, \"resumePathID\": 400000017, \"trackingIndividualID\": 900000067, \"resumeIndividualID\": 900000068, \"targetWaypointID\": 221}, \"split_done_resume\": {\"elapsedMs\": 151.658, \"sourceSinglePoint\": false, \"doneWaypointCount\": 2, \"resumeWaypointCount\": 1, \"removedWaypointID\": 93}, \"clone_followups\": {\"elapsedMs\": 90.33, \"followUpMissionCount\": 1, \"followUpPathCount\": 1}, \"release_resume\": {\"elapsedMs\": 45.289, \"releaseWaypointCount\": 2, \"targetFinishEtaS\": 94}, \"write_json\": {\"elapsedMs\": 46.646, \"fileCount\": 5}, \"totalMs\": 416.919}, \"trackingState\": {\"elapsedMs\": 10.222}, \"status\": \"ok\", \"elapsedMs\": 437.581}, {\"aircraftID\": 6, \"label\": \"uav_resume_6\", \"mode\": \"UAV_RESUME\", \"resolveArtifacts\": {\"elapsedMs\": 0.03, \"currentWaypointID\": 102, \"sourcePathID\": 600000004, \"sourceImpID\": 800000012}, \"loadArtifacts\": {\"elapsedMs\": 0.004, \"impLoaded\": true, \"fpLoaded\": true}, \"cloneAndLocateMission\": {\"elapsedMs\": 0.279, \"missionCount\": 3, \"targetIndex\": 1}, \"status\": \"handled_by_collab\", \"elapsedMs\": 0.961}], \"totalMs\": 3151}\n[ATTACK][TIME] override_total=3151ms\n[TIME] apply_attack_plan_overrides=3158ms\n[TIME] timingMs={\"read_source\": 14.417, \"descriptor_build\": 14.696, \"write_artifacts\": 3167.131, \"delivery_wait\": 7.654}\n[TIME] total=3205ms",
+  "result": {
+    "manned_candidates": [
+      {
+        "aircraft_id": 3,
+        "fuel": 1200.0,
+        "coordinate": {
+          "latitude": 37.788631439208984,
+          "longitude": 128.17909240722656,
+          "altitude": 1199
+        },
+        "heading": null,
+        "speed": null,
+        "weapon_inventory": {
+          "type1": 500,
+          "type2": 7,
+          "type3": 2
+        }
+      },
+      {
+        "aircraft_id": 2,
+        "fuel": 1200.0,
+        "coordinate": {
+          "latitude": 37.78976821899414,
+          "longitude": 128.16795349121094,
+          "altitude": 1199
+        },
+        "heading": null,
+        "speed": null,
+        "weapon_inventory": {
+          "type1": 500,
+          "type2": 7,
+          "type3": 2
+        }
+      }
+    ],
+    "selected_aircraft": {
+      "aircraft_id": 3,
+      "fuel": 1200.0,
+      "coordinate": {
+        "latitude": 37.788631439208984,
+        "longitude": 128.17909240722656,
+        "altitude": 1199
+      },
+      "heading": null,
+      "speed": null,
+      "weapon_inventory": {
+        "type1": 500,
+        "type2": 7,
+        "type3": 2
+      }
+    },
+    "target_tracking": [
+      {
+        "key": "74-4",
+        "target_id": 74,
+        "target_type": 4,
+        "watcher_id": 4,
+        "coordinate": {
+          "latitude": 37.91281509399414,
+          "longitude": 128.16159057617188,
+          "altitude": 779
+        },
+        "is_destroyed": false,
+        "is_used": 1,
+        "target_in_frame": true,
+        "threat": 0.8500000238418579,
+        "first_detected": 832644221289,
+        "last_updated": 832644274978,
+        "raw": {
+          "coordinate": {
+            "altitude": 779,
+            "latitude": 37.91281509399414,
+            "longitude": 128.16159057617188
+          },
+          "firstDetected": 832644221289,
+          "isDestroyed": false,
+          "isIgnored": 0,
+          "isUsed": 1,
+          "lastUpdated": 832644274978,
+          "sinceFirstDetectedMs": 53689,
+          "targetID": 74,
+          "targetInFrame": true,
+          "targetType": 4,
+          "threat": 0.8500000238418579,
+          "watcherID": 4
+        }
+      },
+      {
+        "key": "75-5",
+        "target_id": 75,
+        "target_type": 1,
+        "watcher_id": 5,
+        "coordinate": {
+          "latitude": 37.91624069213867,
+          "longitude": 128.1720733642578,
+          "altitude": 683
+        },
+        "is_destroyed": false,
+        "is_used": 1,
+        "target_in_frame": true,
+        "threat": 0.8999999761581421,
+        "first_detected": 832644274582,
+        "last_updated": 832644274978,
+        "raw": {
+          "coordinate": {
+            "altitude": 683,
+            "latitude": 37.91624069213867,
+            "longitude": 128.1720733642578
+          },
+          "firstDetected": 832644274582,
+          "isDestroyed": false,
+          "isIgnored": 0,
+          "isUsed": 1,
+          "lastUpdated": 832644274978,
+          "sinceFirstDetectedMs": 396,
+          "targetID": 75,
+          "targetInFrame": true,
+          "targetType": 1,
+          "threat": 0.8999999761581421,
+          "watcherID": 5
+        }
+      },
+      {
+        "key": "unknown-1",
+        "target_id": null,
+        "target_type": null,
+        "watcher_id": 4,
+        "coordinate": {
+          "latitude": 37.8963737487793,
+          "longitude": 128.1564483642578,
+          "altitude": 930
+        },
+        "is_destroyed": false,
+        "is_used": 0,
+        "target_in_frame": false,
+        "threat": null,
+        "first_detected": null,
+        "last_updated": null,
+        "raw": {
+          "coordinate": {
+            "altitude": 930,
+            "latitude": 37.8963737487793,
+            "longitude": 128.1564483642578
+          },
+          "fov": 0.6100000143051147,
+          "initDetectedTime": 832644106722,
+          "isIgnored": 0,
+          "isUsed": 0,
+          "watcherID": 4
+        }
+      },
+      {
+        "key": "unknown-2",
+        "target_id": null,
+        "target_type": null,
+        "watcher_id": 4,
+        "coordinate": {
+          "latitude": 37.90060806274414,
+          "longitude": 128.1559295654297,
+          "altitude": 836
+        },
+        "is_destroyed": false,
+        "is_used": 0,
+        "target_in_frame": false,
+        "threat": null,
+        "first_detected": null,
+        "last_updated": null,
+        "raw": {
+          "coordinate": {
+            "altitude": 836,
+            "latitude": 37.90060806274414,
+            "longitude": 128.1559295654297
+          },
+          "fov": 0.6100000143051147,
+          "initDetectedTime": 832644122923,
+          "isIgnored": 0,
+          "isUsed": 0,
+          "watcherID": 4
+        }
+      },
+      {
+        "key": "unknown-4",
+        "target_id": null,
+        "target_type": null,
+        "watcher_id": 4,
+        "coordinate": {
+          "latitude": 37.90937042236328,
+          "longitude": 128.1610870361328,
+          "altitude": 859
+        },
+        "is_destroyed": false,
+        "is_used": 0,
+        "target_in_frame": false,
+        "threat": null,
+        "first_detected": null,
+        "last_updated": null,
+        "raw": {
+          "coordinate": {
+            "altitude": 859,
+            "latitude": 37.90937042236328,
+            "longitude": 128.1610870361328
+          },
+          "fov": 2.4000000953674316,
+          "initDetectedTime": 832644203006,
+          "isIgnored": 0,
+          "isUsed": 0,
+          "watcherID": 4
+        }
+      },
+      {
+        "key": "unknown-5",
+        "target_id": null,
+        "target_type": null,
+        "watcher_id": 4,
+        "coordinate": {
+          "latitude": 37.91282272338867,
+          "longitude": 128.16159057617188,
+          "altitude": 779
+        },
+        "is_destroyed": false,
+        "is_used": 0,
+        "target_in_frame": false,
+        "threat": null,
+        "first_detected": null,
+        "last_updated": null,
+        "raw": {
+          "coordinate": {
+            "altitude": 779,
+            "latitude": 37.91282272338867,
+            "longitude": 128.16159057617188
+          },
+          "fov": 2.332868814468384,
+          "initDetectedTime": 832644219035,
+          "isIgnored": 0,
+          "isUsed": 0,
+          "watcherID": 4
+        }
+      },
+      {
+        "key": "unknown-10",
+        "target_id": null,
+        "target_type": null,
+        "watcher_id": 5,
+        "coordinate": {
+          "latitude": 37.9162483215332,
+          "longitude": 128.17208862304688,
+          "altitude": 683
+        },
+        "is_destroyed": false,
+        "is_used": 0,
+        "target_in_frame": false,
+        "threat": null,
+        "first_detected": null,
+        "last_updated": null,
+        "raw": {
+          "coordinate": {
+            "altitude": 683,
+            "latitude": 37.9162483215332,
+            "longitude": 128.17208862304688
+          },
+          "fov": 1.3383047580718994,
+          "initDetectedTime": 832644271667,
+          "isIgnored": 0,
+          "isUsed": 0,
+          "watcherID": 5
+        }
+      },
+      {
+        "key": "unknown-3",
+        "target_id": null,
+        "target_type": null,
+        "watcher_id": 5,
+        "coordinate": {
+          "latitude": 37.90221405029297,
+          "longitude": 128.16415405273438,
+          "altitude": 870
+        },
+        "is_destroyed": false,
+        "is_used": 0,
+        "target_in_frame": false,
+        "threat": null,
+        "first_detected": null,
+        "last_updated": null,
+        "raw": {
+          "coordinate": {
+            "altitude": 870,
+            "latitude": 37.90221405029297,
+            "longitude": 128.16415405273438
+          },
+          "fov": 1.484713077545166,
+          "initDetectedTime": 832644198706,
+          "isIgnored": 0,
+          "isUsed": 0,
+          "watcherID": 5
+        }
+      },
+      {
+        "key": "unknown-6",
+        "target_id": null,
+        "target_type": null,
+        "watcher_id": 5,
+        "coordinate": {
+          "latitude": 37.907806396484375,
+          "longitude": 128.16978454589844,
+          "altitude": 846
+        },
+        "is_destroyed": false,
+        "is_used": 0,
+        "target_in_frame": false,
+        "threat": null,
+        "first_detected": null,
+        "last_updated": null,
+        "raw": {
+          "coordinate": {
+            "altitude": 846,
+            "latitude": 37.907806396484375,
+            "longitude": 128.16978454589844
+          },
+          "fov": 1.6779347658157349,
+          "initDetectedTime": 832644225786,
+          "isIgnored": 0,
+          "isUsed": 0,
+          "watcherID": 5
+        }
+      },
+      {
+        "key": "unknown-7",
+        "target_id": null,
+        "target_type": null,
+        "watcher_id": 5,
+        "coordinate": {
+          "latitude": 37.90494155883789,
+          "longitude": 128.18312072753906,
+          "altitude": 772
+        },
+        "is_destroyed": false,
+        "is_used": 0,
+        "target_in_frame": false,
+        "threat": null,
+        "first_detected": null,
+        "last_updated": null,
+        "raw": {
+          "coordinate": {
+            "altitude": 772,
+            "latitude": 37.90494155883789,
+            "longitude": 128.18312072753906
+          },
+          "fov": 1.7440006732940674,
+          "initDetectedTime": 832644239720,
+          "isIgnored": 0,
+          "isUsed": 0,
+          "watcherID": 5
+        }
+      },
+      {
+        "key": "unknown-8",
+        "target_id": null,
+        "target_type": null,
+        "watcher_id": 6,
+        "coordinate": {
+          "latitude": 37.90003204345703,
+          "longitude": 128.20059204101562,
+          "altitude": 719
+        },
+        "is_destroyed": false,
+        "is_used": 0,
+        "target_in_frame": false,
+        "threat": null,
+        "first_detected": null,
+        "last_updated": null,
+        "raw": {
+          "coordinate": {
+            "altitude": 719,
+            "latitude": 37.90003204345703,
+            "longitude": 128.20059204101562
+          },
+          "fov": 1.6498593091964722,
+          "initDetectedTime": 832644255722,
+          "isIgnored": 0,
+          "isUsed": 0,
+          "watcherID": 6
+        }
+      },
+      {
+        "key": "unknown-9",
+        "target_id": null,
+        "target_type": null,
+        "watcher_id": 6,
+        "coordinate": {
+          "latitude": 37.90544128417969,
+          "longitude": 128.19354248046875,
+          "altitude": 800
+        },
+        "is_destroyed": false,
+        "is_used": 0,
+        "target_in_frame": false,
+        "threat": null,
+        "first_detected": null,
+        "last_updated": null,
+        "raw": {
+          "coordinate": {
+            "altitude": 800,
+            "latitude": 37.90544128417969,
+            "longitude": 128.19354248046875
+          },
+          "fov": 1.9126930236816406,
+          "initDetectedTime": 832644267971,
+          "isIgnored": 0,
+          "isUsed": 0,
+          "watcherID": 6
+        }
+      }
+    ],
+    "primary_target": {
+      "key": "75-5",
+      "target_id": 75,
+      "target_type": 1,
+      "watcher_id": 5,
+      "coordinate": {
+        "latitude": 37.91624069213867,
+        "longitude": 128.1720733642578,
+        "altitude": 683
+      },
+      "is_destroyed": false,
+      "is_used": 1,
+      "target_in_frame": true,
+      "threat": 0.8999999761581421,
+      "first_detected": 832644274582,
+      "last_updated": 832644274978,
+      "raw": {
+        "key": "75-5",
+        "targetID": 75,
+        "targetType": 1,
+        "watcherID": 5,
+        "coordinate": {
+          "latitude": 37.91624069213867,
+          "longitude": 128.1720733642578,
+          "altitude": 683.0
+        },
+        "isUsed": 1,
+        "isIgnored": 0,
+        "isDestroyed": false,
+        "targetInFrame": true,
+        "threat": 0.8999999761581421,
+        "firstDetected": 832644274582,
+        "lastUpdated": 832644274978,
+        "sourceKey": "75-5"
+      }
+    },
+    "attack_targets": [
+      {
+        "key": "75-5",
+        "target_id": 75,
+        "target_type": 1,
+        "watcher_id": 5,
+        "coordinate": {
+          "latitude": 37.91624069213867,
+          "longitude": 128.1720733642578,
+          "altitude": 683
+        },
+        "is_destroyed": false,
+        "is_used": 1,
+        "target_in_frame": true,
+        "threat": 0.8999999761581421,
+        "first_detected": 832644274582,
+        "last_updated": 832644274978,
+        "raw": {
+          "key": "75-5",
+          "targetID": 75,
+          "targetType": 1,
+          "watcherID": 5,
+          "coordinate": {
+            "latitude": 37.91624069213867,
+            "longitude": 128.1720733642578,
+            "altitude": 683.0
+          },
+          "isUsed": 1,
+          "isIgnored": 0,
+          "isDestroyed": false,
+          "targetInFrame": true,
+          "threat": 0.8999999761581421,
+          "firstDetected": 832644274582,
+          "lastUpdated": 832644274978,
+          "sourceKey": "75-5"
+        }
+      },
+      {
+        "key": "74-4",
+        "target_id": 74,
+        "target_type": 4,
+        "watcher_id": 4,
+        "coordinate": {
+          "latitude": 37.91281509399414,
+          "longitude": 128.16159057617188,
+          "altitude": 779
+        },
+        "is_destroyed": false,
+        "is_used": 1,
+        "target_in_frame": true,
+        "threat": 0.8500000238418579,
+        "first_detected": 832644221289,
+        "last_updated": 832644274978,
+        "raw": {
+          "key": "74-4",
+          "targetID": 74,
+          "targetType": 4,
+          "watcherID": 4,
+          "coordinate": {
+            "latitude": 37.91281509399414,
+            "longitude": 128.16159057617188,
+            "altitude": 779.0
+          },
+          "isUsed": 1,
+          "isIgnored": 0,
+          "isDestroyed": false,
+          "targetInFrame": true,
+          "threat": 0.8500000238418579,
+          "firstDetected": 832644221289,
+          "lastUpdated": 832644274978,
+          "sourceKey": "74-4"
+        }
+      }
+    ],
+    "target_count": 2,
+    "selected_manned_aircraft": [
+      {
+        "aircraft_id": 2,
+        "fuel": 1200.0,
+        "coordinate": {
+          "latitude": 37.78976821899414,
+          "longitude": 128.16795349121094,
+          "altitude": 1199
+        },
+        "heading": null,
+        "speed": null,
+        "weapon_inventory": {
+          "type1": 500,
+          "type2": 7,
+          "type3": 2
+        }
+      },
+      {
+        "aircraft_id": 3,
+        "fuel": 1200.0,
+        "coordinate": {
+          "latitude": 37.788631439208984,
+          "longitude": 128.17909240722656,
+          "altitude": 1199
+        },
+        "heading": null,
+        "speed": null,
+        "weapon_inventory": {
+          "type1": 500,
+          "type2": 7,
+          "type3": 2
+        }
+      }
+    ],
+    "selected_weapon_type": 2,
+    "weapon_choice": {
+      "preferredWeaponType": 2,
+      "selectedWeaponType": 2,
+      "weaponPreference": [
+        2,
+        1,
+        3
+      ],
+      "weaponInventory": {
+        "type1": 500,
+        "type2": 7,
+        "type3": 2
+      },
+      "ammoAvailable": true,
+      "selectedAmmo": 7,
+      "targetType": 1
+    },
+    "attack_point": {
+      "latitude": 37.898260215473556,
+      "longitude": 128.1714867826024,
+      "altitude": 983,
+      "friendly_distance_m": 12067.748467085818,
+      "enemy_distance_m": 2000.000000000512,
+      "current_distance_m": 14067.748467086065,
+      "candidate_distance_m": null,
+      "min_standoff_m": 300.0,
+      "preferred_standoff_m": 2000.0,
+      "raster_sources": [],
+      "selection_mode": "far_projected_to_preferred_standoff"
+    },
+    "missionUpdates": {
+      "source_plan_id": 700000002,
+      "mission_plan_id": 700000005,
+      "plan_path": "C:\\Users\\TRL98\\Desktop\\LAH_MUMT\\Logs\\Scenario_2026-05-21T105639\\SBC3\\MissionPlan\\700000005.json",
+      "target_id": 75,
+      "target_type": 1,
+      "weapon_type": 3,
+      "weapon_choice": {
+        "preferredWeaponType": 3,
+        "selectedWeaponType": 3,
+        "weaponPreference": [
+          3,
+          2,
+          1
+        ],
+        "weaponInventory": {
+          "type1": 500,
+          "type2": 7,
+          "type3": 2
+        },
+        "ammoAvailable": true,
+        "selectedAmmo": 2,
+        "targetType": 4
+      },
+      "attack_targets": [
+        {
+          "key": "75-5",
+          "target_id": 75,
+          "target_type": 1,
+          "watcher_id": 5,
+          "coordinate": {
+            "latitude": 37.91624069213867,
+            "longitude": 128.1720733642578,
+            "altitude": 683
+          },
+          "is_destroyed": false,
+          "is_used": 1,
+          "target_in_frame": true,
+          "threat": 0.8999999761581421,
+          "first_detected": 832644274582,
+          "last_updated": 832644274978,
+          "raw": {
+            "key": "75-5",
+            "targetID": 75,
+            "targetType": 1,
+            "watcherID": 5,
+            "coordinate": {
+              "latitude": 37.91624069213867,
+              "longitude": 128.1720733642578,
+              "altitude": 683.0
+            },
+            "isUsed": 1,
+            "isIgnored": 0,
+            "isDestroyed": false,
+            "targetInFrame": true,
+            "threat": 0.8999999761581421,
+            "firstDetected": 832644274582,
+            "lastUpdated": 832644274978,
+            "sourceKey": "75-5"
+          },
+          "assigned_manned_aircraft_id": 2,
+          "weapon_choice": {
+            "preferredWeaponType": 2,
+            "selectedWeaponType": 2,
+            "weaponPreference": [
+              2,
+              1,
+              3
+            ],
+            "weaponInventory": {
+              "type1": 500,
+              "type2": 7,
+              "type3": 2
+            },
+            "ammoAvailable": true,
+            "selectedAmmo": 7,
+            "targetType": 1
+          },
+          "selected_weapon_type": 2,
+          "weapon_type": 2,
+          "attack_coord": {
+            "latitude": 37.898260215473556,
+            "longitude": 128.1714867826024,
+            "altitude": 683
+          },
+          "tracking_eta_s": 0
+        },
+        {
+          "key": "74-4",
+          "target_id": 74,
+          "target_type": 4,
+          "watcher_id": 4,
+          "coordinate": {
+            "latitude": 37.91281509399414,
+            "longitude": 128.16159057617188,
+            "altitude": 779
+          },
+          "is_destroyed": false,
+          "is_used": 1,
+          "target_in_frame": true,
+          "threat": 0.8500000238418579,
+          "first_detected": 832644221289,
+          "last_updated": 832644274978,
+          "raw": {
+            "key": "74-4",
+            "targetID": 74,
+            "targetType": 4,
+            "watcherID": 4,
+            "coordinate": {
+              "latitude": 37.91281509399414,
+              "longitude": 128.16159057617188,
+              "altitude": 779.0
+            },
+            "isUsed": 1,
+            "isIgnored": 0,
+            "isDestroyed": false,
+            "targetInFrame": true,
+            "threat": 0.8500000238418579,
+            "firstDetected": 832644221289,
+            "lastUpdated": 832644274978,
+            "sourceKey": "74-4"
+          },
+          "assigned_manned_aircraft_id": 3,
+          "weapon_choice": {
+            "preferredWeaponType": 3,
+            "selectedWeaponType": 3,
+            "weaponPreference": [
+              3,
+              2,
+              1
+            ],
+            "weaponInventory": {
+              "type1": 500,
+              "type2": 7,
+              "type3": 2
+            },
+            "ammoAvailable": true,
+            "selectedAmmo": 2,
+            "targetType": 4
+          },
+          "selected_weapon_type": 3,
+          "weapon_type": 3,
+          "attack_coord": {
+            "latitude": 37.894939170822425,
+            "longitude": 128.164113578926,
+            "altitude": 1079
+          },
+          "tracking_eta_s": 0
+        }
+      ],
+      "aircraft": [
+        {
+          "aircraft_id": 2,
+          "role": "manned",
+          "individualMissionPackageID": 800000023,
+          "attack": {
+            "individualMissionID": 900000047,
+            "pathID": 200000009,
+            "waypointIDs": [
+              167,
+              169
+            ]
+          },
+          "removedWaypointID": 79,
+          "attackPath": "C:\\Users\\TRL98\\Desktop\\LAH_MUMT\\Logs\\Scenario_2026-05-21T105639\\SBC3\\FlightPath\\200000009.json",
+          "followUpMissionCount": 2,
+          "attackEntryCoordinate": {
+            "latitude": 37.79047403404613,
+            "longitude": 128.1686587255873,
+            "altitude": 1199
+          },
+          "attackCoordinate": {
+            "latitude": 37.898260215473556,
+            "longitude": 128.1714867826024,
+            "altitude": 1199
+          },
+          "resume": {
+            "individualMissionID": 900000048,
+            "pathID": 200000010
+          },
+          "resumePath": "C:\\Users\\TRL98\\Desktop\\LAH_MUMT\\Logs\\Scenario_2026-05-21T105639\\SBC3\\FlightPath\\200000010.json",
+          "timingMs": {
+            "allocate_ids": {
+              "elapsedMs": 349.102,
+              "attackPathID": 200000009,
+              "resumePathID": 200000010,
+              "attackIndividualID": 900000047,
+              "resumeIndividualID": 900000048,
+              "entryWaypointID": 167,
+              "attackWaypointID": 169
+            },
+            "split_lah_resume": {
+              "elapsedMs": 219.293,
+              "resumeWaypointCount": 1,
+              "removedWaypointID": 79
+            },
+            "clone_followups": {
+              "elapsedMs": 270.649,
+              "followUpMissionCount": 2,
+              "followUpPathCount": 2
+            },
+            "payload_build": {
+              "elapsedMs": 85.2,
+              "hasResume": true,
+              "followUpMissionCount": 2,
+              "attackSpeedMps": 73.61
+            },
+            "write_json": {
+              "elapsedMs": 5.094,
+              "fileCount": 5
+            },
+            "totalMs": 932.579
+          }
+        },
+        {
+          "aircraft_id": 3,
+          "role": "manned",
+          "individualMissionPackageID": 800000025,
+          "attack": {
+            "individualMissionID": 900000054,
+            "pathID": 300000009,
+            "waypointIDs": [
+              186,
+              187
+            ]
+          },
+          "removedWaypointID": 85,
+          "attackPath": "C:\\Users\\TRL98\\Desktop\\LAH_MUMT\\Logs\\Scenario_2026-05-21T105639\\SBC3\\FlightPath\\300000009.json",
+          "followUpMissionCount": 2,
+          "attackEntryCoordinate": {
+            "latitude": 37.7893560323873,
+            "longitude": 128.17976644836548,
+            "altitude": 1199
+          },
+          "attackCoordinate": {
+            "latitude": 37.894939170822425,
+            "longitude": 128.164113578926,
+            "altitude": 1199
+          },
+          "resume": {
+            "individualMissionID": 900000055,
+            "pathID": 300000010
+          },
+          "resumePath": "C:\\Users\\TRL98\\Desktop\\LAH_MUMT\\Logs\\Scenario_2026-05-21T105639\\SBC3\\FlightPath\\300000010.json",
+          "timingMs": {
+            "allocate_ids": {
+              "elapsedMs": 180.71,
+              "attackPathID": 300000009,
+              "resumePathID": 300000010,
+              "attackIndividualID": 900000054,
+              "resumeIndividualID": 900000055,
+              "entryWaypointID": 186,
+              "attackWaypointID": 187
+            },
+            "split_lah_resume": {
+              "elapsedMs": 243.516,
+              "resumeWaypointCount": 1,
+              "removedWaypointID": 85
+            },
+            "clone_followups": {
+              "elapsedMs": 306.628,
+              "followUpMissionCount": 2,
+              "followUpPathCount": 2
+            },
+            "payload_build": {
+              "elapsedMs": 41.593,
+              "hasResume": true,
+              "followUpMissionCount": 2,
+              "attackSpeedMps": 73.61
+            },
+            "write_json": {
+              "elapsedMs": 5.469,
+              "fileCount": 5
+            },
+            "totalMs": 780.994
+          }
+        },
+        {
+          "aircraft_id": 1,
+          "role": "lah_hold_1",
+          "individualMissionPackageID": 800000028,
+          "hold": {
+            "individualMissionID": 900000060,
+            "pathID": 100000009,
+            "waypointID": 211,
+            "durationSeconds": 50
+          },
+          "removedWaypointID": 73,
+          "holdPath": "C:\\Users\\TRL98\\Desktop\\LAH_MUMT\\Logs\\Scenario_2026-05-21T105639\\SBC3\\FlightPath\\100000009.json",
+          "followUpMissionCount": 2,
+          "resume": {
+            "individualMissionID": 900000061,
+            "pathID": 100000010
+          },
+          "resumePath": "C:\\Users\\TRL98\\Desktop\\LAH_MUMT\\Logs\\Scenario_2026-05-21T105639\\SBC3\\FlightPath\\100000010.json",
+          "timingMs": {
+            "allocate_ids": {
+              "elapsedMs": 22.797,
+              "holdPathID": 100000009,
+              "resumePathID": 100000010,
+              "holdIndividualID": 900000060,
+              "resumeIndividualID": 900000061
+            },
+            "split_lah_resume": {
+              "elapsedMs": 143.358,
+              "resumeWaypointCount": 1,
+              "removedWaypointID": 73
+            },
+            "clone_followups": {
+              "elapsedMs": 109.789,
+              "followUpMissionCount": 2,
+              "followUpPathCount": 2
+            },
+            "payload_build": {
+              "elapsedMs": 171.226,
+              "hasResume": true,
+              "followUpMissionCount": 2
+            },
+            "write_json": {
+              "elapsedMs": 5.891,
+              "fileCount": 5
+            },
+            "totalMs": 347.216
+          }
+        },
+        {
+          "aircraft_id": 5,
+          "role": "uav_tracking_5",
+          "individualMissionPackageID": 800000029,
+          "tracking": {
+            "individualMissionID": 900000064,
+            "pathID": 500000013,
+            "targetWaypointID": 212
+          },
+          "removedWaypointID": 97,
+          "donePath": "C:\\Users\\TRL98\\Desktop\\LAH_MUMT\\Logs\\Scenario_2026-05-21T105639\\SBC3\\FlightPath\\500000012.json",
+          "trackingPath": "C:\\Users\\TRL98\\Desktop\\LAH_MUMT\\Logs\\Scenario_2026-05-21T105639\\SBC3\\FlightPath\\500000013.json",
+          "resume": {
+            "individualMissionID": 900000065,
+            "pathID": 500000014
+          },
+          "resumePath": "C:\\Users\\TRL98\\Desktop\\LAH_MUMT\\Logs\\Scenario_2026-05-21T105639\\SBC3\\FlightPath\\500000014.json",
+          "followUpMissionCount": 1,
+          "timingMs": {
+            "allocate_ids": {
+              "elapsedMs": 83.985,
+              "donePathID": 500000012,
+              "attackPathID": 500000013,
+              "resumePathID": 500000014,
+              "trackingIndividualID": 900000064,
+              "resumeIndividualID": 900000065,
+              "targetWaypointID": 212
+            },
+            "split_done_resume": {
+              "elapsedMs": 135.593,
+              "sourceSinglePoint": false,
+              "doneWaypointCount": 2,
+              "resumeWaypointCount": 1,
+              "removedWaypointID": 97
+            },
+            "clone_followups": {
+              "elapsedMs": 63.047,
+              "followUpMissionCount": 1,
+              "followUpPathCount": 1
+            },
+            "release_resume": {
+              "elapsedMs": 40.716,
+              "releaseWaypointCount": 2,
+              "targetFinishEtaS": 94
+            },
+            "write_json": {
+              "elapsedMs": 43.974,
+              "fileCount": 5
+            },
+            "totalMs": 373.978
+          }
+        },
+        {
+          "aircraft_id": 4,
+          "role": "uav_tracking_4",
+          "individualMissionPackageID": 800000030,
+          "tracking": {
+            "individualMissionID": 900000067,
+            "pathID": 400000016,
+            "targetWaypointID": 221
+          },
+          "removedWaypointID": 93,
+          "donePath": "C:\\Users\\TRL98\\Desktop\\LAH_MUMT\\Logs\\Scenario_2026-05-21T105639\\SBC3\\FlightPath\\400000015.json",
+          "trackingPath": "C:\\Users\\TRL98\\Desktop\\LAH_MUMT\\Logs\\Scenario_2026-05-21T105639\\SBC3\\FlightPath\\400000016.json",
+          "resume": {
+            "individualMissionID": 900000068,
+            "pathID": 400000017
+          },
+          "resumePath": "C:\\Users\\TRL98\\Desktop\\LAH_MUMT\\Logs\\Scenario_2026-05-21T105639\\SBC3\\FlightPath\\400000017.json",
+          "followUpMissionCount": 1,
+          "timingMs": {
+            "allocate_ids": {
+              "elapsedMs": 77.831,
+              "donePathID": 400000015,
+              "attackPathID": 400000016,
+              "resumePathID": 400000017,
+              "trackingIndividualID": 900000067,
+              "resumeIndividualID": 900000068,
+              "targetWaypointID": 221
+            },
+            "split_done_resume": {
+              "elapsedMs": 151.658,
+              "sourceSinglePoint": false,
+              "doneWaypointCount": 2,
+              "resumeWaypointCount": 1,
+              "removedWaypointID": 93
+            },
+            "clone_followups": {
+              "elapsedMs": 90.33,
+              "followUpMissionCount": 1,
+              "followUpPathCount": 1
+            },
+            "release_resume": {
+              "elapsedMs": 45.289,
+              "releaseWaypointCount": 2,
+              "targetFinishEtaS": 94
+            },
+            "write_json": {
+              "elapsedMs": 46.646,
+              "fileCount": 5
+            },
+            "totalMs": 416.919
+          }
+        }
+      ],
+      "collaborativeRemainingReplan": [
+        {
+          "currentInputMissionID": 2,
+          "replacementAircraftIDs": [
+            6
+          ],
+          "finishEtaS": 94
+        }
+      ],
+      "timingMs": {
+        "overrideTotal": 3151,
+        "descriptorBuilds": [
+          {
+            "aircraftID": 2,
+            "label": "manned",
+            "mode": "LAH_ATTACK",
+            "status": "ok",
+            "elapsedMs": 956
+          },
+          {
+            "aircraftID": 3,
+            "label": "manned",
+            "mode": "LAH_ATTACK",
+            "status": "ok",
+            "elapsedMs": 898
+          },
+          {
+            "aircraftID": 1,
+            "label": "lah_hold_1",
+            "mode": "LAH_HOLD_RESUME",
+            "status": "ok",
+            "elapsedMs": 357
+          },
+          {
+            "aircraftID": 5,
+            "label": "uav_tracking_5",
+            "mode": "UAV_TRACK",
+            "status": "ok",
+            "elapsedMs": 389
+          },
+          {
+            "aircraftID": 4,
+            "label": "uav_tracking_4",
+            "mode": "UAV_TRACK",
+            "status": "ok",
+            "elapsedMs": 438
+          },
+          {
+            "aircraftID": 6,
+            "label": "uav_resume_6",
+            "mode": "UAV_RESUME",
+            "status": "handled_by_collab",
+            "elapsedMs": 1
+          }
+        ],
+        "overrideDetail": {
+          "phases": {
+            "metadata_normalize": {
+              "elapsedMs": 0.009,
+              "attackTargetCount": 2,
+              "selectedMannedCount": 2
+            },
+            "agent_index": {
+              "elapsedMs": 0.432,
+              "aircraftCount": 6
+            },
+            "weapon_choice": {
+              "elapsedMs": 2.712,
+              "selectedWeaponType": 2,
+              "ammoAvailable": true
+            },
+            "initial_tracking_eta": {
+              "elapsedMs": 0.556,
+              "useDetectionTracking": true,
+              "trackingEtaS": 194
+            },
+            "resolve_source_plan": {
+              "elapsedMs": 0.812,
+              "sourcePlanID": 700000002
+            },
+            "source_plan_load": {
+              "elapsedMs": 0.446,
+              "sourcePlanID": 700000002,
+              "aircraftCount": 6
+            },
+            "sweep_progress_load": {
+              "elapsedMs": 0.547,
+              "entries": 12
+            },
+            "plan_id_resolve": {
+              "elapsedMs": 0.019,
+              "requested": true,
+              "missionPlanID": 700000005
+            },
+            "source_artifact_cache_build": {
+              "elapsedMs": 0.017,
+              "aircraftEntries": 6
+            },
+            "done_input_ids_load": {
+              "elapsedMs": 1.401,
+              "count": 1
+            },
+            "plan_deepcopy": {
+              "elapsedMs": 0.053
+            },
+            "target_uav_assignment": {
+              "elapsedMs": 0.535,
+              "assignedTargetCount": 2,
+              "usedTrackingUavCount": 2
+            },
+            "manned_sequence_assignment": {
+              "elapsedMs": 13.397,
+              "aircraftCount": 2,
+              "error": null
+            },
+            "attack_coordinate_resolution": {
+              "elapsedMs": 8.51,
+              "resolvedCount": 2,
+              "mannedSequenceCount": 2
+            },
+            "remaining_eta": {
+              "elapsedMs": 10.689,
+              "allUavCount": 3,
+              "trackingUavCount": 2,
+              "computedEtaCount": 2,
+              "adjustedEtaS": 0
+            },
+            "descriptor_list_build": {
+              "elapsedMs": 0.04,
+              "descriptorCount": 6,
+              "activeMannedCount": 2,
+              "otherLahCount": 1,
+              "otherUavCount": 1
+            },
+            "collab_tracking_scan": {
+              "elapsedMs": 23.516,
+              "inputCount": 1,
+              "unavailableUavCount": 2
+            },
+            "collab_agent_state_map": {
+              "elapsedMs": 36.266,
+              "aircraftCount": 6
+            },
+            "collab_parallel_started": {
+              "elapsedMs": 0.693,
+              "inputCount": 1,
+              "workers": 1
+            },
+            "collab_parallel_join": {
+              "elapsedMs": 3.258,
+              "waitReason": "UAV_TRACK",
+              "inputCount": 1
+            },
+            "descriptor_loop": {
+              "elapsedMs": 3041.396,
+              "descriptorCount": 6,
+              "updateCount": 5
+            },
+            "final_collab_plan_update": {
+              "elapsedMs": 0.01,
+              "collabInputCount": 1
+            },
+            "mission_plan_write": {
+              "elapsedMs": 11.074,
+              "missionPlanID": 700000005
+            },
+            "option_meta_build": {
+              "elapsedMs": 0.066,
+              "targetCount": 2,
+              "collabInputCount": 1
+            }
+          },
+          "collabRuns": [
+            {
+              "inputMissionID": 2,
+              "unavailableAircraftIDs": [
+                4,
+                5
+              ],
+              "elapsedMs": 1563.172,
+              "status": "ok",
+              "replacementAircraftIDs": [
+                6
+              ],
+              "generatedPathCount": 1,
+              "finishEtaS": 94,
+              "workflow": "no_split"
+            }
+          ],
+          "descriptorDetails": [
+            {
+              "aircraftID": 2,
+              "label": "manned",
+              "mode": "LAH_ATTACK",
+              "resolveArtifacts": {
+                "elapsedMs": 1.553,
+                "currentWaypointID": null,
+                "sourcePathID": 200000001,
+                "sourceImpID": 800000008
+              },
+              "loadArtifacts": {
+                "elapsedMs": 0.005,
+                "impLoaded": true,
+                "fpLoaded": true
+              },
+              "cloneAndLocateMission": {
+                "elapsedMs": 0.12,
+                "missionCount": 3,
+                "targetIndex": 0
+              },
+              "allocateAndPlanUpdate": {
+                "elapsedMs": 19.075,
+                "newImpID": 800000023
+              },
+              "builder": {
+                "elapsedMs": 934.911,
+                "builderMode": "LAH_ATTACK"
+              },
+              "builderDetail": {
+                "allocate_ids": {
+                  "elapsedMs": 349.102,
+                  "attackPathID": 200000009,
+                  "resumePathID": 200000010,
+                  "attackIndividualID": 900000047,
+                  "resumeIndividualID": 900000048,
+                  "entryWaypointID": 167,
+                  "attackWaypointID": 169
+                },
+                "split_lah_resume": {
+                  "elapsedMs": 219.293,
+                  "resumeWaypointCount": 1,
+                  "removedWaypointID": 79
+                },
+                "clone_followups": {
+                  "elapsedMs": 270.649,
+                  "followUpMissionCount": 2,
+                  "followUpPathCount": 2
+                },
+                "payload_build": {
+                  "elapsedMs": 85.2,
+                  "hasResume": true,
+                  "followUpMissionCount": 2,
+                  "attackSpeedMps": 73.61
+                },
+                "write_json": {
+                  "elapsedMs": 5.094,
+                  "fileCount": 5
+                },
+                "totalMs": 932.579
+              },
+              "status": "ok",
+              "elapsedMs": 955.799
+            },
+            {
+              "aircraftID": 3,
+              "label": "manned",
+              "mode": "LAH_ATTACK",
+              "resolveArtifacts": {
+                "elapsedMs": 0.816,
+                "currentWaypointID": null,
+                "sourcePathID": 300000001,
+                "sourceImpID": 800000009
+              },
+              "loadArtifacts": {
+                "elapsedMs": 0.007,
+                "impLoaded": true,
+                "fpLoaded": true
+              },
+              "cloneAndLocateMission": {
+                "elapsedMs": 0.13,
+                "missionCount": 3,
+                "targetIndex": 0
+              },
+              "allocateAndPlanUpdate": {
+                "elapsedMs": 113.639,
+                "newImpID": 800000025
+              },
+              "builder": {
+                "elapsedMs": 782.797,
+                "builderMode": "LAH_ATTACK"
+              },
+              "builderDetail": {
+                "allocate_ids": {
+                  "elapsedMs": 180.71,
+                  "attackPathID": 300000009,
+                  "resumePathID": 300000010,
+                  "attackIndividualID": 900000054,
+                  "resumeIndividualID": 900000055,
+                  "entryWaypointID": 186,
+                  "attackWaypointID": 187
+                },
+                "split_lah_resume": {
+                  "elapsedMs": 243.516,
+                  "resumeWaypointCount": 1,
+                  "removedWaypointID": 85
+                },
+                "clone_followups": {
+                  "elapsedMs": 306.628,
+                  "followUpMissionCount": 2,
+                  "followUpPathCount": 2
+                },
+                "payload_build": {
+                  "elapsedMs": 41.593,
+                  "hasResume": true,
+                  "followUpMissionCount": 2,
+                  "attackSpeedMps": 73.61
+                },
+                "write_json": {
+                  "elapsedMs": 5.469,
+                  "fileCount": 5
+                },
+                "totalMs": 780.994
+              },
+              "status": "ok",
+              "elapsedMs": 897.521
+            },
+            {
+              "aircraftID": 1,
+              "label": "lah_hold_1",
+              "mode": "LAH_HOLD_RESUME",
+              "resolveArtifacts": {
+                "elapsedMs": 0.505,
+                "currentWaypointID": null,
+                "sourcePathID": 100000001,
+                "sourceImpID": 800000007
+              },
+              "loadArtifacts": {
+                "elapsedMs": 0.004,
+                "impLoaded": true,
+                "fpLoaded": true
+              },
+              "cloneAndLocateMission": {
+                "elapsedMs": 0.154,
+                "missionCount": 3,
+                "targetIndex": 0
+              },
+              "allocateAndPlanUpdate": {
+                "elapsedMs": 8.603,
+                "newImpID": 800000028
+              },
+              "builder": {
+                "elapsedMs": 347.261,
+                "builderMode": "LAH_HOLD_RESUME"
+              },
+              "builderDetail": {
+                "allocate_ids": {
+                  "elapsedMs": 22.797,
+                  "holdPathID": 100000009,
+                  "resumePathID": 100000010,
+                  "holdIndividualID": 900000060,
+                  "resumeIndividualID": 900000061
+                },
+                "split_lah_resume": {
+                  "elapsedMs": 143.358,
+                  "resumeWaypointCount": 1,
+                  "removedWaypointID": 73
+                },
+                "clone_followups": {
+                  "elapsedMs": 109.789,
+                  "followUpMissionCount": 2,
+                  "followUpPathCount": 2
+                },
+                "payload_build": {
+                  "elapsedMs": 171.226,
+                  "hasResume": true,
+                  "followUpMissionCount": 2
+                },
+                "write_json": {
+                  "elapsedMs": 5.891,
+                  "fileCount": 5
+                },
+                "totalMs": 347.216
+              },
+              "status": "ok",
+              "elapsedMs": 356.642
+            },
+            {
+              "aircraftID": 5,
+              "label": "uav_tracking_5",
+              "mode": "UAV_TRACK",
+              "resolveArtifacts": {
+                "elapsedMs": 0.032,
+                "currentWaypointID": 98,
+                "sourcePathID": 500000004,
+                "sourceImpID": 800000011
+              },
+              "loadArtifacts": {
+                "elapsedMs": 0.005,
+                "impLoaded": true,
+                "fpLoaded": true
+              },
+              "cloneAndLocateMission": {
+                "elapsedMs": 0.243,
+                "missionCount": 3,
+                "targetIndex": 1
+              },
+              "allocateAndPlanUpdate": {
+                "elapsedMs": 8.475,
+                "newImpID": 800000029
+              },
+              "builder": {
+                "elapsedMs": 377.708,
+                "builderMode": "UAV_TRACK"
+              },
+              "builderDetail": {
+                "allocate_ids": {
+                  "elapsedMs": 83.985,
+                  "donePathID": 500000012,
+                  "attackPathID": 500000013,
+                  "resumePathID": 500000014,
+                  "trackingIndividualID": 900000064,
+                  "resumeIndividualID": 900000065,
+                  "targetWaypointID": 212
+                },
+                "split_done_resume": {
+                  "elapsedMs": 135.593,
+                  "sourceSinglePoint": false,
+                  "doneWaypointCount": 2,
+                  "resumeWaypointCount": 1,
+                  "removedWaypointID": 97
+                },
+                "clone_followups": {
+                  "elapsedMs": 63.047,
+                  "followUpMissionCount": 1,
+                  "followUpPathCount": 1
+                },
+                "release_resume": {
+                  "elapsedMs": 40.716,
+                  "releaseWaypointCount": 2,
+                  "targetFinishEtaS": 94
+                },
+                "write_json": {
+                  "elapsedMs": 43.974,
+                  "fileCount": 5
+                },
+                "totalMs": 373.978
+              },
+              "trackingState": {
+                "elapsedMs": 1.926
+              },
+              "status": "ok",
+              "elapsedMs": 389.062
+            },
+            {
+              "aircraftID": 4,
+              "label": "uav_tracking_4",
+              "mode": "UAV_TRACK",
+              "resolveArtifacts": {
+                "elapsedMs": 0.023,
+                "currentWaypointID": 94,
+                "sourcePathID": 400000004,
+                "sourceImpID": 800000010
+              },
+              "loadArtifacts": {
+                "elapsedMs": 0.004,
+                "impLoaded": true,
+                "fpLoaded": true
+              },
+              "cloneAndLocateMission": {
+                "elapsedMs": 0.18,
+                "missionCount": 3,
+                "targetIndex": 1
+              },
+              "allocateAndPlanUpdate": {
+                "elapsedMs": 7.045,
+                "newImpID": 800000030
+              },
+              "builder": {
+                "elapsedMs": 419.406,
+                "builderMode": "UAV_TRACK"
+              },
+              "builderDetail": {
+                "allocate_ids": {
+                  "elapsedMs": 77.831,
+                  "donePathID": 400000015,
+                  "attackPathID": 400000016,
+                  "resumePathID": 400000017,
+                  "trackingIndividualID": 900000067,
+                  "resumeIndividualID": 900000068,
+                  "targetWaypointID": 221
+                },
+                "split_done_resume": {
+                  "elapsedMs": 151.658,
+                  "sourceSinglePoint": false,
+                  "doneWaypointCount": 2,
+                  "resumeWaypointCount": 1,
+                  "removedWaypointID": 93
+                },
+                "clone_followups": {
+                  "elapsedMs": 90.33,
+                  "followUpMissionCount": 1,
+                  "followUpPathCount": 1
+                },
+                "release_resume": {
+                  "elapsedMs": 45.289,
+                  "releaseWaypointCount": 2,
+                  "targetFinishEtaS": 94
+                },
+                "write_json": {
+                  "elapsedMs": 46.646,
+                  "fileCount": 5
+                },
+                "totalMs": 416.919
+              },
+              "trackingState": {
+                "elapsedMs": 10.222
+              },
+              "status": "ok",
+              "elapsedMs": 437.581
+            },
+            {
+              "aircraftID": 6,
+              "label": "uav_resume_6",
+              "mode": "UAV_RESUME",
+              "resolveArtifacts": {
+                "elapsedMs": 0.03,
+                "currentWaypointID": 102,
+                "sourcePathID": 600000004,
+                "sourceImpID": 800000012
+              },
+              "loadArtifacts": {
+                "elapsedMs": 0.004,
+                "impLoaded": true,
+                "fpLoaded": true
+              },
+              "cloneAndLocateMission": {
+                "elapsedMs": 0.279,
+                "missionCount": 3,
+                "targetIndex": 1
+              },
+              "status": "handled_by_collab",
+              "elapsedMs": 0.961
+            }
+          ],
+          "totalMs": 3151
+        },
+        "pipelineOverride": 3158
+      }
+    }
+  }
+}

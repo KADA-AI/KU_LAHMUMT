@@ -1,0 +1,147 @@
+{
+  "timestamp": 832639524937,
+  "Source": "MMR",
+  "individualMissionPackageID": 800000030,
+  "aircraftID": 6,
+  "individualMissionList": [
+    {
+      "individualMissionID": 900000016,
+      "isDone": true,
+      "relatedMission": {
+        "relatedMissionType": 1,
+        "inputMissionID": 1,
+        "priorMissionID": 0
+      },
+      "individualMissionInfo": {
+        "individualMissionType": 6,
+        "patternType": 8,
+        "autoZoomIn": true,
+        "BEARING": 25.940972368771554,
+        "SPEED": 140.0,
+        "FOV": 11.7,
+        "SEP": 227.0,
+        "MOVE_BEARING": 25.940972368771554,
+        "lineList": [
+          {
+            "width": 333.3333333333333,
+            "coordinateList": [
+              {
+                "latitude": 37.85895752203166,
+                "longitude": 128.15421020923552,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.89741652203166,
+                "longitude": 128.1779202092355,
+                "altitude": 0
+              }
+            ]
+          }
+        ],
+        "targetID": null
+      },
+      "pathID": 600000001
+    },
+    {
+      "individualMissionID": 900000067,
+      "isDone": false,
+      "relatedMission": {
+        "relatedMissionType": 1,
+        "inputMissionID": 2,
+        "priorMissionID": 0,
+        "attackReason": "표적55 등 2개 발견",
+        "targetID": 54
+      },
+      "individualMissionInfo": {
+        "individualMissionType": 1,
+        "patternType": 1,
+        "autoZoomIn": true,
+        "coordinateList": [
+          {
+            "latitude": 37.91371536254883,
+            "longitude": 128.15872192382812,
+            "altitude": 785
+          }
+        ],
+        "lineList": [],
+        "areaList": [],
+        "targetID": 54
+      },
+      "pathID": 600000016
+    },
+    {
+      "individualMissionID": 900000068,
+      "isDone": false,
+      "relatedMission": {
+        "relatedMissionType": 1,
+        "inputMissionID": 2,
+        "priorMissionID": 0
+      },
+      "individualMissionInfo": {
+        "individualMissionType": 7,
+        "patternType": 10,
+        "autoZoomIn": false,
+        "BEARING": 27.188615340992897,
+        "SPEED": 154.0,
+        "FOV": 7.7,
+        "SEP": 913.793051703889,
+        "MOVE_BEARING": 26.609319059163454,
+        "areaList": [],
+        "targetID": null,
+        "coordinateList": [
+          {
+            "latitude": 37.91946851777311,
+            "longitude": 128.16786118598162,
+            "altitude": 1398
+          },
+          {
+            "latitude": 37.92522167299739,
+            "longitude": 128.17700044813512,
+            "altitude": 2011
+          }
+        ],
+        "lineList": []
+      },
+      "pathID": 600000017,
+      "bearing_deg": 27.188615340992897
+    },
+    {
+      "individualMissionID": 900000069,
+      "isDone": false,
+      "relatedMission": {
+        "relatedMissionType": 1,
+        "inputMissionID": 3,
+        "priorMissionID": 0
+      },
+      "individualMissionInfo": {
+        "individualMissionType": 6,
+        "patternType": 8,
+        "autoZoomIn": true,
+        "BEARING": 150.23925888335532,
+        "SPEED": 140.0,
+        "FOV": 11.7,
+        "SEP": 227.0,
+        "MOVE_BEARING": 150.23925888335532,
+        "lineList": [
+          {
+            "width": 333.3333333333333,
+            "coordinateList": [
+              {
+                "latitude": 37.89855,
+                "longitude": 128.1926,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.869625,
+                "longitude": 128.21355,
+                "altitude": 0
+              }
+            ]
+          }
+        ],
+        "targetID": null
+      },
+      "pathID": 600000018
+    }
+  ]
+}

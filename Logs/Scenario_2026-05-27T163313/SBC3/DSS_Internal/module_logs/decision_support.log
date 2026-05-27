@@ -1,0 +1,24 @@
+
+[2026-05-27 16:33:14] process-log attached: decision_support
+[PATH] DB root -> C:\Users\LAHMUMT_2\Desktop\DSS_KU\Logs\Scenario_2026-05-27T163313\SBC3
+[MODE] 모드 변경 → 대기모드
+[CTRL] 0102 상태 유지: ON
+[0102] 상태 보고 이미 송신됨
+[CTRL] {'cmd': 'system_mode', 'mode': 2}
+[MODE] 모드 변경 → 초기 임무 계획
+[CTRL] 0102 상태 유지: ON
+[0102] 상태 보고 이미 송신됨
+[MODE] 모드 변경 → 임무 수행
+[CTRL] 0102 상태 유지: ON
+[0102] 상태 보고 이미 송신됨
+
+[2026-05-27 17:05:58] process-log attached: decision_support
+[CTRL] listener started @ 127.0.0.1:45983
+[PATH] DB root -> C:\Users\LAHMUMT_2\Desktop\DSS_KU\Logs\Scenario_2026-05-27T163313\SBC3
+[0901] 옵션 요청 리스너 등록 완료
+[0101] 모드 수신 리스너 등록 완료
+[0102] 버스 초기화 전이라 0102 송신을 보류합니다.
+[BUS] MOB NodeMessenger 초기화 완료
+[0102] 상태 보고 송신 (status=1)
+[CTRL] 0102 direct handler → ON 요청
+[0102] 상태 보고 이미 송신됨
