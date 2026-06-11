@@ -1,0 +1,186 @@
+{
+          "InputMissionID": 70000001,
+          "SequenceNumber": 1,						# 순서
+          "InputMissionType": 1,						# 기동 : 1 , 수색 공격 : 2 .... (ICD 참고)
+          "IsDone": false,
+          "ShapeType": 2,								# Coordinate : 1, Polyline : 2, Polygons : 3
+          "Coordinate": {
+            "Latitude": 0.0,
+            "Longitude": 0.0,
+            "Altitude": 700
+          },
+          "PolyLine": {
+            "Width": 1000,
+            "CoordinateListN": 4,						# Point 갯수, Polygons은 list 갯수
+            "CoordinateList": [
+              {
+                "Latitude": 38.044697,
+                "Longitude": 127.26591,
+                "Altitude": 0
+              },
+              {
+                "Latitude": 38.079567,
+                "Longitude": 127.2738,
+                "Altitude": 0
+              },
+              {
+                "Latitude": 38.104156,
+                "Longitude": 127.263504,
+                "Altitude": 0
+              },
+              {
+                "Latitude": 38.128197,
+                "Longitude": 127.29269,
+                "Altitude": 0
+              }
+            ]
+          },
+          "Polygons": {
+            "AreaListN": 0,
+            "AreaList": []
+          },
+          "IsDisplay": true
+        },
+
+---------------------------------------------------------------------
+
+
+    "MissionReferencePackage": {
+      "PresenceVector": 0,
+      "Timestamp": "AAAAAAA=",
+      "TakeOverInfoListN": 3,
+      "TakeOverInfoList": [
+        {
+          "AircraftID": 5,
+          "CoordinateList": {
+            "Latitude": 38.013393,
+            "Longitude": 127.25003,
+            "Altitude": 1000
+          }
+        },
+        {
+          "AircraftID": 4,
+          "CoordinateList": {
+            "Latitude": 38.01069,
+            "Longitude": 127.245224,
+            "Altitude": 1000
+          }
+        },
+        {
+          "AircraftID": 6,
+          "CoordinateList": {
+            "Latitude": 38.009605,
+            "Longitude": 127.25243,
+            "Altitude": 1000
+          }
+        }
+      ],
+      "HandOverInfoListN": 3,
+      "HandOverInfoList": [
+        {
+          "AircraftID": 4,
+          "CoordinateList": {
+            "Latitude": 38.01434,
+            "Longitude": 127.35491,
+            "Altitude": 1000
+          }
+        },
+        {
+          "AircraftID": 5,
+          "CoordinateList": {
+            "Latitude": 38.017723,
+            "Longitude": 127.35989,
+            "Altitude": 1000
+          }
+        },
+        {
+          "AircraftID": 6,
+          "CoordinateList": {
+            "Latitude": 38.0138,
+            "Longitude": 127.36573,
+            "Altitude": 1000
+          }
+        }
+      ],
+      "RTBCoordinateListN": 1,
+      "RTBCoordinateList": [
+        {
+          "Latitude": 37.996758,
+          "Longitude": 127.31062,
+          "Altitude": 1000
+        }
+      ],
+      "FlightAreaListN": 1,
+      "FlightAreaList": [
+        {
+          "AreaLatLonListN": 4,
+          "AreaLatLonList": [
+            {
+              "Latitude": 38.154453,
+              "Longitude": 127.23887
+            },
+            {
+              "Latitude": 38.04044,
+              "Longitude": 127.233894
+            },
+            {
+              "Latitude": 38.026375,
+              "Longitude": 127.399376
+            },
+            {
+              "Latitude": 38.165524,
+              "Longitude": 127.41053
+            }
+          ],
+          "AltitudeLimits": {
+            "LowerLimit": 200,
+            "UpperLimit": 1500
+          }
+        }
+      ],
+      "ProhibitedAreaListN": 1,
+      "ProhibitedAreaList": [
+        {
+          "AreaLatLonListN": 4,
+          "AreaLatLonList": [
+            {
+              "Latitude": 38.09801,
+              "Longitude": 127.29517
+            },
+            {
+              "Latitude": 38.03895,
+              "Longitude": 127.28522
+            },
+            {
+              "Latitude": 38.04017,
+              "Longitude": 127.34376
+            },
+            {
+              "Latitude": 38.103546,
+              "Longitude": 127.355255
+            }
+          ],
+          "AltitudeLimits": {
+            "LowerLimit": 200,
+            "UpperLimit": 1500
+          }
+        }
+      ]
+    }
+  },
+  "missionPlanManageList": {
+    "LAHMissionPlans": [],
+    "UAVMissionPlans": [],
+    "missionPlanOptionInfo": {
+      "MessageID": 53113,
+      "PresenceVector": 0,
+      "Timestamp": "AAAAAAA=",
+      "AutoExecution": false,
+      "OptionListN": 0,
+      "OptionList": []
+    },
+    "MovePlanModel": {
+      "unit_LAH_MovePlansList": []
+    }
+  }
+}

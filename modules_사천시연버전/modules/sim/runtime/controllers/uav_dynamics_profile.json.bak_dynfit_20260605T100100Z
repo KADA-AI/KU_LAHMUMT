@@ -1,0 +1,29 @@
+{
+  "enabled": true,
+  "updated_at": "2026-06-05T10:00:59.334410+00:00",
+  "source_log": "uploaded-log-folder",
+  "params": {
+    "banked_turn_enabled": true,
+    "bank_yaw_rate_blend": 0.85,
+    "reference_turn_radius_scale": 1.0724059310238006,
+    "max_yaw_rate_dps": 9.114947176528872,
+    "max_roll_rate_dps": 22.15082933532387,
+    "turn_bank_limit_deg": 33.6303826621669,
+    "roll_limit_deg": 38.6303826621669,
+    "turn_roll_gain": 2.2,
+    "use_reference_turn_radius": true
+  },
+  "basis": {
+    "median_speed_mps": 39.86383,
+    "median_turn_radius_m": 480.9763442888076,
+    "current_reference_radius_m": 448.50212999999997,
+    "reference_turn_radius_scale": 1.0724059310238006,
+    "abs_yaw_rate_p95_dps": 7.724531505532943,
+    "bank_proxy_p95_deg": 30.027127376934732,
+    "opposite_turn_gap_p50_s": 1.9015000000000342
+  },
+  "notes": [
+    "3 UAV track(s) used",
+    "opposite-turn response gap median 1.90s"
+  ]
+}

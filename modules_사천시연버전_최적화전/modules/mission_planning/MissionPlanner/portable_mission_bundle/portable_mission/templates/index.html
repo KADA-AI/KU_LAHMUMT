@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Portable UAV Mission Bundle</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+</head>
+<body>
+  <main class="page">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Portable Bundle</p>
+        <h1>ROI to Hex to Mission</h1>
+        <p class="hero-copy">
+          Upload or drop a GeoTIFF into <code>data/inputs</code>, draw an ROI,
+          convert it to a hex grid, then send start and goal cells to the bundled PPO model.
+        </p>
+      </div>
+      <div class="hero-card">
+        <div class="mini-label">Model</div>
+        <div id="modelFile" class="mini-value">-</div>
+        <div id="modelDefaults" class="mini-note">Loading...</div>
+      </div>
+    </header>
+
+    <section class="grid two-up">
+      <article class="card">
+        <div class="card-head">
+          <div>
+            <p class="eyebrow">Step 1</p>
+            <h2>Terrain Source</h2>
+          </div>
+          <button id="refreshDemsBtn" class="ghost-btn" type="button">Refresh</button>
+        </div>
+
+        <label class="field">
+          <span>Available DEMs</span>
+          <select id="demSelect"></select>
+        </label>
+
+        <div class="row">
+          <button id="loadDemBtn" type="button">Load Preview</button>
+          <label class="upload-btn">
+            <input id="demUploadInput" type="file" accept=".tif,.tiff">
+            <span>Upload GeoTIFF</span>
+          </label>
+        </div>
+
+        <div class="status-line">
+          <strong>Dataset</strong>
+          <span id="demMeta">No DEM loaded.</span>
+        </div>
+
+        <div class="canvas-card">
+          <canvas id="previewCanvas"></canvas>
+        </div>
+
+        <div class="row compact">
+          <button id="clearRoiBtn" class="ghost-btn" type="button">Clear ROI</button>
+          <span id="roiLabel" class="inline-note">Drag on the preview to choose an ROI.</span>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="card-head">
+          <div>
+            <p class="eyebrow">Step 2</p>
+            <h2>Hex Session</h2>
+          </div>
+        </div>
+
+        <div class="field-grid">
+          <label class="field">
+            <span>Altitude (m)</span>
+            <input id="altitudeInput" type="number" min="1" step="25">
+          </label>
+          <label class="field">
+            <span>Hex Step</span>
+            <input id="hexStepInput" type="number" min="1" step="1">
+          </label>
+          <label class="field">
+            <span>Max Steps</span>
+            <input id="maxStepsInput" type="number" min="1" step="1">
+          </label>
+          <label class="field">
+            <span>Max Goals</span>
+            <input id="maxGoalsInput" type="number" min="1" step="1">
+          </label>
+        </div>
+
+        <div class="row">
+          <button id="buildSessionBtn" type="button">Build Hex Grid</button>
+          <span id="sessionMeta" class="inline-note">No active session.</span>
+        </div>
+
+        <div class="status-box">
+          <div><strong>Grid</strong> <span id="gridMeta">-</span></div>
+          <div><strong>Status</strong> <span id="statusText">Ready.</span></div>
+        </div>
+      </article>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <div>
+          <p class="eyebrow">Step 3</p>
+          <h2>Mission Planner</h2>
+        </div>
+        <div class="row compact">
+          <button id="modeStartBtn" class="ghost-btn active" type="button">Pick Start</button>
+          <button id="modeGoalBtn" class="ghost-btn" type="button">Pick Goal</button>
+          <button id="undoGoalBtn" class="ghost-btn" type="button">Undo Goal</button>
+          <button id="clearMissionBtn" class="ghost-btn" type="button">Clear Mission</button>
+        </div>
+      </div>
+
+      <div class="planner-info">
+        <span><strong>Mode</strong> <span id="modeLabel">start</span></span>
+        <span><strong>Start</strong> <span id="startLabel">-</span></span>
+        <span><strong>Goals</strong> <span id="goalLabel">-</span></span>
+      </div>
+
+      <div class="canvas-card planner-card">
+        <canvas id="plannerCanvas"></canvas>
+      </div>
+
+      <div class="row">
+        <label class="check-line">
+          <input id="deterministicInput" type="checkbox" checked>
+          <span>Deterministic inference</span>
+        </label>
+        <button id="simulateBtn" type="button">Run Mission</button>
+      </div>
+    </section>
+
+    <section class="grid two-up">
+      <article class="card">
+        <div class="card-head">
+          <div>
+            <p class="eyebrow">Step 4</p>
+            <h2>Result</h2>
+          </div>
+        </div>
+
+        <div class="metric-grid">
+          <div class="metric"><span>Reward</span><strong id="rewardMetric">-</strong></div>
+          <div class="metric"><span>Steps</span><strong id="stepsMetric">-</strong></div>
+          <div class="metric"><span>Goals Done</span><strong id="goalsMetric">-</strong></div>
+          <div class="metric"><span>Termination</span><strong id="terminationMetric">-</strong></div>
+        </div>
+
+        <div class="status-box">
+          <div><strong>Path</strong> <span id="pathMeta">No run yet.</span></div>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="card-head">
+          <div>
+            <p class="eyebrow">Export</p>
+            <h2>JSON Payload</h2>
+          </div>
+          <button id="downloadJsonBtn" class="ghost-btn" type="button">Download</button>
+        </div>
+        <pre id="jsonOutput" class="json-output">{}</pre>
+      </article>
+    </section>
+  </main>
+
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

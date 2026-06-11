@@ -4,24 +4,79 @@ from __future__ import annotations
 
 import sys, os, threading, json, re, time, shutil, copy, traceback, math, importlib
 import concurrent.futures
-import folium
-os.environ["KU_ROLE"] = "mission"  # MMR
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Set, List
-from shapely.geometry import GeometryCollection, LineString, MultiPolygon, Point, Polygon
-from shapely.geometry.base import BaseGeometry
-from shapely.ops import unary_union
 
 _SCRIPT_PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _SCRIPT_PROJECT_ROOT_STR = str(_SCRIPT_PROJECT_ROOT)
 if _SCRIPT_PROJECT_ROOT_STR not in sys.path:
     sys.path.insert(0, _SCRIPT_PROJECT_ROOT_STR)
 
-from modules.common.process_console import emit_process_log, ensure_console, install_process_file_logging
+from modules.mission_planning.app.bootstrap import (
+    configure_mission_process_console,
+    configure_mission_role,
+)
+from modules.mission_planning.app.message_handlers.system_mode import (
+    MODE_LABELS,
+    build_0102_body as _build_0102_body_payload,
+    extract_mode_code as _extract_mode_code_from_body,
+    extract_system_mode_code,
+    normalize_0102_body_template,
+    parse_payload_body as _parse_system_mode_payload_body,
+    resolve_mode_code_from_text,
+)
+from modules.mission_planning.app.message_handlers.input_packages import (
+    build_input_banner_info as _build_latest_input_banner_info,
+    extract_payload_source as _extract_input_payload_source,
+    prepare_cached_payload_for_file,
+)
+from modules.mission_planning.app.message_handlers.replan_requests import (
+    extract_replan_request_selection,
+    parse_replan_payload,
+    replan_delay_policy,
+)
+from modules.mission_planning.app.delivery.mission_plan_delivery import (
+    merge_post_delivery_snapshot_carry_forward,
+    merge_post_delivery_waypoint_mark,
+    normalize_post_delivery_snapshot_carry_forward,
+    normalize_post_delivery_waypoint_mark,
+    post_0301_delivery_delays,
+    sort_plan_delivery_entries,
+)
+
+configure_mission_role()  # MMR
+
+from shapely.geometry import GeometryCollection, LineString, MultiPolygon, Point, Polygon
+from shapely.geometry.base import BaseGeometry
+from shapely.ops import unary_union
+
+from modules.common.process_console import (
+    emit_process_lifecycle_event,
+    emit_process_log,
+)
+from modules.mission_planning.mission_control.planner_runtime import (
+    PLANNER_RUNTIME_WATCH_RELATIVE_PATHS,
+    current_remaining_hybrid_global_lock_enabled,
+    ensure_mission_planner_import_paths as _ensure_mission_planner_import_paths_impl,
+    file_signature as _planner_runtime_file_signature,
+    planner_runtime_source_signature as _planner_runtime_source_signature_impl,
+    refresh_live_planning_helpers as _refresh_live_planning_helpers_impl,
+    reload_planning_module as _reload_planning_module_impl,
+)
+from modules.mission_planning.mission_control.plan_metrics import (
+    classify_replan_timing_context,
+    count_replan_options,
+)
+from modules.mission_planning.replanning.dispatcher import (
+    is_post_attack_rejoin_detail,
+    is_prior_post_rejoin_detail,
+    should_use_attack_pipeline,
+    should_use_post_attack_rejoin_pipeline,
+    should_use_prior_post_rejoin_pipeline,
+)
 from modules.common.string_limits import limit_utf8_bytes
 
-ensure_console(os.getenv("KU_CONSOLE_TITLE", "KU Mission Planning Console"))
-install_process_file_logging("mission_planning")
+configure_mission_process_console()
 
 try:
     from .pipelines.mission_planning_attack_helpers import (
@@ -30,13 +85,16 @@ try:
         compute_attack_waypoint,
         load_attack_context,
     )
-    from .pipelines.current_remaining_hybrid import (
+    from .replanning.triggers.remaining_hybrid.current import (
         CurrentRemainingHybridRequest,
         build_current_remaining_hybrid,
         filter_generic_flightpath_missions_for_hybrid,
         merge_current_remaining_hybrid,
+        validate_current_remaining_hybrid_paths,
+        validate_current_remaining_hybrid_request,
     )
-    from .pipelines.recon_specialized_pipeline import (
+    from .replanning.line_entry_context import build_line_entry_context_map_from_entry_rows
+    from .replanning.triggers.recon_specialized.pipeline import (
         build_recon_specialized_runtime_payload,
         is_recon_specialized_option,
     )
@@ -48,11 +106,19 @@ try:
         _sanitize_reason,
         _z4,
     )
-    from .runtime.mission_planning_pipeline_logging import PipelineLogManager
-    from .runtime.mission_plan_file_logger import MissionPlanFileLogger
+    from .runtime.logging.pipeline_events import PipelineLogManager, emit_replan_checkpoint
+    from .runtime.logging.plan_file_logger import MissionPlanFileLogger
     from .runtime.debug_artifacts import write_debug_json
-    from .runtime.json_io import write_json
-    from .runtime.source_artifact_cache import (
+    from .runtime.json_io import serialize_json_payload, write_json, write_json_bytes
+    from .runtime.validation.replan_payloads import (
+        ReplanValidationError,
+        collect_missing_flight_path_repairs,
+        sync_flight_plan_individual_mission_ids,
+        validate_mission_flightpath_links,
+        validate_replan_payloads,
+        validate_unique_flightpath_ids,
+    )
+    from .runtime.cache.source_artifacts import (
         SourceArtifactCache,
         call_with_source_artifact_cache,
         use_source_artifact_cache,
@@ -77,7 +143,7 @@ try:
         settings_path as runtime_settings_path,
     )
     from modules.monitoring.logic.replan_runtime_settings import get_target_detection_settings
-    from modules.mission_planning.runtime.attack_assignment_state import (
+    from modules.mission_planning.runtime.state.attack_assignment import (
         get_last_assigned_manned_id,
         set_last_assigned_manned_id,
     )
@@ -88,13 +154,18 @@ except Exception:
         compute_attack_waypoint,
         load_attack_context,
     )
-    from modules.mission_planning.pipelines.current_remaining_hybrid import (
+    from modules.mission_planning.replanning.triggers.remaining_hybrid.current import (
         CurrentRemainingHybridRequest,
         build_current_remaining_hybrid,
         filter_generic_flightpath_missions_for_hybrid,
         merge_current_remaining_hybrid,
+        validate_current_remaining_hybrid_paths,
+        validate_current_remaining_hybrid_request,
     )
-    from modules.mission_planning.pipelines.recon_specialized_pipeline import (
+    from modules.mission_planning.replanning.line_entry_context import (
+        build_line_entry_context_map_from_entry_rows,
+    )
+    from modules.mission_planning.replanning.triggers.recon_specialized.pipeline import (
         build_recon_specialized_runtime_payload,
         is_recon_specialized_option,
     )
@@ -106,11 +177,22 @@ except Exception:
         _sanitize_reason,
         _z4,
     )
-    from modules.mission_planning.runtime.mission_planning_pipeline_logging import PipelineLogManager
-    from modules.mission_planning.runtime.mission_plan_file_logger import MissionPlanFileLogger
+    from modules.mission_planning.runtime.logging.pipeline_events import (
+        PipelineLogManager,
+        emit_replan_checkpoint,
+    )
+    from modules.mission_planning.runtime.logging.plan_file_logger import MissionPlanFileLogger
     from modules.mission_planning.runtime.debug_artifacts import write_debug_json
-    from modules.mission_planning.runtime.json_io import write_json
-    from modules.mission_planning.runtime.source_artifact_cache import (
+    from modules.mission_planning.runtime.json_io import serialize_json_payload, write_json, write_json_bytes
+    from modules.mission_planning.runtime.validation.replan_payloads import (
+        ReplanValidationError,
+        collect_missing_flight_path_repairs,
+        sync_flight_plan_individual_mission_ids,
+        validate_mission_flightpath_links,
+        validate_replan_payloads,
+        validate_unique_flightpath_ids,
+    )
+    from modules.mission_planning.runtime.cache.source_artifacts import (
         SourceArtifactCache,
         call_with_source_artifact_cache,
         use_source_artifact_cache,
@@ -135,35 +217,23 @@ except Exception:
         settings_path as runtime_settings_path,
     )
     from modules.monitoring.logic.replan_runtime_settings import get_target_detection_settings
-    from modules.mission_planning.runtime.attack_assignment_state import (
+    from modules.mission_planning.runtime.state.attack_assignment import (
         get_last_assigned_manned_id,
         set_last_assigned_manned_id,
     )
 
 PROJECT_ROOT, COMMON_DIR = _bootstrap_paths(Path(__file__))
+from modules.common.settings_paths import fusion_runtime_working_dir
+
 _TEMP_DIR = PROJECT_ROOT / "temp"
 _CURRENT_REMAINING_HYBRID_BUILD_LOCK = threading.RLock()
 
-_PLANNER_RUNTIME_WATCH_RELATIVE_PATHS = (
-    Path("modules/mission_planning/MissionPlanner/AnS/__init__.py"),
-    Path("modules/mission_planning/MissionPlanner/AnS/mission_pipeline.py"),
-    Path("modules/mission_planning/MissionPlanner/data_def/d0302.py"),
-    Path("modules/mission_planning/MissionPlanner/data_def/d0303.py"),
-    Path("modules/mission_planning/MissionPlanner/data_def/d0304.py"),
-    Path("modules/mission_planning/pipelines/current_remaining_hybrid.py"),
-    Path("modules/mission_planning/pipelines/reexecute_first_mission_hybrid.py"),
-    Path("modules/mission_planning/pipelines/recon_specialized_pipeline.py"),
-    Path("modules/mission_planning/pipelines/next_collab_path_builder.py"),
-    Path("modules/mission_planning/pipelines/next_collab_replan_pipeline_impl.py"),
-    Path("modules/mission_planning/pipelines/next_collab_replan_pipeline.py"),
-    Path("modules/mission_planning/runtime/next_collab_line_runner.py"),
-    Path("modules/mission_planning/runtime/aircraft_parallel_0303.py"),
-    Path("modules/mission_planning/pipelines/prior_mission_pipeline_impl.py"),
-    Path("modules/mission_planning/pipelines/imaging_schedule_replan_pipeline_impl.py"),
-    Path("modules/mission_planning/pipelines/path_deviation_replan_pipeline_impl.py"),
-    Path("modules/mission_planning/pipelines/attack_plan_pipeline.py"),
-    Path("modules/mission_planning/pipelines/post_attack_rejoin_pipeline.py"),
-)
+
+def _current_remaining_hybrid_global_lock_enabled() -> bool:
+    return current_remaining_hybrid_global_lock_enabled()
+
+
+_PLANNER_RUNTIME_WATCH_RELATIVE_PATHS = PLANNER_RUNTIME_WATCH_RELATIVE_PATHS
 
 
 def _ensure_temp_dir() -> Path:
@@ -172,139 +242,30 @@ def _ensure_temp_dir() -> Path:
 
 
 def _file_sig(path: Path) -> tuple[int, int] | None:
-    try:
-        stat = path.stat()
-    except Exception:
-        return None
-    return int(stat.st_mtime_ns), int(stat.st_size)
+    return _planner_runtime_file_signature(path)
 
 
 def _planner_runtime_source_signature() -> tuple[tuple[str, tuple[int, int] | None], ...]:
-    entries: list[tuple[str, tuple[int, int] | None]] = []
-    for rel_path in _PLANNER_RUNTIME_WATCH_RELATIVE_PATHS:
-        path = PROJECT_ROOT / rel_path
-        rel_key = str(rel_path).replace("\\", "/")
-        if not path.exists():
-            entries.append((rel_key, None))
-            continue
-        entries.append((rel_key, _file_sig(path)))
-    return tuple(entries)
+    return _planner_runtime_source_signature_impl(PROJECT_ROOT)
 
 
 def _reload_planning_module(module_name: str):
-    try:
-        module = importlib.import_module(module_name)
-    except Exception:
-        return None
-    try:
-        return importlib.reload(module)
-    except Exception:
-        return module
+    return _reload_planning_module_impl(module_name)
 
 
 def _refresh_live_planning_helpers() -> None:
-    importlib.invalidate_caches()
-    reload_order = [
-        "modules.mission_planning.pipelines.next_collab_path_builder",
-        "modules.mission_planning.runtime.next_collab_line_runner",
-        "modules.mission_planning.pipelines.next_collab_replan_pipeline_impl",
-        "modules.mission_planning.pipelines.next_collab_replan_pipeline",
-        "modules.mission_planning.pipelines.reexecute_first_mission_hybrid",
-        "modules.mission_planning.pipelines.current_remaining_hybrid",
-        "modules.mission_planning.runtime.aircraft_parallel_0303",
-        "modules.mission_planning.pipelines.prior_mission_pipeline_impl",
-        "modules.mission_planning.pipelines.imaging_schedule_replan_pipeline_impl",
-        "modules.mission_planning.pipelines.path_deviation_replan_pipeline_impl",
-        "modules.mission_planning.pipelines.attack_plan_pipeline",
-        "modules.mission_planning.pipelines.post_attack_rejoin_pipeline",
-    ]
-    modules: Dict[str, Any] = {}
-    for module_name in reload_order:
-        module = _reload_planning_module(module_name)
-        if module is not None:
-            modules[module_name] = module
-
-    current_remaining = modules.get("modules.mission_planning.pipelines.current_remaining_hybrid")
-    if current_remaining is not None:
-        globals()["CurrentRemainingHybridRequest"] = getattr(
-            current_remaining,
-            "CurrentRemainingHybridRequest",
-            globals().get("CurrentRemainingHybridRequest"),
-        )
-        globals()["build_current_remaining_hybrid"] = getattr(
-            current_remaining,
-            "build_current_remaining_hybrid",
-            globals().get("build_current_remaining_hybrid"),
-        )
-        globals()["merge_current_remaining_hybrid"] = getattr(
-            current_remaining,
-            "merge_current_remaining_hybrid",
-            globals().get("merge_current_remaining_hybrid"),
-        )
-        globals()["filter_generic_flightpath_missions_for_hybrid"] = getattr(
-            current_remaining,
-            "filter_generic_flightpath_missions_for_hybrid",
-            globals().get("filter_generic_flightpath_missions_for_hybrid"),
-        )
-
-    aircraft_parallel_0303 = modules.get("modules.mission_planning.runtime.aircraft_parallel_0303")
-    if aircraft_parallel_0303 is not None:
-        globals()["build_0303_flight_plans_aircraft_parallel"] = getattr(
-            aircraft_parallel_0303,
-            "build_0303_flight_plans_aircraft_parallel",
-            globals().get("build_0303_flight_plans_aircraft_parallel"),
-        )
-
-    pipeline_bindings = {
-        "modules.mission_planning.pipelines.prior_mission_pipeline_impl": (
-            "run_prior_mission_pipeline",
-            "warm_prior_mission_pipeline",
-            "run_prior_post_rejoin_pipeline",
-            "warm_prior_post_rejoin_pipeline",
-        ),
-        "modules.mission_planning.pipelines.imaging_schedule_replan_pipeline_impl": (
-            "run_imaging_schedule_replan_pipeline",
-            "warm_imaging_schedule_replan_pipeline",
-        ),
-        "modules.mission_planning.pipelines.path_deviation_replan_pipeline_impl": (
-            "run_path_deviation_replan_pipeline",
-            "warm_path_deviation_replan_pipeline",
-        ),
-        "modules.mission_planning.pipelines.next_collab_replan_pipeline": (
-            "run_next_collab_replan_pipeline",
-            "warm_next_collab_replan_pipeline",
-        ),
-        "modules.mission_planning.pipelines.attack_plan_pipeline": (
-            "run_attack_exclusion_pipeline",
-            "run_attack_plan_pipeline",
-            "warm_attack_plan_pipeline",
-        ),
-        "modules.mission_planning.pipelines.post_attack_rejoin_pipeline": (
-            "run_post_attack_rejoin_pipeline",
-            "warm_post_attack_rejoin_pipeline",
-        ),
-    }
-    for module_name, attr_names in pipeline_bindings.items():
-        module = modules.get(module_name)
-        if module is None:
-            continue
-        for attr_name in attr_names:
-            globals()[attr_name] = getattr(module, attr_name, globals().get(attr_name))
+    _refresh_live_planning_helpers_impl(globals())
 
 
 def _ensure_mission_planner_import_paths() -> None:
-    mp_pkg_dir = Path(PROJECT_ROOT) / "modules" / "mission_planning" / "MissionPlanner"
-    for path in (mp_pkg_dir, mp_pkg_dir.parent, Path(PROJECT_ROOT) / "modules"):
-        path_str = str(path)
-        if path.exists() and path_str not in sys.path:
-            sys.path.insert(0, path_str)
+    _ensure_mission_planner_import_paths_impl(PROJECT_ROOT)
 
 from modules.common.qt_env import ensure_qt_platform
 ensure_qt_platform()
 from modules.common.gui_style import load_shared_stylesheet, polish_tabs, position_window_from_env
 
 from PyQt5.QtCore import (
-    qInstallMessageHandler, QtMsgType, pyqtSignal, QTimer, Qt, QEvent, QObject, QUrl, QRect
+    qInstallMessageHandler, QtMsgType, pyqtSignal, QTimer, Qt, QEvent, QObject, QRect, QThread
 )
 from PyQt5.QtGui import QKeySequence, QPainter, QColor, QFontMetrics, QFont
 from PyQt5.QtWidgets import (
@@ -312,6 +273,7 @@ from PyQt5.QtWidgets import (
     QWidget, QLabel, QHBoxLayout, QVBoxLayout, QSlider, QPushButton, QCheckBox,
     QStyle, QStyleOptionSlider, QDialog, QMessageBox, QFormLayout,
 )
+from modules.mission_planning.app.visualization.mission_visualization_tab import MissionVisualizationTab
 
 class ModeTickLabels(QWidget):
     def __init__(self, slider, labels, parent=None):
@@ -382,11 +344,6 @@ class ModeTickLabels(QWidget):
 
 
 
-try:
-    from PyQt5.QtWebEngineWidgets import QWebEngineView
-except Exception:
-    QWebEngineView = None
-
 # ───────── Qt 경고 필터 ─────────
 def _qt_silent_handler(mode: QtMsgType, context, message: str):
     if "Cannot queue arguments of type" in message:
@@ -410,12 +367,13 @@ from modules.common.message_payload_dialog import JsonPayloadBatchDialog
 from modules.common.option_codes import (
     DEFAULT_OPTION_CODE_SEQUENCE,
     ensure_option_code_sequence,
+    is_option_code_value,
     normalize_option_code,
     option_code_to_label,
 )
 from receive_center import register_listener, unregister_listener   # ★ 0101 모드 수신 리스너
 try:
-    from .runtime.latest_input_cache import (
+    from .runtime.cache.latest_input import (
         reset_latest_inputs,
         update_from_payload as cache_update_from_payload,
         get_latest_package_id,
@@ -428,35 +386,35 @@ try:
         load_next_collab_detail,
         record_next_collab_event,
     )
-    from .pipelines.prior_mission_pipeline_impl import (
+    from .replanning.triggers.prior.pipeline import (
         run_prior_mission_pipeline,
         warm_prior_mission_pipeline,
         run_prior_post_rejoin_pipeline,
         warm_prior_post_rejoin_pipeline,
     )
-    from .pipelines.imaging_schedule_replan_pipeline_impl import (
+    from .replanning.triggers.imaging_schedule.pipeline import (
         run_imaging_schedule_replan_pipeline,
         warm_imaging_schedule_replan_pipeline,
     )
-    from .pipelines.path_deviation_replan_pipeline_impl import (
+    from .replanning.triggers.path_deviation.pipeline import (
         run_path_deviation_replan_pipeline,
         warm_path_deviation_replan_pipeline,
     )
-    from .pipelines.next_collab_replan_pipeline import (
+    from .replanning.triggers.next_collab.pipeline import (
         run_next_collab_replan_pipeline,
         warm_next_collab_replan_pipeline,
     )
-    from .pipelines.attack_plan_pipeline import (
+    from .replanning.triggers.attack.pipeline import (
         run_attack_exclusion_pipeline,
         run_attack_plan_pipeline,
         warm_attack_plan_pipeline,
     )
-    from .pipelines.post_attack_rejoin_pipeline import (
+    from .replanning.triggers.post_attack.pipeline import (
         run_post_attack_rejoin_pipeline,
         warm_post_attack_rejoin_pipeline,
     )
 except Exception:
-    from modules.mission_planning.runtime.latest_input_cache import (
+    from modules.mission_planning.runtime.cache.latest_input import (
         reset_latest_inputs,
         update_from_payload as cache_update_from_payload,
         get_latest_package_id,
@@ -469,30 +427,30 @@ except Exception:
         load_next_collab_detail,
         record_next_collab_event,
     )
-    from modules.mission_planning.pipelines.prior_mission_pipeline_impl import (
+    from modules.mission_planning.replanning.triggers.prior.pipeline import (
         run_prior_mission_pipeline,
         warm_prior_mission_pipeline,
         run_prior_post_rejoin_pipeline,
         warm_prior_post_rejoin_pipeline,
     )
-    from modules.mission_planning.pipelines.imaging_schedule_replan_pipeline_impl import (
+    from modules.mission_planning.replanning.triggers.imaging_schedule.pipeline import (
         run_imaging_schedule_replan_pipeline,
         warm_imaging_schedule_replan_pipeline,
     )
-    from modules.mission_planning.pipelines.path_deviation_replan_pipeline_impl import (
+    from modules.mission_planning.replanning.triggers.path_deviation.pipeline import (
         run_path_deviation_replan_pipeline,
         warm_path_deviation_replan_pipeline,
     )
-    from modules.mission_planning.pipelines.next_collab_replan_pipeline import (
+    from modules.mission_planning.replanning.triggers.next_collab.pipeline import (
         run_next_collab_replan_pipeline,
         warm_next_collab_replan_pipeline,
     )
-    from modules.mission_planning.pipelines.attack_plan_pipeline import (
+    from modules.mission_planning.replanning.triggers.attack.pipeline import (
         run_attack_exclusion_pipeline,
         run_attack_plan_pipeline,
         warm_attack_plan_pipeline,
     )
-    from modules.mission_planning.pipelines.post_attack_rejoin_pipeline import (
+    from modules.mission_planning.replanning.triggers.post_attack.pipeline import (
         run_post_attack_rejoin_pipeline,
         warm_post_attack_rejoin_pipeline,
     )
@@ -1260,6 +1218,28 @@ def _should_apply_remaining_snapshot(
     return True, "source mission snapshot available"
 
 
+def _remaining_snapshot_audit_context(
+    *,
+    ctx: Dict[str, Any],
+    staged: Dict[str, Any],
+) -> str:
+    detail_candidates = []
+    for container in (ctx, staged):
+        detail = container.get("replan_detail") if isinstance(container, dict) else None
+        if isinstance(detail, dict):
+            detail_candidates.append(detail)
+
+    for detail in detail_candidates:
+        if not bool(detail.get("currentRemainingCollaborativeReplan")):
+            continue
+        trigger = str(detail.get("trigger") or "").strip()
+        trigger_type = str(detail.get("triggerType") or "").strip()
+        if trigger == "0201" and trigger_type == "collabReexecuteInputRefresh":
+            return "mission_planning_gui_reexecute_first_snapshot_apply"
+        return "mission_planning_gui_current_remaining_snapshot_apply"
+    return "mission_planning_gui_apply_remaining_snapshot"
+
+
 def _find_input_mission_entry(
     payload: Dict[str, Any],
     input_mission_id: int,
@@ -1405,17 +1385,20 @@ def _build_current_remaining_hybrid_request(
             continue
     if not entry_coord_map:
         return None
+    entry_aircraft_context_map = build_line_entry_context_map_from_entry_rows(
+        detail.get("entryAircraftList") or []
+    )
 
     representative_entry = _normalize_coord_dict(detail.get("representativeEntryCoordinate"))
     if representative_entry is None:
         representative_entry = _centroid_coord_list(list(entry_coord_map.values()))
 
     try:
-        turn_radius_scale = float(detail.get("turnRadiusScale") or 1.4)
+        turn_radius_scale = float(detail.get("turnRadiusScale") or 1.2)
     except Exception:
-        turn_radius_scale = 1.4
+        turn_radius_scale = 1.2
     if turn_radius_scale <= 0.0:
-        turn_radius_scale = 1.4
+        turn_radius_scale = 1.2
 
     apply_option_ordinals: Set[int] | None = None
     raw_apply_ordinals = (
@@ -1457,6 +1440,11 @@ def _build_current_remaining_hybrid_request(
         apply_option_ordinals=apply_option_ordinals,
         planner_mode=planner_mode,
         source_template_input_id=source_template_input_id,
+        entry_aircraft_context_map={
+            int(aid): copy.deepcopy(row)
+            for aid, row in entry_aircraft_context_map.items()
+            if isinstance(row, dict)
+        },
     )
 
 
@@ -1520,6 +1508,7 @@ def _override_input_missions_with_remaining_snapshot(
     *,
     source_plan_id: int | None,
     mission_whitelist: Set[int] | None = None,
+    audit_context: str = "mission_planning_gui_apply_remaining_snapshot",
 ) -> Dict[str, Any]:
     if not isinstance(payload, dict):
         return {"applied": 0, "marked_done": 0, "snapshotMissionCount": 0}
@@ -1532,6 +1521,9 @@ def _override_input_missions_with_remaining_snapshot(
 
     whitelist = {int(value) for value in (mission_whitelist or set())}
     snapshot_map: Dict[int, Dict[str, Any]] = {}
+    snapshot_map_plan_ids: Dict[int, int] = {}
+    snapshot_map_exact: Dict[int, bool] = {}
+    snapshot_map_audited_inputs: Set[int] = set()
     snapshot_plan_ids: Set[int] = set()
     snapshot = mission_area_replan_store.load_snapshot(int(source_plan_id))
     if isinstance(snapshot, dict):
@@ -1545,9 +1537,13 @@ def _override_input_missions_with_remaining_snapshot(
             if input_id is None or input_id <= 0:
                 continue
             snapshot_map[int(input_id)] = item
+            snapshot_map_exact[int(input_id)] = True
+            if snapshot_plan_id is not None and snapshot_plan_id > 0:
+                snapshot_map_plan_ids[int(input_id)] = int(snapshot_plan_id)
 
     applied = 0
     marked_done = 0
+    context_text = str(audit_context or "mission_planning_gui_apply_remaining_snapshot")
     for mission in mission_list:
         if not isinstance(mission, dict):
             continue
@@ -1558,11 +1554,26 @@ def _override_input_missions_with_remaining_snapshot(
             continue
         snapshot_entry = snapshot_map.get(int(input_id))
         if not isinstance(snapshot_entry, dict):
-            snapshot_info = mission_area_replan_store.load_snapshot_entry(
-                int(source_plan_id),
-                int(input_id),
-                allow_latest=True,
-            )
+            mission_detail = mission.get("missionDetail") if isinstance(mission.get("missionDetail"), dict) else {}
+            mission_type = _safe_int_value(mission.get("inputMissionType"))
+            area_rows = mission_detail.get("areaList") if isinstance(mission_detail.get("areaList"), list) else []
+            line_rows = mission_detail.get("lineList") if isinstance(mission_detail.get("lineList"), list) else []
+            is_area_snapshot_request = bool(mission_type == 2 or (area_rows and not line_rows))
+            if is_area_snapshot_request:
+                snapshot_info = mission_area_replan_store.load_replan_ready_snapshot_entry(
+                    None,
+                    int(input_id),
+                    allow_latest=True,
+                    allow_latest_area=True,
+                    audit_context=context_text,
+                )
+            else:
+                snapshot_info = mission_area_replan_store.load_snapshot_entry(
+                    int(source_plan_id),
+                    int(input_id),
+                    allow_latest=True,
+                    audit_context=context_text,
+                )
             if isinstance(snapshot_info, dict):
                 fallback_entry = snapshot_info.get("entry")
                 if isinstance(fallback_entry, dict):
@@ -1571,8 +1582,37 @@ def _override_input_missions_with_remaining_snapshot(
                     fallback_plan_id = _safe_int_value(snapshot_info.get("snapshotMissionPlanID"))
                     if fallback_plan_id is not None and fallback_plan_id > 0:
                         snapshot_plan_ids.add(int(fallback_plan_id))
+                        snapshot_map_plan_ids[int(input_id)] = int(fallback_plan_id)
+                    snapshot_map_exact[int(input_id)] = bool(snapshot_info.get("exact"))
+                    snapshot_map_audited_inputs.add(int(input_id))
             if not isinstance(snapshot_entry, dict):
                 continue
+        elif int(input_id) not in snapshot_map_audited_inputs:
+            mission_area_replan_store.audit_snapshot_entry_access(
+                snapshot_entry,
+                requested_mission_plan_id=int(source_plan_id),
+                snapshot_mission_plan_id=snapshot_map_plan_ids.get(int(input_id), int(source_plan_id)),
+                audit_context=context_text,
+                event="snapshot_entry_exact",
+            )
+            snapshot_map_audited_inputs.add(int(input_id))
+
+        reject_reason = mission_area_replan_store.snapshot_entry_replan_reject_reason(
+            snapshot_entry,
+            exact=snapshot_map_exact.get(int(input_id)),
+        )
+        snapshot_entry_replan_ready = mission_area_replan_store.snapshot_entry_ready_for_replan(snapshot_entry)
+        if reject_reason == "area_snapshot_latest_fallback_not_allowed":
+            mission_area_replan_store.audit_snapshot_entry_rejected(
+                snapshot_entry,
+                requested_mission_plan_id=int(source_plan_id),
+                snapshot_mission_plan_id=snapshot_map_plan_ids.get(int(input_id), int(source_plan_id)),
+                audit_context=context_text,
+                reason=str(reject_reason),
+            )
+            mission["isDone"] = True
+            marked_done += 1
+            continue
 
         remaining_detail = snapshot_entry.get("remainingDetail")
         is_done = bool(snapshot_entry.get("isDone")) or not _has_nonempty_remaining_detail(remaining_detail)
@@ -1580,6 +1620,15 @@ def _override_input_missions_with_remaining_snapshot(
             mission["isDone"] = True
             marked_done += 1
             continue
+
+        if reject_reason and not snapshot_entry_replan_ready:
+            mission_area_replan_store.audit_snapshot_entry_rejected(
+                snapshot_entry,
+                requested_mission_plan_id=int(source_plan_id),
+                snapshot_mission_plan_id=snapshot_map_plan_ids.get(int(input_id), int(source_plan_id)),
+                audit_context=context_text,
+                reason=str(reject_reason),
+            )
 
         mission_detail = mission.get("missionDetail")
         if not isinstance(mission_detail, dict):
@@ -1606,6 +1655,11 @@ def _override_input_missions_with_remaining_snapshot(
         coordinate_list = remaining_detail.get("coordinateList") if isinstance(remaining_detail, dict) else []
         line_list = remaining_detail.get("lineList") if isinstance(remaining_detail, dict) else []
         area_list = remaining_detail.get("areaList") if isinstance(remaining_detail, dict) else []
+        area_segment_list = (
+            remaining_detail.get("areaSegmentList")
+            if isinstance(remaining_detail, dict) and isinstance(remaining_detail.get("areaSegmentList"), list)
+            else []
+        )
         mission_type = str(snapshot_entry.get("missionType") or "").strip().lower()
 
         if mission_type == "line":
@@ -1620,7 +1674,15 @@ def _override_input_missions_with_remaining_snapshot(
                 mission_detail["sourceCoordinateList"] = copy.deepcopy(source_coordinate_list)
         else:
             mission_detail["areaList"] = copy.deepcopy(area_list if isinstance(area_list, list) else [])
-            if isinstance(area_list, list) and area_list:
+            if area_segment_list:
+                mission_detail["areaSegmentList"] = copy.deepcopy(area_segment_list)
+                mission_detail["areaSegmentPolicy"] = str(
+                    remaining_detail.get("areaSegmentPolicy") or "planned_sweep_row_remaining"
+                )
+            else:
+                mission_detail.pop("areaSegmentList", None)
+                mission_detail.pop("areaSegmentPolicy", None)
+            if (isinstance(area_list, list) and area_list) or area_segment_list:
                 mission_detail["coordinateList"] = []
             else:
                 mission_detail["coordinateList"] = copy.deepcopy(
@@ -1666,111 +1728,25 @@ def _plan_meta_has_quality_speed(meta_map: object | None) -> bool:
     return False
 
 
-def _env_int_clamped(name: str, default: int, minimum: int, maximum: int) -> int:
-    try:
-        value = int(os.environ.get(name, str(default)))
-    except Exception:
-        value = int(default)
-    return max(int(minimum), min(int(maximum), int(value)))
-
-
 def _count_replan_options(ctx: object | None, payload: object | None = None) -> int:
-    for source in (payload, ctx):
-        if not isinstance(source, dict):
-            continue
-        for key in ("optionList", "pendingOptionList", "options", "optionCodes", "missionPlanOptions", "candidateMissionPlans"):
-            value = source.get(key)
-            if isinstance(value, list) and value:
-                return len(value)
-        for key in ("missionPlanIDList", "missionPlanIDs", "plan_ids", "option_names"):
-            value = source.get(key)
-            if isinstance(value, list) and value:
-                return len(value)
-    return 0
+    return count_replan_options(ctx, payload)
 
 
 def _classify_replan_timing_context(
     ctx: object | None,
     payload: object | None = None,
 ) -> Dict[str, Any]:
-    context = ctx if isinstance(ctx, dict) else {}
-    data = payload if isinstance(payload, dict) else {}
-    detail = context.get("replan_detail")
-    if not isinstance(detail, dict):
-        detail = data.get("replanDetail")
-    if not isinstance(detail, dict):
-        detail = {}
-
-    reason = str(
-        context.get("reason")
-        or data.get("replanRequest")
-        or data.get("replanReason")
-        or ""
-    ).strip()
-    reason_l = reason.lower()
-    try:
-        level = int(context.get("replan_level", context.get("replanLevel", data.get("replanLevel", 0))) or 0)
-    except Exception:
-        level = 0
-    detail_trigger = str(detail.get("triggerType") or "").strip()
-    detail_trigger_l = detail_trigger.lower()
-    detail_event = str(detail.get("trigger") or "").strip()
-    detail_event_l = detail_event.lower()
-    option_count = _count_replan_options(context, data)
-    force_direct = bool(context.get("force_direct_update"))
-
-    detail_text = ""
-    try:
-        detail_text = json.dumps(detail, ensure_ascii=False, sort_keys=True).lower()
-    except Exception:
-        detail_text = str(detail or "").lower()
-
-    if detail_trigger == "nextCollaborativeMission" or "nextcollaborative" in detail_trigger_l or "collab" in reason_l:
-        trigger = "next_collab_direct"
-    elif detail_trigger == "priorClosedResume":
-        trigger = "prior_post_rejoin_direct"
-    elif detail_trigger == "attackClosedDestroyed":
-        trigger = "post_attack_direct"
-    elif level == 5 or "dl" in reason_l or "risk" in reason_l or "risk" in detail_text:
-        trigger = "dl_risk_level5"
-    elif detail_trigger == "pathDeviation" or _is_path_deviation_reason_text(reason):
-        trigger = "path_deviation_direct"
-    elif detail_trigger == "qualityMonitorSep" or _is_quality_speed_reason_text(reason):
-        trigger = "quality_speed_direct"
-    elif detail_trigger == "imagingScheduleDeviation" or _is_imaging_schedule_reason_text(reason):
-        trigger = "imaging_schedule_direct"
-    elif detail_event == "0402" or "attack" in reason_l or "attacktarget" in detail_text or "0402" in detail_event_l:
-        trigger = "attack_2_option" if option_count <= 2 else "attack_option"
-    elif level == 4 or "prior" in reason_l:
-        trigger = "prior_level4_direct"
-    elif option_count >= 3:
-        trigger = "general_3_option"
-    elif force_direct:
-        trigger = "direct_unknown"
-    else:
-        trigger = "general_or_unknown"
-
-    return {
-        "trigger": trigger,
-        "replanLevel": int(level),
-        "optionCount": int(option_count),
-        "forceDirect": int(force_direct),
-    }
+    return classify_replan_timing_context(
+        ctx,
+        payload,
+        is_path_deviation_reason_text=_is_path_deviation_reason_text,
+        is_quality_speed_reason_text=_is_quality_speed_reason_text,
+        is_imaging_schedule_reason_text=_is_imaging_schedule_reason_text,
+    )
 
 
 def _post_0301_delivery_delays(*, plan_count: int, force_direct: bool) -> tuple[int, int, str]:
-    count = max(int(plan_count or 0), 1)
-    if force_direct:
-        grace_ms = _env_int_clamped("REPLAN_FORCE_DIRECT_POST_0301_GRACE_MS", 0, 0, 1800)
-        timeout_ms = _env_int_clamped("REPLAN_FORCE_DIRECT_POST_0301_TIMEOUT_MS", 1200, grace_ms + 100, 5000)
-        return int(grace_ms), int(timeout_ms), "direct_0903"
-
-    grace_base_ms = _env_int_clamped("REPLAN_OPTION_POST_0301_GRACE_MS", 0, 0, 1800)
-    grace_extra_ms = _env_int_clamped("REPLAN_OPTION_POST_0301_PER_EXTRA_PLAN_MS", 0, 0, 500)
-    timeout_extra_ms = _env_int_clamped("REPLAN_OPTION_POST_0301_TIMEOUT_EXTRA_MS", 20, 0, 3000)
-    grace_ms = int(grace_base_ms) + max(0, count - 1) * int(grace_extra_ms)
-    fallback_ms = int(grace_ms) + int(timeout_extra_ms)
-    return int(grace_ms), int(fallback_ms), "option_or_0901"
+    return post_0301_delivery_delays(plan_count=plan_count, force_direct=force_direct)
 
 
 def _is_next_collab_reason_text(value: object | None) -> bool:
@@ -1781,348 +1757,7 @@ def _sort_plan_delivery_entries(
     plan_ids: object | None,
     option_names: object | None,
 ) -> tuple[list[int], list[str]]:
-    names = list(option_names or [])
-    entries: list[tuple[int, str, int]] = []
-    seen: set[int] = set()
-    for idx, raw_plan_id in enumerate(plan_ids or []):
-        try:
-            plan_id = int(raw_plan_id)
-        except Exception:
-            continue
-        if plan_id <= 0 or plan_id in seen:
-            continue
-        seen.add(plan_id)
-        raw_name = names[idx] if idx < len(names) else None
-        option_name = str(raw_name) if raw_name is not None else f"option{len(entries) + 1}"
-        entries.append((plan_id, option_name, idx))
-    entries.sort(key=lambda item: (item[0], item[2]))
-    return [item[0] for item in entries], [item[1] for item in entries]
-
-
-class MissionVisualizationTab(QWidget):
-    def __init__(self, plan_id_provider, db_root_provider, log_cb, parent=None):
-        super().__init__(parent)
-        self._plan_id_provider = plan_id_provider
-        self._db_root_provider = db_root_provider
-        self._log = log_cb or (lambda _: None)
-        self._map_view_state: dict | None = None
-        self._map_html_path = _ensure_temp_dir() / "mission_planning_map.html"
-        self._show_waypoints = True
-        self._show_geometry = True
-        self._map_view: QWebEngineView | None = None
-
-        layout = QVBoxLayout(self)
-        row = QHBoxLayout()
-        self._info_label = QLabel("plan_ids: -")
-        self._btn_refresh = QPushButton("Refresh")
-        self._btn_refresh.clicked.connect(self.refresh)
-        self._chk_wps = QCheckBox("Show WPs")
-        self._chk_wps.setChecked(True)
-        self._chk_wps.toggled.connect(self._on_toggle_options)
-        self._chk_geo = QCheckBox("Show Mission Geometry")
-        self._chk_geo.setChecked(True)
-        self._chk_geo.toggled.connect(self._on_toggle_options)
-        row.addWidget(self._btn_refresh)
-        row.addWidget(self._chk_wps)
-        row.addWidget(self._chk_geo)
-        row.addStretch(1)
-        row.addWidget(self._info_label)
-        layout.addLayout(row)
-
-        if QWebEngineView is None:
-            layout.addWidget(QLabel("QtWebEngine not available."))
-        else:
-            self._map_view = QWebEngineView()
-            self._map_view.loadFinished.connect(self._on_map_load_finished)
-            layout.addWidget(self._map_view)
-            self._build_map()
-
-    def _log_line(self, msg: str) -> None:
-        try:
-            self._log(f"[VIS] {msg}")
-        except Exception:
-            pass
-
-    def _on_toggle_options(self, checked: bool) -> None:
-        self._show_waypoints = bool(self._chk_wps.isChecked())
-        self._show_geometry = bool(self._chk_geo.isChecked())
-        self.refresh()
-
-    def refresh(self) -> None:
-        if not self._map_view:
-            return
-        self._capture_map_view_state(self._reload_map_content)
-
-    def _build_map(self) -> None:
-        if not self._map_view:
-            return
-        self._write_map_html()
-        self._map_view.setUrl(QUrl.fromLocalFile(str(self._map_html_path)))
-
-    def _reload_map_content(self) -> None:
-        self._write_map_html()
-        try:
-            if self._map_view:
-                self._map_view.reload()
-        except Exception:
-            pass
-
-    def _capture_map_view_state(self, callback=None) -> None:
-        if not self._map_view:
-            if callback:
-                callback()
-            return
-        script = """
-            (function() {
-                var map = null;
-                for (var k in window) {
-                    if (window[k] instanceof L.Map) { map = window[k]; break; }
-                }
-                if (!map) { return null; }
-                var c = map.getCenter();
-                return {lat: c.lat, lng: c.lng, zoom: map.getZoom()};
-            })();
-        """
-        def _store_view(result):
-            if isinstance(result, dict) and "lat" in result and "lng" in result:
-                self._map_view_state = result
-            if callback:
-                callback()
-        try:
-            self._map_view.page().runJavaScript(script, _store_view)
-        except Exception:
-            if callback:
-                callback()
-
-    def _on_map_load_finished(self, ok: bool) -> None:
-        if not ok or not self._map_view_state:
-            return
-        lat = float(self._map_view_state.get("lat", 0.0))
-        lng = float(self._map_view_state.get("lng", 0.0))
-        zoom = int(self._map_view_state.get("zoom", 14))
-        script = f"""
-            (function() {{
-                var map = null;
-                for (var k in window) {{
-                    if (window[k] instanceof L.Map) {{ map = window[k]; break; }}
-                }}
-                if (map) {{
-                    map.setView([{lat}, {lng}], {zoom});
-                }}
-            }})();
-        """
-        try:
-            if self._map_view:
-                self._map_view.page().runJavaScript(script)
-        except Exception:
-            pass
-
-    def _resolve_plan_ids(self, db_root: Path) -> list[int]:
-        raw = []
-        try:
-            raw = list(self._plan_id_provider() or [])
-        except Exception:
-            raw = []
-        plan_ids: list[int] = []
-        for val in raw:
-            try:
-                plan_ids.append(int(val))
-            except Exception:
-                continue
-        if plan_ids:
-            return plan_ids
-        dir_mp = db_root / "MissionPlan"
-        if not dir_mp.exists():
-            return []
-        candidates = sorted(dir_mp.glob("*.json"), key=lambda p: p.stat().st_mtime)
-        if not candidates:
-            return []
-        latest = candidates[-1]
-        try:
-            with latest.open(encoding="utf-8") as fh:
-                data = json.load(fh)
-            val = data.get("missionPlanID")
-            if val is not None:
-                return [int(val)]
-        except Exception:
-            pass
-        if latest.stem.isdigit():
-            return [int(latest.stem)]
-        return []
-
-    def _coords_from_list(self, items) -> list[tuple[float, float]]:
-        coords = []
-        for item in items or []:
-            lat = item.get("latitude")
-            lon = item.get("longitude")
-            if lat is None or lon is None:
-                continue
-            coords.append((float(lat), float(lon)))
-        return coords
-
-    def _collect_plan_data(self, plan_ids: list[int], db_root: Path) -> dict:
-        dir_mp = db_root / "MissionPlan"
-        dir_imp = db_root / "IndividualMissionPlan"
-        dir_fp = db_root / "FlightPath"
-        path_meta: dict[int, dict] = {}
-        line_geoms: list[dict] = []
-        area_geoms: list[dict] = []
-        points: list[tuple[float, float]] = []
-
-        for plan_id in plan_ids:
-            mp_path = dir_mp / f"{int(plan_id)}.json"
-            if not mp_path.exists():
-                continue
-            try:
-                mp_json = json.loads(mp_path.read_text(encoding="utf-8"))
-            except Exception:
-                continue
-            for entry in mp_json.get("aircraftList", []):
-                aid = entry.get("aircraftID")
-                imp_id = entry.get("individualMissionPackageID") or entry.get("individualMissionPlanPackageID")
-                if imp_id is None:
-                    continue
-                imp_path = dir_imp / f"{int(imp_id)}.json"
-                if not imp_path.exists():
-                    continue
-                try:
-                    imp_json = json.loads(imp_path.read_text(encoding="utf-8"))
-                except Exception:
-                    continue
-                aircraft_id = imp_json.get("aircraftID", aid)
-                for im in imp_json.get("individualMissionList", []):
-                    path_id = im.get("pathID")
-                    if path_id is not None:
-                        try:
-                            path_meta[int(path_id)] = {
-                                "aircraftID": aircraft_id,
-                                "missionID": im.get("individualMissionID"),
-                                "missionType": im.get("individualMissionInfo", {}).get("individualMissionType"),
-                            }
-                        except Exception:
-                            pass
-                    info = im.get("individualMissionInfo", {}) or {}
-                    for line in info.get("lineList", []) or []:
-                        coords = self._coords_from_list(line.get("coordinateList"))
-                        if len(coords) >= 2:
-                            line_geoms.append(
-                                {
-                                    "coords": coords,
-                                    "aircraftID": aircraft_id,
-                                    "missionID": im.get("individualMissionID"),
-                                    "pathID": path_id,
-                                }
-                            )
-                            points.extend(coords)
-                    for area in info.get("areaList", []) or []:
-                        coords = self._coords_from_list(area.get("coordinateList"))
-                        if len(coords) >= 3:
-                            area_geoms.append(
-                                {
-                                    "coords": coords,
-                                    "aircraftID": aircraft_id,
-                                    "missionID": im.get("individualMissionID"),
-                                    "pathID": path_id,
-                                }
-                            )
-                            points.extend(coords)
-
-        paths: list[dict] = []
-        for path_id, meta in path_meta.items():
-            fp_path = dir_fp / f"{int(path_id)}.json"
-            if not fp_path.exists():
-                continue
-            try:
-                fp_json = json.loads(fp_path.read_text(encoding="utf-8"))
-            except Exception:
-                continue
-            waypoints = fp_json.get("waypointList") or fp_json.get("lahWaypointList") or []
-            coords = []
-            for wp in waypoints:
-                coord = (wp or {}).get("coordinate") or {}
-                lat = coord.get("latitude")
-                lon = coord.get("longitude")
-                if lat is None or lon is None:
-                    continue
-                coords.append((float(lat), float(lon)))
-            if len(coords) >= 2:
-                paths.append(
-                    {
-                        "pathID": path_id,
-                        "aircraftID": fp_json.get("aircraftID", meta.get("aircraftID")),
-                        "missionID": meta.get("missionID"),
-                        "coords": coords,
-                        "waypoints": waypoints,
-                    }
-                )
-                points.extend(coords)
-
-        return {
-            "paths": paths,
-            "lines": line_geoms,
-            "areas": area_geoms,
-            "points": points,
-        }
-
-    def _write_map_html(self) -> None:
-        db_root = self._db_root_provider()
-        plan_ids = self._resolve_plan_ids(db_root)
-        label = ", ".join(str(pid) for pid in plan_ids) if plan_ids else "-"
-        self._info_label.setText(f"plan_ids: {label}")
-
-        data = self._collect_plan_data(plan_ids, db_root)
-        points = data.get("points") or []
-        state = self._map_view_state or {}
-        if points:
-            avg_lat = sum(p[0] for p in points) / len(points)
-            avg_lon = sum(p[1] for p in points) / len(points)
-        else:
-            avg_lat = float(state.get("lat", 38.128774))
-            avg_lon = float(state.get("lng", 127.318005))
-        zoom = int(state.get("zoom", 13))
-
-        fmap = folium.Map(location=[avg_lat, avg_lon], zoom_start=zoom)
-        color_map = {1: "green", 2: "orange", 3: "purple", 4: "red", 5: "blue", 6: "brown"}
-
-        if self._show_geometry:
-            for line in data.get("lines", []):
-                coords = line["coords"]
-                aid = line.get("aircraftID")
-                color = color_map.get(aid, "gray")
-                label = f"A{aid} M{line.get('missionID')} P{line.get('pathID')}"
-                folium.PolyLine(coords, color=color, weight=2, dash_array="6,6", tooltip=label).add_to(fmap)
-            for area in data.get("areas", []):
-                coords = area["coords"]
-                aid = area.get("aircraftID")
-                color = color_map.get(aid, "gray")
-                label = f"A{aid} M{area.get('missionID')} P{area.get('pathID')}"
-                folium.Polygon(coords, color=color, weight=2, fill=True, fill_opacity=0.2, tooltip=label).add_to(fmap)
-
-        for path in data.get("paths", []):
-            aid = path.get("aircraftID")
-            color = color_map.get(aid, "gray")
-            label = f"A{aid} M{path.get('missionID')} P{path.get('pathID')}"
-            folium.PolyLine(path["coords"], color=color, weight=3, tooltip=label).add_to(fmap)
-            if self._show_waypoints:
-                for idx, wp in enumerate(path.get("waypoints") or []):
-                    coord = (wp or {}).get("coordinate") or {}
-                    lat = coord.get("latitude")
-                    lon = coord.get("longitude")
-                    if lat is None or lon is None:
-                        continue
-                    folium.CircleMarker(
-                        [float(lat), float(lon)],
-                        radius=2,
-                        color=color,
-                        fill=True,
-                        fill_opacity=1.0,
-                        tooltip=f"WP {idx + 1}",
-                    ).add_to(fmap)
-
-        try:
-            fmap.save(str(self._map_html_path))
-        except Exception as exc:
-            self._log_line(f"map save failed: {exc}")
+    return sort_plan_delivery_entries(plan_ids, option_names)
 
 
 # ───────── 메인 윈도우 ─────────
@@ -2136,9 +1771,11 @@ class MainWindow(QMainWindow):
     resume_deferred_replan_sig = pyqtSignal()
     visual_refresh = pyqtSignal()
     id_tab_update_sig = pyqtSignal(object)
+    tab_mark_sent_sig = pyqtSignal(str, object)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self._emit_lifecycle("window_init_start", component="gui", outcome="ok")
         self.setWindowTitle('임무계획(MMR)')
         self.resize(1100, 700)
 
@@ -2186,6 +1823,12 @@ class MainWindow(QMainWindow):
         self._planner_runtime_warmup_running = False
         self._planner_runtime_warmup_pending: Optional[str] = None
         self._planner_runtime_ready_logged = False
+        self._planner_runtime_ready_event = threading.Event()
+        self._planner_runtime_source_signature_seen: Optional[tuple] = None
+        self._terrain_runtime_warmup_lock = threading.Lock()
+        self._terrain_runtime_warmup_running = False
+        self._replan_terrain_warmup_lock = threading.Lock()
+        self._replan_terrain_warmup_running = False
 
         reset_latest_inputs()
         self._last_logged_input_ids = {"0201": None, "0203": None}
@@ -2248,6 +1891,7 @@ class MainWindow(QMainWindow):
         self._db_root: Optional[str] = None
         self._init_gui_log_file_sink()
         self.id_tab_update_sig.connect(self._apply_id_tab_update)
+        self.tab_mark_sent_sig.connect(self._mark_tab_sent)
         self._on_algo_settings_applied()
         self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
         QTimer.singleShot(0, lambda: self._schedule_planner_warmup("startup"))
@@ -2320,8 +1964,20 @@ class MainWindow(QMainWindow):
             port = env_ctrl_port(45981)
             self._ctrl_thread = start_ctrl_listener(port, lambda payload: self.ctrl_payload.emit(payload))
             self._append_log_line(f"[CTRL] listener started @ 127.0.0.1:{port}")
+            self._emit_lifecycle(
+                "listener_start",
+                component="ctrl_listener",
+                outcome="ok",
+                extra={"host": "127.0.0.1", "port": int(port)},
+            )
         except Exception as exc:
             self._append_log_line(f"[CTRL] listener start failed: {exc}")
+            self._emit_lifecycle(
+                "listener_fail",
+                component="ctrl_listener",
+                outcome="failure",
+                reason=str(exc),
+            )
 
         # nFusion RX 초기화 + 테스트 단축키
         threading.Thread(target=self._rx_setup, daemon=True).start()
@@ -2334,6 +1990,7 @@ class MainWindow(QMainWindow):
         # ★★★ 0101 수신 → 모드 반영 리스너 + 폴백 폴링 설치
         self._install_0101_mode_listener()
         self._start_0101_rx_poller()
+        self._emit_lifecycle("window_init_done", component="gui", outcome="ok")
 
     def _refresh_visual_tab(self) -> None:
         tab = getattr(self, "_visual_tab", None)
@@ -2403,6 +2060,27 @@ class MainWindow(QMainWindow):
         )
         return elapsed_ms
 
+    def _emit_lifecycle(
+        self,
+        lifecycle: str,
+        *,
+        component: str = "mission_planning_gui",
+        outcome: str = "ok",
+        reason: Optional[str] = None,
+        extra: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        try:
+            emit_process_lifecycle_event(
+                "mission_planning",
+                lifecycle,
+                component=component,
+                outcome=outcome,
+                reason=reason,
+                extra=extra,
+            )
+        except Exception:
+            pass
+
     def _start_replan_timing(self, ctx: Dict[str, Any], payload: Dict[str, Any] | None = None) -> None:
         if not isinstance(ctx, dict):
             return
@@ -2455,6 +2133,16 @@ class MainWindow(QMainWindow):
             timing[f"{event}_ms"] = round(elapsed_ms, 3)
             timing[f"{event}_wall_ms"] = now_wall_ms
             detail = dict(extra or {})
+            transaction_id = (
+                detail.get("replanTransactionId")
+                or target_ctx.get("replanTransactionId")
+                or target_ctx.get("replan_transaction_id")
+                or timing.get("replanTransactionId")
+            )
+            if transaction_id:
+                transaction_id = str(transaction_id)
+                detail.setdefault("replanTransactionId", transaction_id)
+                timing["replanTransactionId"] = transaction_id
             for key, value in detail.items():
                 timing[f"{event}_{key}"] = value
             variant_value = detail.get("variant")
@@ -2481,6 +2169,22 @@ class MainWindow(QMainWindow):
                 detail_text = " " + " ".join(f"{key}={value}" for key, value in detail.items())
             self.log_sig.emit(
                 f"[REPLAN][TIME] {event}_ms={elapsed_ms:.1f} wall_ms={now_wall_ms}{detail_text}"
+            )
+            replan_detail = target_ctx.get("replan_detail")
+            replan_detail = replan_detail if isinstance(replan_detail, dict) else {}
+            try:
+                mission_plan_id = int((target_ctx.get("plan_ids") or [None])[0])
+            except Exception:
+                mission_plan_id = None
+            emit_replan_checkpoint(
+                name=event,
+                replan_transaction_id=transaction_id,
+                trigger=str(timing.get("trigger") or detail.get("trigger") or ""),
+                trigger_type=str(replan_detail.get("triggerType") or detail.get("triggerType") or ""),
+                pipeline=str(detail.get("pipeline") or timing.get("pipeline") or ""),
+                mission_plan_id=mission_plan_id,
+                elapsed_ms=round(elapsed_ms, 3),
+                extra=detail,
             )
         except Exception:
             return
@@ -2544,8 +2248,25 @@ class MainWindow(QMainWindow):
             return
 
     def _build_planner_runtime(self) -> Dict[str, Any]:
+        runtime_timing: Dict[str, float] = {}
+        step_started = time.perf_counter()
+        source_signature = _planner_runtime_source_signature()
+        runtime_timing["source_signature_ms"] = (time.perf_counter() - step_started) * 1000.0
+        step_started = time.perf_counter()
+        with self._planner_runtime_lock:
+            previous_signature = self._planner_runtime_source_signature_seen
+        runtime_timing["lock_read_ms"] = (time.perf_counter() - step_started) * 1000.0
+        force_reload = previous_signature is not None and previous_signature != source_signature
+        step_started = time.perf_counter()
         _ensure_mission_planner_import_paths()
-        _refresh_live_planning_helpers()
+        runtime_timing["import_path_ms"] = (time.perf_counter() - step_started) * 1000.0
+        if force_reload:
+            step_started = time.perf_counter()
+            _refresh_live_planning_helpers()
+            runtime_timing["refresh_helpers_ms"] = (time.perf_counter() - step_started) * 1000.0
+        else:
+            runtime_timing["refresh_helpers_ms"] = 0.0
+        step_started = time.perf_counter()
         import AnS as mp_ans
         from data_def import d0302, d0303, d0304
 
@@ -2557,20 +2278,26 @@ class MainWindow(QMainWindow):
             from data_def import search_speed as mp_search_speed
         except Exception:
             mp_search_speed = None
-        mp_ans = importlib.reload(mp_ans)
-        d0302 = importlib.reload(d0302)
-        d0303 = importlib.reload(d0303)
-        d0304 = importlib.reload(d0304)
-        if mp_config is not None:
-            try:
-                mp_config = importlib.reload(mp_config)
-            except Exception:
-                pass
-        if mp_search_speed is not None:
-            try:
-                mp_search_speed = importlib.reload(mp_search_speed)
-            except Exception:
-                pass
+        runtime_timing["module_import_ms"] = (time.perf_counter() - step_started) * 1000.0
+        if force_reload:
+            step_started = time.perf_counter()
+            mp_ans = importlib.reload(mp_ans)
+            d0302 = importlib.reload(d0302)
+            d0303 = importlib.reload(d0303)
+            d0304 = importlib.reload(d0304)
+            if mp_config is not None:
+                try:
+                    mp_config = importlib.reload(mp_config)
+                except Exception:
+                    pass
+            if mp_search_speed is not None:
+                try:
+                    mp_search_speed = importlib.reload(mp_search_speed)
+                except Exception:
+                    pass
+            runtime_timing["module_reload_ms"] = (time.perf_counter() - step_started) * 1000.0
+        else:
+            runtime_timing["module_reload_ms"] = 0.0
         run_divide_and_pattern = mp_ans.run_divide_and_pattern
         build_mission_plan_0301 = mp_ans.build_mission_plan_0301
 
@@ -2578,6 +2305,7 @@ class MainWindow(QMainWindow):
         uav_turn_step = 15.0
         applied = False
         param_error: Optional[str] = None
+        step_started = time.perf_counter()
         try:
             uav_cruise_speed, uav_turn_step, applied = self._apply_uav_params_from_store(
                 d0303,
@@ -2589,7 +2317,32 @@ class MainWindow(QMainWindow):
             )
         except Exception as exc:
             param_error = str(exc)
+        runtime_timing["uav_params_ms"] = (time.perf_counter() - step_started) * 1000.0
 
+        step_started = time.perf_counter()
+        with self._planner_runtime_lock:
+            self._planner_runtime_source_signature_seen = source_signature
+        runtime_timing["lock_write_ms"] = (time.perf_counter() - step_started) * 1000.0
+        return {
+            "run_divide_and_pattern": run_divide_and_pattern,
+            "build_mission_plan_0301": build_mission_plan_0301,
+            "d0302": d0302,
+            "d0303": d0303,
+            "d0304": d0304,
+            "uav_cruise_speed": float(uav_cruise_speed),
+            "uav_turn_step": float(uav_turn_step),
+            "uav_params_applied": bool(applied),
+            "uav_params_error": param_error,
+            "warm_status": {},
+            "warm_errors": {},
+            "source_signature": source_signature,
+            "runtime_timing": {key: round(float(value), 3) for key, value in runtime_timing.items()},
+            "runtime_cache_status": "built",
+            "runtime_cache_wait_ms": 0.0,
+            "runtime_force_reload": bool(force_reload),
+        }
+
+    def _warm_planner_auxiliary_pipelines(self) -> Dict[str, Dict[str, Any]]:
         warm_status: Dict[str, Any] = {}
         warm_errors: Dict[str, str] = {}
         for key, warm_fn in (
@@ -2605,31 +2358,96 @@ class MainWindow(QMainWindow):
                 warm_status[key] = warm_fn()
             except BaseException as exc:
                 warm_errors[key] = str(exc)
+        return {"warm_status": warm_status, "warm_errors": warm_errors}
 
-        return {
-            "run_divide_and_pattern": run_divide_and_pattern,
-            "build_mission_plan_0301": build_mission_plan_0301,
-            "d0302": d0302,
-            "d0303": d0303,
-            "d0304": d0304,
-            "uav_cruise_speed": float(uav_cruise_speed),
-            "uav_turn_step": float(uav_turn_step),
-            "uav_params_applied": bool(applied),
-            "uav_params_error": param_error,
-            "warm_status": warm_status,
-            "warm_errors": warm_errors,
-            "source_signature": _planner_runtime_source_signature(),
+    def _emit_planner_runtime_warm_ready(
+        self,
+        runtime: Dict[str, Any],
+        *,
+        reason: str,
+        duration_ms: float,
+        cache_status: str,
+    ) -> None:
+        timing = dict(runtime.get("runtime_timing") or {})
+        extra: Dict[str, Any] = {
+            "cacheStatus": str(cache_status or runtime.get("runtime_cache_status") or ""),
+            "forceReload": int(bool(runtime.get("runtime_force_reload"))),
+            "sourceFileCount": len(runtime.get("source_signature") or ()),
+            "durationMs": round(float(duration_ms), 3),
         }
+        for key, value in timing.items():
+            try:
+                extra[f"build_{key}"] = round(float(value), 3)
+            except Exception:
+                continue
+        self._emit_lifecycle(
+            "planner_runtime_warm_ready",
+            component="planner_runtime",
+            outcome="ok",
+            reason=reason,
+            extra=extra,
+        )
+
+    def _emit_static_resource_warm_ready(
+        self,
+        auxiliary_result: Dict[str, Any],
+        *,
+        reason: str,
+        duration_ms: float,
+    ) -> None:
+        warm_status = dict((auxiliary_result or {}).get("warm_status") or {})
+        warm_errors = dict((auxiliary_result or {}).get("warm_errors") or {})
+        self._emit_lifecycle(
+            "static_resource_warm_ready",
+            component="static_resource",
+            outcome="ok" if not warm_errors else "degraded",
+            reason=reason,
+            extra={
+                "readyCount": len(warm_status),
+                "errorCount": len(warm_errors),
+                "pipelines": ",".join(sorted(str(key) for key in warm_status.keys())),
+                "errorPipelines": ",".join(sorted(str(key) for key in warm_errors.keys())),
+                "durationMs": round(float(duration_ms), 3),
+            },
+        )
 
     def _get_planner_runtime(self) -> Dict[str, Any]:
+        signature = _planner_runtime_source_signature()
         with self._planner_runtime_lock:
             runtime = self._planner_runtime_cache
-        if runtime is not None and runtime.get("source_signature") == _planner_runtime_source_signature():
+            warmup_running = bool(self._planner_runtime_warmup_running)
+        if runtime is not None and runtime.get("source_signature") == signature:
+            runtime["runtime_cache_status"] = "cache_hit"
+            runtime["runtime_cache_wait_ms"] = 0.0
             return runtime
 
+        if warmup_running:
+            wait_started = time.perf_counter()
+            try:
+                self._planner_runtime_ready_event.wait(timeout=3.0)
+            except Exception:
+                pass
+            wait_ms = (time.perf_counter() - wait_started) * 1000.0
+            with self._planner_runtime_lock:
+                runtime = self._planner_runtime_cache
+            if runtime is not None and runtime.get("source_signature") == signature:
+                runtime["runtime_cache_status"] = "warmup_hit"
+                runtime["runtime_cache_wait_ms"] = round(float(wait_ms), 3)
+                return runtime
+
+        build_started = time.perf_counter()
         runtime = self._build_planner_runtime()
+        runtime["runtime_cache_status"] = "built"
+        runtime["runtime_cache_wait_ms"] = 0.0
         with self._planner_runtime_lock:
             self._planner_runtime_cache = runtime
+            self._planner_runtime_ready_event.set()
+        self._emit_planner_runtime_warm_ready(
+            runtime,
+            reason="on_demand",
+            duration_ms=(time.perf_counter() - build_started) * 1000.0,
+            cache_status="built",
+        )
         return runtime
 
     def _prime_latest_input_file(self, msg_id: str) -> None:
@@ -2641,27 +2459,10 @@ class MainWindow(QMainWindow):
         if not isinstance(payload, dict):
             return
 
-        if msg_id == "0201":
-            has_core_data = bool(payload.get("inputMissionList") or payload.get("availableAircraftList"))
-            directory_name = "InputMissionPlan"
-            package_key = "inputMissionPackageID"
-        elif msg_id == "0203":
-            has_core_data = bool(
-                payload.get("takeOverInfoList")
-                or payload.get("flightAreaList")
-                or payload.get("handOverInfoList")
-            )
-            directory_name = "MissionReferenceInfo"
-            package_key = "missionReferencePackageID"
-        else:
+        prepared = prepare_cached_payload_for_file(msg_id, latest_id, payload)
+        if prepared is None:
             return
-        if not has_core_data:
-            return
-
-        try:
-            package_id = int(latest_id)
-        except Exception:
-            return
+        directory_name, package_id, payload_copy = prepared
 
         try:
             db_root = db_paths.get_active_db_root()
@@ -2670,8 +2471,6 @@ class MainWindow(QMainWindow):
 
         directory = db_root / directory_name
         directory.mkdir(parents=True, exist_ok=True)
-        payload_copy = dict(payload)
-        payload_copy.setdefault(package_key, package_id)
         write_json(
             directory / f"{package_id}.json",
             payload_copy,
@@ -2679,6 +2478,223 @@ class MainWindow(QMainWindow):
             ensure_ascii=False,
             skip_if_unchanged=True,
         )
+
+    def _collect_latest_dem_warmup_points(self, *, limit: int = 512) -> list[tuple[float, float]]:
+        points: list[tuple[float, float]] = []
+        seen: set[tuple[float, float]] = set()
+
+        def visit(value: Any) -> None:
+            if len(points) >= int(limit):
+                return
+            if isinstance(value, dict):
+                lat = value.get("latitude", value.get("lat"))
+                lon = value.get("longitude", value.get("lon"))
+                if lat is not None and lon is not None:
+                    try:
+                        pair = (round(float(lat), 7), round(float(lon), 7))
+                    except Exception:
+                        pair = None
+                    if pair is not None and pair not in seen:
+                        seen.add(pair)
+                        points.append(pair)
+                for nested in value.values():
+                    visit(nested)
+                    if len(points) >= int(limit):
+                        return
+            elif isinstance(value, (list, tuple)):
+                for nested in value:
+                    visit(nested)
+                    if len(points) >= int(limit):
+                        return
+
+        for msg_id in ("0201", "0203"):
+            try:
+                snapshot = get_latest_snapshot(msg_id)
+                payload = getattr(snapshot, "payload", None)
+                if isinstance(payload, dict):
+                    visit(payload)
+            except Exception:
+                continue
+        if len(points) >= int(limit):
+            return points
+
+        try:
+            db_root = db_paths.get_active_db_root()
+        except Exception:
+            db_root = db_paths.LEGACY_DB_ROOT
+        for directory_name in ("InputMissionPlan", "MissionReferenceInfo"):
+            if len(points) >= int(limit):
+                break
+            directory = db_root / directory_name
+            try:
+                candidates = sorted(
+                    (path for path in directory.glob("*.json") if path.is_file()),
+                    key=lambda path: (
+                        path.stat().st_mtime,
+                        int(path.stem) if str(path.stem).isdigit() else -1,
+                    ),
+                    reverse=True,
+                )
+            except Exception:
+                candidates = []
+            for path in candidates[:3]:
+                if len(points) >= int(limit):
+                    break
+                try:
+                    payload = json.loads(path.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                visit(payload)
+        return points
+
+    def _warm_terrain_runtime_cache(self, reason: str) -> None:
+        with self._terrain_runtime_warmup_lock:
+            if self._terrain_runtime_warmup_running:
+                self.log_sig.emit(f"[WARM] DEM cache warm-up skipped ({reason}, already_running)")
+                self._emit_lifecycle(
+                    "terrain_warm_ready",
+                    component="terrain_warmup",
+                    outcome="skipped",
+                    reason=reason,
+                    extra={"skipReason": "already_running"},
+                )
+                return
+            self._terrain_runtime_warmup_running = True
+        started = time.perf_counter()
+        points = self._collect_latest_dem_warmup_points()
+        namespace = "data_def"
+        try:
+            helper_module = None
+            for module_name in (
+                "data_def.mission_helpers",
+                "modules.mission_planning.MissionPlanner.data_def.mission_helpers",
+            ):
+                candidate = sys.modules.get(module_name)
+                if candidate is not None and callable(getattr(candidate, "warm_terrain_cache", None)):
+                    helper_module = candidate
+                    namespace = module_name
+                    break
+            if helper_module is None:
+                try:
+                    _ensure_mission_planner_import_paths()
+                    from data_def import mission_helpers as helper_module  # type: ignore
+                except Exception:
+                    try:
+                        from modules.mission_planning.MissionPlanner.data_def import mission_helpers as helper_module
+                        namespace = "modules"
+                    except Exception as exc:
+                        self.log_sig.emit(f"[WARM WARN] DEM cache warm-up import failed ({reason}): {exc}")
+                        self._emit_lifecycle(
+                            "terrain_warm_ready",
+                            component="terrain_warmup",
+                            outcome="error",
+                            reason=reason,
+                            extra={"error": str(exc)[:500]},
+                        )
+                        return
+            try:
+                info = helper_module.warm_terrain_cache(points)
+            except Exception as exc:
+                self.log_sig.emit(f"[WARM WARN] DEM cache warm-up failed ({reason}): {exc}")
+                self._emit_lifecycle(
+                    "terrain_warm_ready",
+                    component="terrain_warmup",
+                    outcome="error",
+                    reason=reason,
+                    extra={"error": str(exc)[:500]},
+                )
+                return
+
+            elapsed_ms = (time.perf_counter() - started) * 1000.0
+            terrain_pixel = info.get("terrain_pixel") if isinstance(info, dict) else {}
+            pixel_currsize = (
+                int(terrain_pixel.get("currsize") or 0)
+                if isinstance(terrain_pixel, dict)
+                else 0
+            )
+            warmup_info = info.get("warmup") if isinstance(info, dict) else {}
+            loaded_tiles = (
+                warmup_info.get("loadedTiles")
+                if isinstance(warmup_info, dict) and isinstance(warmup_info.get("loadedTiles"), list)
+                else []
+            )
+            bbox_tiles = (
+                warmup_info.get("bboxLoadedTiles")
+                if isinstance(warmup_info, dict) and isinstance(warmup_info.get("bboxLoadedTiles"), list)
+                else []
+            )
+            self.log_sig.emit(
+                f"[WARM] DEM cache ready ({reason}, points={len(points)}, "
+                f"pixels={pixel_currsize}, tiles={len(loaded_tiles)}, bboxTiles={len(bbox_tiles)}, "
+                f"namespace={namespace}, elapsed={elapsed_ms:.1f}ms)"
+            )
+            self._emit_lifecycle(
+                "terrain_warm_ready",
+                component="terrain_warmup",
+                outcome="ok",
+                reason=reason,
+                extra={
+                    "points": len(points),
+                    "pixels": pixel_currsize,
+                    "tiles": len(loaded_tiles),
+                    "bboxTiles": len(bbox_tiles),
+                    "namespace": namespace,
+                    "durationMs": round(float(elapsed_ms), 3),
+                },
+            )
+        finally:
+            with self._terrain_runtime_warmup_lock:
+                self._terrain_runtime_warmup_running = False
+
+    def _schedule_replan_terrain_warmup(self, ctx: Dict[str, Any], payload: Dict[str, Any]) -> None:
+        try:
+            timing_kind = _classify_replan_timing_context(ctx, payload).get("trigger")
+        except Exception:
+            timing_kind = ""
+        if str(timing_kind) != "general_3_option":
+            return
+        with self._replan_terrain_warmup_lock:
+            if self._replan_terrain_warmup_running:
+                return
+            self._replan_terrain_warmup_running = True
+
+        ctx_snapshot = ctx if isinstance(ctx, dict) else {}
+        try:
+            self._record_replan_timing_event(
+                "terrain_warmup_started",
+                ctx=ctx_snapshot,
+                extra={"reason": "0902_preplan"},
+            )
+        except Exception:
+            pass
+
+        def worker() -> None:
+            started = time.perf_counter()
+            point_count = 0
+            try:
+                point_count = len(self._collect_latest_dem_warmup_points())
+                self._warm_terrain_runtime_cache("0902_preplan")
+            finally:
+                with self._replan_terrain_warmup_lock:
+                    self._replan_terrain_warmup_running = False
+                try:
+                    self._record_replan_timing_event(
+                        "terrain_warmup_finished",
+                        ctx=ctx_snapshot,
+                        extra={
+                            "reason": "0902_preplan",
+                            "points": int(point_count),
+                            "duration_ms": round((time.perf_counter() - started) * 1000.0, 3),
+                        },
+                    )
+                except Exception:
+                    pass
+
+        threading.Thread(
+            target=worker,
+            name="Replan-Terrain-Warmup",
+            daemon=True,
+        ).start()
 
     def _schedule_planner_warmup(self, reason: str = "background") -> None:
         with self._planner_runtime_lock:
@@ -2697,23 +2713,57 @@ class MainWindow(QMainWindow):
     def _planner_warmup_worker(self, reason: str) -> None:
         announce_ready = False
         runtime: Optional[Dict[str, Any]] = None
+        started = time.perf_counter()
         try:
             runtime = self._build_planner_runtime()
-            self._prime_latest_input_file("0201")
-            self._prime_latest_input_file("0203")
             with self._planner_runtime_lock:
                 self._planner_runtime_cache = runtime
+                self._planner_runtime_ready_event.set()
                 if not self._planner_runtime_ready_logged:
                     self._planner_runtime_ready_logged = True
                     announce_ready = True
+            self._emit_planner_runtime_warm_ready(
+                runtime,
+                reason=reason,
+                duration_ms=(time.perf_counter() - started) * 1000.0,
+                cache_status="warmup_built",
+            )
         except Exception as exc:
             self.log_sig.emit(f"[WARM WARN] Planner warm-up failed ({reason}): {exc}")
+            self._emit_lifecycle(
+                "planner_runtime_warm_ready",
+                component="planner_runtime",
+                outcome="error",
+                reason=reason,
+                extra={
+                    "error": str(exc)[:500],
+                    "durationMs": round((time.perf_counter() - started) * 1000.0, 3),
+                },
+            )
         else:
-            warm_errors = dict((runtime or {}).get("warm_errors") or {})
+            auxiliary_result: Dict[str, Any] = {}
+            auxiliary_started = time.perf_counter()
+            try:
+                auxiliary_result = self._warm_planner_auxiliary_pipelines()
+            except Exception as exc:
+                self.log_sig.emit(f"[WARM WARN] Planner auxiliary warm-up failed ({reason}): {exc}")
+                auxiliary_result = {"warm_status": {}, "warm_errors": {"auxiliary": str(exc)}}
+            self._emit_static_resource_warm_ready(
+                auxiliary_result,
+                reason=reason,
+                duration_ms=(time.perf_counter() - auxiliary_started) * 1000.0,
+            )
+            warm_errors = dict((auxiliary_result or {}).get("warm_errors") or {})
             for pipeline_name, error_text in warm_errors.items():
                 self.log_sig.emit(f"[WARM WARN] {pipeline_name} warm-up failed ({reason}): {error_text}")
             if announce_ready:
                 self.log_sig.emit(f"[WARM] Mission planner runtime ready ({reason})")
+            try:
+                self._prime_latest_input_file("0201")
+                self._prime_latest_input_file("0203")
+                self._warm_terrain_runtime_cache(reason)
+            except Exception as exc:
+                self.log_sig.emit(f"[WARM WARN] Planner post-runtime warm-up failed ({reason}): {exc}")
         finally:
             pending_reason = None
             with self._planner_runtime_lock:
@@ -2726,6 +2776,7 @@ class MainWindow(QMainWindow):
     def _invalidate_planner_runtime(self, *, warm_reason: Optional[str] = None) -> None:
         with self._planner_runtime_lock:
             self._planner_runtime_cache = None
+            self._planner_runtime_ready_event.clear()
         if warm_reason:
             self._schedule_planner_warmup(warm_reason)
 
@@ -2747,29 +2798,19 @@ class MainWindow(QMainWindow):
             self._rx0101 = _Rx0101(self)
             register_listener("0101", self._rx0101)
             self._append_log_line("[0101] 모드 수신 리스너 등록 완료")
+            self._emit_lifecycle("listener_start", component="0101_listener", outcome="ok")
         except Exception as e:
             self._append_log_line(f"[0101] 리스너 등록 실패: {e}")
+            self._emit_lifecycle(
+                "listener_fail",
+                component="0101_listener",
+                outcome="failure",
+                reason=str(e),
+            )
 
     def _on_rx_0101(self, raw: bytes | None):
-        # 1) RAW → 텍스트
-        txt = (raw or b"").decode("utf-8", "ignore")
-        # 2) JSON 추출(프리텍스트 대응)
-        m = re.search(r"\{.*\}", txt, flags=re.S)
-        jtxt = m.group(0) if m else txt.strip()
-        # 3) 딕셔너리 파싱
-        try:
-            body = json.loads(jtxt) if jtxt.startswith("{") else {}
-        except Exception:
-            body = {}
-
-        # 4) 코드 추출(여러 키/형식 대응)
-        code = self._extract_mode_code(body)
-        if code is None:
-            # 마지막 폴백: RAW에서 직접 캡쳐
-            mm = re.search(r'"systemMode"\s*:\s*([0-9]+)', txt)
-            if mm:
-                try: code = int(mm.group(1))
-                except Exception: code = None
+        body = _parse_system_mode_payload_body(raw)
+        code = extract_system_mode_code(raw, body)
 
         if code is None:
             # 조용히 무시(불필요한 실패 로그 없음)
@@ -2786,22 +2827,7 @@ class MainWindow(QMainWindow):
         - 키 대/소문자 무시
         - 값이 str/bool/float 모두 허용
         """
-        if not isinstance(body, dict):
-            return None
-        low = {str(k).lower(): body[k] for k in body.keys() if k is not None}
-        for key in ("systemmode", "mode", "modecode", "state"):
-            if key in low:
-                v = low[key]
-                if isinstance(v, bool):
-                    return 1 if v else 0
-                try:
-                    return int(v)
-                except Exception:
-                    try:
-                        return int(float(str(v).strip()))
-                    except Exception:
-                        return None
-        return None
+        return _extract_mode_code_from_body(body)
 
     def _apply_system_mode_code(self, code: int) -> bool:
         """
@@ -2861,24 +2887,8 @@ class MainWindow(QMainWindow):
             if self._last_0101_raw is not None and raw_latest == self._last_0101_raw:
                 return
 
-            txt = raw_latest.decode("utf-8", "ignore")
-            m = re.search(r"\{.*\}", txt, flags=re.S)
-            jtxt = m.group(0) if m else txt.strip()
-            body = {}
-            try:
-                if jtxt.startswith("{"):
-                    body = json.loads(jtxt)
-            except Exception:
-                body = {}
-
-            code = self._extract_mode_code(body)
-            if code is None:
-                mm = re.search(r'"systemMode"\s*:\s*([0-9]+)', txt)
-                if mm:
-                    try:
-                        code = int(mm.group(1))
-                    except Exception:
-                        code = None
+            body = _parse_system_mode_payload_body(raw_latest)
+            code = extract_system_mode_code(raw_latest, body)
 
             if code is not None:
                 if self._apply_system_mode_code(code):
@@ -2921,33 +2931,17 @@ class MainWindow(QMainWindow):
             pass
 
     def _normalize_0102_body_template(self, body: Optional[dict], *, status: Optional[int] = None) -> dict[str, Any]:
-        template = dict(body or {})
-        template.pop("Timestamp", None)
-        template.pop("timestamp", None)
-
-        source = template.get("source") or template.get("Source") or "MMR"
-        template["source"] = str(source)
-        template.pop("Source", None)
-
-        if status is None:
-            try:
-                status = int(template.get("status", template.get("Status", 1)))
-            except Exception:
-                status = 1
-        template["status"] = int(status)
-        template.pop("Status", None)
-        return template
+        return normalize_0102_body_template(body, status=status)
 
     def _set_0102_body_template(self, body: Optional[dict], *, status: Optional[int] = None) -> None:
         self._hb_0102_body_template = self._normalize_0102_body_template(body, status=status)
 
     def _build_0102_body(self, *, status: Optional[int] = None) -> dict[str, Any]:
-        body = self._normalize_0102_body_template(
+        return _build_0102_body_payload(
             getattr(self, "_hb_0102_body_template", None),
+            now_ms=_now_ms_since_2000,
             status=status,
         )
-        body["timestamp"] = _now_ms_since_2000()
-        return body
 
     def _start_0102_heartbeat_worker_if_needed(self) -> None:
         th = getattr(self, "_hb_0102_thread", None)
@@ -2960,6 +2954,12 @@ class MainWindow(QMainWindow):
             daemon=True,
         )
         self._hb_0102_thread.start()
+        self._emit_lifecycle(
+            "heartbeat_worker_start",
+            component="0102_heartbeat",
+            outcome="ok",
+            extra={"intervalSec": float(getattr(self, "_hb_0102_interval_sec", 0.2) or 0.2)},
+        )
 
     def _run_0102_heartbeat_worker(self) -> None:
         try:
@@ -2969,6 +2969,12 @@ class MainWindow(QMainWindow):
                 self.log_sig.emit(f"[ERR] 0102 heartbeat import failed: {exc}")
             except Exception:
                 pass
+            self._emit_lifecycle(
+                "heartbeat_worker_fail",
+                component="0102_heartbeat",
+                outcome="failure",
+                reason=str(exc),
+            )
             return
 
         interval = float(getattr(self, "_hb_0102_interval_sec", 0.2) or 0.2)
@@ -3011,16 +3017,25 @@ class MainWindow(QMainWindow):
                         self.log_sig.emit(f"[WARN] 0102 heartbeat send failed: {exc}")
                     except Exception:
                         pass
+                    self._emit_lifecycle(
+                        "heartbeat_worker_fail",
+                        component="0102_heartbeat",
+                        outcome="failure",
+                        reason=str(exc),
+                    )
                     last_warn = now
                 next_due = time.monotonic() + max(interval, 0.5)
+        self._emit_lifecycle("heartbeat_worker_stop", component="0102_heartbeat", outcome="ok")
 
     def _set_0102_heartbeat_enabled(self, enabled: bool) -> None:
         self._hb_0102_enabled = bool(enabled)
         if self._hb_0102_enabled:
             self._start_0102_heartbeat_worker_if_needed()
             self._set_0102_tx_state(True)
+            self._emit_lifecycle("heartbeat_enable", component="0102_heartbeat", outcome="ok")
         else:
             self._set_0102_tx_state(False)
+            self._emit_lifecycle("heartbeat_disable", component="0102_heartbeat", outcome="ok")
 
     def _stop_tab_periodic_0102_if_running(self) -> None:
         try:
@@ -3148,7 +3163,7 @@ class MainWindow(QMainWindow):
             pass
 
         try:
-            self._tab.mark_sent(_z4("0301"), raw)
+            self.tab_mark_sent_sig.emit(_z4("0301"), raw)
         except Exception:
             pass
         return True
@@ -3252,8 +3267,18 @@ class MainWindow(QMainWindow):
             try:
                 register_listener(msg_id, handler)
                 self._input_listener_refs.append((msg_id, handler))
+                self._emit_lifecycle(
+                    "listener_start",
+                    component=f"{msg_id}_listener",
+                    outcome="ok",
+                )
             except Exception:
                 self._append_log_line(f"[WARN] Listener registration failed for {msg_id}")
+                self._emit_lifecycle(
+                    "listener_fail",
+                    component=f"{msg_id}_listener",
+                    outcome="failure",
+                )
 
     # ───────── 0201/0203 최신 상태 배너 ─────────
     def _build_input_banner_info(self) -> tuple[str, str]:
@@ -3263,38 +3288,11 @@ class MainWindow(QMainWindow):
         except Exception:
             db_root = db_paths.LEGACY_DB_ROOT
 
-        entries = []
-        tips = []
-        for msg_id, directory in (("0201", db_root / "InputMissionPlan"), ("0203", db_root / "MissionReferenceInfo")):
-            pid = get_latest_package_id(msg_id)
-            pid_text = str(pid) if pid is not None else "미수신"
-
-            resolved_path = None
-            if pid is not None:
-                try:
-                    candidate = directory / f"{pid}.json"
-                    if candidate.exists():
-                        resolved_path = candidate
-                    else:
-                        cached = resolve_path_from_cache(msg_id, directory)
-                        if cached and Path(cached).exists():
-                            resolved_path = Path(cached)
-                except Exception:
-                    resolved_path = None
-
-            file_label = "파일 없음"
-            file_tip = f"{directory} (파일 없음)"
-            if resolved_path:
-                file_label = f"{resolved_path.parent.name}/{resolved_path.name}"
-                file_tip = str(resolved_path)
-            elif pid is not None:
-                file_label = "미존재"
-                file_tip = str(directory / f"{pid}.json")
-
-            entries.append(f"{msg_id}: {pid_text} ({file_label})")
-            tips.append(f"{msg_id}: ID={pid_text}, file={file_tip}")
-
-        return " | ".join(entries), "\n".join(tips)
+        return _build_latest_input_banner_info(
+            db_root,
+            get_latest_package_id=get_latest_package_id,
+            resolve_path_from_cache=resolve_path_from_cache,
+        )
 
     def _refresh_input_banner(self) -> None:
         label = getattr(self, "_latest_input_label", None)
@@ -3581,19 +3579,11 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _is_post_attack_rejoin_detail(detail: Any) -> bool:
-        if not isinstance(detail, dict):
-            return False
-        if str(detail.get("trigger") or "").strip() != "0402":
-            return False
-        return str(detail.get("triggerType") or "").strip() == "attackClosedDestroyed"
+        return is_post_attack_rejoin_detail(detail)
 
     @staticmethod
     def _is_prior_post_rejoin_detail(detail: Any) -> bool:
-        if not isinstance(detail, dict):
-            return False
-        if str(detail.get("trigger") or "").strip() != "0401":
-            return False
-        return str(detail.get("triggerType") or "").strip() == "priorClosedResume"
+        return is_prior_post_rejoin_detail(detail)
 
     def _prepare_follow_up_attack_detail(self, detail: Dict[str, Any]) -> bool:
         if not isinstance(detail, dict):
@@ -3605,6 +3595,7 @@ class MainWindow(QMainWindow):
         source_plan_id = self._get_current_attack_source_plan_id()
         if source_plan_id is None:
             return False
+        current_plan_id = self._to_optional_int(getattr(self, "_last_mission_plan_id", None)) or source_plan_id
 
         bundle = self._build_follow_up_attack_target_bundle(detail, limit=3)
         if not bundle:
@@ -3616,7 +3607,7 @@ class MainWindow(QMainWindow):
         detail["targetBundleMode"] = "follow_up"
         detail["followUpAttackMode"] = True
         detail["sourceMissionPlanID"] = int(source_plan_id)
-        detail["currentMissionPlanID"] = int(source_plan_id)
+        detail["currentMissionPlanID"] = int(current_plan_id)
         return True
 
     def _load_uav_params_from_store(self) -> Optional[Dict[str, Any]]:
@@ -3695,6 +3686,12 @@ class MainWindow(QMainWindow):
             "line_density_scale",
             float(getattr(d0303_module, "LINE_SWEEP_DENSITY_SCALE", 1.18)),
         )
+        fov_db_sep_safety_factor = _get_float(
+            "fov_db_sep_safety_factor",
+            float(getattr(d0303_module, "FOV_DB_SEP_SAFETY_FACTOR", 1.7)),
+        )
+        if fov_db_sep_safety_factor <= 0.0:
+            fov_db_sep_safety_factor = 1.7
         area_density_scale = _get_float(
             "area_density_scale",
             float(getattr(d0303_module, "AREA_SWEEP_DENSITY_SCALE", 1.5)),
@@ -3742,6 +3739,7 @@ class MainWindow(QMainWindow):
         d0303_module.AREA_CUSTOM_FOV_DEG = area_custom_fov_deg
         d0303_module.AREA_OUTPUT_FOV_SCALE = area_output_fov_scale
         d0303_module.LINE_SWEEP_DENSITY_SCALE = line_density_scale
+        d0303_module.FOV_DB_SEP_SAFETY_FACTOR = fov_db_sep_safety_factor
         d0303_module.AREA_SWEEP_DENSITY_SCALE = area_density_scale
         d0303_module.LINE_ROUTE_OFFSET_SCALE = line_route_offset_scale
         d0303_module.AREA_ROUTE_OFFSET_SCALE = area_route_offset_scale
@@ -3766,6 +3764,30 @@ class MainWindow(QMainWindow):
         )
         d0303_module.SWEEP_LINE_INTERP_POINTS = _get_int(
             "sweep_line_interp_points", int(getattr(d0303_module, "SWEEP_LINE_INTERP_POINTS", 2))
+        )
+        d0303_module.MAX_LINESEARCH_COORDS_PER_WAYPOINT = _get_int(
+            "max_linesearch_coords_per_waypoint",
+            int(getattr(d0303_module, "MAX_LINESEARCH_COORDS_PER_WAYPOINT", 2000)),
+        )
+        d0303_module.LINESEARCH_INNER_PARALLEL_MIN_STRIPS = _get_int(
+            "linesearch_inner_parallel_min_strips",
+            int(getattr(d0303_module, "LINESEARCH_INNER_PARALLEL_MIN_STRIPS", 256)),
+        )
+        d0303_module.LINESEARCH_INNER_PARALLEL_MIN_COORDS = _get_int(
+            "linesearch_inner_parallel_min_coords",
+            int(getattr(d0303_module, "LINESEARCH_INNER_PARALLEL_MIN_COORDS", 512)),
+        )
+        d0303_module.LINESEARCH_INNER_PARALLEL_WORKERS = _get_int(
+            "linesearch_inner_parallel_workers",
+            int(getattr(d0303_module, "LINESEARCH_INNER_PARALLEL_WORKERS", 2)),
+        )
+        d0303_module.FORMATION_FOLLOWER_POSTPROCESS_PARALLEL_MIN_FOLLOWERS = _get_int(
+            "formation_follower_postprocess_parallel_min_followers",
+            int(getattr(d0303_module, "FORMATION_FOLLOWER_POSTPROCESS_PARALLEL_MIN_FOLLOWERS", 2)),
+        )
+        d0303_module.FORMATION_FOLLOWER_POSTPROCESS_WORKERS = _get_int(
+            "formation_follower_postprocess_workers",
+            int(getattr(d0303_module, "FORMATION_FOLLOWER_POSTPROCESS_WORKERS", 2)),
         )
         d0303_module.MIN_SWEEP_LEN_M = _get_float(
             "min_sweep_len_m", float(getattr(d0303_module, "MIN_SWEEP_LEN_M", 3.0))
@@ -3827,7 +3849,7 @@ class MainWindow(QMainWindow):
             d0304_module.ALTITUDE_LAYERS_M = altitude_layers_m
 
         # Keep one authoritative settings file by backfilling missing keys
-        # into the project-root uav_params.json (next to run.py).
+        # into settings/uav_params.json.
         resolved_values = {
             "camera_adjust_enabled": bool(values.get("camera_adjust_enabled", False)),
             "camera_adjust_percent": _get_float("camera_adjust_percent", 10.0),
@@ -3865,13 +3887,17 @@ class MainWindow(QMainWindow):
             "entry_hold_fov_deg": _get_float("entry_hold_fov_deg", float(getattr(d0303_module, "ENTRY_HOLD_FOV_DEG", 10.0))),
             "area_output_fov_scale": float(area_output_fov_scale),
             "default_sweep_separation_m": float(sweep_sep),
+            "fov_db_sep_safety_factor": float(fov_db_sep_safety_factor),
             "db_fov_weight": float(db_fov_weight),
+            "fov_db_smaller_fov_steps": _get_int("fov_db_smaller_fov_steps", 3),
+            "area_fov_db_smaller_fov_steps": _get_int("area_fov_db_smaller_fov_steps", 1),
             "line_density_scale": float(line_density_scale),
             "area_density_scale": float(area_density_scale),
             "line_route_offset_scale": float(line_route_offset_scale),
             "area_route_offset_scale": float(area_route_offset_scale),
             "area_first_packet_search_speed_scale": _get_float("area_first_packet_search_speed_scale", 1.2),
             "area_first_packet_sweep_group_scale": _get_float("area_first_packet_sweep_group_scale", 1.5),
+            "next_collab_area_density_scale": _get_float("next_collab_area_density_scale", 2.4),
             "uav_wp_interval_m": float(uav_wp_interval_m),
             "lah_wp_interval_m": float(lah_wp_interval_m),
             "dubins_turn_radius_m": float(dubins_turn_radius_m),
@@ -3929,7 +3955,6 @@ class MainWindow(QMainWindow):
                 "loiter_speed_mps",
                 float(getattr(d0303_module, "LOITER_SPEED_MPS", 30.0)),
             ),
-            "next_collab_entry_lead_time_s": _get_float("next_collab_entry_lead_time_s", 5.0),
             "next_collab_default_entry_strategy": str(values.get("next_collab_default_entry_strategy", "turn_projection")),
             "next_collab_sweep_step_ratio": _get_float("next_collab_sweep_step_ratio", 0.60),
             "next_collab_entry_tprime_target_sep_ratio": _get_float(
@@ -3939,10 +3964,11 @@ class MainWindow(QMainWindow):
             "next_collab_entry_tprime_ratio_scale": _get_float("next_collab_entry_tprime_ratio_scale", 0.50),
             "next_collab_area_path0_trigger_sep_m": _get_float("next_collab_area_path0_trigger_sep_m", 3000.0),
             "next_collab_area_path0_target_sep_ratio": _get_float("next_collab_area_path0_target_sep_ratio", 0.20),
-            "next_collab_turn_radius_scale": _get_float("next_collab_turn_radius_scale", 1.40),
+            "next_collab_turn_radius_scale": _get_float("next_collab_turn_radius_scale", 1.20),
             "next_collab_takeover_first_step_ratio": _get_float("next_collab_takeover_first_step_ratio", 0.40),
             "next_collab_area_fov_scale": _get_float("next_collab_area_fov_scale", 1.00),
-            "next_collab_area_search_speed_scale": _get_float("next_collab_area_search_speed_scale", 1.00),
+            "next_collab_area_search_speed_scale": _get_float("next_collab_area_search_speed_scale", 1.30),
+            "next_collab_area_gsd_margin_ratio": _get_float("next_collab_area_gsd_margin_ratio", 0.90),
             "next_collab_line_db_width_weight": _get_float("next_collab_line_db_width_weight", 0.30),
             "next_collab_line_db_sep_weight": _get_float("next_collab_line_db_sep_weight", 0.25),
             "next_collab_line_db_fov_weight": _get_float("next_collab_line_db_fov_weight", 0.45),
@@ -3993,7 +4019,7 @@ class MainWindow(QMainWindow):
     def _open_lah_rl_planner(self) -> None:
         """LAH Hex 경로계획 별도 창 열기."""
         try:
-            from modules.mission_planning.lah_rl_planner_gui import LAHPlannerWindow
+            from modules.mission_planning.manual.lah_rl_planner_gui import LAHPlannerWindow
         except ImportError:
             try:
                 from lah_rl_planner_gui import LAHPlannerWindow
@@ -4164,9 +4190,7 @@ class MainWindow(QMainWindow):
             self._submit_id_tab_update(plan_state=self._plan_status)
             return
         self._last_logged_input_ids[msg_id] = current
-        src = None
-        if isinstance(payload, dict):
-            src = payload.get("Source") or payload.get("source")
+        src = _extract_input_payload_source(payload if isinstance(payload, dict) else None)
         note = f"[INFO] Latest {msg_id} ID updated → {current}"
         if src:
             note += f" (source={src})"
@@ -4233,6 +4257,14 @@ class MainWindow(QMainWindow):
 
     def _apply_power_state(self):
         on = bool(self._power_on)
+        previous = getattr(self, "_last_lifecycle_power_on", None)
+        if previous is None or bool(previous) != on:
+            self._last_lifecycle_power_on = on
+            self._emit_lifecycle(
+                "power_on" if on else "power_off",
+                component="power",
+                outcome="ok",
+            )
         try:
             self._update_tx_table_enabled(on)
             self._update_rx_table_enabled(True)  # ? RX는 항상 보이게
@@ -4322,6 +4354,9 @@ class MainWindow(QMainWindow):
             "execution_mode": bool(is_execution_mode),
             "force_direct": bool(force_direct),
             "suppress_0702_fallback": bool(suppress_0702_fallback),
+            "replanTransactionId": str(
+                (getattr(self, "_active_plan_context", {}) or {}).get("replanTransactionId") or ""
+            ),
             "delivery_mode": delivery_mode,
             "ready_at": time.monotonic() + (grace_ms / 1000.0),
             "mode_ready": False,
@@ -4425,13 +4460,23 @@ class MainWindow(QMainWindow):
         self._append_log_line(f"[INFO] Post-0301 ready ({trigger}) -> sending 0903")
         self._record_replan_timing_event(
             "post_0301_flushed",
-            extra={"delivery": "0903", "trigger": trigger, "plans": len(valid_plan_ids)},
+            extra={
+                "delivery": "0903",
+                "trigger": trigger,
+                "plans": len(valid_plan_ids),
+                "suppress_0702": int(bool(suppress_0702_fallback)),
+            },
         )
         for idx, mpid in enumerate(valid_plan_ids):
             delay = idx * 200
             QTimer.singleShot(delay, lambda pid=mpid: self._push_0903(pid))
             if force_direct and not suppress_0702_fallback:
                 QTimer.singleShot(delay + 250, lambda pid=mpid: self._push_0702_auto_apply(pid))
+            elif force_direct and suppress_0702_fallback:
+                self._record_replan_timing_event(
+                    "0702_suppressed",
+                    extra={"missionPlanID": int(mpid), "reason": "suppress_0702_fallback"},
+                )
         self._flush_deferred_id_tab_update()
         return True
 
@@ -4464,6 +4509,133 @@ class MainWindow(QMainWindow):
             self._flush_deferred_id_tab_update()
         return sent
 
+    @staticmethod
+    def _normalize_post_delivery_waypoint_mark(payload: Any) -> Dict[str, Any] | None:
+        return normalize_post_delivery_waypoint_mark(payload)
+
+    @classmethod
+    def _merge_post_delivery_waypoint_mark(cls, existing: Any, incoming: Any) -> Dict[str, Any] | None:
+        return merge_post_delivery_waypoint_mark(existing, incoming)
+
+    def _schedule_post_delivery_waypoint_mark(self, payload: Any) -> None:
+        mark_payload = self._normalize_post_delivery_waypoint_mark(payload)
+        if not mark_payload:
+            return
+
+        def worker() -> None:
+            started = time.perf_counter()
+            max_waypoint_id = int(mark_payload.get("max_waypoint_id") or 0)
+            try:
+                _ensure_mission_planner_import_paths()
+                from modules.mission_planning.engine.mission_generation.id_allocation.allocator import (
+                    mark_waypoint_files_written,
+                )
+            except Exception:
+                try:
+                    from data_def.id_allocator import mark_waypoint_files_written  # type: ignore
+                except Exception as exc:
+                    self.log_sig.emit(
+                        f"[WARN] Post-delivery waypoint mark import failed: {exc}"
+                    )
+                    return
+            try:
+                mark_waypoint_files_written(max_waypoint_id if max_waypoint_id > 0 else None)
+                outcome = "ok"
+            except Exception as exc:
+                outcome = "error"
+                self.log_sig.emit(f"[WARN] Post-delivery waypoint mark failed: {exc}")
+            elapsed_ms = (time.perf_counter() - started) * 1000.0
+            try:
+                self._record_replan_timing_event(
+                    "post_delivery_waypoint_mark",
+                    extra={
+                        "max_waypoint_id": int(max_waypoint_id),
+                        "variants": int(mark_payload.get("variants") or 0),
+                        "elapsed_ms": round(float(elapsed_ms), 3),
+                        "outcome": outcome,
+                    },
+                )
+            except Exception:
+                pass
+            self.log_sig.emit(
+                "[REPLAN][METRIC] general_variant_store_post_delivery_waypoint_mark "
+                f"variants={int(mark_payload.get('variants') or 0)} "
+                f"max_waypoint_id={int(max_waypoint_id)} "
+                f"elapsed_ms={float(elapsed_ms):.3f} "
+                f"outcome={outcome}"
+            )
+
+        threading.Thread(
+            target=worker,
+            name="PostDelivery-WaypointMark",
+            daemon=True,
+        ).start()
+
+    @staticmethod
+    def _normalize_post_delivery_snapshot_carry_forward(payload: Any) -> Dict[str, Any] | None:
+        return normalize_post_delivery_snapshot_carry_forward(payload)
+
+    @classmethod
+    def _merge_post_delivery_snapshot_carry_forward(cls, existing: Any, incoming: Any) -> Dict[str, Any] | None:
+        return merge_post_delivery_snapshot_carry_forward(existing, incoming)
+
+    def _schedule_post_delivery_snapshot_carry_forward(self, payload: Any) -> None:
+        carry_payload = self._normalize_post_delivery_snapshot_carry_forward(payload)
+        if not carry_payload:
+            return
+
+        def worker() -> None:
+            started = time.perf_counter()
+            carried = 0
+            skipped = 0
+            errors = 0
+            items = list(carry_payload.get("items") or [])
+            for item in items:
+                try:
+                    path = mission_area_replan_store.carry_forward_snapshot(
+                        int(item.get("sourceMissionPlanID") or 0),
+                        int(item.get("targetMissionPlanID") or 0),
+                        reason=str(item.get("reason") or ""),
+                    )
+                    if path is not None:
+                        carried += 1
+                    else:
+                        skipped += 1
+                except Exception as exc:
+                    errors += 1
+                    self.log_sig.emit(
+                        "[WARN] Post-delivery mission area snapshot carry-forward failed "
+                        f"(sourcePlan={item.get('sourceMissionPlanID')}, "
+                        f"targetPlan={item.get('targetMissionPlanID')}): {exc}"
+                    )
+            elapsed_ms = (time.perf_counter() - started) * 1000.0
+            outcome = "ok" if errors == 0 else "error"
+            try:
+                self._record_replan_timing_event(
+                    "post_delivery_snapshot_carry_forward",
+                    extra={
+                        "items": len(items),
+                        "carried": int(carried),
+                        "skipped": int(skipped),
+                        "errors": int(errors),
+                        "elapsed_ms": round(float(elapsed_ms), 3),
+                        "outcome": outcome,
+                    },
+                )
+            except Exception:
+                pass
+            self.log_sig.emit(
+                "[REPLAN][METRIC] general_variant_store_post_delivery_snapshot_carry_forward "
+                f"items={len(items)} carried={int(carried)} skipped={int(skipped)} "
+                f"errors={int(errors)} elapsed_ms={float(elapsed_ms):.3f} outcome={outcome}"
+            )
+
+        threading.Thread(
+            target=worker,
+            name="PostDelivery-SnapshotCarry",
+            daemon=True,
+        ).start()
+
     def _start_push_sequence(self):
         if not self._power_on:
             self._append_log_line("[BLOCK] Power OFF -> push sequence blocked")
@@ -4475,6 +4647,8 @@ class MainWindow(QMainWindow):
         option_names = list(payload.get("option_names") or [])
         reason = _sanitize_reason(payload.get("reason"), "init-plan")
         plan_meta = payload.get("option_meta") or {}
+        post_delivery_waypoint_mark = payload.get("post_delivery_waypoint_mark")
+        post_delivery_snapshot_carry_forward = payload.get("post_delivery_snapshot_carry_forward")
         if _is_quality_speed_reason_text(reason) or _plan_meta_has_quality_speed(plan_meta):
             force_direct = True
             suppress_0702_fallback = True
@@ -4520,7 +4694,9 @@ class MainWindow(QMainWindow):
                 force_direct=force_direct,
                 suppress_0702_fallback=suppress_0702_fallback,
             )
-            self._push_post_0301_completion(reason=reason)
+            if self._push_post_0301_completion(reason=reason):
+                self._schedule_post_delivery_waypoint_mark(post_delivery_waypoint_mark)
+                self._schedule_post_delivery_snapshot_carry_forward(post_delivery_snapshot_carry_forward)
 
         self._pending_plan_push = None
 
@@ -4618,8 +4794,10 @@ class MainWindow(QMainWindow):
             return False
 
         reason = str(suppress_flag.get("reason") or "Target 정보 변경으로 인한 재계획 중단").strip()
-        if not reason:
+        if not reason or (reason.lower().startswith("target") and "?" in reason):
             reason = "Target 정보 변경으로 인한 재계획 중단"
+        if "target_option_suppressed" not in reason.lower():
+            reason = f"target_option_suppressed: {reason}"
 
         self._pending_plan_push = None
         self._scheduled_0301_plan_ids = []
@@ -4632,7 +4810,16 @@ class MainWindow(QMainWindow):
             pass
 
         self._append_log_line(f"[0402] delivery suppressed before {phase}: {reason}")
-        self._push_0001_notice(reason)
+        sent = self._push_0305(
+            status=2,
+            reason=reason,
+            planning_success=True,
+            check_delivery_suppress=False,
+        )
+        if sent:
+            self._append_log_line(f"[0402] suppress completion sent via 0305 before {phase}")
+        else:
+            self._append_log_line(f"[0402] suppress completion 0305 send failed before {phase}")
         return True
 
     def _click_tx_button_for(self, code: str) -> bool:
@@ -4767,10 +4954,29 @@ class MainWindow(QMainWindow):
             pass
         if prev_root and prev_root != root_str:
             self._append_log_line(f"[PATH] DB root changed: {prev_root} -> {root_str}")
+            self._emit_lifecycle(
+                "db_root_rebind",
+                component="db_root",
+                outcome="ok",
+                extra={"previousRoot": str(prev_root), "dbRoot": root_str},
+            )
         else:
             self._append_log_line(f"[PATH] DB root -> {root_str}")
+            self._emit_lifecycle(
+                "db_root_bind",
+                component="db_root",
+                outcome="ok",
+                extra={"dbRoot": root_str},
+            )
         if need_log_rebound and getattr(self, "_log_file_path", None):
             self._append_log_line(f"[LOG] Mission planning log rebound: {self._log_file_path}")
+        try:
+            if prev_root and prev_root != root_str:
+                self._schedule_planner_warmup("db_root_rebind")
+            elif log_first or need_log_rebound:
+                self._schedule_planner_warmup("db_root_bind")
+        except Exception:
+            pass
 
     def _persist_gui_log(self, text: str) -> None:
         path = getattr(self, "_log_file_path", None)
@@ -4798,6 +5004,12 @@ class MainWindow(QMainWindow):
                 pass
 
     def _append_log_line(self, text: str):
+        if QThread.currentThread() != self.thread():
+            try:
+                self.log_sig.emit(str(text))
+            except Exception:
+                pass
+            return
         try:
             emit_process_log("mission_planning", str(text))
         except Exception:
@@ -4816,6 +5028,13 @@ class MainWindow(QMainWindow):
             pass
         try: print(text)
         except Exception: pass
+
+    def _mark_tab_sent(self, msg_id: str, raw: object = None) -> None:
+        try:
+            if getattr(self, "_tab", None) is not None:
+                self._tab.mark_sent(str(msg_id), raw if isinstance(raw, bytes) else None)
+        except Exception:
+            pass
 
     def _flush_runtime_fov_adjustment_logs(self) -> None:
         try:
@@ -4895,27 +5114,16 @@ class MainWindow(QMainWindow):
 
     # ───────── 모드/슬라이더 ─────────
     def _on_mode_slider_changed(self, val: int):
-        labels = ["초기화 모드", "대기모드", "초기 임무 계획", "임무 수행"]
-        try: self.mode_now.setText(labels[int(val)])
+        try: self.mode_now.setText(MODE_LABELS[int(val)])
         except Exception: pass
         self._power_on = True
-        self._append_log_line(f"[MODE] 슬라이더 변경 → {labels[int(val)] if 0 <= val < len(labels) else val}")
+        self._append_log_line(f"[MODE] 슬라이더 변경 → {MODE_LABELS[int(val)] if 0 <= val < len(MODE_LABELS) else val}")
         self._apply_power_state()
         if self._power_on:
             QTimer.singleShot(500, self._start_0102_stream)
 
     def _resolve_mode_code_from_text(self, text: str) -> int:
-        norm = re.sub(r"\s+", "", str(text)).lower()
-        mapping = {
-            "전원off":0,"off":0,"poweroff":0,
-            "전원on":0,"on":0,"poweron":0,
-            "0":0,
-            "초기화":0,"초기화모드":0,"초기화mode":0,
-            "1":1,"대기모드":1,"대기":1,"standby":1,
-            "2":2,"초기임무계획":2,"초기임무계획모드":2,"initplan":2,"initial":2,
-            "3":3,"임무수행":3,"execution":3,
-        }
-        return int(mapping.get(norm, 1))
+        return resolve_mode_code_from_text(text)
 
     def _current_mode_code(self) -> int | None:
         try:
@@ -4936,7 +5144,6 @@ class MainWindow(QMainWindow):
         return False
 
     def _set_mode_slider_by_text(self, text: str):
-        labels = ["초기화 모드", "대기모드", "초기 임무 계획", "임무 수행"]
         val = self._resolve_mode_code_from_text(text)
         try:
             if getattr(self, "mode_slider", None):
@@ -4945,7 +5152,7 @@ class MainWindow(QMainWindow):
                     self.mode_slider.setValue(val)
                     self.mode_slider.blockSignals(False)
             if getattr(self, "mode_now", None):
-                self.mode_now.setText(labels[val])
+                self.mode_now.setText(MODE_LABELS[val])
             # ★ 텍스트 기반 모드 변경도 통지
         except Exception:
             pass
@@ -4957,11 +5164,12 @@ class MainWindow(QMainWindow):
     # ───────── nFusion RX 초기화 ─────────
     def _rx_setup(self):
         try:
-            FusionNodeIoc.Configure()
-            NodeMessenger.Initialize("MMR_ReceiveNode")
-            NodeMessenger.RegistAllConsumerFromFusionNodeIoc()
-            NodeMessenger.InitAllSubscriberFromAssembly()
-            NodeMessenger.RegistAllProviderFromFusionNodeIoc()
+            with fusion_runtime_working_dir(project_root=PROJECT_ROOT):
+                FusionNodeIoc.Configure()
+                NodeMessenger.Initialize("MMR_ReceiveNode")
+                NodeMessenger.RegistAllConsumerFromFusionNodeIoc()
+                NodeMessenger.InitAllSubscriberFromAssembly()
+                NodeMessenger.RegistAllProviderFromFusionNodeIoc()
             self._bus_ready = True
             try:
                 self.log_sig.emit("[BUS] NodeMessenger 초기화 완료")
@@ -4995,6 +5203,7 @@ class MainWindow(QMainWindow):
         reason: str = "초기임무재계획",
         *,
         planning_success: bool = True,
+        check_delivery_suppress: bool = True,
     ) -> bool:
         clean_reason = limit_utf8_bytes(_sanitize_reason(reason, "초기임무재계획"))
         if self._should_prefix_0305_reason_for_next_collab() and not clean_reason.startswith("_"):
@@ -5004,7 +5213,11 @@ class MainWindow(QMainWindow):
             self._mark_planning_metric_start(clean_reason)
         elif int(status) == 2:
             elapsed_ms = self._mark_planning_metric_finish(clean_reason, success=bool(planning_success))
-            if planning_success and self._consume_attack_delivery_suppress_flag(phase="0305(status=2)"):
+            if (
+                check_delivery_suppress
+                and planning_success
+                and self._consume_attack_delivery_suppress_flag(phase="0305(status=2)")
+            ):
                 self.log_sig.emit(f"[0305] status=2 suppressed: {clean_reason}")
                 return False
         try:
@@ -5046,6 +5259,61 @@ class MainWindow(QMainWindow):
                 self._record_replan_timing_event("0305_status_1", extra={"reason": clean_reason})
             elif int(status) == 2:
                 self._record_replan_timing_event("0305_status_2", extra={"reason": clean_reason})
+                try:
+                    active_ctx = getattr(self, "_active_plan_context", {}) or {}
+                    timing = active_ctx.get("_replan_timing") if isinstance(active_ctx, dict) else {}
+                    if isinstance(timing, dict) and str(timing.get("trigger") or "") == "general_3_option":
+                        summary = timing.get("general_3_option_summary")
+                        if isinstance(summary, dict):
+                            status2_ms = float(timing.get("0305_status_2_ms") or 0.0)
+                            pipeline_done_ms = float(timing.get("pipeline_done_ms") or 0.0)
+                            delivery_tail_ms = max(0.0, status2_ms - pipeline_done_ms)
+                            try:
+                                sent_0301_ms = float(timing.get("0301_sent_ms") or 0.0)
+                            except Exception:
+                                sent_0301_ms = 0.0
+                            pipeline_to_0301_sent_ms = (
+                                max(0.0, sent_0301_ms - pipeline_done_ms)
+                                if sent_0301_ms > 0.0 and pipeline_done_ms > 0.0
+                                else 0.0
+                            )
+                            sent_0301_to_status2_ms = (
+                                max(0.0, status2_ms - sent_0301_ms)
+                                if sent_0301_ms > 0.0 and status2_ms > 0.0
+                                else 0.0
+                            )
+                            summary["delivery_tail_ms"] = round(float(delivery_tail_ms), 3)
+                            summary["pipeline_to_0301_sent_ms"] = round(float(pipeline_to_0301_sent_ms), 3)
+                            summary["0301_sent_to_status2_ms"] = round(float(sent_0301_to_status2_ms), 3)
+                            self.log_sig.emit(
+                                "[REPLAN][METRIC] general_3_option_summary "
+                                f"total_ms={float(summary.get('total_ms') or 0.0):.3f} "
+                                f"parallel_gate_ms={float(summary.get('parallel_gate_ms') or 0.0):.3f} "
+                                f"max_core_ms={float(summary.get('max_core_ms') or 0.0):.3f} "
+                                f"max_total_ms={float(summary.get('max_total_ms') or 0.0):.3f} "
+                                f"store_total_ms={float(summary.get('store_total_ms') or 0.0):.3f} "
+                                f"store_wall_tail_ms={float(summary.get('store_wall_tail_ms') or 0.0):.3f} "
+                                f"store_prepare_order_wait_ms={float(summary.get('store_prepare_order_wait_ms') or 0.0):.3f} "
+                                f"store_prepare_order_wait_total_ms={float(summary.get('store_prepare_order_wait_total_ms') or 0.0):.3f} "
+                                f"store_prepare_queue_wait_ms={float(summary.get('store_prepare_queue_wait_ms') or 0.0):.3f} "
+                                f"store_prepare_queue_wait_total_ms={float(summary.get('store_prepare_queue_wait_total_ms') or 0.0):.3f} "
+                                f"store_prepare_path_id_reservation_ms={float(summary.get('store_prepare_path_id_reservation_ms') or 0.0):.3f} "
+                                f"store_prepare_path_id_reservation_total_ms={float(summary.get('store_prepare_path_id_reservation_total_ms') or 0.0):.3f} "
+                                f"store_prepare_cross_path_id_reservation_ms={float(summary.get('store_prepare_cross_path_id_reservation_ms') or 0.0):.3f} "
+                                f"store_prepare_enqueue_total_wait_ms={float(summary.get('store_prepare_enqueue_total_wait_ms') or 0.0):.3f} "
+                                f"delivery_tail_ms={float(summary.get('delivery_tail_ms') or 0.0):.3f} "
+                                f"pipeline_to_0301_sent_ms={float(summary.get('pipeline_to_0301_sent_ms') or 0.0):.3f} "
+                                f"0301_sent_to_status2_ms={float(summary.get('0301_sent_to_status2_ms') or 0.0):.3f} "
+                                f"critical_variant={int(summary.get('critical_variant') or 0)} "
+                                f"critical_option={int(summary.get('critical_option') or 0)} "
+                                f"max_core_variant={int(summary.get('max_core_variant') or 0)} "
+                                f"max_core_option={int(summary.get('max_core_option') or 0)} "
+                                f"variant_count={int(summary.get('variant_count') or 0)} "
+                                f"pipeline_done_ms={pipeline_done_ms:.3f} "
+                                f"0305_status_2_ms={status2_ms:.3f}"
+                            )
+                except Exception:
+                    pass
             if int(status) == 2 and elapsed_ms is not None:
                 self.log_sig.emit(
                     f"[0305] status={status}, reason={clean_reason}, elapsed={elapsed_ms / 1000.0:.2f}s 전송"
@@ -5105,7 +5373,7 @@ class MainWindow(QMainWindow):
             except Exception:
                 raw = None
             try:
-                self._tab.mark_sent(_z4("0903"), raw)
+                self.tab_mark_sent_sig.emit(_z4("0903"), raw)
             except Exception:
                 pass
         except Exception as e:
@@ -5135,13 +5403,14 @@ class MainWindow(QMainWindow):
         }
         try:
             push_message("0702", NodeMessenger, body_dict=body)
+            self._record_replan_timing_event("0702_sent", extra={"missionPlanID": mpid})
             self.log_sig.emit(f"[0702][AUTO] ignore=2 sent (missionPlanID={mpid})")
             try:
                 raw = json.dumps(body, ensure_ascii=False).encode("utf-8", "ignore")
             except Exception:
                 raw = None
             try:
-                self._tab.mark_sent(_z4("0702"), raw)
+                self.tab_mark_sent_sig.emit(_z4("0702"), raw)
             except Exception:
                 pass
         except Exception as e:
@@ -5176,9 +5445,18 @@ class MainWindow(QMainWindow):
                 active_ctx,
                 phase="0901",
             ):
-                reason = suppress_flag.get("reason") or "Target 정보 변경으로 인한 재계획 중단"
+                reason = str(suppress_flag.get("reason") or "Target 정보 변경으로 인한 재계획 중단").strip()
+                if not reason or (reason.lower().startswith("target") and "?" in reason):
+                    reason = "Target 정보 변경으로 인한 재계획 중단"
+                if "target_option_suppressed" not in reason.lower():
+                    reason = f"target_option_suppressed: {reason}"
                 self.log_sig.emit(f"[0901] option suppressed: {reason}")
-                self._push_0001_notice(str(reason))
+                self._push_0305(
+                    status=2,
+                    reason=reason,
+                    planning_success=True,
+                    check_delivery_suppress=False,
+                )
                 return
             self.log_sig.emit("[0901] stale option suppress flag ignored")
 
@@ -5210,12 +5488,15 @@ class MainWindow(QMainWindow):
                 except Exception:
                     continue
                 raw_name = name_list[idx - 1] if idx - 1 < len(name_list) else None
-                code = normalize_option_code(
-                    raw_name,
-                    fallback=defaults[idx - 1] if idx - 1 < len(defaults) else defaults[-1],
-                )
+                fallback_code = defaults[idx - 1] if idx - 1 < len(defaults) else defaults[-1]
+                code = normalize_option_code(raw_name)
                 if code is None:
-                    code = defaults[-1]
+                    code = fallback_code
+                    if raw_name not in (None, ""):
+                        self.log_sig.emit(
+                            f"[WARN] Unknown option label for 0901 #{idx}: "
+                            f"{raw_name!r}; fallback optionCode={code}({option_code_to_label(code)})"
+                        )
                 valid_entries.append((pid, code))
             if not valid_entries:
                 self.log_sig.emit("[WARN] 0901 skipped: no entries")
@@ -5266,7 +5547,7 @@ class MainWindow(QMainWindow):
             except Exception:
                 raw = None
             try:
-                self._tab.mark_sent(_z4("0001"), raw)
+                self.tab_mark_sent_sig.emit(_z4("0001"), raw)
             except Exception:
                 pass
         except Exception as exc:
@@ -5583,23 +5864,7 @@ class MainWindow(QMainWindow):
 
     # ───────── 0902(재계획 요청) 처리 ─────────
     def _parse_replan_payload(self, raw: bytes | None):
-        if not raw:
-            return None
-        if isinstance(raw, dict):
-            return dict(raw)
-        if isinstance(raw, str):
-            text = raw
-        else:
-            try:
-                text = raw.decode("utf-8", "ignore")
-            except Exception:
-                return None
-        try:
-            m = re.search(r"{.*}", text, flags=re.S)
-            if not m: return None
-            return json.loads(m.group(0))
-        except Exception:
-            return None
+        return parse_replan_payload(raw)
 
     def _capture_replan_payload_for_replay(self, payload: Dict[str, Any], ctx: Dict[str, Any]) -> None:
         if not isinstance(payload, dict):
@@ -5726,6 +5991,19 @@ class MainWindow(QMainWindow):
         self._append_log_line(note)
 
     def _handle_replan_received(self, msg_id, raw):
+        try:
+            return self._handle_replan_received_impl(msg_id, raw)
+        except Exception as exc:
+            self._append_log_line(f"[ERR] 0902 handling failed before pipeline scheduling: {exc}")
+            try:
+                trace_text = traceback.format_exc().strip()
+                if trace_text:
+                    self._append_log_line("[TRACE] " + trace_text)
+            except Exception:
+                pass
+            return
+
+    def _handle_replan_received_impl(self, msg_id, raw):
         """탭에서 0902 수신 시 호출해주는 콜백."""
         if not self._power_on:
             self._append_log_line("[BLOCK] Power OFF → 0902 수신 무시")
@@ -5737,48 +6015,12 @@ class MainWindow(QMainWindow):
             return
         staged = self._staged_plan_context if isinstance(getattr(self, '_staged_plan_context', {}), dict) else {}
 
-        detail_payload = payload.get("replanDetail")
-        detail_trigger = ""
-        if isinstance(detail_payload, dict):
-            detail_trigger = str(detail_payload.get("triggerType") or "").strip()
-
-        # 0902에서 옵션/계획 ID 추출
-        plan_ids: list[int] = []
-        option_names: list[str] = []
-        option_payload = payload.get("optionList") or payload.get("pendingOptionList") or []
-        for item in option_payload:
-            try:
-                plan_ids.append(int(item.get("missionPlanID")))
-            except Exception:
-                continue
-            name = item.get("optionName")
-            if name:
-                option_names.append(str(name))
-        if not plan_ids:
-            for item in payload.get("missionPlanIDList") or []:
-                if isinstance(item, dict):
-                    value = item.get("missionPlanID")
-                else:
-                    value = item
-                try:
-                    plan_ids.append(int(value))
-                except Exception:
-                    continue
-        if not plan_ids and isinstance(detail_payload, dict):
-            try:
-                detail_plan_id = int(detail_payload.get("missionPlanID"))
-            except Exception:
-                detail_plan_id = None
-            if detail_plan_id is not None and detail_plan_id > 0:
-                plan_ids.append(int(detail_plan_id))
-
-        # (필요시) 입력 미션 ID
-        mission_ids: list[int] = []
-        for item in payload.get("inputMissionIDList") or []:
-            try:
-                mission_ids.append(int(item.get("inputMissionID")))
-            except Exception:
-                continue
+        selection = extract_replan_request_selection(payload)
+        detail_payload = selection.detail
+        detail_trigger = selection.detail_trigger_type
+        plan_ids = list(selection.plan_ids)
+        option_names = list(selection.option_names)
+        mission_ids = list(selection.mission_ids)
 
         staged_reason = _sanitize_reason(staged.get("reason"), "init-plan")
         reason = _sanitize_reason(payload.get("replanRequest") or payload.get("replanReason"), staged_reason)
@@ -5853,16 +6095,23 @@ class MainWindow(QMainWindow):
                 },
             )
 
-        self._start_replan_timing(ctx, payload)
         try:
-            self._capture_replan_payload_for_replay(payload, ctx)
+            self._start_replan_timing(ctx, payload)
         except Exception as exc:
-            self._append_log_line(f"[WARN] 0902 replay capture skipped: {exc}")
+            self._append_log_line(f"[WARN] 0902 timing start skipped: {exc}")
+        try:
+            self._schedule_replan_terrain_warmup(ctx, payload)
+        except Exception as exc:
+            self._append_log_line(f"[WARN] 0902 DEM warm-up schedule skipped: {exc}")
         summary = ", ".join(str(pid) for pid in ctx.get("plan_ids", [])) or "-"
         self._append_log_line(f"[AUTO] 0902 received (planIds={summary})")
         delay_ms = self._replan_delay_ms_for_payload(payload)
-        if self._initplan_running:
+        if getattr(self, "_initplan_running", False):
             self._queue_deferred_replan_request(ctx, delay_ms=delay_ms)
+            try:
+                self._capture_replan_payload_for_replay(payload, ctx)
+            except Exception as exc:
+                self._append_log_line(f"[WARN] 0902 replay capture skipped: {exc}")
             return
 
         # 새 0902 요청 수신 시 이전 전송 버퍼 초기화
@@ -5874,20 +6123,24 @@ class MainWindow(QMainWindow):
 
         self._active_plan_context = ctx
         self._schedule_replan_pipeline(delay_ms=delay_ms)
+        try:
+            self._capture_replan_payload_for_replay(payload, ctx)
+        except Exception as exc:
+            self._append_log_line(f"[WARN] 0902 replay capture skipped: {exc}")
 
     def _replan_delay_ms_for_payload(self, payload: Dict[str, Any]) -> int:
-        detail = payload.get("replanDetail")
-        if not isinstance(detail, dict):
-            return 100
-        trigger = str(detail.get("trigger") or "").strip()
-        trigger_type = str(detail.get("triggerType") or "").strip()
-        if trigger == "0402" or trigger_type == "attackClosedDestroyed":
-            return 0
-        if trigger != "0401":
-            return 100
-        if trigger_type in {"communicationLossRTB", "abnormalHealthRTB", "unexpectedRTB"}:
-            return 55_000
-        return 100
+        policy = replan_delay_policy(payload)
+        if policy.runtime_setting_key:
+            return self._runtime_replan_delay_ms(policy.runtime_setting_key, policy.default_delay_ms)
+        return int(policy.default_delay_ms)
+
+    def _runtime_replan_delay_ms(self, key: str, default: int) -> int:
+        try:
+            values = (load_runtime_settings().get("values") or {})
+            raw = values.get(key, default) if isinstance(values, dict) else default
+            return max(0, int(float(raw)))
+        except Exception:
+            return max(0, int(default))
 
     def _queue_deferred_replan_request(self, ctx: Dict[str, Any], *, delay_ms: int) -> None:
         try:
@@ -5948,37 +6201,13 @@ class MainWindow(QMainWindow):
         self._schedule_replan_pipeline(delay_ms=remaining_delay_ms)
 
     def _should_use_attack_pipeline(self, ctx: Dict[str, Any]) -> bool:
-        reason_text = str(ctx.get("reason") or "").strip()
-        if "공격 특화" in reason_text or "공격특화" in reason_text or "공격추천" in reason_text:
-            return True
-
-        detail = ctx.get("replan_detail")
-        if isinstance(detail, dict):
-            if self._is_post_attack_rejoin_detail(detail):
-                return False
-            trigger = detail.get("trigger")
-            if isinstance(trigger, str) and trigger.strip() == "0402":
-                return True
-            for key in ("ReplanReason", "reason", "label", "mode"):
-                value = detail.get(key)
-                if value and ("공격 특화" in str(value) or "공격특화" in str(value)):
-                    return True
-
-        option_names = ctx.get("option_names") or []
-        for name in option_names:
-            text = str(name)
-            if "공격 특화" in text or "공격특화" in text or "공격추천" in text:
-                return True
-
-        return False
+        return should_use_attack_pipeline(ctx)
 
     def _should_use_post_attack_rejoin_pipeline(self, ctx: Dict[str, Any]) -> bool:
-        detail = ctx.get("replan_detail")
-        return self._is_post_attack_rejoin_detail(detail)
+        return should_use_post_attack_rejoin_pipeline(ctx)
 
     def _should_use_prior_post_rejoin_pipeline(self, ctx: Dict[str, Any]) -> bool:
-        detail = ctx.get("replan_detail")
-        return self._is_prior_post_rejoin_detail(detail)
+        return should_use_prior_post_rejoin_pipeline(ctx)
 
     def _ensure_ctx_package_ids(self, ctx: Dict[str, Any], staged: Dict[str, Any]) -> None:
         """replan 파이프라인 진입 전에 필수 패키지 ID를 미리 채워둔다."""
@@ -6098,6 +6327,12 @@ class MainWindow(QMainWindow):
             name="Replan-GUI",
             daemon=True,
         ).start()
+        self._emit_lifecycle(
+            "worker_thread_start",
+            component="replan_pipeline_thread",
+            outcome="ok",
+            extra={"sessionId": session_id},
+        )
 
     def _run_replan_pipeline_thread_entry(self, session_id: Optional[str], plan_run_log=None):
         try:
@@ -6114,6 +6349,13 @@ class MainWindow(QMainWindow):
                 self._pipeline_logger.log_event(session_id, "error", f"Replan pipeline thread crashed: {exc}")
             except Exception:
                 pass
+            self._emit_lifecycle(
+                "worker_thread_exception",
+                component="replan_pipeline_thread",
+                outcome="failure",
+                reason=str(exc),
+                extra={"sessionId": session_id},
+            )
             try:
                 self._push_replan_failure_completion(f"재계획 실패: {exc}")
             except Exception:
@@ -6238,23 +6480,18 @@ class MainWindow(QMainWindow):
                 },
             )
 
-
-            def _normalize_option_label(value: Any) -> str:
-                return str(value).strip() if value is not None else ""
-
             def _collect_attack_option_indices(context: Dict[str, Any]) -> list[int]:
                 labels = list(context.get("option_names") or [])
-                attack_labels = {"공격추천", "공격 특화", "공격특화"}
                 return [
                     idx for idx, label in enumerate(labels)
-                    if _normalize_option_label(label) in attack_labels
+                    if is_option_code_value(label, 2)
                 ]
 
             def _collect_attack_exclusion_option_indices(context: Dict[str, Any]) -> list[int]:
                 labels = list(context.get("option_names") or [])
                 return [
                     idx for idx, label in enumerate(labels)
-                    if _normalize_option_label(label).replace(" ", "") == "공격배제"
+                    if is_option_code_value(label, 3)
                 ]
 
             def _select_by_indices(values: list[Any], indices: list[int]) -> list[Any]:
@@ -6294,7 +6531,12 @@ class MainWindow(QMainWindow):
                         loaded[futures[future]] = future.result()
                 return [row for row in loaded if row is not None]
 
-            def _write_json_batch(rows: list[tuple[Path, Any]], *, pretty: bool = True) -> int:
+            def _write_json_batch(
+                rows: list[tuple[Path, Any]],
+                *,
+                pretty: bool = True,
+                max_workers: Optional[int] = None,
+            ) -> int:
                 if not rows:
                     return 0
 
@@ -6314,8 +6556,12 @@ class MainWindow(QMainWindow):
                     return 1 if _write_one(rows[0]) else 0
 
                 written = 0
+                try:
+                    worker_cap = max(1, int(max_workers)) if max_workers is not None else 8
+                except Exception:
+                    worker_cap = 8
                 with concurrent.futures.ThreadPoolExecutor(
-                    max_workers=min(8, len(rows)),
+                    max_workers=min(worker_cap, len(rows)),
                     thread_name_prefix="WriteJSON",
                 ) as executor:
                     futures = [executor.submit(_write_one, row) for row in rows]
@@ -6323,6 +6569,102 @@ class MainWindow(QMainWindow):
                         if future.result():
                             written += 1
                 return written
+
+            def _serialize_json_batch(
+                rows: list[tuple[Path, Any]],
+                *,
+                pretty: bool = True,
+                max_workers: Optional[int] = None,
+            ) -> list[tuple[Path, bytes]]:
+                if not rows:
+                    return []
+
+                def _serialize_one(item: tuple[Path, Any]) -> tuple[Path, bytes]:
+                    path, payload = item
+                    return (
+                        Path(path),
+                        serialize_json_payload(
+                            Path(path),
+                            payload,
+                            pretty=pretty,
+                            ensure_ascii=False,
+                        ),
+                    )
+
+                if len(rows) == 1:
+                    return [_serialize_one(rows[0])]
+
+                try:
+                    worker_cap = max(1, int(max_workers)) if max_workers is not None else 8
+                except Exception:
+                    worker_cap = 8
+                if worker_cap <= 1:
+                    return [_serialize_one(row) for row in rows]
+                serialized: list[tuple[Path, bytes] | None] = [None] * len(rows)
+                with concurrent.futures.ThreadPoolExecutor(
+                    max_workers=min(worker_cap, len(rows)),
+                    thread_name_prefix="SerializeJSON",
+                ) as executor:
+                    futures = {
+                        executor.submit(_serialize_one, row): idx
+                        for idx, row in enumerate(rows)
+                    }
+                    for future in concurrent.futures.as_completed(futures):
+                        serialized[futures[future]] = future.result()
+                return [row for row in serialized if row is not None]
+
+            def _write_json_bytes_batch_results(
+                rows: list[tuple[Path, bytes]],
+                *,
+                max_workers: Optional[int] = None,
+                skip_if_unchanged: bool = True,
+            ) -> list[bool]:
+                if not rows:
+                    return []
+
+                def _write_one(item: tuple[Path, bytes]) -> bool:
+                    path, payload = item
+                    return bool(
+                        write_json_bytes(
+                            Path(path),
+                            payload,
+                            skip_if_unchanged=skip_if_unchanged,
+                        )
+                    )
+
+                if len(rows) == 1:
+                    return [_write_one(rows[0])]
+
+                try:
+                    worker_cap = max(1, int(max_workers)) if max_workers is not None else 8
+                except Exception:
+                    worker_cap = 8
+                results: list[bool | None] = [None] * len(rows)
+                with concurrent.futures.ThreadPoolExecutor(
+                    max_workers=min(worker_cap, len(rows)),
+                    thread_name_prefix="WriteJSONBytes",
+                ) as executor:
+                    futures = {
+                        executor.submit(_write_one, row): idx
+                        for idx, row in enumerate(rows)
+                    }
+                    for future in concurrent.futures.as_completed(futures):
+                        results[futures[future]] = bool(future.result())
+                return [bool(row) for row in results]
+
+            def _write_json_bytes_batch(
+                rows: list[tuple[Path, bytes]],
+                *,
+                max_workers: Optional[int] = None,
+            ) -> int:
+                return sum(
+                    1
+                    for written in _write_json_bytes_batch_results(
+                        rows,
+                        max_workers=max_workers,
+                    )
+                    if written
+                )
 
             def _repair_missing_flight_path_files(
                 *,
@@ -6332,46 +6674,27 @@ class MainWindow(QMainWindow):
                 flight_plans_0303: list[dict],
                 flight_plans_0304: list[dict],
             ) -> tuple[int, list[int]]:
-                referenced_path_ids: Set[int] = set()
-                for pkg in imp_pkgs or []:
-                    if not isinstance(pkg, dict):
-                        continue
-                    for mission in pkg.get("individualMissionList") or []:
-                        if not isinstance(mission, dict):
-                            continue
-                        pid = _safe_int_value(mission.get("pathID"))
-                        if pid is not None and int(pid) > 0:
-                            referenced_path_ids.add(int(pid))
-
-                fp_lookup: Dict[int, dict] = {}
-                for fp in (flight_plans_0303 or []) + (flight_plans_0304 or []):
-                    if not isinstance(fp, dict):
-                        continue
-                    pid = _safe_int_value(fp.get("pathID"))
-                    if pid is None or int(pid) <= 0:
-                        continue
-                    fp_lookup.setdefault(int(pid), copy.deepcopy(fp))
-
-                def _missing_ids() -> list[int]:
-                    return sorted(
-                        pid for pid in referenced_path_ids if not (dir_fp / f"{int(pid)}.json").exists()
-                    )
-
-                missing_ids = _missing_ids()
+                repair_plan = collect_missing_flight_path_repairs(
+                    flight_path_dir=dir_fp,
+                    individual_mission_plans=imp_pkgs,
+                    flight_plans_0303=flight_plans_0303,
+                    flight_plans_0304=flight_plans_0304,
+                    scope=f"variant={variant_no}",
+                )
+                referenced_path_ids = set(repair_plan.get("referencedPathIDs") or [])
+                missing_ids = list(repair_plan.get("missingPathIDs") or [])
                 repaired = 0
                 if missing_ids:
-                    repair_rows: list[tuple[Path, Any]] = []
-                    for pid in missing_ids:
-                        payload = fp_lookup.get(int(pid))
-                        if isinstance(payload, dict):
-                            repair_rows.append((dir_fp / f"{int(pid)}.json", copy.deepcopy(payload)))
+                    repair_rows = repair_plan.get("repairRows") or []
                     if repair_rows:
                         repaired = _write_json_batch(repair_rows, pretty=True)
                         if repaired:
                             self.log_sig.emit(
                                 f"[WARN] FlightPath repair attempted (variant={variant_no}): rewrote={repaired}"
                             )
-                    missing_ids = _missing_ids()
+                    missing_ids = sorted(
+                        pid for pid in referenced_path_ids if not (dir_fp / f"{int(pid)}.json").exists()
+                    )
                 return repaired, missing_ids
 
             def _sync_flight_plan_individual_mission_ids(
@@ -6381,29 +6704,13 @@ class MainWindow(QMainWindow):
                 flight_plans_0303: list[dict],
                 flight_plans_0304: list[dict],
             ) -> int:
-                mission_id_by_path: Dict[int, int] = {}
-                for pkg in imp_pkgs or []:
-                    if not isinstance(pkg, dict):
-                        continue
-                    for mission in pkg.get("individualMissionList") or []:
-                        if not isinstance(mission, dict):
-                            continue
-                        path_id = _safe_int_value(mission.get("pathID"))
-                        mission_id = _safe_int_value(mission.get("individualMissionID"))
-                        if path_id is None or path_id <= 0 or mission_id is None or mission_id <= 0:
-                            continue
-                        mission_id_by_path[int(path_id)] = int(mission_id)
-                fixed = 0
-                for fp in (flight_plans_0303 or []) + (flight_plans_0304 or []):
-                    if not isinstance(fp, dict):
-                        continue
-                    path_id = _safe_int_value(fp.get("pathID"))
-                    if path_id is None or int(path_id) not in mission_id_by_path:
-                        continue
-                    desired_id = int(mission_id_by_path[int(path_id)])
-                    if _safe_int_value(fp.get("individualMissionID")) != desired_id:
-                        fp["individualMissionID"] = desired_id
-                        fixed += 1
+                summary = sync_flight_plan_individual_mission_ids(
+                    individual_mission_plans=imp_pkgs,
+                    flight_plans_0303=flight_plans_0303,
+                    flight_plans_0304=flight_plans_0304,
+                    scope=f"variant={variant_no}",
+                )
+                fixed = int(summary.get("fixed") or 0)
                 if fixed:
                     self.log_sig.emit(
                         f"[INFO] FlightPath individualMissionID synced (variant={variant_no}): fixed={fixed}"
@@ -6416,23 +6723,14 @@ class MainWindow(QMainWindow):
                 flight_plans_0303: list[dict],
                 flight_plans_0304: list[dict],
             ) -> None:
-                seen: Dict[int, str] = {}
-                duplicates: Set[int] = set()
-                for channel, fps in (("0303", flight_plans_0303 or []), ("0304", flight_plans_0304 or [])):
-                    for fp in fps:
-                        if not isinstance(fp, dict):
-                            continue
-                        path_id = _safe_int_value(fp.get("pathID"))
-                        if path_id is None or int(path_id) <= 0:
-                            continue
-                        pid = int(path_id)
-                        if pid in seen:
-                            duplicates.add(pid)
-                        else:
-                            seen[pid] = channel
-                if duplicates:
-                    summary = ", ".join(str(pid) for pid in sorted(duplicates))
-                    message = f"FlightPath duplicate pathID(s) before write (variant={variant_no}): {summary}"
+                try:
+                    validate_unique_flightpath_ids(
+                        flight_plans_0303=flight_plans_0303,
+                        flight_plans_0304=flight_plans_0304,
+                        scope=f"variant={variant_no}",
+                    )
+                except ReplanValidationError as exc:
+                    message = "; ".join(exc.errors)
                     self.log_sig.emit(f"[ERR] {message}")
                     raise RuntimeError(message)
 
@@ -6443,60 +6741,15 @@ class MainWindow(QMainWindow):
                 flight_plans_0303: list[dict],
                 flight_plans_0304: list[dict],
             ) -> None:
-                mission_by_path: Dict[int, list[tuple[int, int]]] = {}
-                for mission in missions or []:
-                    if not isinstance(mission, dict):
-                        continue
-                    aircraft_id = _safe_int_value(mission.get("aircraftID"))
-                    mission_id = _safe_int_value(mission.get("individualMissionID"))
-                    path_id = _safe_int_value(mission.get("pathID"))
-                    if (
-                        aircraft_id is None
-                        or mission_id is None
-                        or path_id is None
-                        or int(aircraft_id) <= 0
-                        or int(mission_id) <= 0
-                        or int(path_id) <= 0
-                    ):
-                        continue
-                    pid = int(path_id)
-                    mission_by_path.setdefault(pid, []).append((int(aircraft_id), int(mission_id)))
-
-                fp_by_path: Dict[int, dict] = {}
-                for fp in (flight_plans_0303 or []) + (flight_plans_0304 or []):
-                    if not isinstance(fp, dict):
-                        continue
-                    path_id = _safe_int_value(fp.get("pathID"))
-                    if path_id is None or int(path_id) <= 0:
-                        continue
-                    fp_by_path[int(path_id)] = fp
-
-                missing = sorted(pid for pid in mission_by_path if pid not in fp_by_path)
-                if missing:
-                    summary = ", ".join(str(pid) for pid in missing)
-                    message = f"FlightPath link missing pathID(s) before write (variant={variant_no}): {summary}"
-                    self.log_sig.emit(f"[ERR] {message}")
-                    raise RuntimeError(message)
-
-                mismatches: list[str] = []
-                for pid, mission_refs in sorted(mission_by_path.items()):
-                    if len(mission_refs) != 1:
-                        continue
-                    aircraft_id, mission_id = mission_refs[0]
-                    fp = fp_by_path.get(pid)
-                    if not isinstance(fp, dict):
-                        continue
-                    fp_aircraft_id = _safe_int_value(fp.get("aircraftID"))
-                    fp_mission_id = _safe_int_value(fp.get("individualMissionID"))
-                    if fp_aircraft_id is not None and int(fp_aircraft_id) > 0 and int(fp_aircraft_id) != int(aircraft_id):
-                        mismatches.append(f"pathID={pid}:aircraft {fp_aircraft_id}!={aircraft_id}")
-                    if fp_mission_id is not None and int(fp_mission_id) > 0 and int(fp_mission_id) != int(mission_id):
-                        mismatches.append(f"pathID={pid}:mission {fp_mission_id}!={mission_id}")
-                if mismatches:
-                    summary = "; ".join(mismatches[:8])
-                    if len(mismatches) > 8:
-                        summary += f"; +{len(mismatches) - 8} more"
-                    message = f"FlightPath mission link mismatch before write (variant={variant_no}): {summary}"
+                try:
+                    validate_mission_flightpath_links(
+                        missions=missions,
+                        flight_plans_0303=flight_plans_0303,
+                        flight_plans_0304=flight_plans_0304,
+                        scope=f"variant={variant_no}",
+                    )
+                except ReplanValidationError as exc:
+                    message = "; ".join(exc.errors)
                     self.log_sig.emit(f"[ERR] {message}")
                     raise RuntimeError(message)
 
@@ -6506,10 +6759,14 @@ class MainWindow(QMainWindow):
             attack_summary_info: Optional[Dict[str, Any]] = None
             suppress_attack_exclusion_fallback = False
             attack_exclusion_source_plan_id = self._to_optional_int(
-                ctx.get("sourceMissionPlanID")
-                or ctx.get("currentMissionPlanID")
+                ctx.get("currentMissionPlanID")
+                or ctx.get("sourceMissionPlanID")
                 or getattr(self, "_last_mission_plan_id", None)
             )
+            attack_detail = ctx.get("replan_detail") if isinstance(ctx.get("replan_detail"), dict) else {}
+            attack_trigger = str(
+                (attack_detail or {}).get("trigger") or (attack_detail or {}).get("triggerType") or ""
+            ).strip()
 
             def _run_attack_exclusion_parallel(exclusion_ctx: Dict[str, Any]) -> Dict[str, Any]:
                 started_at = time.perf_counter()
@@ -6522,6 +6779,53 @@ class MainWindow(QMainWindow):
                     "result": result,
                     "duration_ms": round((time.perf_counter() - started_at) * 1000.0, 3),
                 }
+
+            def _validate_attack_exclusion_parallel_result(
+                parallel_payload: Dict[str, Any] | None,
+            ) -> tuple[bool, str]:
+                if not isinstance(parallel_payload, dict):
+                    return False, "parallel payload missing"
+                result_wrapper = parallel_payload.get("result")
+                if not isinstance(result_wrapper, dict):
+                    return False, "pipeline wrapper missing"
+                result_payload = result_wrapper.get("result")
+                if not isinstance(result_payload, dict):
+                    return False, "pipeline result missing"
+
+                expected_source_id = self._to_optional_int(attack_exclusion_parallel_info.get("sourcePlanID"))
+                result_source_id = self._to_optional_int(result_payload.get("sourcePlanID"))
+                if (
+                    expected_source_id is not None
+                    and result_source_id is not None
+                    and int(result_source_id) != int(expected_source_id)
+                ):
+                    return False, f"sourcePlanID mismatch ({result_source_id} != {expected_source_id})"
+
+                expected_plan_id = self._to_optional_int(attack_exclusion_parallel_info.get("expectedPlanID"))
+                result_plan_id = self._to_optional_int(result_payload.get("missionPlanID"))
+                if (
+                    expected_plan_id is not None
+                    and result_plan_id is not None
+                    and int(result_plan_id) != int(expected_plan_id)
+                ):
+                    return False, f"missionPlanID mismatch ({result_plan_id} != {expected_plan_id})"
+
+                attack_plan_ids = {
+                    int(pid)
+                    for pid in (attack_ctx.get("plan_ids") or [])
+                    if self._to_optional_int(pid) is not None
+                }
+                if result_plan_id is not None and int(result_plan_id) in attack_plan_ids:
+                    return False, f"missionPlanID collides with attack option ({result_plan_id})"
+
+                updates = result_payload.get("missionUpdates")
+                if not isinstance(updates, dict):
+                    return False, "missionUpdates missing"
+                mode = str(updates.get("mode") or "").strip()
+                if mode != "attack_exclusion":
+                    return False, f"unexpected mode {mode!r}"
+
+                return True, ""
 
             use_attack_pipeline = self._should_use_attack_pipeline(ctx)
             attack_exclusion_parallel_enabled = (
@@ -6539,6 +6843,10 @@ class MainWindow(QMainWindow):
                     exclusion_idx = int(attack_exclusion_ctx_indices[0])
                     parallel_ctx = copy.deepcopy(_filter_context_by_indices(ctx, [exclusion_idx]))
                     parallel_ctx["sourceMissionPlanID"] = int(attack_exclusion_source_plan_id)
+                    expected_plan_id = None
+                    parallel_plan_ids = list(parallel_ctx.get("plan_ids") or [])
+                    if parallel_plan_ids:
+                        expected_plan_id = self._to_optional_int(parallel_plan_ids[0])
                     attack_exclusion_executor = concurrent.futures.ThreadPoolExecutor(
                         max_workers=1,
                         thread_name_prefix="AttackExclude",
@@ -6550,6 +6858,8 @@ class MainWindow(QMainWindow):
                     attack_exclusion_parallel_info = {
                         "originalIndex": int(exclusion_idx),
                         "sourcePlanID": int(attack_exclusion_source_plan_id),
+                        "expectedPlanID": int(expected_plan_id) if expected_plan_id is not None else None,
+                        "trigger": attack_trigger,
                         "startedAt": time.perf_counter(),
                     }
                     self._record_replan_timing_event(
@@ -6557,6 +6867,8 @@ class MainWindow(QMainWindow):
                         extra={
                             "option_index": int(exclusion_idx) + 1,
                             "sourcePlanID": int(attack_exclusion_source_plan_id),
+                            "expectedPlanID": int(expected_plan_id) if expected_plan_id is not None else None,
+                            "trigger": attack_trigger,
                         },
                     )
                     self.log_sig.emit(
@@ -6593,16 +6905,26 @@ class MainWindow(QMainWindow):
                     attack_result_body = (attack_result or {}).get("result") or {}
                     attack_updates = ((attack_result or {}).get("result") or {}).get("missionUpdates")
                     attack_failure_notice = str(attack_result_body.get("failure_notice") or "").strip()
-                    attack_detail = ctx.get("replan_detail") if isinstance(ctx.get("replan_detail"), dict) else {}
-                    attack_trigger = str(
-                        (attack_detail or {}).get("trigger") or (attack_detail or {}).get("triggerType") or ""
-                    ).strip()
                     if not attack_updates and attack_failure_notice and not failure_notice_sent:
                         self.log_sig.emit(f"[ATTACK] 공격 임무 생성 실패 -> 0305 재계획 완료(실패 사유) 발송: {attack_failure_notice}")
                         self._push_replan_failure_completion(attack_failure_notice)
                         failure_notice_sent = True
                     if not attack_updates and attack_trigger == "0402":
                         suppress_attack_exclusion_fallback = True
+                        if attack_exclusion_future is not None:
+                            attack_exclusion_parallel_info["discardReason"] = "0402_attack_pipeline_empty"
+                            cancelled = False
+                            try:
+                                cancelled = bool(attack_exclusion_future.cancel())
+                            except Exception:
+                                cancelled = False
+                            self._record_replan_timing_event(
+                                "attack_exclusion_parallel_discarded",
+                                extra={
+                                    "reason": "0402_attack_pipeline_empty",
+                                    "cancelled": bool(cancelled),
+                                },
+                            )
                         self.log_sig.emit(
                             "[ATTACK] 0402 공격 특화안 생성 실패 -> 공격 배제 fallback을 생략하고 현재 계획을 유지합니다."
                         )
@@ -6833,19 +7155,36 @@ class MainWindow(QMainWindow):
             generated_path_ids: Set[int] = set()
             stored_path_ids: Set[int] = set()
 
+            planner_runtime_started = time.perf_counter()
             planner_runtime = self._get_planner_runtime()
+            planner_runtime_timing = dict(planner_runtime.get("runtime_timing") or {})
+            self._record_replan_timing_event(
+                "planner_runtime_ready",
+                extra={
+                    "duration_ms": round((time.perf_counter() - planner_runtime_started) * 1000.0, 3),
+                    "cache_status": str(planner_runtime.get("runtime_cache_status") or ""),
+                    "cache_wait_ms": float(planner_runtime.get("runtime_cache_wait_ms") or 0.0),
+                    "force_reload": int(bool(planner_runtime.get("runtime_force_reload"))),
+                    **{f"build_{key}": value for key, value in planner_runtime_timing.items()},
+                    "checkpoint": "planner_runtime_ready",
+                },
+            )
             run_divide_and_pattern = planner_runtime["run_divide_and_pattern"]
             build_mission_plan_0301 = planner_runtime["build_mission_plan_0301"]
             d0302 = planner_runtime["d0302"]
             d0303 = planner_runtime["d0303"]
             d0304 = planner_runtime["d0304"]
             _ensure_mission_planner_import_paths()
-            from modules.mission_planning.MissionPlanner.data_def.id_allocator import (
-                next_path_id,
+            from modules.mission_planning.engine.mission_generation.id_allocation.allocator import (
                 reserve_imp_ids,
+                reserve_individual_mission_ids,
                 reserve_mission_plan_ids,
+                mark_waypoint_files_written,
+                reserve_path_id_blocks,
                 reserve_path_ids,
+                reserve_replan_id_bundle,
                 reserve_waypoint_block,
+                reserve_waypoint_blocks,
             )
 
             uav_cruise_speed = float(planner_runtime.get("uav_cruise_speed", 40.0))
@@ -6856,6 +7195,29 @@ class MainWindow(QMainWindow):
                 )
             elif planner_runtime.get("uav_params_error"):
                 self.log_sig.emit(f"[WARN] UAV params load failed: {planner_runtime['uav_params_error']}")
+
+            def _max_waypoint_id_from_flight_plans(*flight_plan_groups) -> int | None:
+                max_waypoint_id = None
+                for group in flight_plan_groups:
+                    for fp in group or []:
+                        if not isinstance(fp, dict):
+                            continue
+                        for list_key in ("waypointList", "lahWaypointList"):
+                            waypoint_list = fp.get(list_key)
+                            if not isinstance(waypoint_list, list):
+                                continue
+                            for waypoint in waypoint_list:
+                                if not isinstance(waypoint, dict):
+                                    continue
+                                try:
+                                    waypoint_id = int(waypoint.get("waypointID"))
+                                except Exception:
+                                    continue
+                                if waypoint_id <= 0:
+                                    continue
+                                if max_waypoint_id is None or waypoint_id > max_waypoint_id:
+                                    max_waypoint_id = waypoint_id
+                return max_waypoint_id
 
             def _imp_path_id(im):
                 for key in ('pathID', 'pathId', 'individualMissionPathID', 'missionPathID'):
@@ -6887,7 +7249,7 @@ class MainWindow(QMainWindow):
                 return None
 
             def _snapshot_mission_path_ids(missions):
-                snapshot: Dict[tuple[int, int], int] = {}
+                snapshot: Dict[tuple[int, int], list[int]] = {}
                 for mission in missions or []:
                     if not isinstance(mission, dict):
                         continue
@@ -6896,16 +7258,18 @@ class MainWindow(QMainWindow):
                         mission_id = int(mission.get("individualMissionID", 0))
                     except Exception:
                         continue
-                    if aircraft_id <= 0 or mission_id <= 0:
+                    # Staged missions use ID 0 until IMP allocation; keep them for pathID remap.
+                    if aircraft_id <= 0 or mission_id < 0:
                         continue
                     path_id = _imp_path_id(mission)
                     if path_id is None or int(path_id) <= 0:
                         continue
-                    snapshot[(aircraft_id, mission_id)] = int(path_id)
+                    snapshot.setdefault((aircraft_id, mission_id), []).append(int(path_id))
                 return snapshot
 
             def _build_path_id_remap(old_snapshot, missions):
-                remap: Dict[int, int] = {}
+                remap_candidates: Dict[int, Set[int]] = {}
+                cursors: Dict[tuple[int, int], int] = {}
                 for mission in missions or []:
                     if not isinstance(mission, dict):
                         continue
@@ -6914,17 +7278,33 @@ class MainWindow(QMainWindow):
                         mission_id = int(mission.get("individualMissionID", 0))
                     except Exception:
                         continue
-                    if aircraft_id <= 0 or mission_id <= 0:
+                    # Staged missions use ID 0 until IMP allocation; keep them for pathID remap.
+                    if aircraft_id <= 0 or mission_id < 0:
                         continue
-                    old_path_id = old_snapshot.get((aircraft_id, mission_id))
+                    key = (aircraft_id, mission_id)
+                    old_values = old_snapshot.get(key)
+                    old_path_id = None
+                    if isinstance(old_values, (list, tuple)):
+                        cursor = int(cursors.get(key, 0))
+                        if cursor < len(old_values):
+                            old_path_id = old_values[cursor]
+                        elif old_values:
+                            old_path_id = old_values[-1]
+                        cursors[key] = cursor + 1
+                    else:
+                        old_path_id = old_values
                     new_path_id = _imp_path_id(mission)
                     if old_path_id is None or new_path_id is None:
                         continue
                     old_pid = int(old_path_id)
                     new_pid = int(new_path_id)
                     if old_pid > 0 and new_pid > 0 and old_pid != new_pid:
-                        remap[old_pid] = new_pid
-                return remap
+                        remap_candidates.setdefault(old_pid, set()).add(new_pid)
+                return {
+                    int(old_pid): int(next(iter(new_values)))
+                    for old_pid, new_values in remap_candidates.items()
+                    if len(new_values) == 1
+                }
 
             def _enforce_fp_path_ids(fps, pid_map, *, path_remap_by_old=None):
                 fixed = 0
@@ -6938,22 +7318,132 @@ class MainWindow(QMainWindow):
                         aid = int(fp.get('aircraftID', 0))
                         desired = None
                         mid = _fp_mission_id(fp)
+                        old_path_id = fp.get("pathID")
+                        try:
+                            old_path_id = int(old_path_id) if old_path_id is not None else None
+                        except Exception:
+                            old_path_id = None
                         if mid is not None:
                             desired = pid_map.get((aid, int(mid)))
-                        if desired is None:
-                            old_path_id = fp.get("pathID")
-                            try:
-                                old_path_id = int(old_path_id) if old_path_id is not None else None
-                            except Exception:
-                                old_path_id = None
-                            if old_path_id is not None:
-                                desired = remap.get(int(old_path_id))
+                        if desired is None and old_path_id is not None:
+                            desired = remap.get(int(old_path_id))
                         if desired is not None and fp.get('pathID') != desired:
                             fp['pathID'] = desired
                             fixed += 1
                     except Exception:
                         continue
                 return fixed
+
+            def _expected_mission_path_ids(missions) -> Set[int]:
+                expected: Set[int] = set()
+                for mission in missions or []:
+                    if not isinstance(mission, dict):
+                        continue
+                    path_id = _imp_path_id(mission)
+                    if path_id is None:
+                        continue
+                    try:
+                        path_id_int = int(path_id)
+                    except Exception:
+                        continue
+                    if path_id_int > 0:
+                        expected.add(path_id_int)
+                return expected
+
+            def _repair_duplicate_flightpath_path_ids(
+                *,
+                missions,
+                flight_plans_0303,
+                flight_plans_0304,
+                generated_path_ids: Set[int],
+                pid_map: Dict[tuple[int, int], int],
+            ) -> int:
+                rows: list[tuple[str, dict]] = []
+                for channel, plans in (("0303", flight_plans_0303 or []), ("0304", flight_plans_0304 or [])):
+                    for fp in plans:
+                        if isinstance(fp, dict):
+                            rows.append((channel, fp))
+                used_path_ids: Set[int] = set()
+                for _channel, fp in rows:
+                    try:
+                        path_id = int(fp.get("pathID", 0))
+                    except Exception:
+                        continue
+                    if path_id > 0:
+                        used_path_ids.add(path_id)
+                generated_path_ids.update(int(pid) for pid in used_path_ids if int(pid) > 0)
+
+                def _reserve_unused_path_id(aircraft_id: int) -> int:
+                    aid = int(aircraft_id)
+                    if aid < 1 or aid > 6:
+                        raise RuntimeError(f"cannot repair duplicate FlightPath pathID for aircraftID={aid}")
+                    for _attempt in range(16):
+                        for candidate in reserve_path_ids(aid, 1):
+                            candidate_int = int(candidate)
+                            if candidate_int <= 0:
+                                continue
+                            if candidate_int in used_path_ids or candidate_int in generated_path_ids:
+                                continue
+                            used_path_ids.add(candidate_int)
+                            generated_path_ids.add(candidate_int)
+                            return candidate_int
+                    raise RuntimeError(f"duplicate FlightPath pathID repair exhausted aircraftID={aid}")
+
+                def _update_matching_mission_path_id(
+                    *,
+                    aircraft_id: int,
+                    mission_id: int | None,
+                    old_path_id: int,
+                    new_path_id: int,
+                ) -> None:
+                    if mission_id is None:
+                        return
+                    for mission in missions or []:
+                        if not isinstance(mission, dict):
+                            continue
+                        try:
+                            mission_aircraft_id = int(mission.get("aircraftID", 0))
+                            mission_individual_id = int(mission.get("individualMissionID", 0))
+                        except Exception:
+                            continue
+                        if mission_aircraft_id != int(aircraft_id) or mission_individual_id != int(mission_id):
+                            continue
+                        current_path_id = _imp_path_id(mission)
+                        if current_path_id is None or int(current_path_id) != int(old_path_id):
+                            continue
+                        mission["pathID"] = int(new_path_id)
+                        pid_map[(int(aircraft_id), int(mission_id))] = int(new_path_id)
+                        return
+
+                seen: Dict[int, tuple[str, dict]] = {}
+                repaired = 0
+                for channel, fp in rows:
+                    try:
+                        path_id = int(fp.get("pathID", 0))
+                    except Exception:
+                        continue
+                    if path_id <= 0:
+                        continue
+                    if path_id not in seen:
+                        seen[path_id] = (channel, fp)
+                        continue
+                    try:
+                        aircraft_id = int(fp.get("aircraftID", 0))
+                    except Exception:
+                        aircraft_id = int(path_id) // 100_000_000
+                    if aircraft_id < 1 or aircraft_id > 6:
+                        aircraft_id = int(path_id) // 100_000_000
+                    new_path_id = _reserve_unused_path_id(int(aircraft_id))
+                    mission_id = _fp_mission_id(fp)
+                    fp["pathID"] = int(new_path_id)
+                    _update_matching_mission_path_id(
+                        aircraft_id=int(aircraft_id),
+                        mission_id=mission_id,
+                        old_path_id=int(path_id),
+                        new_path_id=int(new_path_id),
+                    )
+                    repaired += 1
+                return int(repaired)
 
             db_root = db_paths.get_active_db_root()
 
@@ -7042,7 +7532,7 @@ class MainWindow(QMainWindow):
 
                 path_id = _to_int(mission_entry.get("pathID"))
                 if not path_id or path_id <= 0:
-                    path_id = next_path_id(aircraft_id)
+                    path_id = int(reserve_path_ids(aircraft_id, 1)[0])
                     mission_entry["pathID"] = path_id
                 generated_path_ids.add(path_id)
                 pid_map[(aircraft_id, _to_int(mission_entry.get("individualMissionID")))] = path_id
@@ -7306,10 +7796,22 @@ class MainWindow(QMainWindow):
                         pass
                 return _pick_json(directory)
 
+            self._record_replan_timing_event(
+                "input_resolve_start",
+                extra={"checkpoint": "input_resolve_start"},
+            )
             self.log_sig.emit(f"[INFO] Latest input snapshot → {describe_latest_ids()}")
 
             latest_cmpk_id = get_latest_package_id("0201")
             latest_mrpk_id = get_latest_package_id("0203")
+            self._record_replan_timing_event(
+                "latest_input_ids_loaded",
+                extra={
+                    "has_0201": int(latest_cmpk_id is not None),
+                    "has_0203": int(latest_mrpk_id is not None),
+                    "checkpoint": "latest_input_ids_loaded",
+                },
+            )
 
             cmpk_path = None
             cmpk_missing = False
@@ -7326,7 +7828,7 @@ class MainWindow(QMainWindow):
                         payload_0201.get("inputMissionList") or payload_0201.get("availableAircraftList")
                     ):
                         payload_copy = dict(payload_0201)
-                        payload_copy.setdefault("inputMissionPackageID", latest_cmpk_id)
+                        payload_copy["inputMissionPackageID"] = latest_cmpk_id
                         try:
                             write_json(candidate, payload_copy, pretty=True, ensure_ascii=False, skip_if_unchanged=True)
                             cmpk_path = candidate
@@ -7358,6 +7860,10 @@ class MainWindow(QMainWindow):
 
             if cmpk_path:
                 _record_step("0201_resolved", "ok", detail={"path": str(cmpk_path), "latest_id": latest_cmpk_id})
+                self._record_replan_timing_event(
+                    "input_0201_resolved",
+                    extra={"latest_id": latest_cmpk_id or 0, "checkpoint": "input_0201_resolved"},
+                )
             mrpk_path = None
             mrpk_missing = False
             if latest_mrpk_id is not None:
@@ -7373,7 +7879,7 @@ class MainWindow(QMainWindow):
                         payload_0203.get("takeOverInfoList") or payload_0203.get("flightAreaList") or payload_0203.get("handOverInfoList")
                     ):
                         payload_copy = dict(payload_0203)
-                        payload_copy.setdefault("missionReferencePackageID", latest_mrpk_id)
+                        payload_copy["missionReferencePackageID"] = latest_mrpk_id
                         try:
                             write_json(candidate, payload_copy, pretty=True, ensure_ascii=False, skip_if_unchanged=True)
                             mrpk_path = candidate
@@ -7405,6 +7911,10 @@ class MainWindow(QMainWindow):
 
             if mrpk_path:
                 _record_step("0203_resolved", "ok", detail={"path": str(mrpk_path), "latest_id": latest_mrpk_id})
+                self._record_replan_timing_event(
+                    "input_0203_resolved",
+                    extra={"latest_id": latest_mrpk_id or 0, "checkpoint": "input_0203_resolved"},
+                )
             if not cmpk_path or not mrpk_path:
                 self.log_sig.emit('[ERR] Replan pipeline aborted: missing 0201/0203 input')
                 missing_detail = {"cmpk_path": str(cmpk_path) if cmpk_path else None, "mrpk_path": str(mrpk_path) if mrpk_path else None}
@@ -7415,6 +7925,14 @@ class MainWindow(QMainWindow):
                 self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
                 return
 
+            self._record_replan_timing_event(
+                "input_paths_resolved",
+                extra={
+                    "has_0201": int(bool(cmpk_path)),
+                    "has_0203": int(bool(mrpk_path)),
+                    "checkpoint": "input_paths_resolved",
+                },
+            )
             cmpk_data = None
             mrpk_data = None
             try:
@@ -7438,6 +7956,71 @@ class MainWindow(QMainWindow):
                 self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
                 return
 
+            def _coerce_package_id(value: Any) -> Optional[int]:
+                try:
+                    ivalue = int(value)
+                except Exception:
+                    return None
+                return ivalue if ivalue >= 0 else None
+
+            def _normalize_loaded_package_id(
+                payload: Any,
+                path: Path,
+                *,
+                package_key: str,
+                ctx_key: str,
+                label: str,
+            ) -> None:
+                if not isinstance(payload, dict):
+                    return
+                expected = _coerce_package_id(ctx.get(ctx_key))
+                path_id = _coerce_package_id(Path(path).stem)
+                if expected is None:
+                    expected = path_id
+                if expected is None:
+                    return
+                current = _coerce_package_id(payload.get(package_key))
+                ctx[ctx_key] = int(expected)
+                if current == expected:
+                    return
+                payload[package_key] = int(expected)
+                current_text = str(current) if current is not None else "missing"
+                self.log_sig.emit(
+                    f"[WARN] {label} package ID mismatch: {Path(path).name} has "
+                    f"{package_key}={current_text}; using {expected}"
+                )
+                try:
+                    write_json(
+                        path,
+                        payload,
+                        pretty=True,
+                        ensure_ascii=False,
+                        skip_if_unchanged=True,
+                    )
+                except Exception as exc:
+                    self.log_sig.emit(
+                        f"[WARN] {label} package ID normalization write failed ({Path(path).name}): {exc}"
+                    )
+
+            _normalize_loaded_package_id(
+                cmpk_data,
+                cmpk_path,
+                package_key="inputMissionPackageID",
+                ctx_key="inputMissionPackageID",
+                label="0201",
+            )
+            _normalize_loaded_package_id(
+                mrpk_data,
+                mrpk_path,
+                package_key="missionReferencePackageID",
+                ctx_key="missionReferencePackageID",
+                label="0203",
+            )
+
+            self._record_replan_timing_event(
+                "input_json_loaded",
+                extra={"checkpoint": "input_json_loaded"},
+            )
             validation_errors: list[dict[str, Any]] = []
 
             def _require_list(
@@ -7502,6 +8085,14 @@ class MainWindow(QMainWindow):
             self.log_sig.emit("[CHECK] 0201/0203 필수 데이터 확인 시작")
             mission_list = _require_list(cmpk_data or {}, "inputMissionList", "0201 inputMissionList")
             aircraft_list = _require_list(cmpk_data or {}, "availableAircraftList", "0201 availableAircraftList")
+            self._record_replan_timing_event(
+                "input_required_lists_checked",
+                extra={
+                    "missions": len(mission_list),
+                    "aircrafts": len(aircraft_list),
+                    "checkpoint": "input_required_lists_checked",
+                },
+            )
 
             pkg_type_raw = (cmpk_data or {}).get("inputMissionPackageType")
             try:
@@ -7783,6 +8374,14 @@ class MainWindow(QMainWindow):
                     "flightArea": len(flight_area_list),
                 },
             )
+            self._record_replan_timing_event(
+                "input_validation_done",
+                extra={
+                    "missions": len(mission_list),
+                    "aircrafts": len(aircraft_list),
+                    "checkpoint": "input_validation_done",
+                },
+            )
 
             # Exclude completed input missions (isDone=True) before generating new plans.
             mission_whitelist: Set[int] = set()
@@ -7838,6 +8437,7 @@ class MainWindow(QMainWindow):
                 staged=staged,
                 source_plan_id=snapshot_source_plan_id,
             )
+            snapshot_audit_context = _remaining_snapshot_audit_context(ctx=ctx, staged=staged)
 
             snapshot_apply_result: Dict[str, Any] = {
                 "applied": 0,
@@ -7862,6 +8462,7 @@ class MainWindow(QMainWindow):
                     cmpk_data,
                     source_plan_id=snapshot_source_plan_id,
                     mission_whitelist=snapshot_mission_whitelist,
+                    audit_context=snapshot_audit_context,
                 )
                 if int(snapshot_apply_result.get("applied") or 0) > 0 or int(snapshot_apply_result.get("marked_done") or 0) > 0:
                     self.log_sig.emit(
@@ -7897,6 +8498,22 @@ class MainWindow(QMainWindow):
                 mission_whitelist=mission_whitelist,
             )
             if current_remaining_hybrid_request is not None:
+                current_remaining_hybrid_request_validation = validate_current_remaining_hybrid_request(
+                    current_remaining_hybrid_request,
+                    trigger_detail=current_remaining_source_detail if isinstance(current_remaining_source_detail, dict) else {},
+                )
+                if not bool(current_remaining_hybrid_request_validation.get("valid")):
+                    self.log_sig.emit(
+                        "[WARN] 현재 임무 collaborative hybrid 비활성: "
+                        f"requestValidation={current_remaining_hybrid_request_validation}"
+                    )
+                    current_remaining_hybrid_request = None
+                else:
+                    self.log_sig.emit(
+                        "[INFO] 현재 임무 collaborative hybrid request validation: "
+                        f"{current_remaining_hybrid_request_validation}"
+                    )
+            if current_remaining_hybrid_request is not None:
                 hybrid_scope_ordinals = sorted(
                     int(value)
                     for value in (getattr(current_remaining_hybrid_request, "apply_option_ordinals", None) or [])
@@ -7909,9 +8526,11 @@ class MainWindow(QMainWindow):
                 self.log_sig.emit(
                     "[INFO] 현재 임무 collaborative hybrid armed: "
                     f"inputMissionID={current_remaining_hybrid_request.current_input_id}, "
+                    f"sourceTemplateInputID={getattr(current_remaining_hybrid_request, 'source_template_input_id', None)}, "
                     f"sourcePlan={current_remaining_hybrid_request.source_plan_id}, "
                     f"mode={getattr(current_remaining_hybrid_request, 'planner_mode', 'current_remaining')}, "
                     f"aircraft={sorted(current_remaining_hybrid_request.entry_coord_map.keys())}, "
+                    f"representativeEntry={current_remaining_hybrid_request.representative_entry}, "
                     f"options={hybrid_scope_text}"
                 )
             elif current_remaining_source_detail is not None:
@@ -7922,6 +8541,14 @@ class MainWindow(QMainWindow):
                     f"currentInputMissionID={current_remaining_source_detail.get('currentInputMissionID')}, "
                     f"entryAircraft={len(entry_rows) if isinstance(entry_rows, list) else 0}"
                 )
+            self._record_replan_timing_event(
+                "snapshot_hybrid_prep_done",
+                extra={
+                    "snapshot_apply": int(snapshot_apply_result.get("applied") or 0),
+                    "current_hybrid": int(current_remaining_hybrid_request is not None),
+                    "checkpoint": "snapshot_hybrid_prep_done",
+                },
+            )
 
             def _current_remaining_request_for_variant(
                 request: CurrentRemainingHybridRequest | None,
@@ -7977,6 +8604,7 @@ class MainWindow(QMainWindow):
                         payload,
                         source_plan_id=snapshot_source_plan_id,
                         mission_whitelist=snapshot_mission_whitelist,
+                        audit_context=snapshot_audit_context,
                     )
                     snapshot_mutated = bool(
                         int(snapshot_apply_result.get("applied") or 0) > 0
@@ -8058,6 +8686,10 @@ class MainWindow(QMainWindow):
 
             filtered_cmpk_path = cmpk_path
             mission_list = cmpk_data.get("inputMissionList") if isinstance(cmpk_data, dict) else None
+            self._record_replan_timing_event(
+                "input_filter_start",
+                extra={"checkpoint": "input_filter_start"},
+            )
             if isinstance(mission_list, list):
                 filtered_list = []
                 removed_ids: list[str] = []
@@ -8177,6 +8809,10 @@ class MainWindow(QMainWindow):
                         )
             else:
                 self.log_sig.emit("[WARN] 0201 payload missing valid inputMissionList; continuing without filtering")
+            self._record_replan_timing_event(
+                "input_filter_done",
+                extra={"checkpoint": "input_filter_done"},
+            )
 
             filtered_cmpk_cache: Dict[str, Path] = {}
             try:
@@ -8187,6 +8823,10 @@ class MainWindow(QMainWindow):
             ctx['cmpk_path'] = str(cmpk_path)
             ctx['mrpk_path'] = str(mrpk_path)
 
+            self._record_replan_timing_event(
+                "general_options_prepare_start",
+                extra={"checkpoint": "general_options_prepare_start"},
+            )
             plan_ids_source = ctx.get('plan_ids') or staged.get('plan_ids') or []
             plan_ids: list[int | None] = []
             for val in plan_ids_source:
@@ -8199,7 +8839,18 @@ class MainWindow(QMainWindow):
             plan_count = max(len(plan_ids), len(raw_option_values), 1)
             while len(plan_ids) < plan_count:
                 plan_ids.append(None)
-            option_codes = ensure_option_code_sequence(raw_option_values, plan_count)
+
+            def _warn_unknown_option(idx: int, raw: object, fallback_code: int) -> None:
+                self.log_sig.emit(
+                    f"[WARN] Unknown option label #{idx + 1}: "
+                    f"{raw!r}; fallback optionCode={fallback_code}({option_code_to_label(fallback_code)})"
+                )
+
+            option_codes = ensure_option_code_sequence(
+                raw_option_values,
+                plan_count,
+                on_unknown=_warn_unknown_option,
+            )
             option_labels: List[str] = []
             for idx in range(plan_count):
                 label = ""
@@ -8207,16 +8858,271 @@ class MainWindow(QMainWindow):
                     value = raw_option_values[idx]
                     label = str(value).strip() if value is not None else ""
                 option_labels.append(label)
-            attack_option_labels = {"공격추천", "공격 특화"}
+
+            base_runtime_payload = load_runtime_settings()
+            base_runtime_values = (
+                dict((base_runtime_payload.get("values") or {}))
+                if isinstance(base_runtime_payload, dict)
+                else {}
+            )
+            self._record_replan_timing_event(
+                "runtime_settings_loaded",
+                extra={"checkpoint": "runtime_settings_loaded"},
+            )
+
+            def _variant_runtime_override_payload(option_code: int, option_label: str) -> Optional[Dict[str, Any]]:
+                payload = copy.deepcopy(base_runtime_payload) if isinstance(base_runtime_payload, dict) else {}
+                if is_recon_specialized_option(option_code, option_label):
+                    payload = build_recon_specialized_runtime_payload(payload)
+                return payload or None
+
+            def _current_remaining_request_share_key(request: CurrentRemainingHybridRequest | None) -> Optional[str]:
+                if request is None:
+                    return None
+                entry_rows = [
+                    (
+                        int(aid),
+                        round(float(coord.get("latitude", 0.0) or 0.0), 7),
+                        round(float(coord.get("longitude", 0.0) or 0.0), 7),
+                        round(float(coord.get("altitude", 0.0) or 0.0), 2),
+                    )
+                    for aid, coord in sorted((request.entry_coord_map or {}).items())
+                    if isinstance(coord, dict)
+                ]
+                heading_rows = [
+                    (int(aid), round(float(value), 3))
+                    for aid, value in sorted((request.heading_map or {}).items())
+                ]
+                context_rows = [
+                    (
+                        int(aid),
+                        row.get("currentCoordinate"),
+                        row.get("speedMps"),
+                        row.get("turnSign"),
+                        row.get("turnRadiusM"),
+                    )
+                    for aid, row in sorted((request.entry_aircraft_context_map or {}).items())
+                    if isinstance(row, dict)
+                ]
+                key_payload = {
+                    "sourcePlanID": int(request.source_plan_id),
+                    "currentInputMissionID": int(request.current_input_id),
+                    "sourceTemplateInputID": _safe_int_value(request.source_template_input_id),
+                    "plannerMode": str(getattr(request, "planner_mode", "") or "current_remaining"),
+                    "entryAircraftList": entry_rows,
+                    "headingList": heading_rows,
+                    "entryAircraftContextList": context_rows,
+                    "representativeEntry": request.representative_entry,
+                }
+                return json.dumps(key_payload, sort_keys=True, ensure_ascii=False)
+
+            def _current_remaining_runtime_share_key(option_code: int, option_label: str) -> str:
+                payload = _variant_runtime_override_payload(int(option_code), option_label)
+                if not isinstance(payload, dict):
+                    return "{}"
+                return json.dumps(payload, sort_keys=True, ensure_ascii=False)
+
+            def _evaluate_current_remaining_hybrid_share_policy() -> Dict[str, Any]:
+                active_ordinals: List[int] = []
+                request_keys: Set[str] = set()
+                runtime_keys: Set[str] = set()
+                non_recon_runtime_groups: Dict[str, List[int]] = {}
+                recon_ordinals: List[int] = []
+                non_recon_ordinals: List[int] = []
+                if current_remaining_hybrid_request is None:
+                    return {
+                        "candidate": False,
+                        "shareAllowed": False,
+                        "shareAllowedNonRecon": False,
+                        "reason": "request_unavailable",
+                        "shareStrategy": "none",
+                        "activeOptionOrdinals": active_ordinals,
+                        "reconOptionOrdinals": recon_ordinals,
+                        "sharedVariantOrdinals": [],
+                        "isolatedVariantOrdinals": [],
+                        "isolationReason": "request_unavailable",
+                        "runtimeKeyCount": 0,
+                        "sharedRuntimeGroupSize": 0,
+                        "plannerMode": "current_remaining",
+                        "sourceCurrentDifferent": False,
+                        "reexecuteGenericSkipInputMissionID": None,
+                        "reconRuntimeOverrideAffectsHybridSharing": False,
+                    }
+                planner_mode_text = str(
+                    getattr(current_remaining_hybrid_request, "planner_mode", "")
+                    or "current_remaining"
+                )
+                source_template_id = _safe_int_value(
+                    getattr(current_remaining_hybrid_request, "source_template_input_id", None)
+                )
+                current_input_id_for_share = _safe_int_value(
+                    getattr(current_remaining_hybrid_request, "current_input_id", None)
+                )
+                source_current_different = (
+                    planner_mode_text == "reexecute_first_mission"
+                    and source_template_id is not None
+                    and current_input_id_for_share is not None
+                    and int(source_template_id) != int(current_input_id_for_share)
+                )
+                for local_idx in range(plan_count):
+                    variant_request = _current_remaining_request_for_variant(
+                        current_remaining_hybrid_request,
+                        local_idx + 1,
+                    )
+                    if variant_request is None:
+                        continue
+                    active_ordinals.append(local_idx + 1)
+                    key = _current_remaining_request_share_key(variant_request)
+                    if key is not None:
+                        request_keys.add(str(key))
+                    option_label = option_labels[local_idx] if local_idx < len(option_labels) else ""
+                    runtime_key = _current_remaining_runtime_share_key(
+                        int(option_codes[local_idx]),
+                        option_label,
+                    )
+                    runtime_keys.add(str(runtime_key))
+                    is_recon_option = is_recon_specialized_option(option_codes[local_idx], option_label)
+                    if is_recon_option:
+                        recon_ordinals.append(local_idx + 1)
+                    else:
+                        non_recon_ordinals.append(local_idx + 1)
+                        group_key = json.dumps(
+                            {
+                                "request": str(key or ""),
+                                "runtime": str(runtime_key),
+                            },
+                            sort_keys=True,
+                            ensure_ascii=False,
+                        )
+                        non_recon_runtime_groups.setdefault(group_key, []).append(local_idx + 1)
+                candidate = len(active_ordinals) > 1 and len(request_keys) == 1
+                largest_non_recon_runtime_group = (
+                    max(non_recon_runtime_groups.values(), key=len)
+                    if non_recon_runtime_groups
+                    else []
+                )
+                share_allowed = bool(candidate and not recon_ordinals and len(runtime_keys) == 1)
+                share_allowed_non_recon = bool(candidate and len(largest_non_recon_runtime_group) > 1)
+                if not active_ordinals:
+                    reason_text = "no_active_variant"
+                elif len(active_ordinals) <= 1:
+                    reason_text = "single_variant"
+                elif len(request_keys) != 1:
+                    reason_text = "request_key_mismatch"
+                elif len(runtime_keys) != 1 and not share_allowed_non_recon:
+                    reason_text = "runtime_key_mismatch"
+                elif recon_ordinals:
+                    reason_text = "recon_runtime_override"
+                else:
+                    reason_text = "same_entry_current_source"
+                runtime_override_affects_hybrid = (
+                    planner_mode_text == "reexecute_first_mission"
+                    and reason_text == "recon_runtime_override"
+                )
+                if share_allowed:
+                    shared_ordinals = list(active_ordinals)
+                    isolated_ordinals: List[int] = []
+                    isolation_reason = "-"
+                    share_strategy = "all_shared"
+                elif share_allowed_non_recon:
+                    shared_ordinals = list(largest_non_recon_runtime_group)
+                    isolated_ordinals = [
+                        value
+                        for value in active_ordinals
+                        if value not in set(shared_ordinals)
+                    ]
+                    isolation_reason = "recon_runtime_override"
+                    share_strategy = "non_recon_shared_recon_isolated"
+                else:
+                    shared_ordinals = []
+                    isolated_ordinals = list(active_ordinals)
+                    isolation_reason = reason_text
+                    share_strategy = f"all_isolated_{reason_text}"
+                return {
+                    "candidate": bool(candidate),
+                    "shareAllowed": bool(share_allowed),
+                    "shareAllowedNonRecon": bool(share_allowed_non_recon),
+                    "reason": reason_text,
+                    "shareStrategy": share_strategy,
+                    "activeOptionOrdinals": active_ordinals,
+                    "reconOptionOrdinals": recon_ordinals,
+                    "nonReconOptionOrdinals": non_recon_ordinals,
+                    "sharedVariantOrdinals": shared_ordinals,
+                    "isolatedVariantOrdinals": isolated_ordinals,
+                    "isolationReason": isolation_reason,
+                    "requestKeyCount": len(request_keys),
+                    "runtimeKeyCount": len(runtime_keys),
+                    "sharedRuntimeGroupSize": len(shared_ordinals),
+                    "plannerMode": planner_mode_text,
+                    "sourceCurrentDifferent": bool(source_current_different),
+                    "reexecuteGenericSkipInputMissionID": current_input_id_for_share
+                    if planner_mode_text == "reexecute_first_mission"
+                    else None,
+                    "reconRuntimeOverrideAffectsHybridSharing": bool(runtime_override_affects_hybrid),
+                }
+
+            current_remaining_hybrid_share_policy = _evaluate_current_remaining_hybrid_share_policy()
+            self._record_replan_timing_event(
+                "hybrid_share_policy_evaluated",
+                extra={
+                    "candidate": int(bool(current_remaining_hybrid_share_policy.get("candidate"))),
+                    "active_options": len(current_remaining_hybrid_share_policy.get("activeOptionOrdinals") or []),
+                    "reason": str(current_remaining_hybrid_share_policy.get("reason") or ""),
+                    "checkpoint": "hybrid_share_policy_evaluated",
+                },
+            )
+            if current_remaining_hybrid_request is not None:
+                self.log_sig.emit(
+                    "[INFO] current remaining hybrid share policy: "
+                    f"{current_remaining_hybrid_share_policy}"
+                )
+                self._record_replan_timing_event(
+                    "current_remaining_hybrid_share_policy",
+                    extra={
+                        "candidate": int(bool(current_remaining_hybrid_share_policy.get("candidate"))),
+                        "share_allowed": int(bool(current_remaining_hybrid_share_policy.get("shareAllowed"))),
+                        "reason": str(current_remaining_hybrid_share_policy.get("reason") or ""),
+                        "share_strategy": str(current_remaining_hybrid_share_policy.get("shareStrategy") or ""),
+                        "active_options": len(current_remaining_hybrid_share_policy.get("activeOptionOrdinals") or []),
+                        "recon_options": len(current_remaining_hybrid_share_policy.get("reconOptionOrdinals") or []),
+                        "non_recon_options": len(current_remaining_hybrid_share_policy.get("nonReconOptionOrdinals") or []),
+                        "share_allowed_non_recon": int(
+                            bool(current_remaining_hybrid_share_policy.get("shareAllowedNonRecon"))
+                        ),
+                        "shared_variants": "|".join(
+                            str(value)
+                            for value in (current_remaining_hybrid_share_policy.get("sharedVariantOrdinals") or [])
+                        )
+                        or "-",
+                        "isolated_variants": "|".join(
+                            str(value)
+                            for value in (current_remaining_hybrid_share_policy.get("isolatedVariantOrdinals") or [])
+                        )
+                        or "-",
+                        "isolation_reason": str(current_remaining_hybrid_share_policy.get("isolationReason") or ""),
+                        "runtime_key_count": int(current_remaining_hybrid_share_policy.get("runtimeKeyCount") or 0),
+                        "shared_runtime_group_size": int(
+                            current_remaining_hybrid_share_policy.get("sharedRuntimeGroupSize") or 0
+                        ),
+                        "planner_mode": str(current_remaining_hybrid_share_policy.get("plannerMode") or ""),
+                        "source_current_different": int(
+                            bool(current_remaining_hybrid_share_policy.get("sourceCurrentDifferent"))
+                        ),
+                        "recon_runtime_override_affects_hybrid": int(
+                            bool(
+                                current_remaining_hybrid_share_policy.get(
+                                    "reconRuntimeOverrideAffectsHybridSharing"
+                                )
+                            )
+                        ),
+                    },
+                )
             attack_option_indices: Set[int] = {
-                idx for idx, label in enumerate(option_labels) if label in attack_option_labels
+                idx for idx, code in enumerate(option_codes) if int(code) == 2
             }
             attack_exclusion_option_indices: Set[int] = {
-                idx for idx, label in enumerate(option_labels) if str(label or "").replace(" ", "") == "공격배제"
+                idx for idx, code in enumerate(option_codes) if int(code) == 3
             }
-            for attack_idx in attack_option_indices:
-                if 0 <= attack_idx < len(option_codes):
-                    option_codes[attack_idx] = 2
             shared_attack_detail = ctx.get("replan_detail") if isinstance(ctx.get("replan_detail"), dict) else None
             shared_attack_context = (
                 self._build_attack_context_from_replan_detail(shared_attack_detail) if shared_attack_detail else None
@@ -8258,6 +9164,14 @@ class MainWindow(QMainWindow):
                         f"{sorted(i + 1 for i in prior_option_indices)}"
                     )
 
+            self._record_replan_timing_event(
+                "option_contexts_ready",
+                extra={
+                    "attack_options": len(attack_option_indices),
+                    "prior_options": len(prior_option_indices),
+                    "checkpoint": "option_contexts_ready",
+                },
+            )
             try:
                 cmpk_id = int(Path(cmpk_path).stem)
             except Exception:
@@ -8307,7 +9221,104 @@ class MainWindow(QMainWindow):
                     used_plan_ids.add(assigned)
                     return assigned
 
-            def _allocate_imp_id_map(plan_json: Dict[str, Any]) -> Dict[int, int]:
+            def _positive_int_or_none(value: Any) -> Optional[int]:
+                try:
+                    if value is None:
+                        return None
+                    parsed = int(value)
+                except Exception:
+                    return None
+                return parsed if parsed > 0 else None
+
+            def _option_dependent_isolation_contract(
+                *,
+                variant_no: int,
+                option_code: int,
+                mode: str,
+            ) -> Dict[str, Any]:
+                return {
+                    "sharedBeforeValidation": False,
+                    "validationBeforeStore": True,
+                    "variant": int(variant_no),
+                    "optionCode": int(option_code),
+                    "mode": str(mode or ""),
+                    "isolatedArtifacts": [
+                        "splitResult",
+                        "typeDeciderResult",
+                        "expectedPaths",
+                        "reconAreaReview",
+                    ],
+                }
+
+            def _allocate_general_variant_plan_id(
+                *,
+                variant_no: int,
+                option_code: int,
+                requested_plan_id: Any,
+                generated_plan_json: Dict[str, Any],
+            ) -> tuple[int, Dict[str, Any]]:
+                expected_plan_id = _positive_int_or_none(requested_plan_id)
+                if expected_plan_id is not None:
+                    if expected_plan_id in used_plan_ids:
+                        raise RuntimeError(
+                            "requested pending MissionPlanID already exists "
+                            f"(variant={variant_no}, optionCode={option_code}, missionPlanID={expected_plan_id})"
+                        )
+                    plan_id = _allocate_plan_id(expected_plan_id)
+                else:
+                    plan_id = _allocate_plan_id(_positive_int_or_none(generated_plan_json.get("missionPlanID")))
+                contract = {
+                    "variant": int(variant_no),
+                    "optionCode": int(option_code),
+                    "requestedMissionPlanID": expected_plan_id,
+                    "missionPlanID": int(plan_id),
+                    "missionPlanIDMatchesRequest": expected_plan_id is None or int(plan_id) == int(expected_plan_id),
+                }
+                if not bool(contract["missionPlanIDMatchesRequest"]):
+                    raise RuntimeError(
+                        "MissionPlanID does not match requested pending plan ID "
+                        f"(variant={variant_no}, optionCode={option_code}, "
+                        f"requested={expected_plan_id}, actual={plan_id})"
+                    )
+                return int(plan_id), contract
+
+            def _imp_id_reservation_count(plan_json: Dict[str, Any]) -> int:
+                aircraft_list = plan_json.get("aircraftList")
+                if not isinstance(aircraft_list, list):
+                    return 0
+                seen: Set[int] = set()
+                count = 0
+                for aircraft in aircraft_list:
+                    if not isinstance(aircraft, dict):
+                        continue
+                    try:
+                        aid = int(aircraft.get("aircraftID", 0))
+                    except Exception:
+                        continue
+                    if aid < 1 or aid > 6 or aid in seen:
+                        continue
+                    seen.add(aid)
+                    count += 1
+                return int(count)
+
+            def _individual_mission_reservation_count(missions: list[dict]) -> int:
+                count = 0
+                for mission in missions or []:
+                    if not isinstance(mission, dict):
+                        continue
+                    try:
+                        aid = int(mission.get("aircraftID", 0))
+                    except Exception:
+                        continue
+                    if 1 <= aid <= 6:
+                        count += 1
+                return int(count)
+
+            def _allocate_imp_id_map(
+                plan_json: Dict[str, Any],
+                *,
+                reserved_imp_ids: list[int] | tuple[int, ...] | None = None,
+            ) -> Dict[int, int]:
                 allocated: Dict[int, int] = {}
                 aircraft_list = plan_json.get("aircraftList")
                 if not isinstance(aircraft_list, list):
@@ -8325,7 +9336,13 @@ class MainWindow(QMainWindow):
                     pending_rows.append((aircraft, aid))
                 if not pending_rows:
                     return allocated
-                reserved_pkg_ids = reserve_imp_ids(len(pending_rows))
+                reserved_pkg_ids = [
+                    int(value)
+                    for value in (reserved_imp_ids or [])
+                    if value is not None
+                ]
+                if len(reserved_pkg_ids) < len(pending_rows):
+                    reserved_pkg_ids = reserve_imp_ids(len(pending_rows))
                 for (aircraft, aid), pkg_id in zip(pending_rows, reserved_pkg_ids):
                     pkg_id_int = int(pkg_id)
                     aircraft["individualMissionPackageID"] = pkg_id_int
@@ -8337,6 +9354,7 @@ class MainWindow(QMainWindow):
                 generated_ids: Set[int],
                 *,
                 preserve_mission_ids: Set[int] | None = None,
+                reserved_path_ids_by_aircraft: Optional[Dict[int, list[int]]] = None,
             ) -> Dict[tuple[int, int], int]:
                 preserve_set = {int(value) for value in (preserve_mission_ids or set())}
                 pid_map: Dict[tuple[int, int], int] = {}
@@ -8350,8 +9368,15 @@ class MainWindow(QMainWindow):
                     if aid < 1 or aid > 6:
                         continue
                     grouped.setdefault(aid, []).append(im)
+                reserved_by_aircraft: Dict[int, list[int]] = {}
+                for raw_aid, raw_values in (reserved_path_ids_by_aircraft or {}).items():
+                    try:
+                        aid_int = int(raw_aid)
+                    except Exception:
+                        continue
+                    reserved_by_aircraft[aid_int] = [int(value) for value in (raw_values or [])]
                 for aid, items in grouped.items():
-                    reserved_path_ids_for_aid = reserve_path_ids(aid, len(items))
+                    reserved_path_ids_for_aid = reserved_by_aircraft.get(aid, [])
                     reserve_cursor = 0
                     for im in items:
                         try:
@@ -8368,7 +9393,10 @@ class MainWindow(QMainWindow):
                                 generated_ids.add(pid_int)
                                 continue
                         if reserve_cursor >= len(reserved_path_ids_for_aid):
-                            continue
+                            raise RuntimeError(
+                                "fresh pathID reservation missing "
+                                f"(aircraftID={aid}, requiredIndex={reserve_cursor}, reserved={len(reserved_path_ids_for_aid)})"
+                            )
                         pid = reserved_path_ids_for_aid[reserve_cursor]
                         reserve_cursor += 1
                         pid_int = int(pid)
@@ -8376,6 +9404,62 @@ class MainWindow(QMainWindow):
                         pid_map[(aid, mid)] = pid_int
                         generated_ids.add(pid_int)
                 return pid_map
+
+            def _fresh_path_id_reservation_plan(
+                missions: list[dict],
+                *,
+                preserve_mission_ids: Set[int] | None = None,
+            ) -> Dict[int, int]:
+                preserve_set = {int(value) for value in (preserve_mission_ids or set())}
+                counts: Dict[int, int] = {}
+                for im in missions or []:
+                    try:
+                        aid = int(im.get("aircraftID", 0))
+                        mid = int(im.get("individualMissionID", 0))
+                    except Exception:
+                        continue
+                    if aid < 1 or aid > 6:
+                        continue
+                    if mid in preserve_set:
+                        try:
+                            existing_pid = int(im.get("pathID", 0))
+                        except Exception:
+                            existing_pid = 0
+                        if existing_pid > 0:
+                            continue
+                    counts[aid] = counts.get(aid, 0) + 1
+                return counts
+
+            def _reserve_fresh_path_ids_for_missions(
+                missions: list[dict],
+                *,
+                preserve_mission_ids: Set[int] | None = None,
+            ) -> Dict[int, list[int]]:
+                reservation_plan = _fresh_path_id_reservation_plan(
+                    missions,
+                    preserve_mission_ids=preserve_mission_ids,
+                )
+                reserved: Dict[int, list[int]] = {}
+                if reservation_plan:
+                    try:
+                        bulk_reserved = reserve_path_id_blocks(
+                            {int(aid): int(count) for aid, count in reservation_plan.items() if int(count) > 0}
+                        )
+                    except Exception:
+                        bulk_reserved = {}
+                    for aid, count in reservation_plan.items():
+                        if count <= 0:
+                            continue
+                        values = [int(value) for value in (bulk_reserved.get(int(aid)) or [])]
+                        if not values:
+                            values = [int(value) for value in reserve_path_ids(int(aid), int(count))]
+                        if len(values) < count:
+                            raise RuntimeError(
+                                "fresh pathID reservation short "
+                                f"(aircraftID={aid}, required={count}, reserved={len(values)})"
+                            )
+                        reserved[int(aid)] = values
+                return reserved
 
             def _collect_valid_path_ids(fps):
                 collected: Set[int] = set()
@@ -8496,21 +9580,242 @@ class MainWindow(QMainWindow):
                         f"{int(aid)}:{float(ms):.3f}"
                         for aid, ms in sorted(worker_ms.items(), key=lambda item: int(item[0]))
                     )
+                group_ms = build_result.get("group_worker_ms")
+                group_text = "-"
+                if isinstance(group_ms, dict) and group_ms:
+                    group_text = "|".join(
+                        f"{str(group_id)}:{float(ms):.3f}"
+                        for group_id, ms in sorted(group_ms.items(), key=lambda item: str(item[0]))
+                    )
                 fallback_reasons = build_result.get("fallback_reasons")
                 fallback_text = "-"
                 if isinstance(fallback_reasons, list) and fallback_reasons:
                     fallback_text = "|".join(str(item) for item in fallback_reasons)
                 recon_flag = 1 if is_recon_specialized_option(option_code, None) else 0
+                worker_policy = build_result.get("worker_policy")
+                if not isinstance(worker_policy, dict):
+                    worker_policy = {}
+                line_counts = build_result.get("line_search_counts")
+                if not isinstance(line_counts, dict):
+                    line_counts = {}
+                dense_metrics = build_result.get("dense_linesearch_metrics")
+                if not isinstance(dense_metrics, dict):
+                    dense_metrics = {}
+                elapsed_0303_ms = float(build_result.get("elapsed_ms") or 0.0)
+                build_workers = max(1, int(build_result.get("workers") or 1))
+                phase_wall_divisor = float(build_workers)
+
+                def _dense_ms(key: str) -> float:
+                    try:
+                        return float(dense_metrics.get(key) or 0.0)
+                    except Exception:
+                        return 0.0
+
+                def _phase_ms(key: str) -> float:
+                    phase_map = build_result.get("phase_ms")
+                    if not isinstance(phase_map, dict):
+                        return 0.0
+                    try:
+                        return float(phase_map.get(key) or 0.0)
+                    except Exception:
+                        return 0.0
+
+                primary_phase_budget_ms = sum(
+                    _dense_ms(key) / phase_wall_divisor
+                    for key in (
+                        "generateLineSearchMs",
+                        "formationGroupingMs",
+                        "missionPacketBuildMs",
+                        "lineSearchMergeMs",
+                        "groundRequiredComputeMs",
+                        "filmingNormalizeMs",
+                        "formationPostProcessMs",
+                        "etaEcfMs",
+                        "altitudeGuardMs",
+                        "areaRepositionMs",
+                        "areaPackMs",
+                        "outputNormalizeMs",
+                        "jsonReadyMs",
+                    )
+                )
+                primary_phase_budget_ms += sum(
+                    _phase_ms(key)
+                    for key in (
+                        "sort_by_input_order",
+                        "normalize_timestamps",
+                        "reassign_waypoint_ids",
+                        "dependency_sort_by_input_order",
+                        "dependency_normalize_timestamps",
+                        "dependency_reassign_waypoint_ids",
+                    )
+                )
+                unaccounted_0303_ms = max(0.0, elapsed_0303_ms - primary_phase_budget_ms)
+                line_search_coordinate_cap = int(dense_metrics.get("lineSearchCoordinateCap") or 0)
+                line_search_cap_exceeded_count = int(
+                    dense_metrics.get("lineSearchCoordinateCapExceededCount") or 0
+                )
+                line_search_density_guard_passed = (
+                    line_search_coordinate_cap <= 0
+                    or (
+                        int(line_counts.get("maxLineSearchCoords") or 0) <= int(line_search_coordinate_cap)
+                        and line_search_cap_exceeded_count <= 0
+                    )
+                )
                 emit(
                     "[REPLAN][METRIC] flightpath_build_0303 "
                     f"variant={int(variant_no)} option={int(option_code)} recon={recon_flag} mode={mode} "
                     f"buildMode={str(build_result.get('mode') or 'sequential')} "
                     f"workers={int(build_result.get('workers') or 1)} "
                     f"aircraft={int(build_result.get('aircraft') or 0)} "
+                    f"dependencyGroups={int(build_result.get('dependency_groups') or 0)} "
+                    f"formationGroups={int(build_result.get('formation_groups') or 0)} "
+                    f"independentGroups={int(build_result.get('independent_groups') or 0)} "
+                    f"dagGroups={int(build_result.get('dag_groups') or 0)} "
+                    f"dagFallbackReason={str(build_result.get('dag_fallback_reason') or '-')} "
                     f"paths={len(build_result.get('plans') or [])} "
                     f"reassignedWaypoints={int(build_result.get('reassigned_waypoints') or 0)} "
-                    f"elapsed_ms={float(build_result.get('elapsed_ms') or 0.0):.3f} "
-                    f"fallback={fallback_text} worker_ms={worker_text}"
+                    f"waypointCountPrepass={int(build_result.get('waypoint_count_prepass') or 0)} "
+                    f"legacyDefaultTwoWorkerBottleneck={int(bool(worker_policy.get('legacyDefaultTwoWorkerBottleneck')))} "
+                    f"effectiveWorkerBottleneck={int(bool(worker_policy.get('effectiveWorkerBottleneck')))} "
+                    f"lineSearchCount={int(line_counts.get('lineSearchCount') or 0)} "
+                    f"lineSearchCoordCount={int(line_counts.get('lineSearchCoordCount') or 0)} "
+                    f"maxLineSearchCoords={int(line_counts.get('maxLineSearchCoords') or 0)} "
+                    f"lineSearchCoordinateCap={line_search_coordinate_cap} "
+                    f"lineSearchCoordinateCapExceededCount={line_search_cap_exceeded_count} "
+                    f"lineSearchDensityGuardPassed={int(bool(line_search_density_guard_passed))} "
+                    f"lineSearchJsonBytes={int(line_counts.get('lineSearchJsonBytes') or 0)} "
+                    f"demLookupCount={int(dense_metrics.get('demLookupCount') or 0)} "
+                    f"demCacheHitCount={int(dense_metrics.get('demCacheHitCount') or 0)} "
+                    f"demCacheMissCount={int(dense_metrics.get('demCacheMissCount') or 0)} "
+                    f"demUniquePointCount={int(dense_metrics.get('demUniquePointCount') or 0)} "
+                    f"demTileCount={int(dense_metrics.get('demTileCount') or 0)} "
+                    f"demResolvedByTile={int(dense_metrics.get('demResolvedByTile') or 0)} "
+                    f"demPixelCacheHitCount={int(dense_metrics.get('demPixelCacheHitCount') or 0)} "
+                    f"demPixelCacheMissCount={int(dense_metrics.get('demPixelCacheMissCount') or 0)} "
+                    f"demPixelCacheUniqueMissCount={int(dense_metrics.get('demPixelCacheUniqueMissCount') or 0)} "
+                    f"demPixelCacheClearCount={int(dense_metrics.get('demPixelCacheClearCount') or 0)} "
+                    f"demAltCacheClearCount={int(dense_metrics.get('demAltCacheClearCount') or 0)} "
+                    f"demRunMapHitCount={int(dense_metrics.get('demRunMapHitCount') or 0)} "
+                    f"demRunMapStoreCount={int(dense_metrics.get('demRunMapStoreCount') or 0)} "
+                    f"demRunMapSize={int(dense_metrics.get('demRunMapSize') or 0)} "
+                    f"demBatchFallbackCount={int(dense_metrics.get('demBatchFallbackCount') or 0)} "
+                    f"demBatchFallbackReason={str(dense_metrics.get('demBatchFallbackReason') or '-')} "
+                    f"demTileCandidateCount={int(dense_metrics.get('demTileCandidateCount') or 0)} "
+                    f"demTileFallbackCandidateCount={int(dense_metrics.get('demTileFallbackCandidateCount') or 0)} "
+                    f"demTileApplyCallCount={int(dense_metrics.get('demTileApplyCallCount') or 0)} "
+                    f"demTileLoadLeaderCount={int(dense_metrics.get('demTileLoadLeaderCount') or 0)} "
+                    f"demTileLoadWaiterCount={int(dense_metrics.get('demTileLoadWaiterCount') or 0)} "
+                    f"demTileLoadTimeoutCount={int(dense_metrics.get('demTileLoadTimeoutCount') or 0)} "
+                    f"groundProfileSampleCount={int(dense_metrics.get('groundProfileSampleCount') or 0)} "
+                    f"groundPrepassMs={float(dense_metrics.get('groundPrepassMs') or 0.0):.3f} "
+                    f"groundRequiredPrecomputeCount={int(dense_metrics.get('groundRequiredPrecomputeCount') or 0)} "
+                    f"groundRequiredPrecomputeHitCount={int(dense_metrics.get('groundRequiredPrecomputeHitCount') or 0)} "
+                    f"groundRequiredLineCoordReuseCount={int(dense_metrics.get('groundRequiredLineCoordReuseCount') or 0)} "
+                    f"groundRequiredSignatureCacheHitCount={int(dense_metrics.get('groundRequiredSignatureCacheHitCount') or 0)} "
+                    f"groundRequiredSignatureCacheStoreCount={int(dense_metrics.get('groundRequiredSignatureCacheStoreCount') or 0)} "
+                    f"groundRequiredPreOwnerMs={float(dense_metrics.get('groundRequiredPreOwnerMs') or 0.0):.3f} "
+                    f"groundRequiredPreOwnerSignatureCount={int(dense_metrics.get('groundRequiredPreOwnerSignatureCount') or 0)} "
+                    f"groundRequiredPreOwnerPublishedCount={int(dense_metrics.get('groundRequiredPreOwnerPublishedCount') or 0)} "
+                    f"groundRequiredPreOwnerHitCount={int(dense_metrics.get('groundRequiredPreOwnerHitCount') or 0)} "
+                    f"groundRequiredPreOwnerSkippedCount={int(dense_metrics.get('groundRequiredPreOwnerSkippedCount') or 0)} "
+                    f"groundRequiredMaterializationCacheHitCount={int(dense_metrics.get('groundRequiredMaterializationCacheHitCount') or 0)} "
+                    f"groundRequiredMaterializationWaitMs={float(dense_metrics.get('groundRequiredMaterializationWaitMs') or 0.0):.3f} "
+                    f"groundRequiredFinalPrepassFreshSkipCount={int(dense_metrics.get('groundRequiredFinalPrepassFreshSkipCount') or 0)} "
+                    f"groundRequiredFinalPrepassFreshSkipMs={float(dense_metrics.get('groundRequiredFinalPrepassFreshSkipMs') or 0.0):.3f} "
+                    f"groundRequiredProcessCacheHitCount={int(dense_metrics.get('groundRequiredProcessCacheHitCount') or 0)} "
+                    f"groundRequiredProcessCacheStoreCount={int(dense_metrics.get('groundRequiredProcessCacheStoreCount') or 0)} "
+                    f"groundRequiredProcessCacheInflightLeaderCount={int(dense_metrics.get('groundRequiredProcessCacheInflightLeaderCount') or 0)} "
+                    f"groundRequiredProcessCacheInflightWaiterCount={int(dense_metrics.get('groundRequiredProcessCacheInflightWaiterCount') or 0)} "
+                    f"groundRequiredProcessCacheInflightLocalFastPathCount={int(dense_metrics.get('groundRequiredProcessCacheInflightLocalFastPathCount') or 0)} "
+                    f"groundRequiredProcessCacheInflightTimeoutCount={int(dense_metrics.get('groundRequiredProcessCacheInflightTimeoutCount') or 0)} "
+                    f"groundRequiredProcessCacheInflightWaitMs={float(dense_metrics.get('groundRequiredProcessCacheInflightWaitMs') or 0.0):.3f} "
+                    f"groundRequiredLazyFallbackCount={int(dense_metrics.get('groundRequiredLazyFallbackCount') or 0)} "
+                    f"groundRequiredDenseFastPathCount={int(dense_metrics.get('groundRequiredDenseFastPathCount') or 0)} "
+                    f"groundRequiredDenseFastPathCoordCount={int(dense_metrics.get('groundRequiredDenseFastPathCoordCount') or 0)} "
+                    f"groundRequiredFastPathRejectCount={int(dense_metrics.get('groundRequiredFastPathRejectCount') or 0)} "
+                    f"groundRequiredFastPathRejectReason={str(dense_metrics.get('groundRequiredFastPathRejectReason') or '-')} "
+                    f"groundRequiredCoordAltitudeFastPathCount={int(dense_metrics.get('groundRequiredCoordAltitudeFastPathCount') or 0)} "
+                    f"groundRequiredCoordAltitudeFastPathCoordCount={int(dense_metrics.get('groundRequiredCoordAltitudeFastPathCoordCount') or 0)} "
+                    f"groundRequiredCoordAltitudeFastPathRejectCount={int(dense_metrics.get('groundRequiredCoordAltitudeFastPathRejectCount') or 0)} "
+                    f"groundRequiredCoordAltitudeFastPathRejectReason={str(dense_metrics.get('groundRequiredCoordAltitudeFastPathRejectReason') or '-')} "
+                    f"groundRequiredLineCoordStampCount={int(dense_metrics.get('groundRequiredLineCoordStampCount') or 0)} "
+                    f"groundRequiredLineCoordStampChangedCount={int(dense_metrics.get('groundRequiredLineCoordStampChangedCount') or 0)} "
+                    f"groundRequiredLineCoordCacheSeedCount={int(dense_metrics.get('groundRequiredLineCoordCacheSeedCount') or 0)} "
+                    f"groundRequiredLineCoordCacheSeedSkippedCount={int(dense_metrics.get('groundRequiredLineCoordCacheSeedSkippedCount') or 0)} "
+                    f"groundRequiredLineCoordCacheWarmCount={int(dense_metrics.get('groundRequiredLineCoordCacheWarmCount') or 0)} "
+                    f"groundRequiredLineCoordCacheWarmSkippedCount={int(dense_metrics.get('groundRequiredLineCoordCacheWarmSkippedCount') or 0)} "
+                    f"groundRequiredComputeMs={float(dense_metrics.get('groundRequiredComputeMs') or 0.0):.3f} "
+                    f"groundRequiredScanMs={float(dense_metrics.get('groundRequiredScanMs') or 0.0):.3f} "
+                    f"groundRequiredHitAssignMs={float(dense_metrics.get('groundRequiredHitAssignMs') or 0.0):.3f} "
+                    f"groundRequiredWaiterAssignMs={float(dense_metrics.get('groundRequiredWaiterAssignMs') or 0.0):.3f} "
+                    f"groundRequiredOwnerComputeMs={float(dense_metrics.get('groundRequiredOwnerComputeMs') or 0.0):.3f} "
+                    f"groundRequiredCacheReadMs={float(dense_metrics.get('groundRequiredCacheReadMs') or 0.0):.3f} "
+                    f"groundRequiredCacheLockWaitMs={float(dense_metrics.get('groundRequiredCacheLockWaitMs') or 0.0):.3f} "
+                    f"groundRequiredLineCoordStampMs={float(dense_metrics.get('groundRequiredLineCoordStampMs') or 0.0):.3f} "
+                    f"groundRequiredLineCoordCacheSeedMs={float(dense_metrics.get('groundRequiredLineCoordCacheSeedMs') or 0.0):.3f} "
+                    f"groundRequiredLineCoordCacheWarmMs={float(dense_metrics.get('groundRequiredLineCoordCacheWarmMs') or 0.0):.3f} "
+                    f"groundRequiredSampleBuildMs={float(dense_metrics.get('groundRequiredSampleBuildMs') or 0.0):.3f} "
+                    f"groundRequiredDemLookupMs={float(dense_metrics.get('groundRequiredDemLookupMs') or 0.0):.3f} "
+                    f"groundRequiredResultAssignMs={float(dense_metrics.get('groundRequiredResultAssignMs') or 0.0):.3f} "
+                    f"groundRequiredProcessCacheMs={float(dense_metrics.get('groundRequiredProcessCacheMs') or 0.0):.3f} "
+                    f"demBulkLookupMs={float(dense_metrics.get('demBulkLookupMs') or 0.0):.3f} "
+                    f"demTileResolveMs={float(dense_metrics.get('demTileResolveMs') or 0.0):.3f} "
+                    f"demTileCandidateIndexMs={float(dense_metrics.get('demTileCandidateIndexMs') or 0.0):.3f} "
+                    f"demTileCandidateAssignMs={float(dense_metrics.get('demTileCandidateAssignMs') or 0.0):.3f} "
+                    f"demTileApplyMs={float(dense_metrics.get('demTileApplyMs') or 0.0):.3f} "
+                    f"demTileFallbackScanMs={float(dense_metrics.get('demTileFallbackScanMs') or 0.0):.3f} "
+                    f"demTileLoadMs={float(dense_metrics.get('demTileLoadMs') or 0.0):.3f} "
+                    f"demTileLoadWaitMs={float(dense_metrics.get('demTileLoadWaitMs') or 0.0):.3f} "
+                    f"demNativeTransformMs={float(dense_metrics.get('demNativeTransformMs') or 0.0):.3f} "
+                    f"demRowColTransformMs={float(dense_metrics.get('demRowColTransformMs') or 0.0):.3f} "
+                    f"demPixelReadMs={float(dense_metrics.get('demPixelReadMs') or 0.0):.3f} "
+                    f"demCacheReadMs={float(dense_metrics.get('demCacheReadMs') or 0.0):.3f} "
+                    f"demCacheWriteMs={float(dense_metrics.get('demCacheWriteMs') or 0.0):.3f} "
+                    f"demAltCacheReadMs={float(dense_metrics.get('demAltCacheReadMs') or 0.0):.3f} "
+                    f"demAltCacheWriteMs={float(dense_metrics.get('demAltCacheWriteMs') or 0.0):.3f} "
+                    f"innerParallelWorkers={int(dense_metrics.get('innerParallelWorkers') or 0)} "
+                    f"innerParallelBatches={int(dense_metrics.get('innerParallelBatches') or 0)} "
+                    f"innerParallelSuppressedCount={int(dense_metrics.get('innerParallelSuppressedCount') or 0)} "
+                    f"generateLineSearchMs={float(dense_metrics.get('generateLineSearchMs') or 0.0):.3f} "
+                    f"lineSearchSpeedMs={float(dense_metrics.get('lineSearchSpeedMs') or 0.0):.3f} "
+                    f"lineSearchMergeMs={float(dense_metrics.get('lineSearchMergeMs') or 0.0):.3f} "
+                    f"areaPostProcessMs={float(dense_metrics.get('areaPostProcessMs') or 0.0):.3f} "
+                    f"areaRepositionMs={float(dense_metrics.get('areaRepositionMs') or 0.0):.3f} "
+                    f"areaPrePackAltitudeMs={float(dense_metrics.get('areaPrePackAltitudeMs') or 0.0):.3f} "
+                    f"areaPackMs={float(dense_metrics.get('areaPackMs') or 0.0):.3f} "
+                    f"jsonReadyMs={float(dense_metrics.get('jsonReadyMs') or 0.0):.3f} "
+                    f"outputNormalizeMs={float(dense_metrics.get('outputNormalizeMs') or 0.0):.3f} "
+                    f"unaccounted0303Ms={unaccounted_0303_ms:.3f} "
+                    f"altitudeGuardMs={float(dense_metrics.get('altitudeGuardMs') or 0.0):.3f} "
+                    f"altitudeApplyMs={float(dense_metrics.get('altitudeApplyMs') or 0.0):.3f} "
+                    f"altitudeFloorMs={float(dense_metrics.get('altitudeFloorMs') or 0.0):.3f} "
+                    f"formationLeaderBuildMs={float(dense_metrics.get('formationLeaderBuildMs') or 0.0):.3f} "
+                    f"formationFollowerBuildMs={float(dense_metrics.get('formationFollowerBuildMs') or 0.0):.3f} "
+                    f"formationGroupingMs={float(dense_metrics.get('formationGroupingMs') or 0.0):.3f} "
+                    f"missionPacketBuildMs={float(dense_metrics.get('missionPacketBuildMs') or 0.0):.3f} "
+                    f"formationDemMs={float(dense_metrics.get('formationDemMs') or 0.0):.3f} "
+                    f"formationPostProcessMs={float(dense_metrics.get('formationPostProcessMs') or 0.0):.3f} "
+                    f"formationPostProcessWorkers={int(dense_metrics.get('formationPostProcessWorkers') or 0)} "
+                    f"formationPostProcessTasks={int(dense_metrics.get('formationPostProcessTasks') or 0)} "
+                    f"etaEcfMs={float(dense_metrics.get('etaEcfMs') or 0.0):.3f} "
+                    f"searchSpeedRecalcMs={float(dense_metrics.get('searchSpeedRecalcMs') or 0.0):.3f} "
+                    f"searchSpeedRecalcCount={int(dense_metrics.get('searchSpeedRecalcCount') or 0)} "
+                    f"searchSpeedRecalcCoordCount={int(dense_metrics.get('searchSpeedRecalcCoordCount') or 0)} "
+                    f"searchSpeedRecalcSkippedCount={int(dense_metrics.get('searchSpeedRecalcSkippedCount') or 0)} "
+                    f"filmingNormalizeMs={float(dense_metrics.get('filmingNormalizeMs') or 0.0):.3f} "
+                    f"filmingTerrainBatchMs={float(dense_metrics.get('filmingTerrainBatchMs') or 0.0):.3f} "
+                    f"filmingCandidateScanMs={float(dense_metrics.get('filmingCandidateScanMs') or 0.0):.3f} "
+                    f"filmingCandidateWaypointCount={int(dense_metrics.get('filmingCandidateWaypointCount') or 0)} "
+                    f"filmingTargetCoordCount={int(dense_metrics.get('filmingTargetCoordCount') or 0)} "
+                    f"filmingUniqueCoordCount={int(dense_metrics.get('filmingUniqueCoordCount') or 0)} "
+                    f"filmingNormalizeCallCount={int(dense_metrics.get('filmingNormalizeCallCount') or 0)} "
+                    f"filmingNormalizeChangedCount={int(dense_metrics.get('filmingNormalizeChangedCount') or 0)} "
+                    f"filmingNormalizeSkippedCount={int(dense_metrics.get('filmingNormalizeSkippedCount') or 0)} "
+                    f"filmingTerrainBatchFallbackCount={int(dense_metrics.get('filmingTerrainBatchFallbackCount') or 0)} "
+                    f"elapsed_ms={elapsed_0303_ms:.3f} "
+                    f"fallback={fallback_text} "
+                    f"dependencyParallelFallback={str(build_result.get('dependency_parallel_fallback') or '-')} "
+                    f"worker_ms={worker_text} groupWorkerMs={group_text}"
                 )
 
             generated_plan_ids: list[int] = []
@@ -8518,14 +9823,8 @@ class MainWindow(QMainWindow):
             plan_meta_map: Dict[int, Dict[str, Any]] = {}
             total_imp_files = 0
             total_fp_files = 0
-            base_runtime_payload = load_runtime_settings()
-
-            def _variant_runtime_override_payload(option_code: int, option_label: str) -> Optional[Dict[str, Any]]:
-                payload = copy.deepcopy(base_runtime_payload) if isinstance(base_runtime_payload, dict) else {}
-                if is_recon_specialized_option(option_code, option_label):
-                    payload = build_recon_specialized_runtime_payload(payload)
-                return payload or None
-
+            post_delivery_waypoint_mark: Dict[str, Any] | None = None
+            post_delivery_snapshot_carry_forward: Dict[str, Any] | None = None
             def _trust_input_aircraft_for_replan() -> bool:
                 # This 0902 path is always a replan flow. Even when MSM marks it as
                 # replanLevel=1 (for example RTB/health-unavailable), the planner must
@@ -8557,15 +9856,122 @@ class MainWindow(QMainWindow):
                 except Exception:
                     return int(default)
 
+            def _runtime_bool_setting(key: str, default: bool) -> bool:
+                raw = base_runtime_values.get(key, default)
+                if isinstance(raw, str):
+                    text = raw.strip().lower()
+                    if text in {"0", "false", "no", "off"}:
+                        return False
+                    if text in {"1", "true", "yes", "on"}:
+                        return True
+                return bool(raw)
+
+            def _runtime_int_setting(key: str, default: int) -> int:
+                try:
+                    return int(float(base_runtime_values.get(key, default)))
+                except Exception:
+                    return int(default)
+
+            def _runtime_env_flag(setting_key: str, env_name: str, default: bool) -> bool:
+                return _env_flag(env_name, _runtime_bool_setting(setting_key, default))
+
+            def _runtime_env_int(setting_key: str, env_name: str, default: int) -> int:
+                return _env_int(env_name, _runtime_int_setting(setting_key, default))
+
+            def _general_parallel_runtime_config() -> Dict[str, Any]:
+                return {
+                    "replan_variant_parallel_enabled": _runtime_env_flag(
+                        "replan_variant_parallel_enabled",
+                        "REPLAN_VARIANT_PARALLEL",
+                        True,
+                    ),
+                    "replan_current_remaining_variant_parallel_enabled": _runtime_env_flag(
+                        "replan_current_remaining_variant_parallel_enabled",
+                        "REPLAN_CURRENT_REMAINING_VARIANT_PARALLEL",
+                        True,
+                    ),
+                    "replan_variant_workers": max(
+                        1,
+                        _runtime_env_int(
+                            "replan_variant_workers",
+                            "REPLAN_VARIANT_WORKERS",
+                            3,
+                        ),
+                    ),
+                    "replan_variant_waypoint_block_size": max(
+                        0,
+                        _runtime_env_int(
+                            "replan_variant_waypoint_block_size",
+                            "REPLAN_VARIANT_WAYPOINT_BLOCK_SIZE",
+                            5000,
+                        ),
+                    ),
+                    "replan_recon_worker_cap": max(
+                        0,
+                        _runtime_env_int(
+                            "replan_recon_worker_cap",
+                            "REPLAN_RECON_WORKER_CAP",
+                            0,
+                        ),
+                    ),
+                    "replan_current_remaining_precompute_workers": max(
+                        1,
+                        _runtime_env_int(
+                            "replan_current_remaining_precompute_workers",
+                            "REPLAN_CURRENT_REMAINING_PRECOMPUTE_WORKERS",
+                            2,
+                        ),
+                    ),
+                    "replan_store_prepare_workers": max(
+                        1,
+                        _runtime_env_int(
+                            "replan_store_prepare_workers",
+                            "REPLAN_STORE_PREPARE_WORKERS",
+                            2,
+                        ),
+                    ),
+                    "replan_store_prepare_out_of_order": _runtime_env_flag(
+                        "replan_store_prepare_out_of_order",
+                        "REPLAN_STORE_PREPARE_OUT_OF_ORDER",
+                        True,
+                    ),
+                    "replan_store_commit_workers": max(
+                        1,
+                        _runtime_env_int(
+                            "replan_store_commit_workers",
+                            "REPLAN_STORE_COMMIT_WORKERS",
+                            2,
+                        ),
+                    ),
+                    "replan_store_json_write_workers": max(
+                        1,
+                        _runtime_env_int(
+                            "replan_store_json_write_workers",
+                            "REPLAN_STORE_JSON_WRITE_WORKERS",
+                            2,
+                        ),
+                    ),
+                    "replan_store_path_id_cross_variant_bulk": _runtime_env_flag(
+                        "replan_store_path_id_cross_variant_bulk",
+                        "REPLAN_STORE_PATH_ID_CROSS_VARIANT_BULK",
+                        True,
+                    ),
+                    "replan_store_snapshot_post_delivery": _runtime_env_flag(
+                        "replan_store_snapshot_post_delivery",
+                        "REPLAN_STORE_SNAPSHOT_POST_DELIVERY",
+                        True,
+                    ),
+                }
+
             def _evaluate_general_parallel_safety() -> tuple[bool, int, list[str]]:
                 reasons: list[str] = []
+                runtime_parallel_config = _general_parallel_runtime_config()
                 if not general_parallel_candidate:
                     reasons.append("not_general_multi_variant")
-                if not _env_flag("REPLAN_VARIANT_PARALLEL", True):
-                    reasons.append("env_REPLAN_VARIANT_PARALLEL_disabled")
-                if current_remaining_hybrid_request is not None and not _env_flag(
-                    "REPLAN_CURRENT_REMAINING_VARIANT_PARALLEL",
-                    True,
+                if not bool(runtime_parallel_config["replan_variant_parallel_enabled"]):
+                    reasons.append("runtime_replan_variant_parallel_disabled")
+                if current_remaining_hybrid_request is not None and not bool(
+                    runtime_parallel_config["replan_current_remaining_variant_parallel_enabled"]
                 ):
                     reasons.append("current_remaining_hybrid_active")
                 try:
@@ -8588,11 +9994,11 @@ class MainWindow(QMainWindow):
                 if not Path(cmpk_path).exists() or not Path(mrpk_path).exists():
                     reasons.append("source_artifact_missing")
 
-                requested_workers = max(1, _env_int("REPLAN_VARIANT_WORKERS", 3))
+                requested_workers = max(1, int(runtime_parallel_config["replan_variant_workers"]))
                 workers = min(plan_count, requested_workers)
                 if workers < 2:
                     reasons.append("worker_count_lt_2")
-                waypoint_block_size = max(0, _env_int("REPLAN_VARIANT_WAYPOINT_BLOCK_SIZE", 50000))
+                waypoint_block_size = max(0, int(runtime_parallel_config["replan_variant_waypoint_block_size"]))
                 if waypoint_block_size < 1000:
                     reasons.append("waypoint_block_too_small")
 
@@ -8607,8 +10013,12 @@ class MainWindow(QMainWindow):
                     extra={
                         "enabled": bool(general_parallel_replan),
                         "workers": int(general_parallel_workers),
-                        "waypoint_block_size": max(0, _env_int("REPLAN_VARIANT_WAYPOINT_BLOCK_SIZE", 50000)),
+                        "waypoint_block_size": max(
+                            0,
+                            int(_general_parallel_runtime_config()["replan_variant_waypoint_block_size"]),
+                        ),
                         "reasons": "|".join(general_parallel_gate_reasons) if general_parallel_gate_reasons else "-",
+                        "runtime_settings": "general_variant_parallel",
                     },
                 )
                 if not general_parallel_replan:
@@ -8634,12 +10044,65 @@ class MainWindow(QMainWindow):
                 *,
                 variant_no: int,
                 log_emit: Callable[[str], None],
+                timing_sink: Optional[Dict[str, float]] = None,
             ):
-                with _CURRENT_REMAINING_HYBRID_BUILD_LOCK:
-                    return build_current_remaining_hybrid(
+                global_lock_enabled = _current_remaining_hybrid_global_lock_enabled()
+                lock_wait_started = time.perf_counter()
+                lock_acquired = False
+                if global_lock_enabled:
+                    _CURRENT_REMAINING_HYBRID_BUILD_LOCK.acquire()
+                    lock_acquired = True
+                lock_wait_ms = (time.perf_counter() - lock_wait_started) * 1000.0
+                build_started = time.perf_counter()
+                hybrid_result = None
+                try:
+                    hybrid_result = build_current_remaining_hybrid(
                         request,
                         log=lambda msg, n=variant_no: log_emit(f"[variant {n}] {msg}"),
                     )
+                    return hybrid_result
+                finally:
+                    build_ms = (time.perf_counter() - build_started) * 1000.0
+                    if lock_acquired:
+                        _CURRENT_REMAINING_HYBRID_BUILD_LOCK.release()
+                    if isinstance(timing_sink, dict):
+                        timing_sink["current_hybrid_wait_ms"] = float(lock_wait_ms)
+                        timing_sink["current_hybrid_build_ms"] = float(build_ms)
+                        timing_sink["current_hybrid_global_lock"] = float(int(global_lock_enabled))
+                    log_emit(
+                        f"[TIME] current_remaining_hybrid_build "
+                        f"(variant={variant_no}): wait={lock_wait_ms:.1f} ms, build={build_ms:.1f} ms, "
+                        f"globalLock={int(global_lock_enabled)}"
+                    )
+                    log_emit(
+                        "[REPLAN][METRIC] current_remaining_hybrid_lock_policy "
+                        f"variant={int(variant_no)} "
+                        f"global_lock={int(global_lock_enabled)} "
+                        f"lock_wait_ms={float(lock_wait_ms):.3f} "
+                        f"build_total_ms={float(build_ms):.3f}"
+                    )
+                    prepare_timing = getattr(hybrid_result, "prepare_timing_ms", None)
+                    if isinstance(prepare_timing, dict) and prepare_timing:
+                        def _timing_value(name: str) -> float:
+                            try:
+                                return float(prepare_timing.get(name) or 0.0)
+                            except Exception:
+                                return 0.0
+
+                        log_emit(
+                            "[REPLAN][METRIC] current_remaining_hybrid_prepare "
+                            f"variant={int(variant_no)} "
+                            f"source_load_ms={_timing_value('source_load'):.3f} "
+                            f"target_input_resolve_ms={_timing_value('target_input_resolve'):.3f} "
+                            f"entry_coordinate_resolve_ms={_timing_value('entry_coordinate_resolve'):.3f} "
+                            f"area_planner_run_ms={_timing_value('area_planner_run'):.3f} "
+                            f"id_reservation_ms={_timing_value('id_reservation'):.3f} "
+                            f"replacement_mission_build_ms={_timing_value('replacement_mission_build'):.3f} "
+                            f"flight_path_build_ms={_timing_value('flight_path_build'):.3f} "
+                            f"lock_wait_ms={float(lock_wait_ms):.3f} "
+                            f"global_lock={int(global_lock_enabled)} "
+                            f"build_total_ms={float(build_ms):.3f}"
+                        )
 
             def _apply_current_remaining_hybrid_to_variant(
                 *,
@@ -8678,6 +10141,29 @@ class MainWindow(QMainWindow):
                     flight_plans_0304=flight_plans_0304,
                     hybrid=hybrid,
                 )
+                path_validation = dict(merged.get("pathValidation") or {})
+                if path_validation and not bool(path_validation.get("valid", True)):
+                    overlap_summary = ",".join(
+                        str(pid) for pid in (path_validation.get("overlapPathIDs") or [])
+                    )
+                    raise RuntimeError(
+                        "current remaining hybrid path validation failed "
+                        f"(variant={variant_no}, overlapPathIDs={overlap_summary or '-'})"
+                    )
+                temporary_path_id_remap = dict(merged.get("temporaryPathIdRemap") or {})
+                if temporary_path_id_remap:
+                    remap_summary = ",".join(
+                        f"{old_pid}->{new_pid}"
+                        for old_pid, new_pid in sorted(temporary_path_id_remap.items())
+                    )
+                    emit(
+                        f"[variant {variant_no}] current remaining hybrid temporary pathID remapped: "
+                        f"{remap_summary}"
+                    )
+                emit(
+                    f"[variant {variant_no}] current remaining hybrid path validation: "
+                    f"{path_validation or validate_current_remaining_hybrid_paths(generic_path_ids=[], hybrid_path_ids=[])}"
+                )
                 emit(
                     f"[variant {variant_no}] current remaining collaborative hybrid applied: "
                     f"inputMissionID={hybrid.current_input_id}, "
@@ -8692,6 +10178,664 @@ class MainWindow(QMainWindow):
                     set(int(pid) for pid in (merged.get("generated_path_ids") or set()) if pid is not None),
                 )
 
+            def _mission_related_input_id(mission: Dict[str, Any]) -> Optional[int]:
+                if not isinstance(mission, dict):
+                    return None
+                related = mission.get("relatedMission") if isinstance(mission.get("relatedMission"), dict) else {}
+                for value in (related.get("inputMissionID"), mission.get("inputMissionID")):
+                    parsed = _safe_int_value(value)
+                    if parsed is not None and parsed > 0:
+                        return int(parsed)
+                return None
+
+            def _is_reexecute_line_hold_request(request: CurrentRemainingHybridRequest | None) -> bool:
+                if request is None:
+                    return False
+                if str(getattr(request, "planner_mode", "") or "") != "reexecute_first_mission":
+                    return False
+                return True
+
+            def _lah_mission_has_line_route(mission: Dict[str, Any]) -> bool:
+                if not isinstance(mission, dict):
+                    return False
+                info = mission.get("individualMissionInfo") if isinstance(mission.get("individualMissionInfo"), dict) else {}
+                line_list = info.get("lineList") if isinstance(info.get("lineList"), list) else []
+                for line in line_list:
+                    if not isinstance(line, dict):
+                        continue
+                    if len(_normalize_coord_list(line.get("coordinateList"), min_len=2)) >= 2:
+                        return True
+                try:
+                    mission_type = int(info.get("individualMissionType", 0) or 0)
+                except Exception:
+                    mission_type = 0
+                if mission_type in (6, 7):
+                    return len(_normalize_coord_list(info.get("coordinateList"), min_len=2)) >= 2
+                return False
+
+            def _mark_lah_reexecute_line_hold_for_0304(
+                mission: Dict[str, Any],
+                *,
+                hold_seconds: int = 300,
+            ) -> Dict[str, Any]:
+                marked = copy.deepcopy(mission)
+                marked["_lahHoldAtLineEnd"] = True
+                marked["_lahLineHoldSeconds"] = int(hold_seconds)
+                return marked
+
+            def _manned_missions_for_reexecute_line_hold_0304(
+                manned_missions: List[Dict[str, Any]],
+                request: CurrentRemainingHybridRequest | None,
+            ) -> List[Dict[str, Any]]:
+                if not _is_reexecute_line_hold_request(request):
+                    return list(manned_missions or [])
+                current_input_id = _safe_int_value(getattr(request, "current_input_id", None))
+                if current_input_id is None or current_input_id <= 0:
+                    return list(manned_missions or [])
+                out: List[Dict[str, Any]] = []
+                marked_count = 0
+                for mission in manned_missions or []:
+                    if (
+                        isinstance(mission, dict)
+                        and _mission_related_input_id(mission) == int(current_input_id)
+                        and _lah_mission_has_line_route(mission)
+                    ):
+                        out.append(_mark_lah_reexecute_line_hold_for_0304(mission, hold_seconds=300))
+                        marked_count += 1
+                    else:
+                        out.append(mission)
+                if marked_count:
+                    self.log_sig.emit(
+                        "[REEXEC-FIRST] LAH current LINE hold armed for 0304: "
+                        f"inputMissionID={int(current_input_id)}, missions={int(marked_count)}, hover=300s"
+                    )
+                return out
+
+            def _lah_line_hold_info_from_input_mission(
+                input_mission: Dict[str, Any],
+            ) -> Dict[str, Any] | None:
+                if _mission_geometry_bucket(input_mission) != "line":
+                    return None
+                detail = input_mission.get("missionDetail") if isinstance(input_mission.get("missionDetail"), dict) else {}
+                if not isinstance(detail, dict):
+                    return None
+                info: Dict[str, Any] = {
+                    "individualMissionType": 6,
+                    "patternType": 8,
+                    "autoZoomIn": False,
+                    "targetID": None,
+                }
+                line_list = detail.get("lineList")
+                if isinstance(line_list, list) and line_list:
+                    info["lineList"] = copy.deepcopy(line_list)
+                    return info
+                coord_list = detail.get("coordinateList")
+                coords = _normalize_coord_list(coord_list, min_len=2)
+                if coords:
+                    info["coordinateList"] = copy.deepcopy(coords)
+                    return info
+                return None
+
+            def _source_lah_current_mission_templates(
+                *,
+                source_aircraft_rows: List[Dict[str, Any]],
+                current_input_id: int,
+                log_emit: Callable[[str], None],
+            ) -> Dict[int, Dict[str, Any]]:
+                templates: Dict[int, Dict[str, Any]] = {}
+                for source_aircraft in source_aircraft_rows or []:
+                    if not isinstance(source_aircraft, dict):
+                        continue
+                    aircraft_id = _safe_int_value(source_aircraft.get("aircraftID"))
+                    if aircraft_id is None or not (1 <= int(aircraft_id) <= 3):
+                        continue
+                    package_id = _safe_int_value(
+                        source_aircraft.get("individualMissionPackageID")
+                        or source_aircraft.get("individualMissionPlanPackageID")
+                        or source_aircraft.get("individualMissionPackageId")
+                    )
+                    if package_id is None or package_id <= 0:
+                        continue
+                    try:
+                        source_imp = source_cache.load_individual_mission_plan(int(package_id))
+                    except Exception as exc:
+                        log_emit(
+                            f"[WARN] [REEXEC-FIRST] source LAH IMP load failed "
+                            f"(aircraftID={aircraft_id}, packageID={package_id}): {exc}"
+                        )
+                        continue
+                    for source_mission in source_imp.get("individualMissionList") or []:
+                        if not isinstance(source_mission, dict):
+                            continue
+                        if _mission_related_input_id(source_mission) != int(current_input_id):
+                            continue
+                        mission_copy = copy.deepcopy(source_mission)
+                        mission_copy["aircraftID"] = int(aircraft_id)
+                        if _lah_mission_has_line_route(mission_copy):
+                            templates[int(aircraft_id)] = mission_copy
+                        break
+                return templates
+
+            def _append_reexecute_lah_line_hold_current_artifacts(
+                *,
+                request: CurrentRemainingHybridRequest,
+                source_aircraft_ids: Set[int],
+                source_lah_templates: Dict[int, Dict[str, Any]] | None = None,
+                missions: List[Dict[str, Any]],
+                flight_plans_0304: List[Dict[str, Any]],
+                log_emit: Callable[[str], None],
+            ) -> Dict[str, Any]:
+                summary: Dict[str, Any] = {
+                    "applied": False,
+                    "aircraftIDs": [],
+                    "missionCount": 0,
+                    "flightPathCount": 0,
+                    "pathIDs": [],
+                    "reason": "",
+                }
+                if not _is_reexecute_line_hold_request(request):
+                    summary["reason"] = "not_reexecute_line"
+                    return summary
+                current_input_id = _safe_int_value(getattr(request, "current_input_id", None))
+                if current_input_id is None or current_input_id <= 0:
+                    summary["reason"] = "current_input_id_unavailable"
+                    return summary
+                current_input_mission = getattr(request, "current_input_mission", None)
+                if not isinstance(current_input_mission, dict):
+                    summary["reason"] = "current_input_mission_unavailable"
+                    return summary
+                info_template = _lah_line_hold_info_from_input_mission(current_input_mission)
+                line_templates = {
+                    int(aid): copy.deepcopy(template)
+                    for aid, template in dict(source_lah_templates or {}).items()
+                    if isinstance(template, dict) and _lah_mission_has_line_route(template)
+                }
+                if not isinstance(info_template, dict) and not line_templates:
+                    summary["reason"] = "line_geometry_unavailable"
+                    return summary
+                lah_ids = sorted(
+                    int(aid)
+                    for aid in (source_aircraft_ids or set())
+                    if 1 <= int(aid) <= 3
+                )
+                if not lah_ids:
+                    summary["reason"] = "source_plan_lah_unavailable"
+                    return summary
+
+                hold_missions_for_imp: List[Dict[str, Any]] = []
+                hold_missions_for_fp: List[Dict[str, Any]] = []
+                for aid in lah_ids:
+                    try:
+                        path_id = int(reserve_path_ids(int(aid), 1)[0])
+                    except Exception as exc:
+                        log_emit(f"[WARN] [REEXEC-FIRST] LAH hold pathID reservation failed (aircraftID={aid}): {exc}")
+                        continue
+                    if int(aid) in line_templates:
+                        mission_entry = copy.deepcopy(line_templates[int(aid)])
+                        mission_entry["aircraftID"] = int(aid)
+                        mission_entry["individualMissionID"] = 0
+                        mission_entry["isDone"] = False
+                        rel = mission_entry.get("relatedMission") if isinstance(mission_entry.get("relatedMission"), dict) else {}
+                        mission_entry["relatedMission"] = {
+                            "relatedMissionType": rel.get("relatedMissionType", 1),
+                            "inputMissionID": int(current_input_id),
+                            "priorMissionID": rel.get("priorMissionID", 0),
+                        }
+                        mission_entry["pathID"] = int(path_id)
+                    elif isinstance(info_template, dict):
+                        mission_entry = {
+                            "aircraftID": int(aid),
+                            "individualMissionID": 0,
+                            "isDone": False,
+                            "relatedMission": {
+                                "relatedMissionType": 1,
+                                "inputMissionID": int(current_input_id),
+                                "priorMissionID": 0,
+                            },
+                            "individualMissionInfo": copy.deepcopy(info_template),
+                            "pathID": int(path_id),
+                        }
+                    else:
+                        continue
+                    hold_missions_for_imp.append(copy.deepcopy(mission_entry))
+                    hold_missions_for_fp.append(
+                        _mark_lah_reexecute_line_hold_for_0304(mission_entry, hold_seconds=300)
+                    )
+
+                if not hold_missions_for_fp:
+                    summary["reason"] = "no_hold_missions_built"
+                    return summary
+
+                wp_alloc = None
+                try:
+                    wp_count = max(1, len(hold_missions_for_fp))
+                    wp_start = int(reserve_waypoint_block(int(wp_count)))
+                    wp_alloc = d0304._WPAllocator(start=wp_start, end=wp_start + wp_count - 1)
+                except Exception as exc:
+                    log_emit(f"[WARN] [REEXEC-FIRST] LAH hold waypoint block reservation failed: {exc}")
+
+                hold_fps = d0304.build_lah_flight_plans_fixed(
+                    hold_missions_for_fp,
+                    cruise_speed=40.0,
+                    manned_plan_mode="normal",
+                    lah_path_mode="linear",
+                    wp_alloc=wp_alloc,
+                )
+                if not hold_fps:
+                    summary["reason"] = "d0304_hold_flightpath_empty"
+                    return summary
+
+                missions.extend(hold_missions_for_imp)
+                flight_plans_0304.extend(hold_fps)
+                summary.update(
+                    {
+                        "applied": True,
+                        "aircraftIDs": [int(mission.get("aircraftID")) for mission in hold_missions_for_imp],
+                        "missionCount": len(hold_missions_for_imp),
+                        "flightPathCount": len(hold_fps),
+                        "pathIDs": [
+                            int(fp.get("pathID"))
+                            for fp in hold_fps
+                            if _safe_int_value(fp.get("pathID")) is not None
+                        ],
+                        "reason": "ok",
+                    }
+                )
+                log_emit(
+                    "[REEXEC-FIRST] LAH current LINE hold generated: "
+                    f"inputMissionID={int(current_input_id)}, "
+                    f"aircraft={summary['aircraftIDs']}, "
+                    f"pathIDs={summary['pathIDs']}, hover=300s"
+                )
+                return summary
+
+            def _current_cmpk_pending_input_ids() -> Set[int]:
+                result: Set[int] = set()
+                mission_rows = cmpk_data.get("inputMissionList") if isinstance(cmpk_data, dict) else None
+                if not isinstance(mission_rows, list):
+                    return result
+                for mission in mission_rows:
+                    if not isinstance(mission, dict) or bool(mission.get("isDone")):
+                        continue
+                    input_id = _safe_int_value(mission.get("inputMissionID"))
+                    if input_id is not None and input_id > 0:
+                        result.add(int(input_id))
+                return result
+
+            def _waypoint_lists_in_flight_path(flight_path: Dict[str, Any]) -> list[list[dict]]:
+                lists: list[list[dict]] = []
+                if not isinstance(flight_path, dict):
+                    return lists
+                for key in ("waypointList", "uavWaypointList", "lahWaypointList"):
+                    rows = flight_path.get(key)
+                    if isinstance(rows, list):
+                        lists.append([row for row in rows if isinstance(row, dict)])
+                return lists
+
+            def _reserve_and_remap_flight_path_waypoints(flight_path: Dict[str, Any]) -> int:
+                waypoint_lists = _waypoint_lists_in_flight_path(flight_path)
+                waypoint_count = sum(len(rows) for rows in waypoint_lists)
+                if waypoint_count <= 0:
+                    return 0
+                start_id = int(reserve_waypoint_block(int(waypoint_count)))
+                next_id = int(start_id)
+                id_map: Dict[int, int] = {}
+                for rows in waypoint_lists:
+                    for waypoint in rows:
+                        old_id = _safe_int_value(waypoint.get("waypointID"))
+                        new_id = int(next_id)
+                        next_id += 1
+                        if old_id is not None and old_id > 0:
+                            id_map[int(old_id)] = int(new_id)
+                        waypoint["waypointID"] = int(new_id)
+                for rows in waypoint_lists:
+                    for waypoint in rows:
+                        old_next = _safe_int_value(waypoint.get("nextWaypointID"))
+                        if old_next is not None and int(old_next) in id_map:
+                            waypoint["nextWaypointID"] = int(id_map[int(old_next)])
+                return int(waypoint_count)
+
+            def _append_reexecute_current_fast_path_future_artifacts(
+                *,
+                variant_no: int,
+                request: CurrentRemainingHybridRequest,
+                hybrid_result: Any,
+                mp_json: Dict[str, Any],
+                missions: list[dict],
+                flight_plans_0303: list[dict],
+                flight_plans_0304: list[dict],
+                log_emit: Callable[[str], None],
+            ) -> Dict[str, Any]:
+                source_plan_id = _safe_int_value(getattr(request, "source_plan_id", None))
+                current_input_id = _safe_int_value(getattr(request, "current_input_id", None))
+                source_template_input_id = _safe_int_value(
+                    getattr(request, "source_template_input_id", None)
+                )
+                if source_plan_id is None or source_plan_id <= 0:
+                    raise RuntimeError("reexecute fast-path source plan unavailable")
+                if current_input_id is None or current_input_id <= 0:
+                    raise RuntimeError("reexecute fast-path current input unavailable")
+                pending_input_ids = _current_cmpk_pending_input_ids()
+                if not pending_input_ids:
+                    raise RuntimeError("reexecute fast-path pending input list unavailable")
+                future_input_ids = set(int(value) for value in pending_input_ids)
+                future_input_ids.discard(int(current_input_id))
+                if source_template_input_id is not None and source_template_input_id > 0:
+                    future_input_ids.discard(int(source_template_input_id))
+
+                source_plan = source_cache.load_mission_plan(int(source_plan_id))
+                source_aircraft_rows = source_plan.get("aircraftList") if isinstance(source_plan, dict) else None
+                if not isinstance(source_aircraft_rows, list) or not source_aircraft_rows:
+                    raise RuntimeError(f"reexecute fast-path source MissionPlan invalid: {source_plan_id}")
+
+                aircraft_rows_by_id: Dict[int, Dict[str, Any]] = {}
+                for aircraft in source_aircraft_rows:
+                    if not isinstance(aircraft, dict):
+                        continue
+                    aircraft_id = _safe_int_value(aircraft.get("aircraftID"))
+                    if aircraft_id is None or aircraft_id <= 0:
+                        continue
+                    aircraft_rows_by_id.setdefault(
+                        int(aircraft_id),
+                        {"aircraftID": int(aircraft_id), "individualMissionPackageID": 0},
+                    )
+
+                source_lah_current_templates = _source_lah_current_mission_templates(
+                    source_aircraft_rows=source_aircraft_rows,
+                    current_input_id=int(current_input_id),
+                    log_emit=log_emit,
+                )
+                lah_hold_summary = _append_reexecute_lah_line_hold_current_artifacts(
+                    request=request,
+                    source_aircraft_ids=set(int(aid) for aid in aircraft_rows_by_id.keys()),
+                    source_lah_templates=source_lah_current_templates,
+                    missions=missions,
+                    flight_plans_0304=flight_plans_0304,
+                    log_emit=log_emit,
+                )
+                carried_missions: list[dict] = []
+                carried_fps_0303: list[dict] = []
+                carried_fps_0304: list[dict] = []
+                carried_input_ids: Set[int] = set()
+                copied_waypoints = 0
+                missing_fp_count = 0
+                if not future_input_ids:
+                    log_emit(
+                        f"[INFO] [variant {variant_no}] reexecute fast-path has no future input missions; "
+                        "current mission only."
+                    )
+
+                for source_aircraft in source_aircraft_rows:
+                    if not isinstance(source_aircraft, dict):
+                        continue
+                    aircraft_id = _safe_int_value(source_aircraft.get("aircraftID"))
+                    if aircraft_id is None or not (1 <= int(aircraft_id) <= 6):
+                        continue
+                    package_id = _safe_int_value(
+                        source_aircraft.get("individualMissionPackageID")
+                        or source_aircraft.get("individualMissionPlanPackageID")
+                        or source_aircraft.get("individualMissionPackageId")
+                    )
+                    if package_id is None or package_id <= 0:
+                        continue
+                    try:
+                        source_imp = source_cache.load_individual_mission_plan(int(package_id))
+                    except Exception as exc:
+                        log_emit(
+                            f"[WARN] [variant {variant_no}] reexecute fast-path source IMP load failed "
+                            f"(aircraftID={aircraft_id}, packageID={package_id}): {exc}"
+                        )
+                        continue
+                    for source_mission in source_imp.get("individualMissionList") or []:
+                        if not isinstance(source_mission, dict):
+                            continue
+                        input_id = _mission_related_input_id(source_mission)
+                        if input_id is None or int(input_id) not in future_input_ids:
+                            continue
+                        if bool(source_mission.get("isDone")):
+                            continue
+                        path_id = _safe_int_value(source_mission.get("pathID"))
+                        if path_id is None or path_id <= 0:
+                            continue
+                        try:
+                            flight_path = source_cache.load_flight_path(int(path_id))
+                        except Exception as exc:
+                            missing_fp_count += 1
+                            log_emit(
+                                f"[WARN] [variant {variant_no}] reexecute fast-path source FlightPath load failed "
+                                f"(pathID={path_id}, inputMissionID={input_id}): {exc}"
+                            )
+                            continue
+                        mission_copy = copy.deepcopy(source_mission)
+                        mission_copy["aircraftID"] = int(aircraft_id)
+                        mission_copy["individualMissionPlanPackageID"] = 0
+                        flight_path_copy = copy.deepcopy(flight_path)
+                        flight_path_copy["aircraftID"] = int(aircraft_id)
+                        copied_waypoints += _reserve_and_remap_flight_path_waypoints(flight_path_copy)
+                        carried_missions.append(mission_copy)
+                        if int(aircraft_id) in (1, 2, 3):
+                            carried_fps_0304.append(flight_path_copy)
+                        else:
+                            carried_fps_0303.append(flight_path_copy)
+                        carried_input_ids.add(int(input_id))
+
+                if future_input_ids and not carried_missions:
+                    raise RuntimeError(
+                        "reexecute fast-path found no carry-forward missions "
+                        f"(sourcePlan={source_plan_id}, futureInputs={sorted(future_input_ids)})"
+                    )
+
+                for aircraft_id in sorted(aircraft_rows_by_id):
+                    if not any(
+                        int(mission.get("aircraftID", 0)) == int(aircraft_id)
+                        for mission in list(missions or []) + carried_missions
+                    ):
+                        continue
+                    if not any(
+                        _safe_int_value(row.get("aircraftID")) == int(aircraft_id)
+                        for row in mp_json.get("aircraftList", [])
+                        if isinstance(row, dict)
+                    ):
+                        mp_json.setdefault("aircraftList", []).append(copy.deepcopy(aircraft_rows_by_id[aircraft_id]))
+                mp_json["aircraftList"] = sorted(
+                    [
+                        row
+                        for row in (mp_json.get("aircraftList") or [])
+                        if isinstance(row, dict)
+                        and _safe_int_value(row.get("aircraftID")) is not None
+                        and any(
+                            int(mission.get("aircraftID", 0)) == int(_safe_int_value(row.get("aircraftID")) or 0)
+                            for mission in list(missions or []) + carried_missions
+                        )
+                    ],
+                    key=lambda row: int(row.get("aircraftID", 0)),
+                )
+
+                missions.extend(carried_missions)
+                flight_plans_0303.extend(carried_fps_0303)
+                flight_plans_0304.extend(carried_fps_0304)
+                return {
+                    "sourcePlanID": int(source_plan_id),
+                    "currentInputMissionID": int(current_input_id),
+                    "sourceTemplateInputMissionID": (
+                        int(source_template_input_id)
+                        if source_template_input_id is not None and source_template_input_id > 0
+                        else None
+                    ),
+                    "futureInputMissionIDs": sorted(int(value) for value in future_input_ids),
+                    "carriedInputMissionIDs": sorted(int(value) for value in carried_input_ids),
+                    "carriedMissionCount": int(len(carried_missions)),
+                    "carriedFlightPath0303Count": int(len(carried_fps_0303)),
+                    "carriedFlightPath0304Count": int(len(carried_fps_0304)),
+                    "carriedWaypointCount": int(copied_waypoints),
+                    "missingFlightPathCount": int(missing_fp_count),
+                    "hybridMissionCount": int(len(getattr(hybrid_result, "missions", []) or [])),
+                    "hybridFlightPath0303Count": int(len(getattr(hybrid_result, "flight_plans_0303", []) or [])),
+                    "hybridFlightPath0304Count": int(len(getattr(hybrid_result, "flight_plans_0304", []) or [])),
+                    "lahHoldApplied": bool(lah_hold_summary.get("applied")),
+                    "lahHoldAircraftIDs": [
+                        int(value)
+                        for value in (lah_hold_summary.get("aircraftIDs") or [])
+                        if _safe_int_value(value) is not None
+                    ],
+                    "lahHoldMissionCount": int(lah_hold_summary.get("missionCount") or 0),
+                    "lahHoldFlightPath0304Count": int(lah_hold_summary.get("flightPathCount") or 0),
+                    "lahHoldPathIDs": [
+                        int(value)
+                        for value in (lah_hold_summary.get("pathIDs") or [])
+                        if _safe_int_value(value) is not None
+                    ],
+                    "lahHoldReason": str(lah_hold_summary.get("reason") or ""),
+                }
+
+            def _build_reexecute_current_fast_path_variant_core(
+                *,
+                variant_no: int,
+                option_code: int,
+                requested_plan_id: Any,
+                cmpk_source_path: Path,
+                iter_out_root: Path,
+                current_remaining_request: CurrentRemainingHybridRequest,
+                shared_current_remaining_future: Any,
+                shared_current_remaining_role: str,
+                core_phase_ms: Dict[str, float],
+                variant_generated_path_ids: Set[int],
+                log_emit: Callable[[str], None],
+            ) -> Optional[Dict[str, Any]]:
+                if current_remaining_request is None:
+                    return None
+                if str(getattr(current_remaining_request, "planner_mode", "") or "") != "reexecute_first_mission":
+                    return None
+                if not _runtime_env_flag(
+                    "replan_reexecute_current_fast_path_enabled",
+                    "REPLAN_REEXECUTE_CURRENT_FAST_PATH",
+                    True,
+                ):
+                    return None
+
+                current_remaining_hybrid_result = None
+                try:
+                    if isinstance(shared_current_remaining_future, concurrent.futures.Future):
+                        join_started = time.perf_counter()
+                        current_remaining_hybrid_result = shared_current_remaining_future.result()
+                        join_ms = (time.perf_counter() - join_started) * 1000.0
+                        core_phase_ms["current_hybrid_wait_ms"] = float(join_ms)
+                        core_phase_ms["current_hybrid_build_ms"] = 0.0
+                        log_emit(
+                            "[REPLAN][METRIC] current_remaining_hybrid_shared_join "
+                            f"variant={int(variant_no)} option={int(option_code)} "
+                            f"role={shared_current_remaining_role or 'shared'} "
+                            f"join_wait_ms={join_ms:.3f} "
+                            f"result_available={int(current_remaining_hybrid_result is not None)}"
+                        )
+                    else:
+                        current_remaining_hybrid_result = _build_current_remaining_hybrid_locked(
+                            current_remaining_request,
+                            variant_no=variant_no,
+                            log_emit=log_emit,
+                            timing_sink=core_phase_ms,
+                        )
+                except Exception as exc:
+                    log_emit(
+                        f"[WARN] [variant {variant_no}] reexecute current fast-path hybrid build failed: {exc}"
+                    )
+                    return None
+                if current_remaining_hybrid_result is None:
+                    log_emit(f"[WARN] [variant {variant_no}] reexecute current fast-path hybrid unavailable")
+                    return None
+
+                mp_json: Dict[str, Any] = {
+                    "missionPlanID": 0,
+                    "timestamp": _now_ms_since_2000(),
+                    "missionPlanTimestamp": _now_ms_since_2000(),
+                    "planningTime": 0.0,
+                    "plannerID": 1,
+                    "inputMissionPackageID": cmpk_id,
+                    "missionReferencePackageID": int(Path(mrpk_path).stem) if mrpk_path else 0,
+                    "aircraftList": [],
+                    "Source": "MMR",
+                }
+                missions: list[dict] = []
+                flight_plans_0303: list[dict] = []
+                flight_plans_0304: list[dict] = []
+                step_t0 = time.perf_counter()
+                try:
+                    missions, flight_plans_0303, flight_plans_0304, hybrid_path_ids = _apply_current_remaining_hybrid_to_variant(
+                        variant_no=variant_no,
+                        missions=missions,
+                        flight_plans_0303=flight_plans_0303,
+                        flight_plans_0304=flight_plans_0304,
+                        request=current_remaining_request,
+                        hybrid_result=current_remaining_hybrid_result,
+                        log_emit=log_emit,
+                    )
+                    core_phase_ms["hybrid_merge_ms"] = (time.perf_counter() - step_t0) * 1000.0
+                    variant_generated_path_ids.update(int(pid) for pid in hybrid_path_ids if pid is not None)
+
+                    step_t0 = time.perf_counter()
+                    carry_summary = _append_reexecute_current_fast_path_future_artifacts(
+                        variant_no=variant_no,
+                        request=current_remaining_request,
+                        hybrid_result=current_remaining_hybrid_result,
+                        mp_json=mp_json,
+                        missions=missions,
+                        flight_plans_0303=flight_plans_0303,
+                        flight_plans_0304=flight_plans_0304,
+                        log_emit=log_emit,
+                    )
+                except Exception as exc:
+                    log_emit(
+                        f"[WARN] [variant {variant_no}] reexecute current fast-path fallback to full generation: {exc}"
+                    )
+                    return None
+                carry_ms = (time.perf_counter() - step_t0) * 1000.0
+                core_phase_ms["collect_missions_ms"] = float(carry_ms)
+                log_emit(
+                    "[REPLAN][METRIC] reexecute_current_fast_path "
+                    f"variant={int(variant_no)} option={int(option_code)} "
+                    f"sourcePlan={carry_summary['sourcePlanID']} "
+                    f"currentInputMissionID={carry_summary['currentInputMissionID']} "
+                    f"sourceTemplateInputMissionID={carry_summary.get('sourceTemplateInputMissionID') or 0} "
+                    f"futureInputs={'|'.join(str(v) for v in carry_summary['futureInputMissionIDs']) or '-'} "
+                    f"carriedInputs={'|'.join(str(v) for v in carry_summary['carriedInputMissionIDs']) or '-'} "
+                    f"carriedMissions={carry_summary['carriedMissionCount']} "
+                    f"carried0303={carry_summary['carriedFlightPath0303Count']} "
+                    f"carried0304={carry_summary['carriedFlightPath0304Count']} "
+                    f"carriedWaypoints={carry_summary['carriedWaypointCount']} "
+                    f"lahHoldApplied={int(bool(carry_summary.get('lahHoldApplied')))} "
+                    f"lahHoldAircraft={'|'.join(str(v) for v in (carry_summary.get('lahHoldAircraftIDs') or [])) or '-'} "
+                    f"lahHoldPaths={'|'.join(str(v) for v in (carry_summary.get('lahHoldPathIDs') or [])) or '-'} "
+                    f"missingFlightPaths={carry_summary['missingFlightPathCount']} "
+                    f"carry_ms={carry_ms:.3f}"
+                )
+                log_emit(
+                    f"[INFO] [variant {variant_no}] 현재임무 재수행 fast-path 적용: "
+                    f"current hybrid만 생성, 미래 FlightPath는 source plan에서 carry-forward "
+                    f"(missions={len(missions)}, fp0303={len(flight_plans_0303)}, fp0304={len(flight_plans_0304)})"
+                )
+                return {
+                    "variant_no": variant_no,
+                    "requested_plan_id": requested_plan_id,
+                    "option_code": option_code,
+                    "cmpk_source_path": cmpk_source_path,
+                    "iter_out_root": iter_out_root,
+                    "mp_json": mp_json,
+                    "imp_id_map": {},
+                    "missions": missions,
+                    "flight_plans_0303": flight_plans_0303,
+                    "flight_plans_0304": flight_plans_0304,
+                    "generated_path_ids": variant_generated_path_ids,
+                    "option_dependent_isolation": _option_dependent_isolation_contract(
+                        variant_no=variant_no,
+                        option_code=option_code,
+                        mode="parallel_core_fast_path",
+                    ),
+                    "current_remaining_hybrid_active": True,
+                    "current_remaining_hybrid_applied": True,
+                    "remaining_hybrid_result": None,
+                    "reexecute_current_fast_path": carry_summary,
+                }
+
             def _apply_remaining_hybrid_customization(
                 *,
                 variant_no: int,
@@ -8700,7 +10844,12 @@ class MainWindow(QMainWindow):
                 flight_plans_0303: List[Dict[str, Any]],
                 snapshot_mutated: bool,
             ):
+                hybrid_started = time.perf_counter()
                 if not snapshot_mutated:
+                    self.log_sig.emit(
+                        f"[REMAINING][variant {variant_no}] hybrid customization skipped: "
+                        "snapshot_not_mutated (elapsed=0.0 ms)"
+                    )
                     return None
                 active_detail = None
                 for container in (ctx, staged):
@@ -8709,12 +10858,14 @@ class MainWindow(QMainWindow):
                         active_detail = detail_payload
                         break
                 try:
-                    from .pipelines.general_remaining_hybrid_replan import (
+                    from .replanning.triggers.remaining_hybrid.general import (
                         apply_remaining_hybrid_replan,
                     )
                 except Exception as exc:
+                    elapsed_ms = (time.perf_counter() - hybrid_started) * 1000.0
                     self.log_sig.emit(
-                        f"[REMAINING][variant {variant_no}] hybrid helper import skipped: {exc}"
+                        f"[REMAINING][variant {variant_no}] hybrid helper import skipped: {exc} "
+                        f"(elapsed={elapsed_ms:.1f} ms)"
                     )
                     return None
                 try:
@@ -8727,10 +10878,14 @@ class MainWindow(QMainWindow):
                         log=lambda msg, n=variant_no: self.log_sig.emit(f"[variant {n}] {msg}"),
                     )
                 except Exception as exc:
+                    elapsed_ms = (time.perf_counter() - hybrid_started) * 1000.0
                     self.log_sig.emit(
-                        f"[REMAINING][variant {variant_no}] hybrid customization failed: {exc}"
+                        f"[REMAINING][variant {variant_no}] hybrid customization failed: {exc} "
+                        f"(elapsed={elapsed_ms:.1f} ms)"
                     )
                     return None
+                elapsed_ms = (time.perf_counter() - hybrid_started) * 1000.0
+                path_count = len([fp for fp in (flight_plans_0303 or []) if isinstance(fp, dict)])
                 if getattr(result, "applied", False):
                     mode = str(getattr(result, "mode", "") or "-")
                     input_mid = getattr(result, "input_mission_id", None)
@@ -8739,15 +10894,61 @@ class MainWindow(QMainWindow):
                     self.log_sig.emit(
                         "[REMAINING] hybrid customization applied "
                         f"(variant={variant_no}, mode={mode}, inputMissionID={input_mid}, "
-                        f"aircraft={aircraft_ids}, workflow={workflow or '-'})"
+                        f"aircraft={aircraft_ids}, paths0303={path_count}, "
+                        f"workflow={workflow or '-'}, elapsed={elapsed_ms:.1f} ms)"
                     )
                 else:
                     reason_text = str(getattr(result, "reason", "") or "").strip()
                     if reason_text:
                         self.log_sig.emit(
-                            f"[REMAINING][variant {variant_no}] hybrid customization skipped: {reason_text}"
+                            f"[REMAINING][variant {variant_no}] hybrid customization skipped: {reason_text} "
+                            f"(paths0303={path_count}, elapsed={elapsed_ms:.1f} ms)"
                         )
                 return result
+
+            def _carry_forward_mission_area_snapshot(
+                *,
+                variant_no: int,
+                plan_id: int,
+                reason: str,
+            ) -> Dict[str, Any]:
+                source_id = _positive_int_or_none(snapshot_source_plan_id)
+                target_id = _positive_int_or_none(plan_id)
+                summary = {
+                    "sourceMissionPlanID": source_id,
+                    "targetMissionPlanID": target_id,
+                    "carried": False,
+                    "path": None,
+                    "reason": str(reason or ""),
+                }
+                if source_id is None or target_id is None:
+                    return summary
+                try:
+                    carried_path = mission_area_replan_store.carry_forward_snapshot(
+                        int(source_id),
+                        int(target_id),
+                        reason=str(reason or ""),
+                    )
+                except Exception as exc:
+                    summary["error"] = str(exc)
+                    self.log_sig.emit(
+                        f"[WARN] mission area snapshot carry-forward failed "
+                        f"(variant={variant_no}, sourcePlan={source_id}, targetPlan={target_id}): {exc}"
+                    )
+                    return summary
+                if carried_path is not None:
+                    summary["carried"] = True
+                    summary["path"] = str(carried_path)
+                    self.log_sig.emit(
+                        f"[INFO] mission area snapshot carried forward "
+                        f"(variant={variant_no}, sourcePlan={source_id}, targetPlan={target_id})"
+                    )
+                else:
+                    self.log_sig.emit(
+                        f"[INFO] mission area snapshot carry-forward skipped "
+                        f"(variant={variant_no}, sourcePlan={source_id}, targetPlan={target_id})"
+                    )
+                return summary
 
             def _run_general_variant_core(spec: Dict[str, Any]) -> Dict[str, Any]:
                 variant_no = int(spec["variant_no"])
@@ -8756,6 +10957,8 @@ class MainWindow(QMainWindow):
                 cmpk_source_path = Path(spec["cmpk_source_path"])
                 runtime_payload = spec.get("runtime_payload")
                 current_remaining_request = spec.get("current_remaining_hybrid_request")
+                shared_current_remaining_future = spec.get("shared_current_remaining_hybrid_future")
+                shared_current_remaining_role = str(spec.get("shared_current_remaining_hybrid_role") or "")
                 variant_logs: list[str] = []
                 variant_timing_events: list[Dict[str, Any]] = []
 
@@ -8778,6 +10981,17 @@ class MainWindow(QMainWindow):
                 waypoint_block_0303_end = spec.get("waypoint_block_0303_end", spec.get("waypoint_block_end"))
                 waypoint_block_0304_start = spec.get("waypoint_block_0304_start")
                 waypoint_block_0304_end = spec.get("waypoint_block_0304_end")
+                core_phase_ms: Dict[str, float] = {
+                    "divide_and_pattern_ms": 0.0,
+                    "build_0301_load_ms": 0.0,
+                    "collect_missions_ms": 0.0,
+                    "current_hybrid_wait_ms": 0.0,
+                    "current_hybrid_build_ms": 0.0,
+                    "flightpath_0303_ms": 0.0,
+                    "flightpath_0304_ms": 0.0,
+                    "hybrid_merge_ms": 0.0,
+                    "eta_follow_ms": 0.0,
+                }
                 with runtime_settings_override(runtime_payload):
                     iter_out_root = out_root_base / f"variant_{variant_no:02d}"
                     if iter_out_root.exists():
@@ -8794,6 +11008,96 @@ class MainWindow(QMainWindow):
                         },
                     )
                     variant_generated_path_ids: Set[int] = set()
+                    fast_path_result = _build_reexecute_current_fast_path_variant_core(
+                        variant_no=variant_no,
+                        option_code=option_code,
+                        requested_plan_id=requested_plan_id,
+                        cmpk_source_path=cmpk_source_path,
+                        iter_out_root=iter_out_root,
+                        current_remaining_request=current_remaining_request,
+                        shared_current_remaining_future=shared_current_remaining_future,
+                        shared_current_remaining_role=shared_current_remaining_role,
+                        core_phase_ms=core_phase_ms,
+                        variant_generated_path_ids=variant_generated_path_ids,
+                        log_emit=_variant_log,
+                    )
+                    if isinstance(fast_path_result, dict):
+                        flight_plans_0303 = list(fast_path_result.get("flight_plans_0303") or [])
+                        flight_plans_0304 = list(fast_path_result.get("flight_plans_0304") or [])
+                        if flight_plans_0303 and flight_plans_0304:
+                            step_t0 = time.perf_counter()
+                            try:
+                                fast_path_result["flight_plans_0304"] = d0304.apply_uav_eta_follow_speed_plan(
+                                    list(flight_plans_0304),
+                                    list(flight_plans_0303),
+                                )
+                                _variant_log(
+                                    f"[INFO] Applied LAH-UAV ETA follow speed plan (variant={variant_no}, fast-path)"
+                                )
+                            except Exception as exc:
+                                _variant_log(
+                                    f"[WARN] Failed to apply LAH-UAV ETA follow speed plan "
+                                    f"(variant={variant_no}, fast-path): {exc}"
+                                )
+                            finally:
+                                core_phase_ms["eta_follow_ms"] = (time.perf_counter() - step_t0) * 1000.0
+                        if not fast_path_result.get("flight_plans_0303") and not fast_path_result.get("flight_plans_0304"):
+                            _variant_log(f"[ERR] FlightPath generation failed (variant={variant_no}, fast-path)")
+                            raise _VariantCoreError(
+                                "flightpath_generation_failed",
+                                f"FlightPath generation failed (variant={variant_no}, fast-path)",
+                                variant_no=variant_no,
+                            )
+                        _variant_log(
+                            f"[OK] FlightPath counts (variant={variant_no}, fast-path): "
+                            f"0303={len(fast_path_result.get('flight_plans_0303') or [])} / "
+                            f"0304={len(fast_path_result.get('flight_plans_0304') or [])}"
+                        )
+                        _emit_flightpath_metric(
+                            _variant_log,
+                            variant_no=variant_no,
+                            option_code=option_code,
+                            mode="parallel_core_fast_path",
+                            flight_plans_0303=fast_path_result.get("flight_plans_0303") or [],
+                            flight_plans_0304=fast_path_result.get("flight_plans_0304") or [],
+                        )
+                        core_total_ms = (time.perf_counter() - variant_start) * 1000.0
+                        if isinstance(fast_path_result.get("mp_json"), dict):
+                            fast_path_result["mp_json"]["planningTime"] = float(core_total_ms)
+                        _variant_log(
+                            "[REPLAN][METRIC] general_variant_core_phase "
+                            f"variant={int(variant_no)} option={int(option_code)} mode=parallel_core_fast_path "
+                            f"divide_and_pattern_ms={core_phase_ms['divide_and_pattern_ms']:.3f} "
+                            f"build_0301_load_ms={core_phase_ms['build_0301_load_ms']:.3f} "
+                            f"collect_missions_ms={core_phase_ms['collect_missions_ms']:.3f} "
+                            f"current_hybrid_wait_ms={core_phase_ms['current_hybrid_wait_ms']:.3f} "
+                            f"current_hybrid_build_ms={core_phase_ms['current_hybrid_build_ms']:.3f} "
+                            f"flightpath_0303_ms={core_phase_ms['flightpath_0303_ms']:.3f} "
+                            f"flightpath_0304_ms={core_phase_ms['flightpath_0304_ms']:.3f} "
+                            f"hybrid_merge_ms={core_phase_ms['hybrid_merge_ms']:.3f} "
+                            f"eta_follow_ms={core_phase_ms['eta_follow_ms']:.3f} "
+                            f"core_total_ms={float(core_total_ms):.3f}"
+                        )
+                        _variant_timing(
+                            "variant_core_finished",
+                            {
+                                "variant": variant_no,
+                                "option": option_code,
+                                "mode": "parallel_core_fast_path",
+                                "status": "success",
+                                "duration_ms": round(core_total_ms, 3),
+                            },
+                        )
+                        fast_path_result.update(
+                            {
+                                "core_total_ms": core_total_ms,
+                                "core_phase_ms": dict(core_phase_ms),
+                                "log_messages": variant_logs,
+                                "timing_events": variant_timing_events,
+                            }
+                        )
+                        return fast_path_result
+
                     step_t0 = time.perf_counter()
                     _variant_log(f"[STEP 1.{variant_no}] Divide & Pattern start")
                     imp_paths = run_divide_and_pattern(
@@ -8812,6 +11116,7 @@ class MainWindow(QMainWindow):
                             variant_no=variant_no,
                         )
                     step_ms = (time.perf_counter() - step_t0) * 1000.0
+                    core_phase_ms["divide_and_pattern_ms"] = float(step_ms)
                     _variant_log(f"[TIME] divide_and_pattern (variant={variant_no}): {step_ms:.1f} ms")
                     _variant_log(f"[OK] IMP generated: {len(imp_paths)} file(s) (variant={variant_no})")
 
@@ -8822,6 +11127,7 @@ class MainWindow(QMainWindow):
                         str(mrpk_path),
                         imp_paths,
                         str(mp_tmp),
+                        mission_plan_id=0,
                     )
                     if not isinstance(mp_json, dict):
                         with mp_tmp.open(encoding="utf-8") as f:
@@ -8831,6 +11137,7 @@ class MainWindow(QMainWindow):
                         for a in mp_json.get("aircraftList", [])
                     }
                     step_ms = (time.perf_counter() - step_t0) * 1000.0
+                    core_phase_ms["build_0301_load_ms"] = float(step_ms)
                     _variant_log(f"[TIME] build_0301+load (variant={variant_no}): {step_ms:.1f} ms")
                     _variant_log(f"[OK] MissionPlan built: {mp_tmp.name} (variant={variant_no})")
 
@@ -8845,6 +11152,7 @@ class MainWindow(QMainWindow):
                                 im_copy["individualMissionPlanPackageID"] = imp_id_map.get(aid)
                             missions.append(im_copy)
                     step_ms = (time.perf_counter() - step_t0) * 1000.0
+                    core_phase_ms["collect_missions_ms"] = float(step_ms)
                     _variant_log(
                         f"[TIME] collect_missions (variant={variant_no}): {step_ms:.1f} ms, count={len(missions)}"
                     )
@@ -8855,16 +11163,48 @@ class MainWindow(QMainWindow):
                     current_remaining_hybrid_result = None
                     if current_remaining_request is not None:
                         try:
-                            current_remaining_hybrid_result = _build_current_remaining_hybrid_locked(
-                                current_remaining_request,
-                                variant_no=variant_no,
-                                log_emit=_variant_log,
-                            )
+                            if isinstance(shared_current_remaining_future, concurrent.futures.Future):
+                                join_started = time.perf_counter()
+                                current_remaining_hybrid_result = shared_current_remaining_future.result()
+                                join_ms = (time.perf_counter() - join_started) * 1000.0
+                                core_phase_ms["current_hybrid_wait_ms"] = float(join_ms)
+                                core_phase_ms["current_hybrid_build_ms"] = 0.0
+                                _variant_log(
+                                    "[REPLAN][METRIC] current_remaining_hybrid_shared_join "
+                                    f"variant={int(variant_no)} option={int(option_code)} "
+                                    f"role={shared_current_remaining_role or 'shared'} "
+                                    f"join_wait_ms={join_ms:.3f} "
+                                    f"result_available={int(current_remaining_hybrid_result is not None)}"
+                                )
+                            else:
+                                current_remaining_hybrid_result = _build_current_remaining_hybrid_locked(
+                                    current_remaining_request,
+                                    variant_no=variant_no,
+                                    log_emit=_variant_log,
+                                    timing_sink=core_phase_ms,
+                                )
                         except Exception as exc:
                             _variant_log(
                                 f"[WARN] [variant {variant_no}] current remaining collaborative hybrid failed before generic skip: {exc}"
                             )
-                            current_remaining_hybrid_result = None
+                            if isinstance(shared_current_remaining_future, concurrent.futures.Future):
+                                try:
+                                    _variant_log(
+                                        f"[variant {variant_no}] shared current remaining hybrid fallback -> per-variant build"
+                                    )
+                                    current_remaining_hybrid_result = _build_current_remaining_hybrid_locked(
+                                        current_remaining_request,
+                                        variant_no=variant_no,
+                                        log_emit=_variant_log,
+                                        timing_sink=core_phase_ms,
+                                    )
+                                except Exception as fallback_exc:
+                                    _variant_log(
+                                        f"[WARN] [variant {variant_no}] current remaining fallback build failed: {fallback_exc}"
+                                    )
+                                    current_remaining_hybrid_result = None
+                            else:
+                                current_remaining_hybrid_result = None
                         if current_remaining_hybrid_result is not None:
                             skip_result = filter_generic_flightpath_missions_for_hybrid(
                                 generic_unmanned,
@@ -8872,6 +11212,17 @@ class MainWindow(QMainWindow):
                                 hybrid=current_remaining_hybrid_result,
                             )
                             generic_unmanned = list(skip_result.missions)
+                            skip_policy = getattr(skip_result, "skip_policy", {}) or {}
+                            if (
+                                str(getattr(current_remaining_request, "planner_mode", "") or "")
+                                == "reexecute_first_mission"
+                            ):
+                                _variant_log(
+                                    f"[REEXEC-FIRST] generic 0303 skip result: "
+                                    f"policy={skip_policy}, skipped={int(skip_result.skipped_count)}, "
+                                    f"aircraft={sorted(skip_result.skipped_aircraft_ids)}, "
+                                    f"pathIDs={sorted(skip_result.skipped_path_ids)}"
+                                )
                             if int(skip_result.skipped_count) > 0:
                                 _variant_log(
                                     f"[variant {variant_no}] current remaining generic 0303 skipped: "
@@ -8887,6 +11238,7 @@ class MainWindow(QMainWindow):
                         return d0303._WPAllocator(
                             start=int(start_value),
                             end=int(end_value) if end_value is not None else None,
+                            overflow_block_size=int(waypoint_block_size),
                         )
 
                     wp_alloc_0303 = _make_wp_allocator(waypoint_block_0303_start, waypoint_block_0303_end)
@@ -8912,12 +11264,12 @@ class MainWindow(QMainWindow):
                     def _build_0304():
                         start = time.perf_counter()
                         try:
-                            _rv = (load_runtime_settings().get("values") or {})
+                            _rv = (runtime_payload.get("values") or {}) if isinstance(runtime_payload, dict) else {}
                         except Exception:
                             _rv = {}
                         plans = d0304.build_lah_flight_plans_fixed(
                             manned,
-                            cruise_speed=30.0,
+                            cruise_speed=40.0,
                             manned_plan_mode=manned_plan_mode,
                             lah_path_mode=str(_rv.get("lah_path_mode", "linear")),
                             lah_rl_hex_step=int(_rv.get("lah_rl_hex_step", 50)),
@@ -8931,12 +11283,29 @@ class MainWindow(QMainWindow):
                     elapsed_0303_ms = 0.0
                     elapsed_0304_ms = 0.0
                     build_result_0303: Dict[str, Any] | None = None
-                    if generic_unmanned:
+                    flightpath_builds_concurrent = False
+                    if generic_unmanned and manned:
+                        flightpath_builds_concurrent = True
+                        with concurrent.futures.ThreadPoolExecutor(
+                            max_workers=2,
+                            thread_name_prefix="Build0303_0304",
+                        ) as fp_executor:
+                            future_0303 = fp_executor.submit(_build_0303, generic_unmanned)
+                            future_0304 = fp_executor.submit(_build_0304)
+                            build_result_0303 = future_0303.result()
+                            flight_plans_0304, elapsed_0304_ms = future_0304.result()
+                        flight_plans_0303 = list(build_result_0303.get("plans") or [])
+                        elapsed_0303_ms = float(build_result_0303.get("elapsed_ms") or 0.0)
+                        core_phase_ms["flightpath_0303_ms"] = float(elapsed_0303_ms)
+                        core_phase_ms["flightpath_0304_ms"] = float(elapsed_0304_ms)
+                    elif generic_unmanned:
                         build_result_0303 = _build_0303(generic_unmanned)
                         flight_plans_0303 = list(build_result_0303.get("plans") or [])
                         elapsed_0303_ms = float(build_result_0303.get("elapsed_ms") or 0.0)
-                    if manned:
+                        core_phase_ms["flightpath_0303_ms"] = float(elapsed_0303_ms)
+                    if manned and not flightpath_builds_concurrent:
                         flight_plans_0304, elapsed_0304_ms = _build_0304()
+                        core_phase_ms["flightpath_0304_ms"] = float(elapsed_0304_ms)
                     if generic_unmanned or manned:
                         mode_parts = []
                         if build_result_0303 is not None:
@@ -8949,7 +11318,7 @@ class MainWindow(QMainWindow):
                         elif unmanned and current_remaining_hybrid_result is not None:
                             mode_parts.append("0303=skipped_by_current_remaining_hybrid")
                         if manned:
-                            mode_parts.append("0304=sequential")
+                            mode_parts.append("0304=sequential_concurrent" if flightpath_builds_concurrent else "0304=sequential")
                         _variant_log(
                             f"[INFO] FlightPath build mode (variant={variant_no}): "
                             + ", ".join(mode_parts)
@@ -8973,6 +11342,7 @@ class MainWindow(QMainWindow):
 
                     remaining_hybrid_result = None
                     if current_remaining_request is not None:
+                        step_t0 = time.perf_counter()
                         missions, flight_plans_0303, flight_plans_0304, hybrid_path_ids = _apply_current_remaining_hybrid_to_variant(
                             variant_no=variant_no,
                             missions=missions,
@@ -8982,8 +11352,10 @@ class MainWindow(QMainWindow):
                             hybrid_result=current_remaining_hybrid_result,
                             log_emit=_variant_log,
                         )
+                        core_phase_ms["hybrid_merge_ms"] = (time.perf_counter() - step_t0) * 1000.0
                         variant_generated_path_ids.update(int(pid) for pid in hybrid_path_ids if pid is not None)
                     else:
+                        step_t0 = time.perf_counter()
                         remaining_hybrid_result = _apply_remaining_hybrid_customization(
                             variant_no=variant_no,
                             cmpk_source_path=cmpk_source_path,
@@ -8994,8 +11366,10 @@ class MainWindow(QMainWindow):
                                 or int(snapshot_apply_result.get("marked_done") or 0) > 0
                             ),
                         )
+                        core_phase_ms["hybrid_merge_ms"] = (time.perf_counter() - step_t0) * 1000.0
 
                     if flight_plans_0303 and flight_plans_0304:
+                        step_t0 = time.perf_counter()
                         try:
                             flight_plans_0304 = d0304.apply_uav_eta_follow_speed_plan(
                                 list(flight_plans_0304),
@@ -9008,6 +11382,8 @@ class MainWindow(QMainWindow):
                             _variant_log(
                                 f"[WARN] Failed to apply LAH-UAV ETA follow speed plan (variant={variant_no}): {exc}"
                             )
+                        finally:
+                            core_phase_ms["eta_follow_ms"] = (time.perf_counter() - step_t0) * 1000.0
 
                     if not flight_plans_0303 and not flight_plans_0304:
                         _variant_log(f"[ERR] FlightPath generation failed (variant={variant_no})")
@@ -9029,6 +11405,20 @@ class MainWindow(QMainWindow):
                     )
 
                     core_total_ms = (time.perf_counter() - variant_start) * 1000.0
+                    _variant_log(
+                        "[REPLAN][METRIC] general_variant_core_phase "
+                        f"variant={int(variant_no)} option={int(option_code)} mode=parallel_core "
+                        f"divide_and_pattern_ms={core_phase_ms['divide_and_pattern_ms']:.3f} "
+                        f"build_0301_load_ms={core_phase_ms['build_0301_load_ms']:.3f} "
+                        f"collect_missions_ms={core_phase_ms['collect_missions_ms']:.3f} "
+                        f"current_hybrid_wait_ms={core_phase_ms['current_hybrid_wait_ms']:.3f} "
+                        f"current_hybrid_build_ms={core_phase_ms['current_hybrid_build_ms']:.3f} "
+                        f"flightpath_0303_ms={core_phase_ms['flightpath_0303_ms']:.3f} "
+                        f"flightpath_0304_ms={core_phase_ms['flightpath_0304_ms']:.3f} "
+                        f"hybrid_merge_ms={core_phase_ms['hybrid_merge_ms']:.3f} "
+                        f"eta_follow_ms={core_phase_ms['eta_follow_ms']:.3f} "
+                        f"core_total_ms={float(core_total_ms):.3f}"
+                    )
                     _variant_timing(
                         "variant_core_finished",
                         {
@@ -9051,18 +11441,23 @@ class MainWindow(QMainWindow):
                         "flight_plans_0303": flight_plans_0303,
                         "flight_plans_0304": flight_plans_0304,
                         "generated_path_ids": variant_generated_path_ids,
+                        "option_dependent_isolation": _option_dependent_isolation_contract(
+                            variant_no=variant_no,
+                            option_code=option_code,
+                            mode="parallel_core",
+                        ),
                         "current_remaining_hybrid_active": current_remaining_request is not None,
                         "current_remaining_hybrid_applied": current_remaining_hybrid_result is not None,
                         "remaining_hybrid_result": remaining_hybrid_result,
                         "core_total_ms": core_total_ms,
+                        "core_phase_ms": dict(core_phase_ms),
                         "log_messages": variant_logs,
                         "timing_events": variant_timing_events,
                     }
 
-            def _store_general_variant(result: Dict[str, Any]) -> None:
-                nonlocal total_imp_files, total_fp_files
+            def _prepare_general_variant_store(result: Dict[str, Any]) -> Dict[str, Any]:
                 variant_no = int(result["variant_no"])
-                variant_store_start = time.perf_counter()
+                variant_store_prepare_start = time.perf_counter()
                 requested_plan_id = result.get("requested_plan_id")
                 option_code = int(result["option_code"])
                 iter_out_root = Path(result["iter_out_root"])
@@ -9073,12 +11468,48 @@ class MainWindow(QMainWindow):
                 flight_plans_0304 = result["flight_plans_0304"]
                 remaining_hybrid_result = result.get("remaining_hybrid_result")
                 current_remaining_parallel = bool(result.get("current_remaining_hybrid_active"))
-                generated_path_ids.update(int(val) for val in (result.get("generated_path_ids") or set()) if val is not None)
+                option_dependent_isolation = dict(result.get("option_dependent_isolation") or {})
+                try:
+                    store_json_write_workers = max(
+                        1,
+                        int(
+                            result.get("store_json_write_workers")
+                            or _general_parallel_runtime_config().get("replan_store_json_write_workers")
+                            or 2
+                        ),
+                    )
+                except Exception:
+                    store_json_write_workers = 2
+                variant_generated_path_ids: Set[int] = {
+                    int(val) for val in (result.get("generated_path_ids") or set()) if val is not None
+                }
+                store_phase_ms: Dict[str, float] = {
+                    "pathID_mapping_ms": 0.0,
+                    "build_0302_ms": 0.0,
+                    "validate_ms": 0.0,
+                    "serialize_0302_ms": 0.0,
+                    "serialize_flightpath_ms": 0.0,
+                    "write_0302_ms": 0.0,
+                    "write_flightpath_ms": 0.0,
+                    "write_artifacts_ms": 0.0,
+                    "repair_flightpath_ms": 0.0,
+                    "write_0301_ms": 0.0,
+                    "waypoint_mark_ms": 0.0,
+                    "carry_forward_snapshot_ms": 0.0,
+                    "store_prepare_ms": 0.0,
+                    "store_commit_ms": 0.0,
+                    "store_total_ms": 0.0,
+                }
 
                 pre_path_snapshot = _snapshot_mission_path_ids(missions)
                 step_t0 = time.perf_counter()
-                pid_map = _assign_fresh_path_ids(missions, generated_path_ids)
+                pid_map = _assign_fresh_path_ids(
+                    missions,
+                    variant_generated_path_ids,
+                    reserved_path_ids_by_aircraft=result.get("reserved_path_ids_by_aircraft") or {},
+                )
                 step_ms = (time.perf_counter() - step_t0) * 1000.0
+                store_phase_ms["pathID_mapping_ms"] = float(step_ms)
                 if current_remaining_parallel:
                     self.log_sig.emit(
                         f"[TIME] pathID_mapping (variant={variant_no}, current_remaining_parallel_store): {step_ms:.1f} ms"
@@ -9105,6 +11536,18 @@ class MainWindow(QMainWindow):
                     self.log_sig.emit(
                         f"[INFO] FlightPath pathID enforced (variant={variant_no}): 0303={fixed3}, 0304={fixed4}"
                     )
+                duplicate_repairs = _repair_duplicate_flightpath_path_ids(
+                    missions=missions,
+                    flight_plans_0303=flight_plans_0303,
+                    flight_plans_0304=flight_plans_0304,
+                    generated_path_ids=variant_generated_path_ids,
+                    pid_map=pid_map,
+                )
+                if duplicate_repairs:
+                    self.log_sig.emit(
+                        f"[WARN] FlightPath duplicate pathID repaired before write "
+                        f"(variant={variant_no}): fixed={duplicate_repairs}"
+                    )
                 _validate_unique_flightpath_ids(
                     variant_no=variant_no,
                     flight_plans_0303=flight_plans_0303,
@@ -9115,7 +11558,7 @@ class MainWindow(QMainWindow):
                     flight_plans_0303=flight_plans_0303,
                     variant_no=variant_no,
                 )
-                expected_path_ids = {int(pid) for pid in pid_map.values() if pid is not None}
+                expected_path_ids = _expected_mission_path_ids(missions)
                 available_path_ids = _collect_valid_path_ids(flight_plans_0303)
                 available_path_ids.update(_collect_valid_path_ids(flight_plans_0304))
                 missing_path_ids = sorted(pid for pid in expected_path_ids if pid not in available_path_ids)
@@ -9128,18 +11571,27 @@ class MainWindow(QMainWindow):
                         f"FlightPath generation incomplete (variant={variant_no}): missing pathID(s) {missing_summary}"
                     )
 
-                plan_id_value = requested_plan_id if requested_plan_id is not None else mp_json.get("missionPlanID")
-                try:
-                    preferred_plan_id = int(plan_id_value)
-                except Exception:
-                    preferred_plan_id = None
-                plan_id = _allocate_plan_id(preferred_plan_id)
+                plan_id, plan_id_contract = _allocate_general_variant_plan_id(
+                    variant_no=variant_no,
+                    option_code=option_code,
+                    requested_plan_id=requested_plan_id,
+                    generated_plan_json=mp_json,
+                )
                 mp_json["missionPlanID"] = plan_id
-                imp_id_map = _allocate_imp_id_map(mp_json)
+                imp_id_map = _allocate_imp_id_map(
+                    mp_json,
+                    reserved_imp_ids=result.get("reserved_imp_ids") or [],
+                )
 
                 step_t0 = time.perf_counter()
-                imp_pkgs = d0302.build_mission_packages(missions, cmpk_id=cmpk_id, plan_pkg_map=imp_id_map)
+                imp_pkgs = d0302.build_mission_packages(
+                    missions,
+                    cmpk_id=cmpk_id,
+                    plan_pkg_map=imp_id_map,
+                    reserved_individual_mission_ids=result.get("reserved_individual_mission_ids") or [],
+                )
                 step_ms = (time.perf_counter() - step_t0) * 1000.0
+                store_phase_ms["build_0302_ms"] = float(step_ms)
                 self.log_sig.emit(
                     f"[TIME] build_0302 (variant={variant_no}): {step_ms:.1f} ms, packages={len(imp_pkgs)}"
                 )
@@ -9155,85 +11607,386 @@ class MainWindow(QMainWindow):
                     flight_plans_0303=flight_plans_0303,
                     flight_plans_0304=flight_plans_0304,
                 )
-
                 step_t0 = time.perf_counter()
+                validation_summary = validate_replan_payloads(
+                    mission_plan=mp_json,
+                    individual_mission_plans=imp_pkgs,
+                    flight_paths=list(flight_plans_0303 or []) + list(flight_plans_0304 or []),
+                    scope=f"generalFallback:{plan_id}",
+                    allow_existing_db_artifacts=True,
+                    log=self.log_sig.emit,
+                )
+                step_ms = (time.perf_counter() - step_t0) * 1000.0
+                store_phase_ms["validate_ms"] = float(step_ms)
+                self.log_sig.emit(
+                    f"[TIME] validate_general_variant (variant={variant_no}): {step_ms:.1f} ms"
+                )
+
                 imp_write_rows: list[tuple[Path, Any]] = []
+                prepared_imp_ids: Set[int] = set()
                 for pkg in imp_pkgs:
                     imp_id = pkg.get("individualMissionPackageID") or pkg.get("individualMissionPlanPackageID")
                     if imp_id is None:
                         continue
                     try:
-                        generated_imp_ids.add(int(imp_id))
+                        prepared_imp_ids.add(int(imp_id))
                     except Exception:
                         pass
                     imp_write_rows.append((dir_imp / f"{int(imp_id)}.json", pkg))
-                _write_json_batch(imp_write_rows, pretty=True)
-                total_imp_files += len(imp_pkgs)
-                step_ms = (time.perf_counter() - step_t0) * 1000.0
-                self.log_sig.emit(
-                    f"[TIME] write_0302 (variant={variant_no}): {step_ms:.1f} ms, files={len(imp_pkgs)}"
-                )
 
-                def _dump_fp(target_dir, fps):
+                def _build_fp_rows(target_dir, fps):
                     rows: list[tuple[Path, Any]] = []
+                    ids: Set[int] = set()
                     for fp in fps:
                         pid = fp.get("pathID")
                         if pid is None:
                             continue
                         rows.append((target_dir / f"{int(pid)}.json", fp))
                         try:
-                            stored_path_ids.add(int(pid))
+                            ids.add(int(pid))
                         except Exception:
                             pass
-                    _write_json_batch(rows, pretty=True)
-                    return len(rows)
+                    return rows, ids
 
+                fp_write_rows_0303, fp_ids_0303 = _build_fp_rows(dir_fp, flight_plans_0303)
+                fp_write_rows_0304, fp_ids_0304 = _build_fp_rows(dir_fp, flight_plans_0304)
+                fp_count_0303 = len(fp_write_rows_0303)
+                fp_count_0304 = len(fp_write_rows_0304)
                 step_t0 = time.perf_counter()
-                fp_count_0303 = _dump_fp(dir_fp, flight_plans_0303)
-                fp_count_0304 = _dump_fp(dir_fp, flight_plans_0304)
-                total_fp_files += fp_count_0303 + fp_count_0304
-                step_ms = (time.perf_counter() - step_t0) * 1000.0
+                imp_write_bytes_rows = _serialize_json_batch(
+                    imp_write_rows,
+                    pretty=True,
+                    max_workers=1,
+                )
+                store_phase_ms["serialize_0302_ms"] = (time.perf_counter() - step_t0) * 1000.0
+                step_t0 = time.perf_counter()
+                fp_write_rows_all = list(fp_write_rows_0303) + list(fp_write_rows_0304)
+                fp_write_bytes_rows_all = _serialize_json_batch(
+                    fp_write_rows_all,
+                    pretty=False,
+                    max_workers=store_json_write_workers,
+                )
+                fp_split_idx = len(fp_write_rows_0303)
+                fp_write_bytes_rows_0303 = fp_write_bytes_rows_all[:fp_split_idx]
+                fp_write_bytes_rows_0304 = fp_write_bytes_rows_all[fp_split_idx:]
+                store_phase_ms["serialize_flightpath_ms"] = (time.perf_counter() - step_t0) * 1000.0
+                prepare_total_ms = (time.perf_counter() - variant_store_prepare_start) * 1000.0
+                store_phase_ms["store_prepare_ms"] = float(prepare_total_ms)
+                result["store_phase_ms"] = dict(store_phase_ms)
+                result["store_prepare_total_ms"] = float(prepare_total_ms)
+                result["store_prepare_wait_for_order_ms"] = float(
+                    result.get("store_prepare_wait_for_order_ms") or 0.0
+                )
+                result["store_prepare_queue_wait_ms"] = float(
+                    result.get("store_prepare_queue_wait_ms") or result.get("store_prepare_wait_for_order_ms") or 0.0
+                )
+                result["store_prepare_enqueue_total_wait_ms"] = float(
+                    result.get("store_prepare_enqueue_total_wait_ms") or 0.0
+                )
                 self.log_sig.emit(
-                    f"[TIME] write_FlightPath (variant={variant_no}): {step_ms:.1f} ms, files={fp_count_0303 + fp_count_0304}"
+                    "[REPLAN][METRIC] general_variant_store_prepare_phase "
+                    f"variant={int(variant_no)} option={int(option_code)} mode=parallel_store_prepare "
+                    f"wait_for_order_ms={float(result.get('store_prepare_wait_for_order_ms') or 0.0):.3f} "
+                    f"queue_wait_ms={float(result.get('store_prepare_queue_wait_ms') or 0.0):.3f} "
+                    f"enqueue_total_wait_ms={float(result.get('store_prepare_enqueue_total_wait_ms') or 0.0):.3f} "
+                    f"path_id_reservation_ms={float(result.get('path_id_reservation_ms') or 0.0):.3f} "
+                    f"pathID_mapping_ms={store_phase_ms['pathID_mapping_ms']:.3f} "
+                    f"build_0302_ms={store_phase_ms['build_0302_ms']:.3f} "
+                    f"validate_ms={store_phase_ms['validate_ms']:.3f} "
+                    f"serialize_0302_ms={store_phase_ms['serialize_0302_ms']:.3f} "
+                    f"serialize_flightpath_ms={store_phase_ms['serialize_flightpath_ms']:.3f} "
+                    "flightpath_json_pretty=0 "
+                    f"imp_files={len(imp_pkgs)} fp_files={fp_count_0303 + fp_count_0304} "
+                    f"store_json_write_workers={int(store_json_write_workers)} "
+                    f"store_prepare_ms={float(prepare_total_ms):.3f}"
                 )
-                _emit_flightpath_write_metric(
-                    self.log_sig.emit,
-                    variant_no=variant_no,
-                    option_code=option_code,
-                    mode="parallel_store",
-                    files_0303=fp_count_0303,
-                    files_0304=fp_count_0304,
-                    write_ms=step_ms,
-                )
-                repaired_fp_count, missing_fp_ids = _repair_missing_flight_path_files(
-                    variant_no=variant_no,
-                    dir_fp=dir_fp,
-                    imp_pkgs=imp_pkgs,
-                    flight_plans_0303=flight_plans_0303,
-                    flight_plans_0304=flight_plans_0304,
-                )
-                if missing_fp_ids:
-                    missing_summary = ", ".join(str(pid) for pid in missing_fp_ids)
+                return {
+                    "result": result,
+                    "variant_no": variant_no,
+                    "option_code": option_code,
+                    "iter_out_root": iter_out_root,
+                    "plan_id": plan_id,
+                    "plan_id_contract": plan_id_contract,
+                    "mp_json": mp_json,
+                    "imp_pkgs": imp_pkgs,
+                    "flight_plans_0303": flight_plans_0303,
+                    "flight_plans_0304": flight_plans_0304,
+                    "imp_write_rows": imp_write_rows,
+                    "imp_write_bytes_rows": imp_write_bytes_rows,
+                    "fp_write_rows_0303": fp_write_rows_0303,
+                    "fp_write_rows_0304": fp_write_rows_0304,
+                    "fp_write_bytes_rows_0303": fp_write_bytes_rows_0303,
+                    "fp_write_bytes_rows_0304": fp_write_bytes_rows_0304,
+                    "fp_count_0303": fp_count_0303,
+                    "fp_count_0304": fp_count_0304,
+                    "prepared_imp_ids": prepared_imp_ids,
+                    "prepared_path_ids": set(fp_ids_0303).union(fp_ids_0304),
+                    "variant_generated_path_ids": variant_generated_path_ids,
+                    "remaining_hybrid_result": remaining_hybrid_result,
+                    "option_dependent_isolation": option_dependent_isolation,
+                    "validation_summary": validation_summary,
+                    "store_phase_ms": store_phase_ms,
+                    "prepare_total_ms": float(prepare_total_ms),
+                    "store_json_write_workers": int(store_json_write_workers),
+                    "defer_waypoint_files_written_mark": bool(
+                        result.get("defer_waypoint_files_written_mark")
+                    ),
+                    "defer_snapshot_carry_forward": bool(result.get("defer_snapshot_carry_forward")),
+                }
+
+            def _write_general_variant_store_files(staged: Dict[str, Any]) -> Dict[str, Any]:
+                result = staged["result"]
+                variant_no = int(staged["variant_no"])
+                option_code = int(staged["option_code"])
+                plan_id = int(staged["plan_id"])
+                mp_json = staged["mp_json"]
+                imp_pkgs = staged["imp_pkgs"]
+                flight_plans_0303 = staged["flight_plans_0303"]
+                flight_plans_0304 = staged["flight_plans_0304"]
+                store_phase_ms: Dict[str, float] = dict(staged.get("store_phase_ms") or {})
+                try:
+                    store_json_write_workers = max(1, int(staged.get("store_json_write_workers") or 2))
+                except Exception:
+                    store_json_write_workers = 2
+                file_commit_start = time.perf_counter()
+                created_final_paths: list[Path] = []
+
+                def _split_write_results(results: list[bool], first_count: int) -> tuple[int, int]:
+                    split_idx = max(0, min(int(first_count), len(results)))
+                    first_written = sum(1 for written in results[:split_idx] if written)
+                    second_written = sum(1 for written in results[split_idx:] if written)
+                    return int(first_written), int(second_written)
+
+                def _track_new_paths(rows: list[tuple[Path, Any]]) -> None:
+                    for path, _payload in rows or []:
+                        try:
+                            if not Path(path).exists():
+                                created_final_paths.append(Path(path))
+                        except Exception:
+                            continue
+
+                try:
+                    imp_write_rows = list(staged.get("imp_write_bytes_rows") or staged.get("imp_write_rows") or [])
+                    fp_write_rows_0303 = list(
+                        staged.get("fp_write_bytes_rows_0303") or staged.get("fp_write_rows_0303") or []
+                    )
+                    fp_write_rows_0304 = list(
+                        staged.get("fp_write_bytes_rows_0304") or staged.get("fp_write_rows_0304") or []
+                    )
+                    fp_write_rows_all = fp_write_rows_0303 + fp_write_rows_0304
+                    artifact_write_rows = imp_write_rows + fp_write_rows_all
+                    _track_new_paths(artifact_write_rows)
+                    all_artifact_paths_new = len(created_final_paths) == len(artifact_write_rows)
+                    step_t0 = time.perf_counter()
+                    artifact_write_results = _write_json_bytes_batch_results(
+                        artifact_write_rows,
+                        max_workers=store_json_write_workers,
+                        skip_if_unchanged=not all_artifact_paths_new,
+                    )
+                    artifact_write_ms = (time.perf_counter() - step_t0) * 1000.0
+                    imp_written_count, fp_written_count = _split_write_results(
+                        artifact_write_results,
+                        len(imp_write_rows),
+                    )
+                    fp_results = artifact_write_results[len(imp_write_rows):]
+                    fp_count_0303, fp_count_0304 = _split_write_results(
+                        fp_results,
+                        len(fp_write_rows_0303),
+                    )
+                    store_phase_ms["write_0302_ms"] = float(artifact_write_ms if imp_write_rows and not fp_write_rows_all else 0.0)
+                    store_phase_ms["write_flightpath_ms"] = float(artifact_write_ms if fp_write_rows_all else 0.0)
+                    store_phase_ms["write_artifacts_ms"] = float(artifact_write_ms)
                     self.log_sig.emit(
-                        f"[ERR] FlightPath write incomplete (variant={variant_no}): missing pathID(s) {missing_summary}"
+                        f"[TIME] write_0302+FlightPath (variant={variant_no}): {artifact_write_ms:.1f} ms, "
+                        f"impFiles={len(imp_pkgs)}, fpFiles={fp_count_0303 + fp_count_0304}, "
+                        f"written={imp_written_count + fp_written_count}"
                     )
-                    raise RuntimeError(
-                        f"FlightPath write incomplete (variant={variant_no}): missing pathID(s) {missing_summary}"
-                    )
-                if repaired_fp_count:
                     step_ms = (time.perf_counter() - step_t0) * 1000.0
                     self.log_sig.emit(
-                        f"[TIME] write_FlightPath+repair (variant={variant_no}): {step_ms:.1f} ms"
+                        f"[TIME] write_FlightPath (variant={variant_no}, combined): {step_ms:.1f} ms, files={fp_count_0303 + fp_count_0304}"
                     )
+                    _emit_flightpath_write_metric(
+                        self.log_sig.emit,
+                        variant_no=variant_no,
+                        option_code=option_code,
+                        mode="parallel_store",
+                        files_0303=fp_count_0303,
+                        files_0304=fp_count_0304,
+                        write_ms=step_ms,
+                    )
+                    repair_t0 = time.perf_counter()
+                    repaired_fp_count, missing_fp_ids = _repair_missing_flight_path_files(
+                        variant_no=variant_no,
+                        dir_fp=dir_fp,
+                        imp_pkgs=imp_pkgs,
+                        flight_plans_0303=flight_plans_0303,
+                        flight_plans_0304=flight_plans_0304,
+                    )
+                    store_phase_ms["repair_flightpath_ms"] = (time.perf_counter() - repair_t0) * 1000.0
+                    if missing_fp_ids:
+                        missing_summary = ", ".join(str(pid) for pid in missing_fp_ids)
+                        self.log_sig.emit(
+                            f"[ERR] FlightPath write incomplete (variant={variant_no}): missing pathID(s) {missing_summary}"
+                        )
+                        raise RuntimeError(
+                            f"FlightPath write incomplete (variant={variant_no}): missing pathID(s) {missing_summary}"
+                        )
+                    if repaired_fp_count:
+                        step_ms = (time.perf_counter() - step_t0) * 1000.0
+                        store_phase_ms["write_flightpath_ms"] = float(step_ms)
+                        self.log_sig.emit(
+                            f"[TIME] write_FlightPath+repair (variant={variant_no}): {step_ms:.1f} ms"
+                        )
+                    max_waypoint_id = _max_waypoint_id_from_flight_plans(
+                        flight_plans_0303,
+                        flight_plans_0304,
+                    )
+                    try:
+                        if not bool(staged.get("defer_waypoint_files_written_mark")):
+                            waypoint_mark_t0 = time.perf_counter()
+                            mark_waypoint_files_written(max_waypoint_id)
+                            store_phase_ms["waypoint_mark_ms"] = (
+                                time.perf_counter() - waypoint_mark_t0
+                            ) * 1000.0
+                    except Exception:
+                        pass
 
-                variant_total_ms = float(result.get("core_total_ms") or 0.0) + (time.perf_counter() - variant_store_start) * 1000.0
-                step_t0 = time.perf_counter()
-                mp_json["planningTime"] = variant_total_ms
-                write_json(dir_mp / f"{plan_id}.json", mp_json, pretty=True, ensure_ascii=False, skip_if_unchanged=True)
-                step_ms = (time.perf_counter() - step_t0) * 1000.0
-                self.log_sig.emit(f"[TIME] write_0301 (variant={variant_no}): {step_ms:.1f} ms")
+                    variant_total_ms = (
+                        float(result.get("core_total_ms") or 0.0)
+                        + float(staged.get("prepare_total_ms") or 0.0)
+                        + (time.perf_counter() - file_commit_start) * 1000.0
+                    )
+                    step_t0 = time.perf_counter()
+                    mp_json["planningTime"] = variant_total_ms
+                    mp_path = dir_mp / f"{plan_id}.json"
+                    if not mp_path.exists():
+                        created_final_paths.append(mp_path)
+                    write_json(mp_path, mp_json, pretty=True, ensure_ascii=False, skip_if_unchanged=True)
+                    step_ms = (time.perf_counter() - step_t0) * 1000.0
+                    store_phase_ms["write_0301_ms"] = float(step_ms)
+                    self.log_sig.emit(f"[TIME] write_0301 (variant={variant_no}): {step_ms:.1f} ms")
+                    store_phase_ms["store_file_commit_ms"] = (time.perf_counter() - file_commit_start) * 1000.0
+                    return {
+                        "staged": staged,
+                        "result": result,
+                        "variant_no": variant_no,
+                        "option_code": option_code,
+                        "plan_id": plan_id,
+                        "mp_json": mp_json,
+                        "imp_pkgs": imp_pkgs,
+                        "flight_plans_0303": flight_plans_0303,
+                        "flight_plans_0304": flight_plans_0304,
+                        "fp_count_0303": int(fp_count_0303),
+                        "fp_count_0304": int(fp_count_0304),
+                        "store_phase_ms": dict(store_phase_ms),
+                        "variant_total_ms": float(variant_total_ms),
+                        "created_final_paths": list(created_final_paths),
+                        "store_json_write_workers": int(store_json_write_workers),
+                        "max_waypoint_id": max_waypoint_id,
+                    }
+                except Exception:
+                    for path in reversed(created_final_paths):
+                        try:
+                            if path.exists():
+                                path.unlink()
+                        except Exception:
+                            pass
+                    raise
+
+            def _finalize_general_variant_store(committed: Dict[str, Any]) -> None:
+                nonlocal total_imp_files, total_fp_files
+                staged = committed["staged"]
+                result = committed["result"]
+                variant_no = int(committed["variant_no"])
+                option_code = int(committed["option_code"])
+                iter_out_root = Path(staged["iter_out_root"])
+                plan_id = int(committed["plan_id"])
+                plan_id_contract = dict(staged.get("plan_id_contract") or {})
+                imp_pkgs = committed["imp_pkgs"]
+                remaining_hybrid_result = staged.get("remaining_hybrid_result")
+                option_dependent_isolation = dict(staged.get("option_dependent_isolation") or {})
+                variant_generated_path_ids: Set[int] = {
+                    int(val) for val in (staged.get("variant_generated_path_ids") or set()) if val is not None
+                }
+                validation_summary = staged.get("validation_summary")
+                store_phase_ms: Dict[str, float] = dict(committed.get("store_phase_ms") or {})
+                try:
+                    store_json_write_workers = max(1, int(committed.get("store_json_write_workers") or 2))
+                except Exception:
+                    store_json_write_workers = 2
+                finalize_start = time.perf_counter()
+                snapshot_reason = (
+                    "general_remaining_hybrid"
+                    if getattr(remaining_hybrid_result, "applied", False)
+                    else "general_fallback"
+                )
+                defer_snapshot_carry = bool(staged.get("defer_snapshot_carry_forward"))
+                if defer_snapshot_carry:
+                    source_id = _positive_int_or_none(snapshot_source_plan_id)
+                    target_id = _positive_int_or_none(plan_id)
+                    snapshot_carry_forward = {
+                        "sourceMissionPlanID": source_id,
+                        "targetMissionPlanID": target_id,
+                        "carried": False,
+                        "path": None,
+                        "reason": str(snapshot_reason or ""),
+                        "deferred": bool(source_id is not None and target_id is not None),
+                    }
+                    if source_id is not None and target_id is not None:
+                        result["post_delivery_snapshot_carry_forward_item"] = {
+                            "sourceMissionPlanID": int(source_id),
+                            "targetMissionPlanID": int(target_id),
+                            "variant": int(variant_no),
+                            "reason": str(snapshot_reason or ""),
+                        }
+                        snapshot_carry_forward["scheduledPostDelivery"] = True
+                    store_phase_ms["carry_forward_snapshot_ms"] = 0.0
+                else:
+                    step_t0 = time.perf_counter()
+                    snapshot_carry_forward = _carry_forward_mission_area_snapshot(
+                        variant_no=variant_no,
+                        plan_id=plan_id,
+                        reason=snapshot_reason,
+                    )
+                    store_phase_ms["carry_forward_snapshot_ms"] = (time.perf_counter() - step_t0) * 1000.0
+                store_phase_ms["store_finalize_ms"] = (time.perf_counter() - finalize_start) * 1000.0
+                store_phase_ms["store_commit_ms"] = float(store_phase_ms.get("store_file_commit_ms") or 0.0) + float(
+                    store_phase_ms["store_finalize_ms"]
+                )
+                store_phase_ms["store_total_ms"] = float(staged.get("prepare_total_ms") or 0.0) + float(
+                    store_phase_ms["store_commit_ms"]
+                )
+                result["store_phase_ms"] = dict(store_phase_ms)
+                result["store_total_ms"] = float(store_phase_ms["store_total_ms"])
+                result["variant_wall_total_ms"] = float(result.get("core_total_ms") or 0.0) + float(
+                    store_phase_ms["store_total_ms"]
+                )
+                variant_total_ms = float(committed.get("variant_total_ms") or 0.0)
                 self.log_sig.emit(
-                    f"[OK] Stored variant {variant_no}: MissionPlanID={plan_id}, IMP={len(imp_pkgs)}, FlightPath={fp_count_0303 + fp_count_0304}"
+                    "[REPLAN][METRIC] general_variant_store_phase "
+                    f"variant={int(variant_no)} option={int(option_code)} mode=parallel_store "
+                    f"pathID_mapping_ms={store_phase_ms['pathID_mapping_ms']:.3f} "
+                    f"build_0302_ms={store_phase_ms['build_0302_ms']:.3f} "
+                    f"validate_ms={store_phase_ms['validate_ms']:.3f} "
+                    f"serialize_0302_ms={float(store_phase_ms.get('serialize_0302_ms') or 0.0):.3f} "
+                    f"serialize_flightpath_ms={float(store_phase_ms.get('serialize_flightpath_ms') or 0.0):.3f} "
+                    f"write_0302_ms={store_phase_ms['write_0302_ms']:.3f} "
+                    f"write_flightpath_ms={store_phase_ms['write_flightpath_ms']:.3f} "
+                    f"write_artifacts_ms={float(store_phase_ms.get('write_artifacts_ms') or 0.0):.3f} "
+                    f"repair_flightpath_ms={float(store_phase_ms.get('repair_flightpath_ms') or 0.0):.3f} "
+                    f"write_0301_ms={store_phase_ms['write_0301_ms']:.3f} "
+                    f"waypoint_mark_ms={float(store_phase_ms.get('waypoint_mark_ms') or 0.0):.3f} "
+                    f"defer_waypoint_mark={int(bool(staged.get('defer_waypoint_files_written_mark')))} "
+                    f"carry_forward_snapshot_ms={store_phase_ms['carry_forward_snapshot_ms']:.3f} "
+                    f"store_prepare_ms={store_phase_ms['store_prepare_ms']:.3f} "
+                    f"store_file_commit_ms={float(store_phase_ms.get('store_file_commit_ms') or 0.0):.3f} "
+                    f"store_finalize_ms={store_phase_ms['store_finalize_ms']:.3f} "
+                    f"store_json_write_workers={int(store_json_write_workers)} "
+                    f"store_commit_ms={store_phase_ms['store_commit_ms']:.3f} "
+                    f"store_total_ms={store_phase_ms['store_total_ms']:.3f}"
+                )
+                self.log_sig.emit(
+                    f"[OK] Stored variant {variant_no}: MissionPlanID={plan_id}, IMP={len(imp_pkgs)}, FlightPath={int(committed['fp_count_0303']) + int(committed['fp_count_0304'])}"
                 )
                 self._record_replan_timing_event(
                     "variant_finished",
@@ -9247,8 +12000,26 @@ class MainWindow(QMainWindow):
                 )
                 self.log_sig.emit(f"[TIME] variant_total (variant={variant_no}): {variant_total_ms:.1f} ms")
 
+                generated_imp_ids.update(int(value) for value in (staged.get("prepared_imp_ids") or set()))
+                stored_path_ids.update(int(value) for value in (staged.get("prepared_path_ids") or set()))
+                total_imp_files += len(imp_pkgs)
+                total_fp_files += int(committed["fp_count_0303"]) + int(committed["fp_count_0304"])
                 generated_plan_ids.append(plan_id)
                 option_codes_out.append(int(option_code))
+                generated_path_ids.update(variant_generated_path_ids)
+                plan_meta_map.setdefault(int(plan_id), {}).update(
+                    {
+                        "variant": int(variant_no),
+                        "optionCode": int(option_code),
+                        "requestedMissionPlanID": plan_id_contract["requestedMissionPlanID"],
+                        "missionPlanIDMatchesRequest": plan_id_contract["missionPlanIDMatchesRequest"],
+                        "planIDContract": plan_id_contract,
+                        "optionDependentIsolation": option_dependent_isolation,
+                        "currentRemainingHybridSharePolicy": copy.deepcopy(current_remaining_hybrid_share_policy),
+                        "missionAreaSnapshotCarryForward": snapshot_carry_forward,
+                        "validation": validation_summary,
+                    }
+                )
                 if getattr(remaining_hybrid_result, "applied", False):
                     plan_meta_map.setdefault(int(plan_id), {}).update(
                         {
@@ -9265,6 +12036,9 @@ class MainWindow(QMainWindow):
                             "remainingHybridWorkflow": str(
                                 getattr(remaining_hybrid_result, "planner_workflow", "") or ""
                             ),
+                            "remainingHybridValidation": copy.deepcopy(
+                                getattr(remaining_hybrid_result, "validation", None) or {}
+                            ),
                         }
                     )
                 self.log_sig.emit(
@@ -9274,6 +12048,32 @@ class MainWindow(QMainWindow):
                     shutil.rmtree(iter_out_root)
                 except Exception:
                     pass
+
+            def _cleanup_committed_store_files(committed_rows: list[Dict[str, Any]]) -> None:
+                for committed in reversed(committed_rows or []):
+                    for path in reversed(committed.get("created_final_paths") or []):
+                        try:
+                            path = Path(path)
+                            if path.exists():
+                                path.unlink()
+                        except Exception:
+                            pass
+
+            def _commit_general_variant_store(staged: Dict[str, Any]) -> None:
+                committed = _write_general_variant_store_files(staged)
+                _finalize_general_variant_store(committed)
+
+            def _store_general_variant(result: Dict[str, Any]) -> None:
+                if "reserved_path_ids_by_aircraft" not in result:
+                    result["reserved_path_ids_by_aircraft"] = _reserve_fresh_path_ids_for_missions(
+                        result.get("missions") or []
+                    )
+                result.setdefault(
+                    "store_json_write_workers",
+                    int(_general_parallel_runtime_config().get("replan_store_json_write_workers") or 2),
+                )
+                staged = _prepare_general_variant_store(result)
+                _commit_general_variant_store(staged)
 
             def _flush_parallel_variant_diagnostics(result: Dict[str, Any]) -> None:
                 for event_payload in list(result.get("timing_events") or []):
@@ -9290,11 +12090,166 @@ class MainWindow(QMainWindow):
                 result["timing_events"] = []
                 result["log_messages"] = []
 
+            def _record_general_3_option_summary(results_by_idx: Dict[int, Dict[str, Any]]) -> None:
+                if not results_by_idx:
+                    return
+                ordered_results = [
+                    results_by_idx[idx]
+                    for idx in sorted(results_by_idx)
+                    if isinstance(results_by_idx.get(idx), dict)
+                ]
+                if not ordered_results:
+                    return
+                timing = ctx.get("_replan_timing") if isinstance(ctx, dict) else {}
+                timing = timing if isinstance(timing, dict) else {}
+                try:
+                    base_perf = float(timing.get("base_perf"))
+                    total_ms = max(0.0, (time.perf_counter() - base_perf) * 1000.0)
+                except Exception:
+                    total_ms = 0.0
+                core_rows = [
+                    (
+                        float(row.get("core_total_ms") or 0.0),
+                        int(row.get("variant_no") or 0),
+                        int(row.get("option_code") or 0),
+                    )
+                    for row in ordered_results
+                ]
+                total_rows = [
+                    (
+                        float(row.get("variant_wall_total_ms") or row.get("core_total_ms") or 0.0),
+                        int(row.get("variant_no") or 0),
+                        int(row.get("option_code") or 0),
+                    )
+                    for row in ordered_results
+                ]
+                max_core_ms, max_core_variant, max_core_option = max(core_rows, default=(0.0, 0, 0))
+                max_total_ms, critical_variant, critical_option = max(total_rows, default=(0.0, 0, 0))
+                store_total_ms = sum(float(row.get("store_total_ms") or 0.0) for row in ordered_results)
+                summary_perf = time.perf_counter()
+                core_ready_perfs = [
+                    float(row.get("store_core_result_ready_perf") or 0.0)
+                    for row in ordered_results
+                    if float(row.get("store_core_result_ready_perf") or 0.0) > 0.0
+                ]
+                if core_ready_perfs:
+                    store_wall_tail_ms = max(0.0, (summary_perf - max(core_ready_perfs)) * 1000.0)
+                else:
+                    store_wall_tail_ms = max(0.0, float(total_ms) - float(max_core_ms))
+                store_prepare_order_wait_values = [
+                    float(row.get("store_prepare_wait_for_order_ms") or 0.0)
+                    for row in ordered_results
+                ]
+                store_prepare_queue_wait_values = [
+                    float(row.get("store_prepare_queue_wait_ms") or row.get("store_prepare_wait_for_order_ms") or 0.0)
+                    for row in ordered_results
+                ]
+                store_prepare_path_reservation_values = [
+                    float(row.get("path_id_reservation_ms") or 0.0)
+                    for row in ordered_results
+                ]
+                store_prepare_cross_path_reservation_values = [
+                    float(row.get("cross_path_id_reservation_ms") or 0.0)
+                    for row in ordered_results
+                ]
+                store_prepare_enqueue_total_wait_values = [
+                    float(row.get("store_prepare_enqueue_total_wait_ms") or 0.0)
+                    for row in ordered_results
+                ]
+                store_prepare_order_wait_ms = max(store_prepare_order_wait_values, default=0.0)
+                store_prepare_order_wait_total_ms = sum(store_prepare_order_wait_values)
+                store_prepare_queue_wait_ms = max(store_prepare_queue_wait_values, default=0.0)
+                store_prepare_queue_wait_total_ms = sum(store_prepare_queue_wait_values)
+                store_prepare_path_id_reservation_ms = max(store_prepare_path_reservation_values, default=0.0)
+                store_prepare_path_id_reservation_total_ms = sum(store_prepare_path_reservation_values)
+                store_prepare_cross_path_id_reservation_ms = max(
+                    store_prepare_cross_path_reservation_values,
+                    default=0.0,
+                )
+                store_prepare_enqueue_total_wait_ms = max(store_prepare_enqueue_total_wait_values, default=0.0)
+                summary = {
+                    "total_ms": round(float(total_ms), 3),
+                    "parallel_gate_ms": round(float(timing.get("parallel_safety_gate_ms") or 0.0), 3),
+                    "max_core_ms": round(float(max_core_ms), 3),
+                    "max_total_ms": round(float(max_total_ms), 3),
+                    "store_total_ms": round(float(store_total_ms), 3),
+                    "store_wall_tail_ms": round(float(store_wall_tail_ms), 3),
+                    "store_prepare_order_wait_ms": round(float(store_prepare_order_wait_ms), 3),
+                    "store_prepare_order_wait_total_ms": round(float(store_prepare_order_wait_total_ms), 3),
+                    "store_prepare_queue_wait_ms": round(float(store_prepare_queue_wait_ms), 3),
+                    "store_prepare_queue_wait_total_ms": round(float(store_prepare_queue_wait_total_ms), 3),
+                    "store_prepare_path_id_reservation_ms": round(float(store_prepare_path_id_reservation_ms), 3),
+                    "store_prepare_path_id_reservation_total_ms": round(float(store_prepare_path_id_reservation_total_ms), 3),
+                    "store_prepare_cross_path_id_reservation_ms": round(float(store_prepare_cross_path_id_reservation_ms), 3),
+                    "store_prepare_enqueue_total_wait_ms": round(float(store_prepare_enqueue_total_wait_ms), 3),
+                    "critical_variant": int(critical_variant or max_core_variant),
+                    "critical_option": int(critical_option or max_core_option),
+                    "max_core_variant": int(max_core_variant),
+                    "max_core_option": int(max_core_option),
+                    "variant_count": len(ordered_results),
+                }
+                if isinstance(timing, dict):
+                    timing["general_3_option_summary"] = dict(summary)
+                self.log_sig.emit(
+                    "[REPLAN][METRIC] general_3_option_summary "
+                    f"total_ms={summary['total_ms']:.3f} "
+                    f"parallel_gate_ms={summary['parallel_gate_ms']:.3f} "
+                    f"max_core_ms={summary['max_core_ms']:.3f} "
+                    f"max_total_ms={summary['max_total_ms']:.3f} "
+                    f"store_total_ms={summary['store_total_ms']:.3f} "
+                    f"store_wall_tail_ms={summary['store_wall_tail_ms']:.3f} "
+                    f"store_prepare_order_wait_ms={summary['store_prepare_order_wait_ms']:.3f} "
+                    f"store_prepare_order_wait_total_ms={summary['store_prepare_order_wait_total_ms']:.3f} "
+                    f"store_prepare_queue_wait_ms={summary['store_prepare_queue_wait_ms']:.3f} "
+                    f"store_prepare_queue_wait_total_ms={summary['store_prepare_queue_wait_total_ms']:.3f} "
+                    f"store_prepare_path_id_reservation_ms={summary['store_prepare_path_id_reservation_ms']:.3f} "
+                    f"store_prepare_path_id_reservation_total_ms={summary['store_prepare_path_id_reservation_total_ms']:.3f} "
+                    f"store_prepare_cross_path_id_reservation_ms={summary['store_prepare_cross_path_id_reservation_ms']:.3f} "
+                    f"store_prepare_enqueue_total_wait_ms={summary['store_prepare_enqueue_total_wait_ms']:.3f} "
+                    f"critical_variant={summary['critical_variant']} "
+                    f"critical_option={summary['critical_option']} "
+                    f"max_core_variant={summary['max_core_variant']} "
+                    f"max_core_option={summary['max_core_option']} "
+                    f"variant_count={summary['variant_count']} "
+                    "0305_status_2_ms=pending"
+                )
+
+            def _build_shared_current_remaining_hybrid_for_parallel(
+                *,
+                request: CurrentRemainingHybridRequest,
+                runtime_payload: Optional[Dict[str, Any]],
+                representative_variant: int,
+                shared_variants: List[int],
+            ):
+                build_started = time.perf_counter()
+                self.log_sig.emit(
+                    "[REPLAN][METRIC] current_remaining_hybrid_shared_precompute_start "
+                    f"representative_variant={int(representative_variant)} "
+                    f"shared_variants={'|'.join(str(int(v)) for v in shared_variants) or '-'}"
+                )
+                with runtime_settings_override(runtime_payload):
+                    result = _build_current_remaining_hybrid_locked(
+                        request,
+                        variant_no=int(representative_variant),
+                        log_emit=self.log_sig.emit,
+                    )
+                elapsed_ms = (time.perf_counter() - build_started) * 1000.0
+                self.log_sig.emit(
+                    "[REPLAN][METRIC] current_remaining_hybrid_shared_precompute_finish "
+                    f"representative_variant={int(representative_variant)} "
+                    f"shared_variants={'|'.join(str(int(v)) for v in shared_variants) or '-'} "
+                    f"elapsed_ms={elapsed_ms:.3f} "
+                    f"result_available={int(result is not None)}"
+                )
+                return result
+
             variant_loop_indices = range(plan_count)
             if general_parallel_replan:
+                runtime_parallel_config = _general_parallel_runtime_config()
                 max_workers = max(1, int(general_parallel_workers))
-                recon_worker_cap = max(0, _env_int("REPLAN_RECON_WORKER_CAP", 0))
+                recon_worker_cap = max(0, int(runtime_parallel_config["replan_recon_worker_cap"]))
                 if recon_worker_cap > 0 and max_workers > recon_worker_cap:
+                    requested_workers_before_recon_cap = int(max_workers)
                     has_recon_specialized_variant = any(
                         is_recon_specialized_option(
                             option_codes[idx],
@@ -9305,26 +12260,241 @@ class MainWindow(QMainWindow):
                     if has_recon_specialized_variant:
                         max_workers = recon_worker_cap
                         self.log_sig.emit(
-                            f"[INFO] 정찰특화 옵션 포함 -> REPLAN_RECON_WORKER_CAP={recon_worker_cap} 적용"
+                            f"[INFO] 정찰특화 옵션 포함 -> REPLAN_RECON_WORKER_CAP={recon_worker_cap} 적용 "
+                            f"(requestedWorkers={requested_workers_before_recon_cap}, cappedWorkers={max_workers})"
+                        )
+                        self.log_sig.emit(
+                            "[REPLAN][METRIC] recon_worker_cap "
+                            f"requestedWorkers={requested_workers_before_recon_cap} "
+                            f"cappedWorkers={int(max_workers)} variants={plan_count}"
                         )
                 self.log_sig.emit(
                     f"[INFO] 일반 재계획 옵션 병렬 생성 활성화: variants={plan_count}, workers={max_workers}"
                 )
-                waypoint_block_size = max(1000, _env_int("REPLAN_VARIANT_WAYPOINT_BLOCK_SIZE", 50000))
+                waypoint_block_size = max(
+                    1000,
+                    int(runtime_parallel_config["replan_variant_waypoint_block_size"]),
+                )
+                shared_current_remaining_hybrid_future: Optional[concurrent.futures.Future] = None
+                shared_current_remaining_hybrid_executor: Optional[concurrent.futures.ThreadPoolExecutor] = None
+                isolated_current_remaining_hybrid_executor: Optional[concurrent.futures.ThreadPoolExecutor] = None
+                isolated_current_remaining_hybrid_futures: Dict[int, concurrent.futures.Future] = {}
+                shared_current_remaining_ordinals = [
+                    int(value)
+                    for value in (current_remaining_hybrid_share_policy.get("sharedVariantOrdinals") or [])
+                    if _safe_int_value(value) is not None
+                ]
+                isolated_current_remaining_ordinals = [
+                    int(value)
+                    for value in (current_remaining_hybrid_share_policy.get("isolatedVariantOrdinals") or [])
+                    if _safe_int_value(value) is not None
+                ]
+                share_current_remaining_hybrid = (
+                    current_remaining_hybrid_request is not None
+                    and len(shared_current_remaining_ordinals) > 1
+                    and bool(
+                        current_remaining_hybrid_share_policy.get("shareAllowed")
+                        or current_remaining_hybrid_share_policy.get("shareAllowedNonRecon")
+                    )
+                )
+                if share_current_remaining_hybrid:
+                    representative_variant = int(shared_current_remaining_ordinals[0])
+                    representative_request = _current_remaining_request_for_variant(
+                        current_remaining_hybrid_request,
+                        representative_variant,
+                    )
+                    if representative_request is not None:
+                        representative_idx = max(0, representative_variant - 1)
+                        representative_runtime_payload = _variant_runtime_override_payload(
+                            int(option_codes[representative_idx]),
+                            option_labels[representative_idx] if representative_idx < len(option_labels) else "",
+                        )
+                        shared_current_remaining_hybrid_executor = concurrent.futures.ThreadPoolExecutor(
+                            max_workers=1,
+                            thread_name_prefix="HybridShare",
+                        )
+                        shared_current_remaining_hybrid_future = shared_current_remaining_hybrid_executor.submit(
+                            _build_shared_current_remaining_hybrid_for_parallel,
+                            request=representative_request,
+                            runtime_payload=representative_runtime_payload,
+                            representative_variant=representative_variant,
+                            shared_variants=list(shared_current_remaining_ordinals),
+                        )
+                        self.log_sig.emit(
+                            "[REPLAN][METRIC] current_remaining_hybrid_share_enabled "
+                            f"shared_variants={'|'.join(str(int(v)) for v in shared_current_remaining_ordinals)} "
+                            f"isolated_variants={'|'.join(str(int(v)) for v in (current_remaining_hybrid_share_policy.get('isolatedVariantOrdinals') or [])) or '-'} "
+                            f"runtime_key_count={int(current_remaining_hybrid_share_policy.get('runtimeKeyCount') or 0)} "
+                            f"shared_runtime_group_size={int(current_remaining_hybrid_share_policy.get('sharedRuntimeGroupSize') or 0)} "
+                            f"reason={current_remaining_hybrid_share_policy.get('reason') or '-'} "
+                            f"share_strategy={current_remaining_hybrid_share_policy.get('shareStrategy') or '-'}"
+                        )
+                    else:
+                        shared_current_remaining_ordinals = []
+                isolated_precompute_ordinals = [
+                    int(variant)
+                    for variant in isolated_current_remaining_ordinals
+                    if int(variant) not in set(shared_current_remaining_ordinals)
+                ]
+                if current_remaining_hybrid_request is not None and isolated_precompute_ordinals:
+                    isolated_workers = max(
+                        1,
+                        min(
+                            len(isolated_precompute_ordinals),
+                            int(runtime_parallel_config.get("replan_current_remaining_precompute_workers") or 2),
+                        ),
+                    )
+                    isolated_current_remaining_hybrid_executor = concurrent.futures.ThreadPoolExecutor(
+                        max_workers=isolated_workers,
+                        thread_name_prefix="HybridIso",
+                    )
+                    for isolated_variant in isolated_precompute_ordinals:
+                        isolated_request = _current_remaining_request_for_variant(
+                            current_remaining_hybrid_request,
+                            isolated_variant,
+                        )
+                        if isolated_request is None:
+                            continue
+                        isolated_idx = max(0, int(isolated_variant) - 1)
+                        isolated_runtime_payload = _variant_runtime_override_payload(
+                            int(option_codes[isolated_idx]),
+                            option_labels[isolated_idx] if isolated_idx < len(option_labels) else "",
+                        )
+                        isolated_current_remaining_hybrid_futures[int(isolated_variant)] = (
+                            isolated_current_remaining_hybrid_executor.submit(
+                                _build_shared_current_remaining_hybrid_for_parallel,
+                                request=isolated_request,
+                                runtime_payload=isolated_runtime_payload,
+                                representative_variant=int(isolated_variant),
+                                shared_variants=[int(isolated_variant)],
+                            )
+                        )
+                    if isolated_current_remaining_hybrid_futures:
+                        self.log_sig.emit(
+                            "[REPLAN][METRIC] current_remaining_hybrid_isolated_precompute_enabled "
+                            f"isolated_variants={'|'.join(str(int(v)) for v in sorted(isolated_current_remaining_hybrid_futures))} "
+                            f"workers={int(isolated_workers)} "
+                            f"reason={current_remaining_hybrid_share_policy.get('reason') or '-'} "
+                            f"share_strategy={current_remaining_hybrid_share_policy.get('shareStrategy') or '-'}"
+                        )
+                store_commit_workers_budget = max(
+                    1,
+                    min(
+                        int(plan_count),
+                        int(runtime_parallel_config.get("replan_store_commit_workers") or 1),
+                    ),
+                )
+                store_prepare_workers_budget = max(
+                    1,
+                    min(
+                        int(plan_count),
+                        int(runtime_parallel_config.get("replan_store_prepare_workers") or 1),
+                    ),
+                )
+                store_json_write_workers_budget = max(
+                    1,
+                    int(runtime_parallel_config.get("replan_store_json_write_workers") or 2),
+                )
+                store_commit_peak_threads = int(store_commit_workers_budget) * int(
+                    store_json_write_workers_budget
+                )
+                dependency_parallel_enabled = _runtime_bool_setting(
+                    "replan_0303_dependency_parallel_enabled",
+                    True,
+                )
+                dependency_workers_budget = max(
+                    1,
+                    _runtime_int_setting("replan_0303_dependency_workers", 3),
+                ) if dependency_parallel_enabled else 1
+                linesearch_inner_workers_budget = max(
+                    1,
+                    _runtime_int_setting("linesearch_inner_parallel_workers", 2),
+                )
+                formation_post_workers_budget = max(
+                    1,
+                    _runtime_int_setting("formation_follower_postprocess_workers", 2),
+                )
+                cpu_count = int(os.cpu_count() or 1)
+                shared_hybrid_worker_count = 1 if share_current_remaining_hybrid else 0
+                isolated_hybrid_worker_count = (
+                    int(getattr(isolated_current_remaining_hybrid_executor, "_max_workers", 0) or 0)
+                    if isolated_current_remaining_hybrid_futures
+                    else 0
+                )
+                core_phase_peak_threads = (
+                    int(max_workers)
+                    + int(store_prepare_workers_budget)
+                    + int(shared_hybrid_worker_count)
+                    + int(isolated_hybrid_worker_count)
+                )
+                self.log_sig.emit(
+                    "[REPLAN][METRIC] parallel_thread_budget "
+                    f"variants={int(plan_count)} core_workers={int(max_workers)} "
+                    f"store_prepare_workers={int(store_prepare_workers_budget)} "
+                    f"store_prepare_out_of_order={int(bool(runtime_parallel_config.get('replan_store_prepare_out_of_order')))} "
+                    f"store_commit_workers={int(store_commit_workers_budget)} "
+                    f"store_json_write_workers={int(store_json_write_workers_budget)} "
+                    f"shared_hybrid_workers={int(shared_hybrid_worker_count)} "
+                    f"isolated_hybrid_workers={int(isolated_hybrid_worker_count)} "
+                    f"load_imp_fixed_cap=6 mp0301_fixed_cap=6 save0302_fixed_cap=8 "
+                    f"dependency_parallel_enabled={int(bool(dependency_parallel_enabled))} "
+                    f"dependency_workers={int(dependency_workers_budget)} "
+                    f"linesearch_inner_workers={int(linesearch_inner_workers_budget)} "
+                    f"formation_post_workers={int(formation_post_workers_budget)} "
+                    f"cpu_count={int(cpu_count)} "
+                    f"core_phase_peak_threads={int(core_phase_peak_threads)} "
+                    f"store_commit_peak_threads={int(store_commit_peak_threads)} "
+                    f"peak_configured_threads={max(int(core_phase_peak_threads), int(store_commit_peak_threads))}"
+                )
                 parallel_specs = []
+                waypoint_blocks: list[tuple[int, int]] = []
+                waypoint_reserve_t0 = time.perf_counter()
+                waypoint_bulk_used = False
+                waypoint_fallback_count = 0
+                try:
+                    if callable(reserve_waypoint_blocks):
+                        waypoint_blocks = list(
+                            reserve_waypoint_blocks([waypoint_block_size] * (int(plan_count) * 2))
+                            or []
+                        )
+                        waypoint_bulk_used = len(waypoint_blocks) >= int(plan_count) * 2
+                except Exception as exc:
+                    waypoint_blocks = []
+                    self.log_sig.emit(f"[WARN] bulk waypointID block reservation failed; fallback to legacy: {exc}")
                 for idx in range(plan_count):
                     variant_current_remaining_request = _current_remaining_request_for_variant(
                         current_remaining_hybrid_request,
                         idx + 1,
                     )
-                    waypoint_block_0303_start = int(reserve_waypoint_block(waypoint_block_size))
-                    waypoint_block_0303_end = waypoint_block_0303_start + waypoint_block_size - 1
-                    waypoint_block_0304_start = int(reserve_waypoint_block(waypoint_block_size))
-                    waypoint_block_0304_end = waypoint_block_0304_start + waypoint_block_size - 1
+                    block_idx = int(idx) * 2
+                    if len(waypoint_blocks) >= block_idx + 2:
+                        waypoint_block_0303_start, waypoint_block_0303_end = waypoint_blocks[block_idx]
+                        waypoint_block_0304_start, waypoint_block_0304_end = waypoint_blocks[block_idx + 1]
+                    else:
+                        waypoint_block_0303_start = int(reserve_waypoint_block(waypoint_block_size))
+                        waypoint_block_0303_end = waypoint_block_0303_start + waypoint_block_size - 1
+                        waypoint_block_0304_start = int(reserve_waypoint_block(waypoint_block_size))
+                        waypoint_block_0304_end = waypoint_block_0304_start + waypoint_block_size - 1
+                        waypoint_fallback_count += 2
+                    variant_ordinal = idx + 1
+                    current_hybrid_future = (
+                        shared_current_remaining_hybrid_future
+                        if variant_ordinal in set(shared_current_remaining_ordinals)
+                        else isolated_current_remaining_hybrid_futures.get(variant_ordinal)
+                    )
+                    current_hybrid_role = (
+                        "non_recon_shared"
+                        if variant_ordinal in set(shared_current_remaining_ordinals)
+                        else (
+                            "isolated_precompute"
+                            if variant_ordinal in isolated_current_remaining_hybrid_futures
+                            else "isolated"
+                        )
+                    )
                     parallel_specs.append(
                         {
                             "idx": idx,
-                            "variant_no": idx + 1,
+                            "variant_no": variant_ordinal,
                             "requested_plan_id": plan_ids[idx],
                             "option_code": int(option_codes[idx]),
                             "cmpk_source_path": Path(cmpk_path),
@@ -9333,6 +12503,8 @@ class MainWindow(QMainWindow):
                                 option_labels[idx] if idx < len(option_labels) else "",
                             ),
                             "current_remaining_hybrid_request": variant_current_remaining_request,
+                            "shared_current_remaining_hybrid_future": current_hybrid_future,
+                            "shared_current_remaining_hybrid_role": current_hybrid_role,
                             "waypoint_block_0303_start": waypoint_block_0303_start,
                             "waypoint_block_0303_end": waypoint_block_0303_end,
                             "waypoint_block_0304_start": waypoint_block_0304_start,
@@ -9344,12 +12516,386 @@ class MainWindow(QMainWindow):
                         f"0303={waypoint_block_0303_start}-{waypoint_block_0303_end}, "
                         f"0304={waypoint_block_0304_start}-{waypoint_block_0304_end}"
                     )
+                waypoint_reserve_ms = (time.perf_counter() - waypoint_reserve_t0) * 1000.0
+                self._record_replan_timing_event(
+                    "waypoint_blocks_reserved",
+                    extra={
+                        "blocks": len(parallel_specs) * 2,
+                        "bulk": int(bool(waypoint_bulk_used)),
+                        "fallback_count": int(waypoint_fallback_count),
+                        "block_size": int(waypoint_block_size),
+                        "reserve_wall_ms": round(float(waypoint_reserve_ms), 3),
+                    },
+                )
+                self._record_replan_timing_event(
+                    "parallel_specs_ready",
+                    extra={
+                        "specs": len(parallel_specs),
+                        "workers": int(max_workers),
+                    },
+                )
                 parallel_results: Dict[int, Dict[str, Any]] = {}
+                prepared_store_results: Dict[int, Dict[str, Any]] = {}
+                committed_store_results: Dict[int, Dict[str, Any]] = {}
+                store_prepare_future_map: Dict[concurrent.futures.Future, int] = {}
+                store_commit_future_map: Dict[concurrent.futures.Future, int] = {}
+                store_prepare_submitted_indices: Set[int] = set()
+                store_commit_submitted_indices: Set[int] = set()
+                next_store_prepare_idx = 0
+                store_prepare_executor: Optional[concurrent.futures.ThreadPoolExecutor] = None
+                store_commit_executor: Optional[concurrent.futures.ThreadPoolExecutor] = None
                 try:
+                    store_prepare_workers = max(
+                        1,
+                        min(
+                            int(plan_count),
+                            int(runtime_parallel_config.get("replan_store_prepare_workers") or 1),
+                        ),
+                    )
+                    store_prepare_out_of_order = bool(
+                        runtime_parallel_config.get("replan_store_prepare_out_of_order")
+                    )
+                    store_prepare_executor = concurrent.futures.ThreadPoolExecutor(
+                        max_workers=store_prepare_workers,
+                        thread_name_prefix="StorePrepare",
+                    )
+                    store_commit_workers = max(
+                        1,
+                        min(
+                            int(plan_count),
+                            int(runtime_parallel_config.get("replan_store_commit_workers") or 1),
+                        ),
+                    )
+                    store_commit_executor = concurrent.futures.ThreadPoolExecutor(
+                        max_workers=store_commit_workers,
+                        thread_name_prefix="StoreCommit",
+                    )
+                    store_path_id_cross_variant_bulk = bool(
+                        runtime_parallel_config.get("replan_store_path_id_cross_variant_bulk")
+                    )
+                    cross_path_id_reservation_done = not store_path_id_cross_variant_bulk
+                    cross_path_id_reservation_ms = 0.0
+
+                    def _ensure_cross_variant_path_id_reservations() -> bool:
+                        nonlocal cross_path_id_reservation_done, cross_path_id_reservation_ms
+                        if cross_path_id_reservation_done:
+                            return True
+                        if len(parallel_results) < len(parallel_specs):
+                            return False
+
+                        reservation_started = time.perf_counter()
+                        plans_by_idx: Dict[int, Dict[int, int]] = {}
+                        aggregate_counts: Dict[int, int] = {}
+                        imp_counts_by_idx: Dict[int, int] = {}
+                        individual_counts_by_idx: Dict[int, int] = {}
+                        for idx_to_reserve in sorted(parallel_results):
+                            result_to_reserve = parallel_results[idx_to_reserve]
+                            if "reserved_path_ids_by_aircraft" not in result_to_reserve:
+                                reservation_plan = _fresh_path_id_reservation_plan(
+                                    result_to_reserve.get("missions") or []
+                                )
+                                plans_by_idx[int(idx_to_reserve)] = dict(reservation_plan)
+                                for aid, count in reservation_plan.items():
+                                    aggregate_counts[int(aid)] = aggregate_counts.get(int(aid), 0) + int(count)
+                            if "reserved_imp_ids" not in result_to_reserve:
+                                imp_counts_by_idx[int(idx_to_reserve)] = _imp_id_reservation_count(
+                                    result_to_reserve.get("mp_json") or {}
+                                )
+                            if "reserved_individual_mission_ids" not in result_to_reserve:
+                                individual_counts_by_idx[int(idx_to_reserve)] = _individual_mission_reservation_count(
+                                    result_to_reserve.get("missions") or []
+                                )
+
+                        reserve_started = time.perf_counter()
+                        total_imp_count = sum(int(count) for count in imp_counts_by_idx.values())
+                        total_individual_count = sum(int(count) for count in individual_counts_by_idx.values())
+                        reserved_bundle = reserve_replan_id_bundle(
+                            path_count_by_aircraft={
+                                int(aid): int(count)
+                                for aid, count in aggregate_counts.items()
+                                if int(count) > 0
+                            },
+                            imp_count=int(total_imp_count),
+                            individual_mission_count=int(total_individual_count),
+                        )
+                        bulk_reserved: Dict[int, list[int]] = {
+                            int(aid): [int(value) for value in (values or [])]
+                            for aid, values in (reserved_bundle.get("pathID") or {}).items()
+                        }
+                        reserved_imp_ids_all = [
+                            int(value)
+                            for value in (reserved_bundle.get("individualMissionPackage") or [])
+                        ]
+                        reserved_individual_ids_all = [
+                            int(value)
+                            for value in (reserved_bundle.get("individualMission") or [])
+                        ]
+                        if len(reserved_imp_ids_all) < int(total_imp_count):
+                            raise RuntimeError(
+                                "cross-variant IMP ID bundle reservation short "
+                                f"(required={total_imp_count}, reserved={len(reserved_imp_ids_all)})"
+                            )
+                        if len(reserved_individual_ids_all) < int(total_individual_count):
+                            raise RuntimeError(
+                                "cross-variant individualMission ID bundle reservation short "
+                                f"(required={total_individual_count}, reserved={len(reserved_individual_ids_all)})"
+                            )
+                        reserve_ms = (time.perf_counter() - reserve_started) * 1000.0
+
+                        cursors: Dict[int, int] = {int(aid): 0 for aid in aggregate_counts}
+                        for idx_to_reserve in sorted(plans_by_idx):
+                            assigned: Dict[int, list[int]] = {}
+                            for aid, count in sorted(plans_by_idx[idx_to_reserve].items()):
+                                aid_int = int(aid)
+                                count_int = int(count)
+                                if count_int <= 0:
+                                    continue
+                                values = [int(value) for value in (bulk_reserved.get(aid_int) or [])]
+                                cursor = int(cursors.get(aid_int, 0))
+                                segment = values[cursor : cursor + count_int]
+                                if len(segment) < count_int:
+                                    raise RuntimeError(
+                                        "cross-variant pathID reservation short "
+                                        f"(aircraftID={aid_int}, required={count_int}, "
+                                        f"reserved={len(values)}, cursor={cursor})"
+                                    )
+                                assigned[aid_int] = segment
+                                cursors[aid_int] = cursor + count_int
+                            parallel_results[idx_to_reserve]["reserved_path_ids_by_aircraft"] = assigned
+                            parallel_results[idx_to_reserve]["path_id_reservation_ms"] = 0.0
+                            parallel_results[idx_to_reserve]["cross_path_id_reservation_ms"] = float(reserve_ms)
+                            parallel_results[idx_to_reserve]["cross_path_id_reservation_shared"] = True
+                        imp_cursor = 0
+                        for idx_to_reserve in sorted(imp_counts_by_idx):
+                            count = int(imp_counts_by_idx[idx_to_reserve])
+                            segment = reserved_imp_ids_all[imp_cursor : imp_cursor + count]
+                            if len(segment) < count:
+                                raise RuntimeError(
+                                    "cross-variant IMP ID reservation short "
+                                    f"(variantIndex={idx_to_reserve}, required={count}, reserved={len(reserved_imp_ids_all)})"
+                                )
+                            parallel_results[idx_to_reserve]["reserved_imp_ids"] = segment
+                            imp_cursor += count
+                        individual_cursor = 0
+                        for idx_to_reserve in sorted(individual_counts_by_idx):
+                            count = int(individual_counts_by_idx[idx_to_reserve])
+                            segment = reserved_individual_ids_all[individual_cursor : individual_cursor + count]
+                            if len(segment) < count:
+                                raise RuntimeError(
+                                    "cross-variant individualMission ID reservation short "
+                                    f"(variantIndex={idx_to_reserve}, required={count}, reserved={len(reserved_individual_ids_all)})"
+                                )
+                            parallel_results[idx_to_reserve]["reserved_individual_mission_ids"] = segment
+                            individual_cursor += count
+
+                        total_ms = (time.perf_counter() - reservation_started) * 1000.0
+                        cross_path_id_reservation_ms = float(total_ms)
+                        cross_path_id_reservation_done = True
+                        self.log_sig.emit(
+                            "[REPLAN][METRIC] general_variant_cross_path_id_reservation "
+                            f"variants={len(plans_by_idx)} "
+                            f"aircraft={len(aggregate_counts)} "
+                            f"totalCount={sum(int(value) for value in aggregate_counts.values())} "
+                            f"impCount={total_imp_count} "
+                            f"individualMissionCount={total_individual_count} "
+                            f"reserve_ms={reserve_ms:.3f} "
+                            f"total_ms={total_ms:.3f} "
+                            f"counts="
+                            + "|".join(
+                                f"{int(aid)}:{int(count)}"
+                                for aid, count in sorted(aggregate_counts.items())
+                            )
+                        )
+                        return True
+
+                    def _queue_store_prepare(idx_to_submit: int) -> None:
+                        if store_prepare_executor is None or idx_to_submit in store_prepare_submitted_indices:
+                            return
+                        result_to_prepare = parallel_results[idx_to_submit]
+                        ready_perf = float(
+                            result_to_prepare.get("store_core_result_ready_perf")
+                            or time.perf_counter()
+                        )
+                        queue_ready_perf = time.perf_counter()
+                        queue_wait_ms = max(0.0, (queue_ready_perf - ready_perf) * 1000.0)
+                        reserve_t0 = time.perf_counter()
+                        if "reserved_path_ids_by_aircraft" not in result_to_prepare:
+                            if store_path_id_cross_variant_bulk:
+                                result_to_prepare["reserved_path_ids_by_aircraft"] = {}
+                            else:
+                                result_to_prepare["reserved_path_ids_by_aircraft"] = _reserve_fresh_path_ids_for_missions(
+                                    result_to_prepare.get("missions") or []
+                                )
+                        reserve_ms = (time.perf_counter() - reserve_t0) * 1000.0
+                        queued_perf = time.perf_counter()
+                        enqueue_total_wait_ms = max(0.0, (queued_perf - ready_perf) * 1000.0)
+                        result_to_prepare["store_prepare_wait_for_order_ms"] = float(queue_wait_ms)
+                        result_to_prepare["store_prepare_queue_wait_ms"] = float(queue_wait_ms)
+                        result_to_prepare["store_prepare_enqueue_total_wait_ms"] = float(enqueue_total_wait_ms)
+                        result_to_prepare["store_prepare_queued_perf"] = float(queued_perf)
+                        if not bool(result_to_prepare.get("cross_path_id_reservation_shared")):
+                            result_to_prepare["path_id_reservation_ms"] = float(reserve_ms)
+                        result_to_prepare["store_json_write_workers"] = int(
+                            runtime_parallel_config.get("replan_store_json_write_workers") or 2
+                        )
+                        result_to_prepare["defer_waypoint_files_written_mark"] = True
+                        result_to_prepare["defer_snapshot_carry_forward"] = bool(
+                            runtime_parallel_config.get("replan_store_snapshot_post_delivery")
+                        )
+                        store_prepare_future_map[
+                            store_prepare_executor.submit(
+                                _prepare_general_variant_store,
+                                result_to_prepare,
+                            )
+                        ] = idx_to_submit
+                        store_prepare_submitted_indices.add(idx_to_submit)
+                        self.log_sig.emit(
+                            "[REPLAN][METRIC] general_variant_store_prepare_queued "
+                            f"variant={int(result_to_prepare.get('variant_no') or (idx_to_submit + 1))} "
+                            f"option={int(result_to_prepare.get('option_code') or 0)} "
+                            f"idx={idx_to_submit} wait_for_order_ms={queue_wait_ms:.3f} "
+                            f"queue_wait_ms={queue_wait_ms:.3f} "
+                            f"enqueue_total_wait_ms={enqueue_total_wait_ms:.3f} "
+                            f"path_id_reservation_ms={float(result_to_prepare.get('path_id_reservation_ms') or reserve_ms):.3f} "
+                            f"cross_path_id_reservation_ms={float(result_to_prepare.get('cross_path_id_reservation_ms') or 0.0):.3f} "
+                            f"cross_path_id_reservation_shared={int(bool(result_to_prepare.get('cross_path_id_reservation_shared')))} "
+                            f"workers={int(store_prepare_workers)} "
+                            f"out_of_order={int(store_prepare_out_of_order)}"
+                        )
+
+                    def _submit_ready_store_prepare() -> None:
+                        nonlocal next_store_prepare_idx
+                        if store_prepare_executor is None:
+                            return
+                        if store_path_id_cross_variant_bulk and not _ensure_cross_variant_path_id_reservations():
+                            return
+                        if store_prepare_out_of_order:
+                            for idx_to_submit in sorted(parallel_results):
+                                _queue_store_prepare(int(idx_to_submit))
+                            return
+                        while next_store_prepare_idx in parallel_results:
+                            idx_to_submit = int(next_store_prepare_idx)
+                            _queue_store_prepare(idx_to_submit)
+                            next_store_prepare_idx += 1
+
+                    def _queue_store_commit(idx_to_submit: int, staged: Dict[str, Any]) -> None:
+                        if store_commit_executor is None or idx_to_submit in store_commit_submitted_indices:
+                            return
+                        store_commit_future_map[
+                            store_commit_executor.submit(
+                                _write_general_variant_store_files,
+                                staged,
+                            )
+                        ] = int(idx_to_submit)
+                        store_commit_submitted_indices.add(int(idx_to_submit))
+                        self.log_sig.emit(
+                            "[REPLAN][METRIC] general_variant_store_commit_queued "
+                            f"variant={int(staged.get('variant_no') or (idx_to_submit + 1))} "
+                            f"option={int(staged.get('option_code') or 0)} "
+                            f"idx={idx_to_submit} workers={store_commit_workers} "
+                            f"json_write_workers={int(staged.get('store_json_write_workers') or 2)} "
+                            "streaming=1"
+                        )
+
+                    def _record_store_prepare_failure(idx: int, exc: BaseException) -> None:
+                        result = parallel_results.get(idx) or {}
+                        self._record_replan_timing_event(
+                            "variant_finished",
+                            extra={
+                                "variant": int(result.get("variant_no") or (idx + 1)),
+                                "option": int(result.get("option_code") or 0),
+                                "mode": "parallel_store_prepare",
+                                "status": "failed",
+                                "code": type(exc).__name__,
+                            },
+                        )
+
+                    def _record_store_commit_failure(idx: int, exc: BaseException) -> None:
+                        result = parallel_results.get(idx) or {}
+                        self._record_replan_timing_event(
+                            "variant_finished",
+                            extra={
+                                "variant": int(result.get("variant_no") or (idx + 1)),
+                                "option": int(result.get("option_code") or 0),
+                                "mode": "parallel_store_commit",
+                                "status": "failed",
+                                "code": type(exc).__name__,
+                            },
+                        )
+
+                    def _drain_store_commit_futures(
+                        *,
+                        wait_all: bool,
+                        failures: list[BaseException] | None = None,
+                    ) -> None:
+                        futures = list(store_commit_future_map)
+                        if not futures:
+                            return
+                        iterable = concurrent.futures.as_completed(futures) if wait_all else [f for f in futures if f.done()]
+                        for commit_future in iterable:
+                            if commit_future not in store_commit_future_map:
+                                continue
+                            idx = int(store_commit_future_map.pop(commit_future))
+                            try:
+                                committed_store_results[idx] = commit_future.result()
+                            except concurrent.futures.CancelledError:
+                                continue
+                            except Exception as exc:
+                                _record_store_commit_failure(idx, exc)
+                                if failures is not None:
+                                    failures.append(exc)
+
+                    def _drain_store_prepare_futures(
+                        *,
+                        wait_all: bool,
+                        prepare_failures: list[BaseException],
+                        commit_failures: list[BaseException],
+                    ) -> None:
+                        futures = list(store_prepare_future_map)
+                        if not futures:
+                            return
+                        iterable = concurrent.futures.as_completed(futures) if wait_all else [f for f in futures if f.done()]
+                        for prepare_future in iterable:
+                            if prepare_future not in store_prepare_future_map:
+                                continue
+                            idx = int(store_prepare_future_map.pop(prepare_future))
+                            try:
+                                staged = prepare_future.result()
+                                prepared_store_results[idx] = staged
+                                if not prepare_failures and not commit_failures:
+                                    _queue_store_commit(idx, staged)
+                            except concurrent.futures.CancelledError:
+                                continue
+                            except Exception as exc:
+                                _record_store_prepare_failure(idx, exc)
+                                prepare_failures.append(exc)
+
+                    def _cancel_streaming_store_work_and_cleanup() -> None:
+                        for pending_prepare in list(store_prepare_future_map):
+                            try:
+                                pending_prepare.cancel()
+                            except Exception:
+                                pass
+                        for pending_commit in list(store_commit_future_map):
+                            try:
+                                pending_commit.cancel()
+                            except Exception:
+                                pass
+                        if store_commit_executor is not None:
+                            try:
+                                store_commit_executor.shutdown(wait=True, cancel_futures=True)
+                            except Exception:
+                                pass
+                        _drain_store_commit_futures(wait_all=True, failures=None)
+                        if committed_store_results:
+                            _cleanup_committed_store_files(list(committed_store_results.values()))
+
                     with concurrent.futures.ThreadPoolExecutor(
                         max_workers=max_workers,
                         thread_name_prefix="PlanVariant",
                     ) as executor:
+                        store_prepare_failures: list[BaseException] = []
+                        store_commit_failures: list[BaseException] = []
                         future_map = {
                             executor.submit(
                                 call_with_source_artifact_cache,
@@ -9359,12 +12905,30 @@ class MainWindow(QMainWindow):
                             ): spec
                             for spec in parallel_specs
                         }
+                        self._record_replan_timing_event(
+                            "parallel_executor_submitted",
+                            extra={
+                                "futures": len(future_map),
+                                "workers": int(max_workers),
+                            },
+                        )
                         for future in concurrent.futures.as_completed(future_map):
                             spec = future_map[future]
                             try:
                                 result = future.result()
                                 _flush_parallel_variant_diagnostics(result)
+                                result["store_core_result_ready_perf"] = time.perf_counter()
                                 parallel_results[int(spec["idx"])] = result
+                                _submit_ready_store_prepare()
+                                _drain_store_prepare_futures(
+                                    wait_all=False,
+                                    prepare_failures=store_prepare_failures,
+                                    commit_failures=store_commit_failures,
+                                )
+                                _drain_store_commit_futures(
+                                    wait_all=False,
+                                    failures=store_commit_failures,
+                                )
                             except _VariantCoreError as exc:
                                 self._record_replan_timing_event(
                                     "variant_finished",
@@ -9384,6 +12948,7 @@ class MainWindow(QMainWindow):
                                 _notify_failure_once(exc.code, detail={"variant": exc.variant_no, **exc.detail})
                                 self._plan_status = "임무계획 실패"
                                 self._submit_id_tab_update(scope=self._session_scope, plan_state=self._plan_status)
+                                _cancel_streaming_store_work_and_cleanup()
                                 return
                             except Exception as exc:
                                 self._record_replan_timing_event(
@@ -9397,9 +12962,55 @@ class MainWindow(QMainWindow):
                                     },
                                 )
                                 raise
+                            if store_prepare_failures:
+                                for pending in future_map:
+                                    if pending is not future:
+                                        pending.cancel()
+                                _cancel_streaming_store_work_and_cleanup()
+                                raise store_prepare_failures[0]
+                            if store_commit_failures:
+                                for pending in future_map:
+                                    if pending is not future:
+                                        pending.cancel()
+                                _cancel_streaming_store_work_and_cleanup()
+                                raise store_commit_failures[0]
+                    _drain_store_prepare_futures(
+                        wait_all=True,
+                        prepare_failures=store_prepare_failures,
+                        commit_failures=store_commit_failures,
+                    )
+                    if store_prepare_failures:
+                        _cancel_streaming_store_work_and_cleanup()
+                        raise store_prepare_failures[0]
+                    _drain_store_commit_futures(
+                        wait_all=True,
+                        failures=store_commit_failures,
+                    )
+                    if store_commit_failures:
+                        _cancel_streaming_store_work_and_cleanup()
+                        raise store_commit_failures[0]
+                    deferred_max_waypoint_id = max(
+                        (
+                            int(row.get("max_waypoint_id") or 0)
+                            for row in committed_store_results.values()
+                            if isinstance(row, dict)
+                        ),
+                        default=0,
+                    )
+                    post_delivery_waypoint_mark = {
+                        "max_waypoint_id": int(deferred_max_waypoint_id),
+                        "variants": int(plan_count),
+                        "reason": "general_3_option_parallel_store",
+                    }
+                    self.log_sig.emit(
+                        "[REPLAN][METRIC] general_variant_store_deferred_waypoint_mark "
+                        f"variants={int(plan_count)} "
+                        f"max_waypoint_id={int(deferred_max_waypoint_id)} "
+                        "mode=post_delivery"
+                    )
                     for idx in range(plan_count):
                         try:
-                            _store_general_variant(parallel_results[idx])
+                            _finalize_general_variant_store(committed_store_results[idx])
                         except Exception as exc:
                             result = parallel_results.get(idx) or {}
                             self._record_replan_timing_event(
@@ -9407,22 +13018,74 @@ class MainWindow(QMainWindow):
                                 extra={
                                     "variant": int(result.get("variant_no") or (idx + 1)),
                                     "option": int(result.get("option_code") or 0),
-                                    "mode": "parallel_store",
+                                    "mode": "parallel_store_finalize",
                                     "status": "failed",
                                     "code": type(exc).__name__,
                                 },
                             )
                             raise
+                    snapshot_carry_items = [
+                        dict(item)
+                        for idx in range(plan_count)
+                        for item in [
+                            (parallel_results.get(idx) or {}).get(
+                                "post_delivery_snapshot_carry_forward_item"
+                            )
+                        ]
+                        if isinstance(item, dict)
+                    ]
+                    if snapshot_carry_items:
+                        post_delivery_snapshot_carry_forward = {
+                            "items": snapshot_carry_items,
+                            "reason": "general_3_option_parallel_store",
+                        }
+                        self.log_sig.emit(
+                            "[REPLAN][METRIC] general_variant_store_deferred_snapshot_carry_forward "
+                            f"variants={int(plan_count)} items={len(snapshot_carry_items)} mode=post_delivery"
+                        )
+                    if (
+                        int(plan_count) >= 3
+                        and str(((ctx.get("_replan_timing") or {}).get("trigger") if isinstance(ctx, dict) else "") or "")
+                        == "general_3_option"
+                    ):
+                        _record_general_3_option_summary(parallel_results)
                     variant_loop_indices = range(0)
                 except Exception as exc:
                     self.log_sig.emit(f"[ERR] 일반 재계획 병렬 생성 실패: {exc}")
                     raise
+                finally:
+                    if store_prepare_executor is not None:
+                        try:
+                            store_prepare_executor.shutdown(wait=True, cancel_futures=True)
+                        except Exception:
+                            pass
+                    if store_commit_executor is not None:
+                        try:
+                            store_commit_executor.shutdown(wait=True, cancel_futures=True)
+                        except Exception:
+                            pass
+                    if shared_current_remaining_hybrid_executor is not None:
+                        try:
+                            shared_current_remaining_hybrid_executor.shutdown(wait=True, cancel_futures=True)
+                        except Exception:
+                            pass
+                    if isolated_current_remaining_hybrid_executor is not None:
+                        try:
+                            isolated_current_remaining_hybrid_executor.shutdown(wait=True, cancel_futures=True)
+                        except Exception:
+                            pass
 
             for idx in variant_loop_indices:
                 variant_no = idx + 1
                 requested_plan_id = plan_ids[idx]
                 option_code = option_codes[idx]
                 option_label = option_labels[idx] if idx < len(option_labels) else ""
+                variant_generated_path_ids: Set[int] = set()
+                option_dependent_isolation = _option_dependent_isolation_contract(
+                    variant_no=variant_no,
+                    option_code=int(option_code),
+                    mode="sequential",
+                )
                 variant_current_remaining_request = _current_remaining_request_for_variant(
                     current_remaining_hybrid_request,
                     variant_no,
@@ -9474,25 +13137,43 @@ class MainWindow(QMainWindow):
                             return
                         wait_ms = (time.perf_counter() - wait_t0) * 1000.0
                         attack_exclusion_parallel_info["consumed"] = True
-                        exclusion_result = (parallel_payload or {}).get("result") or {}
-                        exclusion_ms = float((parallel_payload or {}).get("duration_ms") or 0.0)
-                        for message in (exclusion_result.get("logMessages") or []):
-                            self._append_log_line(f"[ATTACK-EXCLUDE] {message}")
-                        self._record_replan_timing_event(
-                            "attack_exclusion_parallel_joined",
-                            extra={
-                                "variant": variant_no,
-                                "duration_ms": round(exclusion_ms, 3),
-                                "wait_ms": round(wait_ms, 3),
-                            },
+                        parallel_valid, parallel_reject_reason = _validate_attack_exclusion_parallel_result(
+                            parallel_payload
                         )
+                        if not parallel_valid:
+                            parallel_exclusion_used = False
+                            self.log_sig.emit(
+                                "[WARN] 공격 배제 병렬 결과 폐기 -> 순차 재생성: "
+                                f"{parallel_reject_reason}"
+                            )
+                            self._record_replan_timing_event(
+                                "attack_exclusion_parallel_discarded",
+                                extra={
+                                    "variant": variant_no,
+                                    "reason": str(parallel_reject_reason),
+                                    "wait_ms": round(wait_ms, 3),
+                                },
+                            )
+                        else:
+                            exclusion_result = (parallel_payload or {}).get("result") or {}
+                            exclusion_ms = float((parallel_payload or {}).get("duration_ms") or 0.0)
+                            for message in (exclusion_result.get("logMessages") or []):
+                                self._append_log_line(f"[ATTACK-EXCLUDE] {message}")
+                            self._record_replan_timing_event(
+                                "attack_exclusion_parallel_joined",
+                                extra={
+                                    "variant": variant_no,
+                                    "duration_ms": round(exclusion_ms, 3),
+                                    "wait_ms": round(wait_ms, 3),
+                                },
+                            )
                         if attack_exclusion_executor is not None:
                             try:
                                 attack_exclusion_executor.shutdown(wait=False, cancel_futures=False)
                             except Exception:
                                 pass
                             attack_exclusion_executor = None
-                    else:
+                    if not parallel_exclusion_used:
                         self.log_sig.emit(f"[variant {variant_no}] 공격 배제 전용 재개 파이프라인 적용")
                         exclusion_ctx = _filter_context_by_indices(ctx, [idx])
                         if attack_exclusion_source_plan_id is not None:
@@ -9789,6 +13470,7 @@ class MainWindow(QMainWindow):
                         str(mrpk_path),
                         imp_paths,
                         str(mp_tmp),
+                        mission_plan_id=0,
                     )
                     if not isinstance(mp_json, dict):
                         with mp_tmp.open(encoding='utf-8') as f:
@@ -9819,7 +13501,12 @@ class MainWindow(QMainWindow):
                     pid_map: Dict[tuple[int, int], int] = {}
                     if variant_current_remaining_request is None:
                         step_t0 = time.perf_counter()
-                        pid_map = _assign_fresh_path_ids(missions, generated_path_ids)
+                        reserved_path_ids_by_aircraft = _reserve_fresh_path_ids_for_missions(missions)
+                        pid_map = _assign_fresh_path_ids(
+                            missions,
+                            variant_generated_path_ids,
+                            reserved_path_ids_by_aircraft=reserved_path_ids_by_aircraft,
+                        )
                         step_ms = (time.perf_counter() - step_t0) * 1000.0
                         self.log_sig.emit(
                             f"[TIME] pathID_mapping (variant={variant_no}): {step_ms:.1f} ms"
@@ -9853,6 +13540,17 @@ class MainWindow(QMainWindow):
                                 hybrid=current_remaining_hybrid_result,
                             )
                             generic_unmanned = list(skip_result.missions)
+                            skip_policy = getattr(skip_result, "skip_policy", {}) or {}
+                            if (
+                                str(getattr(variant_current_remaining_request, "planner_mode", "") or "")
+                                == "reexecute_first_mission"
+                            ):
+                                self.log_sig.emit(
+                                    f"[REEXEC-FIRST] generic 0303 skip result: "
+                                    f"policy={skip_policy}, skipped={int(skip_result.skipped_count)}, "
+                                    f"aircraft={sorted(skip_result.skipped_aircraft_ids)}, "
+                                    f"pathIDs={sorted(skip_result.skipped_path_ids)}"
+                                )
                             if int(skip_result.skipped_count) > 0:
                                 self.log_sig.emit(
                                     f"[variant {variant_no}] current remaining generic 0303 skipped: "
@@ -9862,6 +13560,30 @@ class MainWindow(QMainWindow):
                                     f"pathIDs={sorted(skip_result.skipped_path_ids)}"
                                 )
                     wp_alloc = d0303._WPAllocator()
+                    wp_alloc_0303 = wp_alloc
+                    wp_alloc_0304 = wp_alloc
+                    flightpath_wp_blocks_reserved = False
+                    try:
+                        block_size = max(
+                            1000,
+                            int(_general_parallel_runtime_config()["replan_variant_waypoint_block_size"]),
+                        )
+                        wp0303_start = int(reserve_waypoint_block(block_size))
+                        wp0304_start = int(reserve_waypoint_block(block_size))
+                        wp_alloc_0303 = d0303._WPAllocator(
+                            start=wp0303_start,
+                            end=wp0303_start + block_size - 1,
+                            overflow_block_size=block_size,
+                        )
+                        wp_alloc_0304 = d0304._WPAllocator(
+                            start=wp0304_start,
+                            end=wp0304_start + block_size - 1,
+                        )
+                        flightpath_wp_blocks_reserved = True
+                    except Exception as exc:
+                        self.log_sig.emit(
+                            f"[WARN] FlightPath waypointID block reservation failed; using shared allocator: {exc}"
+                        )
                     try:
                         payload_values = (runtime_payload.get("values") or {}) if isinstance(runtime_payload, dict) else {}
                         manned_plan_mode = str(payload_values.get("manned_plan_mode") or "normal").strip().lower()
@@ -9873,7 +13595,7 @@ class MainWindow(QMainWindow):
                         d0303,
                         unmanned_missions,
                         runtime_payload=runtime_payload,
-                        wp_alloc=wp_alloc,
+                        wp_alloc=wp_alloc_0303,
                         cruise_speed=float(uav_cruise_speed),
                         turn_step_deg=float(uav_turn_step),
                         ref0203=mrpk_data,
@@ -9882,17 +13604,21 @@ class MainWindow(QMainWindow):
                 def _build_0304():
                     start = time.perf_counter()
                     try:
-                        _rv = (load_runtime_settings().get("values") or {})
+                        _rv = (runtime_payload.get("values") or {}) if isinstance(runtime_payload, dict) else {}
                     except Exception:
                         _rv = {}
-                    plans = d0304.build_lah_flight_plans_fixed(
+                    manned_for_0304 = _manned_missions_for_reexecute_line_hold_0304(
                         manned,
-                        cruise_speed=30.0,
+                        variant_current_remaining_request,
+                    )
+                    plans = d0304.build_lah_flight_plans_fixed(
+                        manned_for_0304,
+                        cruise_speed=40.0,
                         manned_plan_mode=manned_plan_mode,
                         lah_path_mode=str(_rv.get("lah_path_mode", "linear")),
                         lah_rl_hex_step=int(_rv.get("lah_rl_hex_step", 50)),
                         lah_rl_area_km=float(_rv.get("lah_rl_area_km", 10.0)),
-                        wp_alloc=wp_alloc,
+                        wp_alloc=wp_alloc_0304,
                     )
                     return plans, (time.perf_counter() - start) * 1000.0
 
@@ -9901,12 +13627,25 @@ class MainWindow(QMainWindow):
                 elapsed_0303_ms = 0.0
                 elapsed_0304_ms = 0.0
                 build_result_0303: Dict[str, Any] | None = None
+                flightpath_builds_concurrent = False
 
-                if generic_unmanned:
+                if generic_unmanned and manned and flightpath_wp_blocks_reserved:
+                    flightpath_builds_concurrent = True
+                    with concurrent.futures.ThreadPoolExecutor(
+                        max_workers=2,
+                        thread_name_prefix="Build0303_0304",
+                    ) as fp_executor:
+                        future_0303 = fp_executor.submit(_build_0303, generic_unmanned)
+                        future_0304 = fp_executor.submit(_build_0304)
+                        build_result_0303 = future_0303.result()
+                        flight_plans_0304, elapsed_0304_ms = future_0304.result()
+                    flight_plans_0303 = list(build_result_0303.get("plans") or [])
+                    elapsed_0303_ms = float(build_result_0303.get("elapsed_ms") or 0.0)
+                elif generic_unmanned:
                     build_result_0303 = _build_0303(generic_unmanned)
                     flight_plans_0303 = list(build_result_0303.get("plans") or [])
                     elapsed_0303_ms = float(build_result_0303.get("elapsed_ms") or 0.0)
-                if manned:
+                if manned and not flightpath_builds_concurrent:
                     flight_plans_0304, elapsed_0304_ms = _build_0304()
                 if generic_unmanned or manned:
                     mode_parts = []
@@ -9920,7 +13659,7 @@ class MainWindow(QMainWindow):
                     elif unmanned and current_remaining_hybrid_result is not None:
                         mode_parts.append("0303=skipped_by_current_remaining_hybrid")
                     if manned:
-                        mode_parts.append("0304=sequential")
+                        mode_parts.append("0304=sequential_concurrent" if flightpath_builds_concurrent else "0304=sequential")
                     self.log_sig.emit(
                         f"[INFO] FlightPath build mode (variant={variant_no}): "
                         + ", ".join(mode_parts)
@@ -9957,7 +13696,12 @@ class MainWindow(QMainWindow):
                     )
                     post_hybrid_path_snapshot = _snapshot_mission_path_ids(missions)
                     step_t0 = time.perf_counter()
-                    pid_map = _assign_fresh_path_ids(missions, generated_path_ids)
+                    reserved_path_ids_by_aircraft = _reserve_fresh_path_ids_for_missions(missions)
+                    pid_map = _assign_fresh_path_ids(
+                        missions,
+                        variant_generated_path_ids,
+                        reserved_path_ids_by_aircraft=reserved_path_ids_by_aircraft,
+                    )
                     step_ms = (time.perf_counter() - step_t0) * 1000.0
                     self.log_sig.emit(
                         f"[TIME] pathID_mapping (variant={variant_no}, current_remaining): {step_ms:.1f} ms"
@@ -10021,7 +13765,7 @@ class MainWindow(QMainWindow):
                         variant_prior_context,
                         variant_no,
                         pid_map,
-                        generated_path_ids,
+                        variant_generated_path_ids,
                     )
                 if custom_t0 is not None:
                     custom_ms = (time.perf_counter() - custom_t0) * 1000.0
@@ -10033,7 +13777,7 @@ class MainWindow(QMainWindow):
                     pid_val = fp.get('pathID')
                     if pid_val is not None:
                         try:
-                            generated_path_ids.add(int(pid_val))
+                            variant_generated_path_ids.add(int(pid_val))
                         except Exception:
                             pass
 
@@ -10049,6 +13793,23 @@ class MainWindow(QMainWindow):
                 )
                 if fixed3 or fixed4:
                     self.log_sig.emit(f"[INFO] FlightPath pathID enforced (variant={variant_no}): 0303={fixed3}, 0304={fixed4}")
+                duplicate_repairs = _repair_duplicate_flightpath_path_ids(
+                    missions=missions,
+                    flight_plans_0303=flight_plans_0303,
+                    flight_plans_0304=flight_plans_0304,
+                    generated_path_ids=variant_generated_path_ids,
+                    pid_map=pid_map,
+                )
+                if duplicate_repairs:
+                    self.log_sig.emit(
+                        f"[WARN] FlightPath duplicate pathID repaired before write "
+                        f"(variant={variant_no}): fixed={duplicate_repairs}"
+                    )
+                _validate_unique_flightpath_ids(
+                    variant_no=variant_no,
+                    flight_plans_0303=flight_plans_0303,
+                    flight_plans_0304=flight_plans_0304,
+                )
                 _apply_manual_runtime_fov_overrides(
                     missions=missions,
                     flight_plans_0303=flight_plans_0303,
@@ -10081,7 +13842,7 @@ class MainWindow(QMainWindow):
                     flight_plans_0304=flight_plans_0304,
                 )
 
-                expected_path_ids = {int(pid) for pid in pid_map.values() if pid is not None}
+                expected_path_ids = _expected_mission_path_ids(missions)
 
                 def _collect_valid_path_ids(fps):
                     collected: Set[int] = set()
@@ -10133,15 +13894,26 @@ class MainWindow(QMainWindow):
                     )
                     return
 
-                plan_id_value = requested_plan_id if requested_plan_id is not None else mp_json.get('missionPlanID')
-                try:
-                    preferred_plan_id = int(plan_id_value)
-                except Exception:
-                    preferred_plan_id = None
-                plan_id = _allocate_plan_id(preferred_plan_id)
+                plan_id, plan_id_contract = _allocate_general_variant_plan_id(
+                    variant_no=variant_no,
+                    option_code=int(option_code),
+                    requested_plan_id=requested_plan_id,
+                    generated_plan_json=mp_json,
+                )
                 mp_json['missionPlanID'] = plan_id
                 imp_id_map = _allocate_imp_id_map(mp_json)
                 plan_meta_entry = plan_meta_map.setdefault(plan_id, {})
+                plan_meta_entry.update(
+                    {
+                        "variant": int(variant_no),
+                        "optionCode": int(option_code),
+                        "requestedMissionPlanID": plan_id_contract["requestedMissionPlanID"],
+                        "missionPlanIDMatchesRequest": plan_id_contract["missionPlanIDMatchesRequest"],
+                        "planIDContract": plan_id_contract,
+                        "optionDependentIsolation": option_dependent_isolation,
+                        "currentRemainingHybridSharePolicy": copy.deepcopy(current_remaining_hybrid_share_policy),
+                    }
+                )
                 if variant_attack_context:
                     attack_meta = {
                         "attack": True,
@@ -10183,6 +13955,9 @@ class MainWindow(QMainWindow):
                             "remainingHybridWorkflow": str(
                                 getattr(remaining_hybrid_result, "planner_workflow", "") or ""
                             ),
+                            "remainingHybridValidation": copy.deepcopy(
+                                getattr(remaining_hybrid_result, "validation", None) or {}
+                            ),
                         }
                     )
 
@@ -10197,6 +13972,26 @@ class MainWindow(QMainWindow):
                     imp_pkgs=imp_pkgs,
                     flight_plans_0303=flight_plans_0303,
                     flight_plans_0304=flight_plans_0304,
+                )
+                _validate_mission_flightpath_links(
+                    variant_no=variant_no,
+                    missions=missions,
+                    flight_plans_0303=flight_plans_0303,
+                    flight_plans_0304=flight_plans_0304,
+                )
+                step_t0 = time.perf_counter()
+                validation_summary = validate_replan_payloads(
+                    mission_plan=mp_json,
+                    individual_mission_plans=imp_pkgs,
+                    flight_paths=list(flight_plans_0303 or []) + list(flight_plans_0304 or []),
+                    scope=f"generalFallback:{plan_id}",
+                    allow_existing_db_artifacts=True,
+                    log=self.log_sig.emit,
+                )
+                step_ms = (time.perf_counter() - step_t0) * 1000.0
+                plan_meta_entry["validation"] = validation_summary
+                self.log_sig.emit(
+                    f"[TIME] validate_general_variant (variant={variant_no}, sequential): {step_ms:.1f} ms"
                 )
                 step_t0 = time.perf_counter()
                 imp_write_rows: list[tuple[Path, Any]] = []
@@ -10290,6 +14085,12 @@ class MainWindow(QMainWindow):
                     self.log_sig.emit(
                         f"[TIME] write_FlightPath+repair (variant={variant_no}): {step_ms:.1f} ms"
                     )
+                try:
+                    mark_waypoint_files_written(
+                        _max_waypoint_id_from_flight_plans(flight_plans_0303, flight_plans_0304)
+                    )
+                except Exception:
+                    pass
 
                 step_t0 = time.perf_counter()
                 mp_json["planningTime"] = float((time.perf_counter() - variant_start) * 1000.0)
@@ -10298,6 +14099,16 @@ class MainWindow(QMainWindow):
                 self.log_sig.emit(
                     f"[TIME] write_0301 (variant={variant_no}): {step_ms:.1f} ms"
                 )
+                snapshot_carry_forward = _carry_forward_mission_area_snapshot(
+                    variant_no=variant_no,
+                    plan_id=plan_id,
+                    reason=(
+                        "general_remaining_hybrid"
+                        if getattr(remaining_hybrid_result, "applied", False)
+                        else "general_fallback"
+                    ),
+                )
+                plan_meta_entry["missionAreaSnapshotCarryForward"] = snapshot_carry_forward
 
                 self.log_sig.emit(f"[OK] Stored variant {variant_no}: MissionPlanID={plan_id}, IMP={len(imp_pkgs)}, FlightPath={fp_count_0303 + fp_count_0304}")
                 total_ms = (time.perf_counter() - variant_start) * 1000.0
@@ -10317,6 +14128,7 @@ class MainWindow(QMainWindow):
 
                 generated_plan_ids.append(plan_id)
                 option_codes_out.append(int(option_code))
+                generated_path_ids.update(variant_generated_path_ids)
                 self.log_sig.emit(
                     f"[INFO] Option mapping #{variant_no}: "
                     f"planID={plan_id}, optionCode={option_code}({option_code_to_label(option_code)})"
@@ -10401,6 +14213,8 @@ class MainWindow(QMainWindow):
                 plan_meta_map,
                 force_direct_update=force_direct_update,
                 suppress_0702_fallback=suppress_0702_fallback,
+                post_delivery_waypoint_mark=post_delivery_waypoint_mark,
+                post_delivery_snapshot_carry_forward=post_delivery_snapshot_carry_forward,
             )
             summary_info = {
                 "mode": "legacy",
@@ -10439,10 +14253,23 @@ class MainWindow(QMainWindow):
                 plan_log_summary.setdefault("exception", str(exc))
             except Exception:
                 pass
+            self._emit_lifecycle(
+                "uncaught_exception",
+                component="replan_pipeline",
+                outcome="failure",
+                reason=str(exc),
+                extra={"sessionId": session_id},
+            )
             _notify_failure_once(plan_log_stop_reason or "exception", exc=exc, detail=dict(plan_log_summary))
         finally:
             try:
                 if attack_exclusion_executor is not None:
+                    self._emit_lifecycle(
+                        "future_cancel",
+                        component="attack_exclusion_parallel",
+                        outcome="cancelled",
+                        extra={"pending": bool(attack_exclusion_future is not None and not attack_exclusion_future.done())},
+                    )
                     attack_exclusion_executor.shutdown(wait=True, cancel_futures=True)
                     attack_exclusion_executor = None
             except Exception:
@@ -10504,6 +14331,13 @@ class MainWindow(QMainWindow):
                 else (final_status if final_status in ("success", "error") else "error")
             )
             self._pipeline_logger.close_session(session_id, status_text, summary=summary_info or summary_payload)
+            self._emit_lifecycle(
+                "worker_thread_stop",
+                component="replan_pipeline_thread",
+                outcome=status_text,
+                reason=plan_log_stop_reason,
+                extra={"sessionId": session_id},
+            )
             try:
                 self.resume_deferred_replan_sig.emit()
             except Exception:
@@ -10737,6 +14571,16 @@ class MainWindow(QMainWindow):
         summary = dict(result.summary or {})
         summary.setdefault("status", str(getattr(result, "status", "skipped") or "skipped"))
         summary.setdefault("log_path", str(getattr(result, "log_path", "")))
+        transaction_id = summary.get("replanTransactionId")
+        if transaction_id:
+            ctx["replanTransactionId"] = str(transaction_id)
+            try:
+                timing = ctx.get("_replan_timing")
+                if isinstance(timing, dict):
+                    timing["replanTransactionId"] = str(transaction_id)
+            except Exception:
+                pass
+            self._active_plan_context = ctx
         if str(summary.get("status") or "").strip().lower() == "skipped" and not result.plan_ids:
             skip_reason = str(summary.get("reason") or "rejoin_not_needed").strip() or "rejoin_not_needed"
             group_skip_reasons: List[str] = []
@@ -11015,6 +14859,8 @@ class MainWindow(QMainWindow):
         summary = {
             "plan_ids": list(generated_plan_ids),
             "option_names": list(option_names),
+            "generated_individual_mission_package_ids": sorted(imp_id_set),
+            "generated_path_ids": sorted(path_id_set),
             "log_path": str(result.log_path),
         }
         if session_id:
@@ -11137,6 +14983,7 @@ class MainWindow(QMainWindow):
         detail: Dict[str, Any],
         failure_reason: str,
     ) -> Optional[Dict[str, Any]]:
+        started_at = time.perf_counter()
         lowered = str(failure_reason or "").lower()
         if "produced no path rows" not in lowered and "planner returned no valid path rows" not in lowered:
             return None
@@ -11150,12 +14997,7 @@ class MainWindow(QMainWindow):
             return None
 
         total_length_m = self._next_collab_polyline_length_m(coords)
-        try:
-            entry_lead_s = float(detail.get("entryLeadTimeS") or 0.0)
-        except Exception:
-            entry_lead_s = 0.0
-        predictive_travel_m = max(0.0, float(entry_lead_s) * 40.0)
-        short_line_threshold_m = max(150.0, predictive_travel_m)
+        short_line_threshold_m = 150.0
         if not (total_length_m > 0.0 and total_length_m <= short_line_threshold_m):
             return None
 
@@ -11166,6 +15008,7 @@ class MainWindow(QMainWindow):
             "line_length_m": round(float(total_length_m), 1),
             "threshold_m": round(float(short_line_threshold_m), 1),
             "line_width_m": round(float(width_m), 1) if isinstance(width_m, (int, float)) and width_m > 0.0 else None,
+            "skip_decision_elapsed_ms": round(max(0.0, (time.perf_counter() - started_at) * 1000.0), 3),
         }
 
     @staticmethod
@@ -11278,6 +15121,10 @@ class MainWindow(QMainWindow):
                 )
                 self._push_replan_noop_completion(reason, "재계획 불필요")
                 self._push_0001_notice(notice)
+                self._record_replan_timing_event(
+                    "next_collab_short_line_skip",
+                    extra=dict(short_line_skip_summary),
+                )
                 record_next_collab_event(
                     "mission_skipped",
                     {
@@ -11387,6 +15234,14 @@ class MainWindow(QMainWindow):
             "plan_ids": list(generated_plan_ids),
             "option_names": list(option_names),
             "inputMissionPackageID": int(result.new_input_package_id),
+            "generated_individual_mission_package_ids": sorted(
+                int(val) for val in result.generated_imp_ids if val is not None
+            ),
+            "generated_path_ids": sorted(
+                int(val) for val in result.generated_path_ids if val is not None
+            ),
+            "force_direct_update": True,
+            "suppress_0702_fallback": True,
             "log_path": str(result.log_path),
         }
         self.log_sig.emit(
@@ -11600,6 +15455,31 @@ class MainWindow(QMainWindow):
             merged_detail.update(detail)
             detail = merged_detail
             ctx["replan_detail"] = detail
+        if isinstance(detail, dict):
+            def _ctx_positive_int(*keys: str) -> Optional[int]:
+                for key in keys:
+                    try:
+                        value = int(ctx.get(key))
+                    except Exception:
+                        continue
+                    if value > 0:
+                        return value
+                return None
+
+            latest_source_plan_id = _ctx_positive_int(
+                "currentMissionPlanID",
+                "sourceMissionPlanID",
+                "currentPlanID",
+                "sourcePlanID",
+                "current_mission_plan_id",
+                "source_mission_plan_id",
+                "source_plan_id",
+            )
+            if latest_source_plan_id is not None:
+                detail = dict(detail)
+                detail["currentMissionPlanID"] = int(latest_source_plan_id)
+                detail["sourceMissionPlanID"] = int(latest_source_plan_id)
+                ctx["replan_detail"] = detail
 
         self._log_path_deviation_event(
             "mission_receive",
@@ -11609,6 +15489,10 @@ class MainWindow(QMainWindow):
                 "planIDs": plan_ids,
                 "detailTriggerType": detail_trigger or None,
                 "storeDetailLoaded": bool(store_detail),
+                "ctxCurrentMissionPlanID": ctx.get("currentMissionPlanID"),
+                "ctxSourceMissionPlanID": ctx.get("sourceMissionPlanID"),
+                "detailCurrentMissionPlanID": detail.get("currentMissionPlanID") if isinstance(detail, dict) else None,
+                "detailSourceMissionPlanID": detail.get("sourceMissionPlanID") if isinstance(detail, dict) else None,
                 "detailKeys": sorted(detail.keys()) if isinstance(detail, dict) else [],
             },
         )
@@ -11698,6 +15582,18 @@ class MainWindow(QMainWindow):
         summary = {
             "plan_ids": list(generated_plan_ids),
             "option_names": list(option_names),
+            "generated_individual_mission_package_ids": sorted(
+                int(val) for val in result.generated_imp_ids if val is not None
+            ),
+            "generated_path_ids": sorted(
+                int(val) for val in result.generated_path_ids if val is not None
+            ),
+            "preserved_manned_individual_mission_package_ids": sorted(
+                int(val) for val in getattr(result, "preserved_manned_imp_ids", set()) if val is not None
+            ),
+            "preserved_manned_path_ids": sorted(
+                int(val) for val in getattr(result, "preserved_manned_path_ids", set()) if val is not None
+            ),
             "log_path": str(result.log_path),
             "removed_waypoint_id": int(result.removed_waypoint_id),
             "inserted_waypoint_id": int(result.inserted_waypoint_id),
@@ -11888,6 +15784,8 @@ class MainWindow(QMainWindow):
         *,
         force_direct_update: bool = False,
         suppress_0702_fallback: bool = False,
+        post_delivery_waypoint_mark: Optional[Dict[str, Any]] = None,
+        post_delivery_snapshot_carry_forward: Optional[Dict[str, Any]] = None,
     ):
         safe_reason = _sanitize_reason(reason, "init-plan")
         is_quality_speed_delivery = _is_quality_speed_reason_text(safe_reason) or _plan_meta_has_quality_speed(option_meta)
@@ -11936,7 +15834,13 @@ class MainWindow(QMainWindow):
         new_plan_ids, new_option_names = _sort_plan_delivery_entries(new_plan_ids, new_option_names)
         self._record_replan_timing_event(
             "pipeline_done",
-            extra={"plans": len(new_plan_ids), "force_direct": bool(force_direct_update)},
+            extra={
+                "plans": len(new_plan_ids),
+                "force_direct": bool(force_direct_update),
+                "suppress_0702": bool(suppress_0702_fallback),
+                "quality_speed": bool(is_quality_speed_delivery),
+                "option_names": len(new_option_names),
+            },
         )
 
         if self._pending_plan_push:
@@ -11965,13 +15869,25 @@ class MainWindow(QMainWindow):
             pending["option_meta"] = merged_meta
             pending["force_direct_update"] = pending.get("force_direct_update") or bool(force_direct_update)
             pending["suppress_0702_fallback"] = pending.get("suppress_0702_fallback") or bool(suppress_0702_fallback)
+            merged_mark = self._merge_post_delivery_waypoint_mark(
+                pending.get("post_delivery_waypoint_mark"),
+                post_delivery_waypoint_mark,
+            )
+            if merged_mark:
+                pending["post_delivery_waypoint_mark"] = merged_mark
+            merged_snapshot_carry = self._merge_post_delivery_snapshot_carry_forward(
+                pending.get("post_delivery_snapshot_carry_forward"),
+                post_delivery_snapshot_carry_forward,
+            )
+            if merged_snapshot_carry:
+                pending["post_delivery_snapshot_carry_forward"] = merged_snapshot_carry
             self._pending_plan_push = pending
             summary = ", ".join(str(pid) for pid in merged_ids) or "-"
             self._record_replan_timing_event("0301_merged", extra={"plans": len(merged_ids)})
             self.log_sig.emit(f"[STEP 4] 0301 push merged (planIds={summary})")
             return
 
-        self._pending_plan_push = {
+        pending_payload = {
             "plan_ids": new_plan_ids,
             "option_names": new_option_names,
             "reason": safe_reason,
@@ -11979,6 +15895,15 @@ class MainWindow(QMainWindow):
             "force_direct_update": bool(force_direct_update),
             "suppress_0702_fallback": bool(suppress_0702_fallback),
         }
+        normalized_mark = self._normalize_post_delivery_waypoint_mark(post_delivery_waypoint_mark)
+        if normalized_mark:
+            pending_payload["post_delivery_waypoint_mark"] = normalized_mark
+        normalized_snapshot_carry = self._normalize_post_delivery_snapshot_carry_forward(
+            post_delivery_snapshot_carry_forward
+        )
+        if normalized_snapshot_carry:
+            pending_payload["post_delivery_snapshot_carry_forward"] = normalized_snapshot_carry
+        self._pending_plan_push = pending_payload
         try:
             self._scheduled_0301_plan_ids = [int(pid) for pid in new_plan_ids if pid is not None]
         except Exception:
@@ -11991,20 +15916,36 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         if hide_instead_of_close(self, event, log=self._append_log_line):
             return
+        self._emit_lifecycle("graceful_shutdown", component="gui", outcome="start")
         try:
             self._hb_0102_enabled = False
             self._hb_0102_stop.set()
             for msg_id, handler in getattr(self, "_input_listener_refs", []):
                 unregister_listener(msg_id, handler)
+                self._emit_lifecycle(
+                    "listener_stop",
+                    component=f"{msg_id}_listener",
+                    outcome="ok",
+                )
         except Exception:
+            self._emit_lifecycle(
+                "listener_stop_fail",
+                component="input_listener",
+                outcome="failure",
+            )
             pass
+        self._emit_lifecycle("graceful_shutdown", component="gui", outcome="ok")
         super().closeEvent(event)
+
+
+def _smoke_launch_main() -> int:
+    from modules.mission_planning.app.gui_entrypoint import smoke_launch_main
+
+    return smoke_launch_main(sys.modules[__name__])
 
 
 # ───────── 엔트리 ─────────
 if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    load_shared_stylesheet(app, PROJECT_ROOT)
-    win = MainWindow()
-    apply_initial_visibility(app, win, position_window_from_env)
-    sys.exit(app.exec_())
+    from modules.mission_planning.app.gui_entrypoint import run_public_gui_entrypoint
+
+    sys.exit(run_public_gui_entrypoint(sys.modules[__name__]))

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -14,9 +15,19 @@ from modules.monitoring.logic.mission_coverage import (
     build_swept_footprint_geometry,
     merge_coverage_geometry,
 )
+from modules.monitoring.logic.mission_line_progress import (
+    LineSweepDefinition,
+    LineSweepState,
+    build_line_sweep_definition,
+    force_complete_line_sweep_state,
+    line_sweep_metrics,
+    reset_line_sweep_state,
+    update_line_sweep_state,
+)
 
 _ON_MISSION_STARTUP_GUARD_MS = 10000
 _ON_MISSION_BLOCK_FLIGHT_MODES = {1, 2, 3}
+_PRECISE_SWEEP_MAX_SENSOR_DISTANCE_M = 1500.0
 
 
 def _coerce_int(value: object) -> int | None:
@@ -51,6 +62,42 @@ def _derive_cumulative_etas(raw_etas: list[float]) -> tuple[list[float], bool]:
     return cumulative, False
 
 
+def _coord_distance_m(a: object, b: object) -> float | None:
+    if not isinstance(a, dict) or not isinstance(b, dict):
+        return None
+    lat1 = _coerce_float(a.get("latitude") or a.get("Latitude"))
+    lon1 = _coerce_float(a.get("longitude") or a.get("Longitude"))
+    lat2 = _coerce_float(b.get("latitude") or b.get("Latitude"))
+    lon2 = _coerce_float(b.get("longitude") or b.get("Longitude"))
+    if lat1 is None or lon1 is None or lat2 is None or lon2 is None:
+        return None
+    phi1 = math.radians(float(lat1))
+    phi2 = math.radians(float(lat2))
+    d_phi = math.radians(float(lat2) - float(lat1))
+    d_lambda = math.radians(float(lon2) - float(lon1))
+    hav = (
+        math.sin(d_phi / 2.0) ** 2
+        + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2.0) ** 2
+    )
+    return 6_371_000.0 * 2.0 * math.atan2(math.sqrt(hav), math.sqrt(max(0.0, 1.0 - hav)))
+
+
+def _nearest_coord_index(
+    coords: list[dict[str, Any]],
+    target: object,
+) -> tuple[int | None, float | None]:
+    best_idx: int | None = None
+    best_dist: float | None = None
+    for idx, coord in enumerate(coords or []):
+        dist_m = _coord_distance_m(coord, target)
+        if dist_m is None:
+            continue
+        if best_dist is None or float(dist_m) < float(best_dist):
+            best_idx = int(idx)
+            best_dist = float(dist_m)
+    return best_idx, best_dist
+
+
 @dataclass
 class MissionMeta:
     mission_id: int
@@ -63,6 +110,9 @@ class MissionMeta:
     waypoint_eta_cumulative: dict[int, float]
     waypoint_index: dict[int, int]
     sweep_point_count: int = 0
+    waypoint_sweep_start_index: dict[int, int] | None = None
+    waypoint_sweep_point_count: dict[int, int] | None = None
+    waypoint_sweep_coords: dict[int, list[dict[str, Any]]] | None = None
     has_filming: bool = False
     requires_filming_completion: bool = False
     post_attack_boundary_hold: bool = False
@@ -82,6 +132,7 @@ class MissionProgressState:
     sweep_done: bool = False
     flying_status: int | None = None
     filming_status: int | None = None
+    sweep_progress_points: int = 0
 
 
 @dataclass
@@ -139,6 +190,8 @@ class MissionProgressTracker:
         self._waypoint_completion_ts_ms: dict[int, dict[int, int | None]] = {}
         self._mission_coverage_defs: dict[int, MissionCoverageDefinition] = {}
         self._mission_coverage_state: dict[int, MissionCoverageState] = {}
+        self._mission_line_defs: dict[int, LineSweepDefinition] = {}
+        self._mission_line_state: dict[int, LineSweepState] = {}
         self._forced_active_input_id: int | None = None
         self._fallback_baseline_ms: dict[int, int] = {}
         self._fallback_baseline_monotonic: dict[int, float] = {}
@@ -279,10 +332,41 @@ class MissionProgressTracker:
 
                 waypoint_eta_cumulative: dict[int, float] = {}
                 waypoint_index: dict[int, int] = {}
+                waypoint_sweep_start_index: dict[int, int] = {}
+                waypoint_sweep_point_count: dict[int, int] = {}
+                waypoint_sweep_coords: dict[int, list[dict[str, Any]]] = {}
+                sweep_lists = [
+                    [dict(coord) for coord in coords if isinstance(coord, dict)]
+                    for coords in (mission.get("sweep_line_coordinate_lists") or [])
+                    if isinstance(coords, list)
+                ]
+                sweep_list_idx = 0
+                sweep_point_offset = 0
                 for idx, wid in enumerate(waypoint_ids):
                     cum_val = cumulative_etas[idx] if idx < len(cumulative_etas) else 0.0
                     waypoint_eta_cumulative[int(wid)] = float(max(0.0, cum_val))
                     waypoint_index[int(wid)] = int(idx)
+                    waypoint_def = (
+                        mission.get("waypoints")[idx]
+                        if isinstance(mission.get("waypoints"), list) and idx < len(mission.get("waypoints"))
+                        else {}
+                    )
+                    point_count = (
+                        _coerce_int((waypoint_def or {}).get("line_search_point_count"))
+                        if isinstance(waypoint_def, dict)
+                        else None
+                    ) or 0
+                    if point_count > 0:
+                        coords_for_wp: list[dict[str, Any]] = []
+                        if sweep_list_idx < len(sweep_lists):
+                            coords_for_wp = sweep_lists[sweep_list_idx]
+                            sweep_list_idx += 1
+                        if coords_for_wp:
+                            point_count = len(coords_for_wp)
+                        waypoint_sweep_start_index[int(wid)] = int(sweep_point_offset)
+                        waypoint_sweep_point_count[int(wid)] = int(point_count)
+                        waypoint_sweep_coords[int(wid)] = coords_for_wp
+                        sweep_point_offset += int(point_count)
                 meta = MissionMeta(
                     mission_id=mission_id,
                     aircraft_id=aircraft_id,
@@ -294,6 +378,9 @@ class MissionProgressTracker:
                     waypoint_eta_cumulative=waypoint_eta_cumulative,
                     waypoint_index=waypoint_index,
                     sweep_point_count=int(max(0, sweep_point_count)),
+                    waypoint_sweep_start_index=waypoint_sweep_start_index,
+                    waypoint_sweep_point_count=waypoint_sweep_point_count,
+                    waypoint_sweep_coords=waypoint_sweep_coords,
                     has_filming=bool(has_filming),
                     requires_filming_completion=bool(requires_filming_completion),
                     post_attack_boundary_hold=bool(mission.get("post_attack_boundary_hold")),
@@ -302,6 +389,9 @@ class MissionProgressTracker:
                 coverage_def = build_mission_coverage_definition(mission)
                 if coverage_def is not None:
                     self._mission_coverage_defs[mission_id] = coverage_def
+                line_def = build_line_sweep_definition(mission, coverage_def=coverage_def)
+                if line_def is not None:
+                    self._mission_line_defs[mission_id] = line_def
                 self._mission_to_package[mission_id] = package_id
                 self._last_completed_idx.setdefault(mission_id, -1)
                 self._waypoint_state[mission_id] = {
@@ -340,6 +430,10 @@ class MissionProgressTracker:
                             covered_geometry=coverage_def.assignment_geometry,
                             covered_area_m2=float(coverage_def.planned_area_m2),
                         )
+                    if line_def is not None:
+                        line_state = LineSweepState()
+                        force_complete_line_sweep_state(line_def, line_state)
+                        self._mission_line_state[mission_id] = line_state
                     self._completed_mission_ids.add(mission_id)
                     if waypoint_ids:
                         self._last_completed_idx[mission_id] = len(waypoint_ids) - 1
@@ -356,6 +450,8 @@ class MissionProgressTracker:
                             mission_id,
                             MissionCoverageState(),
                         )
+                    if line_def is not None:
+                        self._mission_line_state.setdefault(mission_id, LineSweepState())
 
         if self._formation_followers:
             for follower_id, info in self._formation_followers.items():
@@ -476,10 +572,9 @@ class MissionProgressTracker:
         if mission_id is None:
             return
 
-        wp_map = self._waypoint_to_mission.get(aircraft_id, {})
         has_direct_wp_match = (
             current_wp is not None
-            and int(wp_map.get(int(current_wp), -1)) == int(mission_id)
+            and self._mission_contains_waypoint(int(mission_id), int(current_wp))
         )
         combined_on_mission = self._combined_on_mission_status(
             int(mission_id),
@@ -535,12 +630,14 @@ class MissionProgressTracker:
                         not state_obj.done
                         and not state_obj.awaiting_execute
                         and not state_obj.paused
-                    ):
+                ):
                         delta = (ts_int - int(last_ms)) / 1000.0
                         if delta > 0:
                             state_obj.elapsed_seconds += float(delta)
                     state_obj.last_update_ms = ts_int
         self._aircraft_current_mission[aircraft_id] = mission_id
+        self._update_line_sweep_progress(mission_id, state, timestamp_ms=timestamp_ms)
+        self._update_sweep_point_progress(mission_id, state, current_wp=current_wp)
         self._update_mission_coverage(mission_id, state)
         meta = self._mission_meta.get(mission_id)
         if self._update_mission_state(mission_id, current_wp, combined_on_mission, timestamp_ms):
@@ -763,6 +860,11 @@ class MissionProgressTracker:
         if not missions:
             return None
         input_int = int(input_id)
+        current_id = self._aircraft_current_mission.get(int(aircraft_id))
+        if current_id is not None and self._mission_contains_waypoint(int(current_id), int(waypoint_id)):
+            meta = self._mission_meta.get(int(current_id))
+            if meta is not None and meta.input_id is not None and int(meta.input_id) == input_int:
+                return int(current_id)
         mapping = self._waypoint_to_mission.get(int(aircraft_id), {})
         mission_id = mapping.get(int(waypoint_id))
         if mission_id is not None:
@@ -822,6 +924,14 @@ class MissionProgressTracker:
             if not state.done:
                 return int(mission_id)
         return last_same_input
+
+    def _mission_contains_waypoint(self, mission_id: int | None, waypoint_id: int | None) -> bool:
+        if mission_id is None or waypoint_id is None:
+            return False
+        meta = self._mission_meta.get(int(mission_id))
+        if meta is None:
+            return False
+        return int(waypoint_id) in meta.waypoint_index
 
     def force_complete_missions(self, mission_ids: list[int]) -> list[dict[str, int | None]]:
         completed: list[dict[str, int | None]] = []
@@ -887,6 +997,9 @@ class MissionProgressTracker:
                 }
             if mission_id in self._mission_coverage_defs:
                 self._mission_coverage_state[mission_id] = MissionCoverageState()
+            if mission_id in self._mission_line_defs:
+                line_state = self._mission_line_state.setdefault(mission_id, LineSweepState())
+                reset_line_sweep_state(line_state)
 
     def pause_aircraft(self, aircraft_id: int | None, timestamp_ms: int | None) -> None:
         if aircraft_id is None:
@@ -958,6 +1071,80 @@ class MissionProgressTracker:
         coverage_state.covered_geometry = merged
         coverage_state.covered_area_m2 = covered_area
 
+    def _update_line_sweep_progress(
+        self,
+        mission_id: int,
+        state: dict[str, Any],
+        *,
+        timestamp_ms: int | None,
+    ) -> None:
+        line_def = self._mission_line_defs.get(int(mission_id))
+        if line_def is None:
+            return
+        line_state = self._mission_line_state.setdefault(int(mission_id), LineSweepState())
+        if line_state.covered_length_m >= line_def.planned_length_m - 1e-6:
+            return
+        update_line_sweep_state(
+            line_def,
+            line_state,
+            state,
+            timestamp_ms=timestamp_ms,
+        )
+
+    def _update_sweep_point_progress(
+        self,
+        mission_id: int,
+        state: dict[str, Any],
+        *,
+        current_wp: int | None,
+    ) -> None:
+        meta = self._mission_meta.get(int(mission_id))
+        state_obj = self._progress_state.setdefault(int(mission_id), MissionProgressState())
+        if meta is None or int(meta.sweep_point_count or 0) <= 0:
+            return
+        if state_obj.sweep_done or state_obj.done:
+            state_obj.sweep_progress_points = int(meta.sweep_point_count or 0)
+            return
+        current_wp_int = _coerce_int(current_wp)
+        if current_wp_int is None:
+            return
+
+        start_by_wp = meta.waypoint_sweep_start_index or {}
+        count_by_wp = meta.waypoint_sweep_point_count or {}
+        coords_by_wp = meta.waypoint_sweep_coords or {}
+
+        candidate_points: int | None = None
+        current_wp_index = meta.waypoint_index.get(int(current_wp_int))
+        if current_wp_index is not None:
+            prefix_points = 0
+            for waypoint_id, start_idx in start_by_wp.items():
+                wp_index = meta.waypoint_index.get(int(waypoint_id))
+                if wp_index is None or int(wp_index) >= int(current_wp_index):
+                    continue
+                count = int(count_by_wp.get(int(waypoint_id), 0) or 0)
+                prefix_points = max(prefix_points, int(start_idx) + count)
+            candidate_points = int(prefix_points)
+
+        coords = coords_by_wp.get(int(current_wp_int)) or []
+        if coords:
+            sensor_center = state.get("sensor_center_coordinate")
+            nearest_idx, nearest_dist_m = _nearest_coord_index(coords, sensor_center)
+            if (
+                nearest_idx is not None
+                and nearest_dist_m is not None
+                and float(nearest_dist_m) <= float(_PRECISE_SWEEP_MAX_SENSOR_DISTANCE_M)
+            ):
+                start_idx = int(start_by_wp.get(int(current_wp_int), 0) or 0)
+                candidate_points = max(
+                    int(candidate_points or 0),
+                    start_idx + int(nearest_idx) + 1,
+                )
+        if candidate_points is None:
+            return
+        bounded = max(0, min(int(meta.sweep_point_count or 0), int(candidate_points)))
+        if bounded > int(state_obj.sweep_progress_points or 0):
+            state_obj.sweep_progress_points = int(bounded)
+
     def _coverage_metrics_for_mission(self, mission_id: int) -> tuple[float, float, int, bool]:
         coverage_def = self._mission_coverage_defs.get(int(mission_id))
         if coverage_def is None:
@@ -971,6 +1158,12 @@ class MissionProgressTracker:
         percent = max(0, min(percent, 100))
         return covered_area, planned_area, percent, True
 
+    def _line_sweep_metrics_for_mission(self, mission_id: int) -> tuple[float, float, int, bool]:
+        return line_sweep_metrics(
+            self._mission_line_defs.get(int(mission_id)),
+            self._mission_line_state.get(int(mission_id)),
+        )
+
     def _mission_requires_sweep(self, mission_id: int) -> bool:
         meta = self._mission_meta.get(int(mission_id))
         if meta is None:
@@ -979,6 +1172,7 @@ class MissionProgressTracker:
             meta.requires_filming_completion
             or meta.has_filming
             or int(meta.sweep_point_count or 0) > 0
+            or int(mission_id) in self._mission_line_defs
             or int(mission_id) in self._mission_coverage_defs
         )
 
@@ -1019,6 +1213,10 @@ class MissionProgressTracker:
         return flying_status
 
     def _force_complete_coverage(self, mission_id: int) -> None:
+        line_def = self._mission_line_defs.get(int(mission_id))
+        if line_def is not None:
+            line_state = self._mission_line_state.setdefault(int(mission_id), LineSweepState())
+            force_complete_line_sweep_state(line_def, line_state)
         coverage_def = self._mission_coverage_defs.get(int(mission_id))
         if coverage_def is None:
             return
@@ -1046,6 +1244,8 @@ class MissionProgressTracker:
         mission_id: int,
         *,
         path_percent: int,
+        line_percent: int,
+        line_enabled: bool,
         coverage_percent: int,
         coverage_enabled: bool,
     ) -> int:
@@ -1054,6 +1254,8 @@ class MissionProgressTracker:
             return 100
         if state.sweep_done:
             return 100
+        if line_enabled:
+            return max(0, min(int(line_percent), 99))
         if coverage_enabled:
             return max(0, min(int(coverage_percent), 99))
         if state.filming_status in (1, 2):
@@ -1209,6 +1411,9 @@ class MissionProgressTracker:
     def _resolve_mission_for_waypoint(self, aircraft_id: int, waypoint_id: int | None) -> int | None:
         if waypoint_id is None:
             return None
+        current_id = self._aircraft_current_mission.get(int(aircraft_id))
+        if current_id is not None and self._mission_contains_waypoint(int(current_id), int(waypoint_id)):
+            return int(current_id)
         mapping = self._waypoint_to_mission.get(aircraft_id, {})
         if waypoint_id in mapping:
             return mapping.get(waypoint_id)
@@ -1379,6 +1584,22 @@ class MissionProgressTracker:
             covered_area_m2, planned_area_m2, coverage_percent, coverage_enabled = (
                 self._coverage_metrics_for_mission(mission_id)
             )
+            line_covered_length_m, line_planned_length_m, line_percent, line_enabled = (
+                self._line_sweep_metrics_for_mission(mission_id)
+            )
+            footprint_covered_area_m2 = covered_area_m2
+            footprint_planned_area_m2 = planned_area_m2
+            footprint_coverage_percent = coverage_percent
+            footprint_coverage_enabled = coverage_enabled
+            coverage_source = "footprint" if coverage_enabled else "none"
+            coverage_unit = "m2" if coverage_enabled else None
+            if line_enabled:
+                covered_area_m2 = line_covered_length_m
+                planned_area_m2 = line_planned_length_m
+                coverage_percent = line_percent
+                coverage_enabled = True
+                coverage_source = "line_sweep"
+                coverage_unit = "m"
             last_wp = int(meta.waypoint_ids[-1]) if meta.waypoint_ids else None
             if (
                 not state.done
@@ -1446,9 +1667,21 @@ class MissionProgressTracker:
             sweep_percent = self._sweep_progress_percent(
                 int(mission_id),
                 path_percent=path_percent,
+                line_percent=line_percent,
+                line_enabled=line_enabled,
                 coverage_percent=coverage_percent,
                 coverage_enabled=coverage_enabled,
             )
+            sweep_progress_points = max(0, int(state.sweep_progress_points or 0))
+            sweep_point_count = max(0, int(meta.sweep_point_count or 0))
+            sweep_point_percent: int | None = None
+            if sweep_point_count > 0:
+                if state.sweep_done or state.done:
+                    sweep_progress_points = sweep_point_count
+                sweep_progress_points = max(0, min(sweep_point_count, sweep_progress_points))
+                sweep_point_percent = int(round((sweep_progress_points / max(1, sweep_point_count)) * 100.0))
+                if sweep_progress_points > 0 and not (state.sweep_done or state.done):
+                    sweep_percent = max(int(sweep_percent), min(int(sweep_point_percent), 99))
             if self._mission_requires_sweep(int(mission_id)):
                 percent = min(int(path_percent), int(sweep_percent))
             else:
@@ -1481,6 +1714,11 @@ class MissionProgressTracker:
                 "path_actual_seconds": int(round(path_actual)),
                 "sweep_progress_percent": int(sweep_percent),
                 "sweep_actual_seconds": int(round(planned * (sweep_percent / 100.0))) if planned > 0 else 0,
+                "sweep_progress_points": int(sweep_progress_points),
+                "sweep_point_count": int(sweep_point_count),
+                "sweep_point_progress_percent": (
+                    int(sweep_point_percent) if sweep_point_percent is not None else None
+                ),
                 "sweep_required": bool(self._mission_requires_sweep(int(mission_id))),
                 "path_done": bool(state.path_done),
                 "sweep_done": bool(state.sweep_done),
@@ -1494,6 +1732,25 @@ class MissionProgressTracker:
                 "covered_area_m2": round(covered_area_m2, 3),
                 "planned_area_m2": round(planned_area_m2, 3),
                 "coverage_enabled": bool(coverage_enabled),
+                "coverage_source": coverage_source,
+                "coverage_unit": coverage_unit,
+                "line_coverage_percent": line_percent,
+                "line_covered_length_m": round(line_covered_length_m, 3),
+                "line_planned_length_m": round(line_planned_length_m, 3),
+                "line_coverage_enabled": bool(line_enabled),
+                "footprint_coverage_percent": footprint_coverage_percent,
+                "footprint_covered_area_m2": round(footprint_covered_area_m2, 3),
+                "footprint_planned_area_m2": round(footprint_planned_area_m2, 3),
+                "footprint_coverage_enabled": bool(footprint_coverage_enabled),
+                "sweep_progress_source": (
+                    "line_sweep"
+                    if line_enabled
+                    else "footprint"
+                    if footprint_coverage_enabled
+                    else "path_fallback"
+                    if state.filming_status in (1, 2)
+                    else "none"
+                ),
             }
 
         if formation_map:
@@ -1531,6 +1788,17 @@ class MissionProgressTracker:
                     "covered_area_m2",
                     "planned_area_m2",
                     "coverage_enabled",
+                    "coverage_source",
+                    "coverage_unit",
+                    "line_coverage_percent",
+                    "line_covered_length_m",
+                    "line_planned_length_m",
+                    "line_coverage_enabled",
+                    "footprint_coverage_percent",
+                    "footprint_covered_area_m2",
+                    "footprint_planned_area_m2",
+                    "footprint_coverage_enabled",
+                    "sweep_progress_source",
                 ):
                     if key in leader_prog:
                         follower_prog[key] = leader_prog[key]

@@ -1,0 +1,176 @@
+{
+  "description": "Current remaining hybrid fixture for failure fallback and pathID remap behavior.",
+  "request": {
+    "source_plan_id": 910001,
+    "current_input_id": 7001,
+    "current_input_mission": {
+      "inputMissionID": 7001,
+      "missionType": "area"
+    },
+    "next_input_mission": {
+      "inputMissionID": 7002,
+      "missionType": "line"
+    },
+    "entry_coord_map": {
+      "5": {
+        "latitude": 36.125,
+        "longitude": 127.125,
+        "altitude": 900
+      }
+    },
+    "heading_map": {
+      "5": 92.5
+    },
+    "representative_entry": {
+      "latitude": 36.125,
+      "longitude": 127.125,
+      "altitude": 900
+    },
+    "turn_radius_scale": 1.0
+  },
+  "generic": {
+    "missions": [
+      {
+        "aircraftID": 5,
+        "pathID": 500000010,
+        "relatedMission": {
+          "inputMissionID": 7001
+        },
+        "label": "current generic mission removed only after hybrid success"
+      },
+      {
+        "aircraftID": 5,
+        "pathID": 500000001,
+        "relatedMission": {
+          "inputMissionID": 7999
+        },
+        "label": "unrelated generic mission preserved and used as collision baseline"
+      },
+      {
+        "aircraftID": 4,
+        "pathID": 400000001,
+        "relatedMission": {
+          "inputMissionID": 7999
+        },
+        "label": "other UAV generic mission preserved"
+      },
+      {
+        "aircraftID": 1,
+        "pathID": 100000001,
+        "relatedMission": {
+          "inputMissionID": 7001
+        },
+        "label": "manned mission preserved"
+      }
+    ],
+    "flight_plans_0303": [
+      {
+        "pathID": 500000010,
+        "aircraftID": 5,
+        "waypointList": [
+          {
+            "waypointID": 1
+          }
+        ]
+      },
+      {
+        "pathID": 500000001,
+        "aircraftID": 5,
+        "waypointList": [
+          {
+            "waypointID": 2
+          }
+        ]
+      },
+      {
+        "pathID": 400000001,
+        "aircraftID": 4,
+        "waypointList": [
+          {
+            "waypointID": 3
+          }
+        ]
+      }
+    ],
+    "flight_plans_0304": [
+      {
+        "pathID": 100000001,
+        "aircraftID": 1,
+        "waypointList": [
+          {
+            "waypointID": 4
+          }
+        ]
+      }
+    ]
+  },
+  "hybrid_prepared": {
+    "replacement_by_aircraft": {
+      "5": [
+        {
+          "aircraftID": 5,
+          "pathID": 500000001,
+          "relatedMission": {
+            "inputMissionID": 7001
+          },
+          "label": "hybrid replacement mission collides with preserved generic pathID"
+        }
+      ]
+    },
+    "generated_fp_by_path": {
+      "500000001": {
+        "pathID": 500000001,
+        "waypointList": [
+          {
+            "waypointID": 10
+          }
+        ]
+      }
+    },
+    "generated_path_ids": [
+      500000001
+    ],
+    "planner_workflow": "fixture-next-collab",
+    "planner_result_text": "fixture success",
+    "timing_ms": {
+      "source_load": 1.25,
+      "flight_path_build": 2.5
+    },
+    "id_reservation": {
+      "path_ids": [
+        500000001
+      ]
+    },
+    "uav_work_summary": {
+      "5": 1
+    },
+    "mission_mode": "current_remaining_fixture"
+  },
+  "expected": {
+    "failure_generic_path_ids": [
+      500000010,
+      500000001,
+      400000001
+    ],
+    "skipped_path_ids_after_success": [
+      500000010
+    ],
+    "removed_path_ids_after_merge": [
+      500000010
+    ],
+    "temporary_path_id_remap": {
+      "500000001": 500000002
+    },
+    "merged_generated_path_ids": [
+      500000002
+    ],
+    "merged_0303_path_ids": [
+      500000001,
+      400000001,
+      500000002
+    ],
+    "merged_0304_path_ids": [
+      100000001
+    ]
+  }
+}

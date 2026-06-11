@@ -1,0 +1,68 @@
+    {
+      "HorizontalFov": 0.0,
+      "VerticalFov": 0.0,
+      "DiagonalFov": 0.0,
+      "SensorCenterLat": 0.0,
+      "SensorCenterLon": 0.0,
+      "SensorCenterAlt": 0,
+      "SlantRange": 0,
+      "FootPrintLeftTopLat": 0.0,
+      "FootPrintLeftTopLon": 0.0,
+      "FootPrintLeftTopAlt": 0,
+      "FootPrintRightTopLat": 0.0,
+      "FootPrintRightTopLon": 0.0,
+      "FootPrintRightTopAlt": 0,
+      "FootPrintRightBottomLat": 0.0,
+      "FootPrintRightBottomLon": 0.0,
+      "FootPrintRightBottomAlt": 0,
+      "FootPrintLeftBottomLat": 0.0,
+      "FootPrintLeftBottomLon": 0.0,
+      "FootPrintLeftBottomAlt": 0,
+      "ID": 4,                           						# AircraftID
+      "Name": null,
+      "Type": 1,									# 무인기 : 1, 유인기 : 3, 적군 : 5
+      "PlatformType": 0,								# 유무인기 : 0, 적군 : 3
+      "Health": 100.0,
+      "Status": 1,
+      "PayLoadHealth": 1,
+      "FuelWarning": 1,
+      "entityAbnormalCause": {
+        "Hit": 0,
+        "Loss1": 0,
+        "Loss2": 0,
+        "Loss3": 0,
+        "FuelWarning": 0,
+        "FuelDanger": 0,
+        "FuelZero": 0,
+        "Crash": 0,
+        "Sensor": 0
+      },
+      "Identification": 1,								# 아군 : 1, 적군 : 2
+      "IsLeader": 0,									# None : 0, 유인기 지휘기 : 1, 유인기 편대기 : 2 
+      "LOC": {
+        "Latitude": 38.01069,
+        "Longitude": 127.245224,
+        "Altitude": 1000
+      },
+      "velocity": {
+        "Speed": 0.0,
+        "Heading": 0.0
+      },
+      "weapons": {									# 유인기 무장
+        "Type1": 0,
+        "Type2": 0,
+        "Type3": 0
+      },
+      "Fuel": 15.0,
+      "FuelConsumption": 3.23E-05,
+      "DetectRange": 1500.0,
+      "AttackRange": 1000.0,
+      "AttackAccuracy": 50.0,
+      "AttackDelay": 0.1,
+      "AttackDamage": 1.0,
+      "UAVTestMode": 0,
+      "DetectPixel": 500000.0,							# 설정 가능하게 (랜덤 : 20)
+      "RecogPixel": 10000.0,							# 설정 가능하게 (랜덤 : 10)
+      "AttackFlag": 1,
+      "LAHStatus": 1
+    },

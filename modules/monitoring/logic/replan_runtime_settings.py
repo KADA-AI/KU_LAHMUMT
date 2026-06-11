@@ -6,6 +6,8 @@ import threading
 from pathlib import Path
 from typing import Any, Dict, Iterable
 
+from modules.common.settings_paths import replan_defaults_path, replan_settings_path
+
 
 _CACHE_LOCK = threading.Lock()
 _CACHE_SIG: tuple[tuple[int, int] | None, tuple[int, int] | None] | None = None
@@ -63,12 +65,27 @@ _FALLBACK_SETTINGS: Dict[str, Any] = {
         "alt_waypoint_trigger_s": 2.0,
         "alt_waypoint_lead_time_s": 10.0,
         "next_mission_entry_lead_time_s": 10.0,
+        "turn_radius_scale": 1.15,
         "turn_radius_30_m": 340.0,
         "turn_radius_40_m": 450.0,
         "turn_radius_50_m": 560.0,
         "coord_heading_fallback_min_delta_deg": 25.0,
         "coord_heading_fallback_max_delta_deg": 120.0,
         "coord_heading_fallback_max_turn_dps": 15.0,
+        "adaptive_enabled": True,
+        "adaptive_sample_min_interval_s": 0.75,
+        "adaptive_min_turn_rate_dps": 2.5,
+        "adaptive_min_speed_mps": 25.0,
+        "adaptive_max_speed_mps": 70.0,
+        "adaptive_min_radius_m": 80.0,
+        "adaptive_max_radius_m": 2000.0,
+        "adaptive_ema_alpha": 0.08,
+        "adaptive_warmup_samples": 4,
+        "adaptive_min_scale": 0.85,
+        "adaptive_max_scale": 1.45,
+        "adaptive_threshold_gain": 0.65,
+        "adaptive_threshold_down_gain": 0.35,
+        "adaptive_save_interval_s": 10.0,
     },
     "quality_speed": {
         "lower_band_ratio": 0.90,
@@ -109,8 +126,8 @@ _FALLBACK_SETTINGS: Dict[str, Any] = {
     },
     "post_attack_rejoin": {
         "closure_cooldown_ms": 30000,
-        "min_remaining_eta_s": 120,
-        "rejoin_margin_s": 45,
+        "min_remaining_eta_s": 30,
+        "rejoin_margin_s": 15,
         "turn_radius_m": 180.0,
         "default_cruise_speed_mps": 35.0,
         "active_progress_skip_percent": 70,
@@ -118,7 +135,7 @@ _FALLBACK_SETTINGS: Dict[str, Any] = {
     "replan_queue": {
         "active_timeout_ms": 45000,
         "history_limit": 30,
-        "target_dispatch_delay_ms": 800,
+        "target_dispatch_delay_ms": 0,
         "release_on_option_info": False,
         "suppress_active_target_options_on_new_detection": True,
     },
@@ -130,20 +147,12 @@ _FALLBACK_SETTINGS: Dict[str, Any] = {
 }
 
 
-def _project_root() -> Path:
-    current = Path(__file__).resolve()
-    for parent in current.parents:
-        if (parent / "run.py").exists():
-            return parent
-    return current.parents[3]
-
-
 def settings_path() -> Path:
-    return _project_root() / "replan_settings.json"
+    return replan_settings_path()
 
 
 def defaults_path() -> Path:
-    return _project_root() / "replan_settings_defaults.json"
+    return replan_defaults_path()
 
 
 def _path_sig(path: Path) -> tuple[int, int] | None:
@@ -351,6 +360,52 @@ def normalize_replan_settings(
     path_cfg["coord_heading_fallback_max_turn_dps"] = max(
         0.0, _as_float(path_cfg.get("coord_heading_fallback_max_turn_dps"), 15.0)
     )
+    path_cfg["adaptive_enabled"] = _as_bool(path_cfg.get("adaptive_enabled"), True)
+    path_cfg["adaptive_sample_min_interval_s"] = max(
+        0.2, _as_float(path_cfg.get("adaptive_sample_min_interval_s"), 0.75)
+    )
+    path_cfg["adaptive_min_turn_rate_dps"] = max(
+        0.1, _as_float(path_cfg.get("adaptive_min_turn_rate_dps"), 2.5)
+    )
+    path_cfg["adaptive_min_speed_mps"] = max(
+        0.0, _as_float(path_cfg.get("adaptive_min_speed_mps"), 25.0)
+    )
+    path_cfg["adaptive_max_speed_mps"] = max(
+        float(path_cfg["adaptive_min_speed_mps"]),
+        _as_float(path_cfg.get("adaptive_max_speed_mps"), 70.0),
+    )
+    path_cfg["adaptive_min_radius_m"] = max(
+        1.0, _as_float(path_cfg.get("adaptive_min_radius_m"), 80.0)
+    )
+    path_cfg["adaptive_max_radius_m"] = max(
+        float(path_cfg["adaptive_min_radius_m"]),
+        _as_float(path_cfg.get("adaptive_max_radius_m"), 2000.0),
+    )
+    path_cfg["adaptive_ema_alpha"] = min(
+        1.0,
+        max(0.01, _as_float(path_cfg.get("adaptive_ema_alpha"), 0.08)),
+    )
+    path_cfg["adaptive_warmup_samples"] = max(
+        1, _as_int(path_cfg.get("adaptive_warmup_samples"), 4)
+    )
+    path_cfg["adaptive_min_scale"] = max(
+        0.1, _as_float(path_cfg.get("adaptive_min_scale"), 0.85)
+    )
+    path_cfg["adaptive_max_scale"] = max(
+        float(path_cfg["adaptive_min_scale"]),
+        _as_float(path_cfg.get("adaptive_max_scale"), 1.45),
+    )
+    path_cfg["adaptive_threshold_gain"] = min(
+        1.0,
+        max(0.0, _as_float(path_cfg.get("adaptive_threshold_gain"), 0.65)),
+    )
+    path_cfg["adaptive_threshold_down_gain"] = min(
+        1.0,
+        max(0.0, _as_float(path_cfg.get("adaptive_threshold_down_gain"), 0.35)),
+    )
+    path_cfg["adaptive_save_interval_s"] = max(
+        1.0, _as_float(path_cfg.get("adaptive_save_interval_s"), 10.0)
+    )
 
     quality_cfg = merged.get("quality_speed")
     if not isinstance(quality_cfg, dict):
@@ -435,11 +490,11 @@ def normalize_replan_settings(
     )
     post_attack_cfg["min_remaining_eta_s"] = max(
         0,
-        _as_int(post_attack_cfg.get("min_remaining_eta_s"), 120),
+        _as_int(post_attack_cfg.get("min_remaining_eta_s"), 30),
     )
     post_attack_cfg["rejoin_margin_s"] = max(
         0,
-        _as_int(post_attack_cfg.get("rejoin_margin_s"), 45),
+        _as_int(post_attack_cfg.get("rejoin_margin_s"), 15),
     )
     post_attack_cfg["turn_radius_m"] = max(
         1.0,
@@ -460,7 +515,7 @@ def normalize_replan_settings(
         merged["replan_queue"] = queue_cfg
     queue_cfg["active_timeout_ms"] = max(1000, _as_int(queue_cfg.get("active_timeout_ms"), 45000))
     queue_cfg["history_limit"] = max(5, _as_int(queue_cfg.get("history_limit"), 30))
-    queue_cfg["target_dispatch_delay_ms"] = max(0, _as_int(queue_cfg.get("target_dispatch_delay_ms"), 800))
+    queue_cfg["target_dispatch_delay_ms"] = max(0, _as_int(queue_cfg.get("target_dispatch_delay_ms"), 0))
     queue_cfg["release_on_option_info"] = _as_bool(
         queue_cfg.get("release_on_option_info"),
         False,

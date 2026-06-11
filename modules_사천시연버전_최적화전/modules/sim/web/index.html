@@ -1,0 +1,658 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sim Map</title>
+    <link rel="stylesheet" href="/vendor/maplibre-gl.css" />
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body
+    data-tile-url="__TILE_URL__"
+    data-min-zoom="__MIN_ZOOM__"
+    data-max-zoom="__MAX_ZOOM__"
+    data-center-lat="__CENTER_LAT__"
+    data-center-lon="__CENTER_LON__"
+    data-start-zoom="__START_ZOOM__"
+    data-bounds="__BOUNDS_JSON__"
+    data-dem-url="__DEM_URL__"
+    data-dem-available="__DEM_AVAILABLE__"
+    data-dem-tile-size="__DEM_TILE_SIZE__"
+    data-dem-max-zoom="__DEM_MAX_ZOOM__"
+    data-dem-bounds="__DEM_BOUNDS__"
+    data-dem-encoding="__DEM_ENCODING__"
+    data-dem-exaggeration="__DEM_EXAGGERATION__"
+    data-dem-pitch-threshold="__DEM_PITCH_THRESHOLD__"
+  >
+    <div id="map"></div>
+        <div id="scenario-overlay" class="scenario-overlay" aria-hidden="true">
+      <div class="scenario-overlay-dot" data-scn-dot></div>
+      <div class="scenario-overlay-tooltip" data-scn-tooltip>
+        <div class="scenario-overlay-title" data-scn-title>0202 선행임무 정보</div>
+        <div class="scenario-overlay-coord" data-scn-coord>Lat -- / Lon -- / Alt --</div>
+        <div class="scenario-overlay-hint" data-scn-hint>클릭: 전송 · 우클릭: 취소</div>
+      </div>
+    </div>
+    <div id="enemy-picker" class="enemy-picker" aria-hidden="true">
+      <div class="enemy-picker-center"></div>
+      <button type="button" class="enemy-picker-item" data-enemy-type="0" title="없음">없음</button>
+      <button type="button" class="enemy-picker-item" data-enemy-type="roi" title="ROI">ROI</button>
+      <button type="button" class="enemy-picker-item" data-enemy-type="1" title="전차">전차</button>
+      <button type="button" class="enemy-picker-item" data-enemy-type="2" title="장갑차">장갑차</button>
+      <button type="button" class="enemy-picker-item" data-enemy-type="3" title="방사포">방사포</button>
+      <button type="button" class="enemy-picker-item" data-enemy-type="4" title="곡사포">곡사포</button>
+      <button type="button" class="enemy-picker-item" data-enemy-type="5" title="고정고사포">고정고사포</button>
+      <button type="button" class="enemy-picker-item" data-enemy-type="6" title="군인">군인</button>
+    </div>
+    <div class="toolbar">
+      <div class="toolbar-title">SIM MAP</div>
+      <div class="toolbar-time" id="sim-time">T+00:00:00</div>
+      <button id="toggle-sweep-lines" class="toggle is-active" type="button" aria-pressed="true">
+        Sweep Lines
+      </button>
+      <button id="toggle-buildings" class="toggle">3D Buildings</button>
+    </div>
+    <div id="mission-legend" class="mission-legend" aria-hidden="true">
+      <div class="mission-legend-title">FLIGHT PATHS</div>
+      <div class="mission-legend-items">
+        <div class="mission-legend-item agent-lah1" data-agent="LAH1">
+          <span class="mission-legend-dot"></span>LAH1
+        </div>
+        <div class="mission-legend-item agent-lah2" data-agent="LAH2">
+          <span class="mission-legend-dot"></span>LAH2
+        </div>
+        <div class="mission-legend-item agent-lah3" data-agent="LAH3">
+          <span class="mission-legend-dot"></span>LAH3
+        </div>
+        <div class="mission-legend-item agent-uav1" data-agent="UAV1">
+          <span class="mission-legend-dot"></span>UAV1
+        </div>
+        <div class="mission-legend-item agent-uav2" data-agent="UAV2">
+          <span class="mission-legend-dot"></span>UAV2
+        </div>
+        <div class="mission-legend-item agent-uav3" data-agent="UAV3">
+          <span class="mission-legend-dot"></span>UAV3
+        </div>
+      </div>
+    </div>
+    <div class="monitoring-card">
+      <div class="monitoring-copy">
+        <div class="monitoring-eyebrow">Visual Mode</div>
+        <div class="monitoring-title">Monitoring</div>
+        <div class="monitoring-meta" id="monitoring-meta">SIM playback</div>
+      </div>
+      <label class="monitoring-switch" for="monitoring-toggle" aria-label="Toggle monitoring mode">
+        <input id="monitoring-toggle" type="checkbox" />
+        <span class="monitoring-switch-track">
+          <span class="monitoring-switch-thumb"></span>
+        </span>
+      </label>
+    </div>
+    <div id="left-controls" class="panel panel-left">
+      <button type="button" class="ui-btn ui-btn-text" data-agent="LAH1">
+        LAH1
+        <span class="ui-btn-dot" aria-hidden="true"></span>
+      </button>
+      <button type="button" class="ui-btn ui-btn-text" data-agent="LAH2">
+        LAH2
+        <span class="ui-btn-dot" aria-hidden="true"></span>
+      </button>
+      <button type="button" class="ui-btn ui-btn-text" data-agent="LAH3">
+        LAH3
+        <span class="ui-btn-dot" aria-hidden="true"></span>
+      </button>
+      <button type="button" class="ui-btn ui-btn-text" data-agent="UAV1">
+        UAV1
+        <span class="ui-btn-dot" aria-hidden="true"></span>
+      </button>
+      <button type="button" class="ui-btn ui-btn-text" data-agent="UAV2">
+        UAV2
+        <span class="ui-btn-dot" aria-hidden="true"></span>
+      </button>
+      <button type="button" class="ui-btn ui-btn-text" data-agent="UAV3">
+        UAV3
+        <span class="ui-btn-dot" aria-hidden="true"></span>
+      </button>
+    </div>
+    <div id="agent-panel" class="agent-panel" aria-hidden="true">
+      <div class="agent-panel-header">
+        <div id="agent-panel-title" class="agent-panel-title">LAH1</div>
+        <button id="agent-panel-close" type="button" class="agent-panel-close" aria-label="Close">
+          ×
+        </button>
+      </div>
+      <div class="agent-panel-body">
+        <div class="agent-panel-placeholder">No data</div>
+      </div>
+    </div>
+    <div id="bottom-controls" class="panel panel-bottom-left">
+      <button
+        id="playback-toggle"
+        type="button"
+        class="ui-btn ui-btn-icon"
+        data-action="playback"
+        title="Playback"
+      >
+        <img src="/resources/plan_sign.png" alt="Playback" />
+      </button>
+      <div id="playback-panel" class="playback-panel" aria-hidden="true">
+        <button
+          type="button"
+          class="playback-btn playback-btn-play"
+          title="Play"
+        ></button>
+        <div class="playback-speed-group">
+          <button
+            type="button"
+            class="playback-btn playback-btn-fast"
+            title="Speed"
+            aria-haspopup="true"
+            aria-expanded="false"
+            aria-controls="playback-speed-menu"
+          ></button>
+          <div
+            id="playback-speed-menu"
+            class="playback-speed-menu"
+            role="menu"
+            aria-hidden="true"
+          >
+            <button type="button" class="playback-speed-option" data-speed="1" role="menuitem">
+              x1
+            </button>
+            <button type="button" class="playback-speed-option" data-speed="2" role="menuitem">
+              x2
+            </button>
+            <button type="button" class="playback-speed-option" data-speed="5" role="menuitem">
+              x5
+            </button>
+            <button type="button" class="playback-speed-option" data-speed="10" role="menuitem">
+              x10
+            </button>
+          </div>
+        </div>
+        <button
+          type="button"
+          class="playback-btn playback-btn-pause"
+          title="Pause"
+        ></button>
+        <button
+          type="button"
+          class="playback-btn playback-btn-stop"
+          title="Stop"
+        ></button>
+        <button
+          type="button"
+          class="playback-btn playback-btn-reset"
+          title="Reset"
+        ></button>
+      </div>
+    </div>
+    <div class="top-right-controls">
+      <button
+        id="mission-toggle"
+        type="button"
+        class="ui-btn ui-btn-icon"
+        title="Mission"
+        aria-expanded="false"
+      >
+        <img src="/resources/path_sign.png" alt="Mission" />
+      </button>
+      <button
+        id="scenario-toggle"
+        type="button"
+        class="ui-btn ui-btn-icon"
+        title="Scenario"
+        aria-expanded="false"
+      >
+        <img src="/resources/Scenario.png" alt="Scenario" />
+      </button>
+    </div>
+    <div id="mission-panel" class="mission-panel" aria-hidden="true">
+      <div class="mission-panel-header">
+        <span class="mission-panel-title">Mission</span>
+      </div>
+      <div class="mission-panel-body">
+        <div class="mission-row">
+          <button id="mission-generate" type="button" class="mission-btn mission-btn-primary">
+            Generate Mission
+          </button>
+          <button id="mission-load" type="button" class="mission-btn mission-btn-ghost mission-btn-multiline">
+            Load<br />Mission
+          </button>
+        </div>
+        <div class="mission-row mission-row-status">
+          <button id="mission-initial" type="button" class="mission-btn mission-btn-wide">
+            초기 임무계획
+          </button>
+          <div class="mission-status" data-mission-status>
+            <span class="mission-status-dot"></span>
+            <span class="mission-status-text">대기</span>
+          </div>
+        </div>
+        <div class="mission-divider"></div>
+        <div class="mission-subsection">
+          <div class="mission-subtitle">Multi Sim</div>
+          <div class="mission-row mission-row-compact">
+            <label class="mission-radio">
+              <input type="radio" name="multi-seed-mode" value="random" checked />
+              Random
+            </label>
+            <label class="mission-radio">
+              <input type="radio" name="multi-seed-mode" value="fixed" />
+              Fixed
+            </label>
+            <select id="multi-seed-select" class="mission-select" disabled>
+              <option value="1">Seed 1</option>
+              <option value="2">Seed 2</option>
+              <option value="3">Seed 3</option>
+              <option value="4">Seed 4</option>
+              <option value="5">Seed 5</option>
+              <option value="6">Seed 6</option>
+              <option value="7">Seed 7</option>
+              <option value="8">Seed 8</option>
+              <option value="9">Seed 9</option>
+              <option value="10">Seed 10</option>
+            </select>
+          </div>
+          <div class="mission-row mission-row-compact">
+            <label class="mission-label">Count</label>
+            <input
+              id="multi-seed-count"
+              class="mission-input"
+              type="number"
+              min="1"
+              step="1"
+              value="10"
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+        <div id="scenario-panel" class="scenario-panel" aria-hidden="true">
+      <div class="scenario-panel-header">
+        <span class="scenario-panel-title">Scenario</span>
+      </div>
+      <div class="scenario-panel-body">
+        <div class="scenario-hero">
+          <div>
+            <div class="scenario-hero-eyebrow">Message Composer</div>
+            <div class="scenario-hero-title">Scenario Inputs</div>
+          </div>
+          <div class="scenario-hero-status" id="scenario-mode-chip">Direct Input</div>
+        </div>
+        <div class="scenario-tabs" role="tablist" aria-label="Scenario tabs">
+          <button type="button" class="scenario-tab is-active" data-scn-tab="0202">0202</button>
+          <button type="button" class="scenario-tab" data-scn-tab="0801">0801</button>
+          <button type="button" class="scenario-tab" data-scn-tab="0802">0802</button>
+          <button type="button" class="scenario-tab" data-scn-tab="0803">0803</button>
+          <button type="button" class="scenario-tab" data-scn-tab="enemy">Enemy</button>
+        </div>
+        <section class="scenario-card">
+          <div class="scenario-card-title">0202 선행임무 정보</div>
+          <div class="scenario-row">
+            <label class="scenario-label" for="scn-0202-source">Source</label>
+            <input id="scn-0202-source" class="scenario-input" type="text" value="DSC" />
+          </div>
+          <div class="scenario-row">
+            <label class="scenario-label" for="scn-0202-mission-id">Prior Mission ID</label>
+            <input
+              id="scn-0202-mission-id"
+              class="scenario-input"
+              type="number"
+              min="1"
+              step="1"
+              value="1"
+            />
+          </div>
+          <div class="scenario-row">
+            <label class="scenario-label" for="scn-0202-type">Type</label>
+            <select id="scn-0202-type" class="scenario-select">
+              <option value="coord">좌표</option>
+              <option value="target">표적</option>
+            </select>
+          </div>
+          <div class="scenario-row scenario-row-coord" data-scn-coord-block>
+            <label class="scenario-label" for="scn-0202-lat">Coordinate</label>
+            <div class="scenario-coord">
+              <input id="scn-0202-lat" class="scenario-input" type="number" step="0.000001" placeholder="Lat" />
+              <input id="scn-0202-lon" class="scenario-input" type="number" step="0.000001" placeholder="Lon" />
+              <input id="scn-0202-alt" class="scenario-input" type="number" step="1" value="1000" placeholder="Alt" />
+            </div>
+          </div>
+          <div class="scenario-row scenario-row-target is-hidden" data-scn-target-block>
+            <label class="scenario-label" for="scn-0202-target-id">Target ID</label>
+            <input id="scn-0202-target-id" class="scenario-input" type="number" step="1" value="0" />
+          </div>
+          <div class="scenario-row scenario-row-actions">
+            <button id="scn-0202-pick" type="button" class="scenario-btn scenario-btn-ghost">
+              Map Input Mode
+            </button>
+            <button id="scn-0202-send" type="button" class="scenario-btn scenario-btn-primary">
+              Send 0202
+            </button>
+          </div>
+          <div class="scenario-hint" id="scn-0202-hint">
+            좌표 모드에서 Map Input Mode를 누르면 맵에서 바로 선택합니다.
+          </div>
+        </section>
+        <section class="scenario-card">
+          <div class="scenario-card-title">0801 운용자 임무재계획 명령</div>
+          <div class="scenario-row">
+            <label class="scenario-label" for="scn-0801-source">Source</label>
+            <input id="scn-0801-source" class="scenario-input" type="text" value="DSC" />
+          </div>
+          <div class="scenario-row">
+            <label class="scenario-label" for="scn-0801-input-id">Input Package ID</label>
+            <input id="scn-0801-input-id" class="scenario-input" type="number" step="1" value="0" />
+          </div>
+          <div class="scenario-row">
+            <label class="scenario-label" for="scn-0801-ref-id">Reference Package ID</label>
+            <input id="scn-0801-ref-id" class="scenario-input" type="number" step="1" value="0" />
+          </div>
+          <div class="scenario-row">
+            <label class="scenario-label" for="scn-0801-time">Operator Time</label>
+            <input
+              id="scn-0801-time"
+              class="scenario-input"
+              type="number"
+              placeholder="ms since 2000 (운용자 시간 기준)"
+            />
+          </div>
+          <div class="scenario-row scenario-row-actions">
+            <button id="scn-0801-send" type="button" class="scenario-btn scenario-btn-primary">
+              Send 0801
+            </button>
+          </div>
+        </section>
+        <section class="scenario-card">
+          <div class="scenario-card-title">0802 강제명령</div>
+          <div class="scenario-row">
+            <label class="scenario-label" for="scn-0802-source">Source</label>
+            <input id="scn-0802-source" class="scenario-input" type="text" value="DSC" />
+          </div>
+          <div class="scenario-row">
+            <label class="scenario-label" for="scn-0802-aircraft">Aircraft</label>
+            <select id="scn-0802-aircraft" class="scenario-select">
+              <option value="4">UAV1 (4)</option>
+              <option value="5">UAV2 (5)</option>
+              <option value="6">UAV3 (6)</option>
+            </select>
+          </div>
+          <div class="scenario-row">
+            <label class="scenario-label" for="scn-0802-type">Mandatory Type</label>
+            <select id="scn-0802-type" class="scenario-select">
+              <option value="1">강제 대기</option>
+              <option value="2">강제 귀환</option>
+              <option value="3">강제 임무복귀</option>
+            </select>
+          </div>
+          <div class="scenario-row scenario-row-actions">
+            <button id="scn-0802-send" type="button" class="scenario-btn scenario-btn-primary">
+              Send 0802
+            </button>
+          </div>
+        </section>
+        <section class="scenario-card">
+          <div class="scenario-card-title">0803 협업기저임무</div>
+          <div class="scenario-row">
+            <label class="scenario-label" for="scn-0803-source">Source</label>
+            <input id="scn-0803-source" class="scenario-input" type="text" value="CSP" />
+          </div>
+          <div class="scenario-row scenario-row-actions">
+            <button id="scn-0803-next" type="button" class="scenario-btn scenario-btn-ghost">
+              Next mission (execute=1)
+            </button>
+            <button id="scn-0803-repeat" type="button" class="scenario-btn scenario-btn-primary">
+              Repeat (execute=2)
+            </button>
+          </div>
+        </section>
+        <section class="scenario-card">
+          <div class="scenario-card-title">적 배치</div>
+          <div class="scenario-row scenario-row-actions">
+            <button id="scn-enemy-pick" type="button" class="scenario-btn scenario-btn-ghost">
+              Map Input Mode
+            </button>
+            <button id="scn-enemy-clear" type="button" class="scenario-btn scenario-btn-primary">
+              Clear Enemies
+            </button>
+          </div>
+          <div class="scenario-hint" id="scn-enemy-hint">
+            Map Input Mode → 맵 클릭 → 유형 선택 (없음/전차/장갑차/방사포/곡사포/고정고사포/군인)
+          </div>
+        </section>
+      </div>
+    </div>
+    <input
+      id="mission-folder-input"
+      type="file"
+      webkitdirectory
+      directory
+      multiple
+      hidden
+      aria-hidden="true"
+    />
+    <button
+      id="right-panel-toggle"
+      class="side-panel-toggle"
+      type="button"
+      aria-expanded="false"
+      title="Open panel"
+    >
+      &gt;
+    </button>
+    <button
+      id="left-side-toggle"
+      class="side-panel-left-toggle"
+      type="button"
+      aria-expanded="true"
+      title="Toggle left panel"
+    >
+      ▶
+    </button>
+    <button
+      id="right-side-toggle"
+      class="side-panel-right-toggle"
+      type="button"
+      aria-expanded="false"
+      title="Open panel"
+    >
+      &lt;
+    </button>
+    <div id="right-panel" class="side-panel" aria-hidden="true">
+      <div class="side-panel-header">
+        <span class="side-panel-title">0401 DATA</span>
+      </div>
+      <div class="side-panel-body"></div>
+    </div>
+    <div id="left-side-panel" class="side-panel-left" aria-hidden="true">
+      <div class="side-panel-left-header">
+        <span class="side-panel-left-title">UAV SENSOR</span>
+      </div>
+      <div class="side-panel-left-body">
+        <div class="data-empty">
+          <div class="data-empty-title">좌측 패널</div>
+          <div class="data-empty-sub">추가 예정</div>
+        </div>
+      </div>
+    </div>
+    <div id="right-side-panel" class="side-panel-right" aria-hidden="true">
+      <div class="side-panel-right-header">
+        <span class="side-panel-right-title">SIM TOOLS</span>
+        <div class="side-panel-right-actions">
+          <button
+            id="auto-option-approve-toggle"
+            class="auto-option-toggle"
+            type="button"
+            aria-pressed="false"
+            title="Auto approve first 0701 option"
+          >
+            Auto Opt1 OFF
+          </button>
+          <span id="io-connection" class="io-connection io-connection-off">OFFLINE</span>
+        </div>
+      </div>
+      <div class="side-panel-right-body">
+        <div class="right-tool-tabs" role="tablist" aria-label="SIM tool tabs">
+          <button type="button" class="right-tool-tab is-active" data-right-tool-tab="io">INT I/O</button>
+          <button type="button" class="right-tool-tab" data-right-tool-tab="dynamics">DYN FIT</button>
+        </div>
+        <div class="right-tool-panel is-active" data-right-tool-panel="io">
+        <div class="io-grid">
+          <section class="io-card">
+            <div class="io-card-header">
+              <span class="io-card-title">TX MESSAGES</span>
+              <span class="io-card-meta">Send Queue</span>
+            </div>
+            <div class="io-table-wrap">
+              <table class="io-table" aria-label="TX messages">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Name</th>
+                    <th>State</th>
+                    <th class="io-col-action">Send</th>
+                    <th class="io-col-action">View</th>
+                  </tr>
+                </thead>
+                <tbody id="io-tx-body" data-io-type="tx"></tbody>
+              </table>
+            </div>
+            <div class="io-log">
+              <div class="io-log-title">TX Log</div>
+              <div id="io-tx-log" class="io-log-lines mono"></div>
+            </div>
+          </section>
+          <section class="io-card">
+            <div class="io-card-header">
+              <span class="io-card-title">RX MESSAGES</span>
+              <span class="io-card-meta">Receive Queue</span>
+            </div>
+            <div class="io-table-wrap">
+              <table class="io-table" aria-label="RX messages">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Name</th>
+                    <th>State</th>
+                    <th class="io-col-action">View</th>
+                  </tr>
+                </thead>
+                <tbody id="io-rx-body" data-io-type="rx"></tbody>
+              </table>
+            </div>
+            <div class="io-log">
+              <div class="io-log-title">RX Log</div>
+              <div id="io-rx-log" class="io-log-lines mono"></div>
+            </div>
+          </section>
+        </div>
+        <div id="io-modal" class="io-modal" aria-hidden="true">
+          <div class="io-modal-card">
+            <div class="io-modal-header">
+              <span id="io-modal-title" class="io-modal-title">Payload</span>
+              <button id="io-modal-close" type="button" class="io-modal-close">닫기</button>
+            </div>
+            <pre id="io-modal-body" class="io-modal-body"></pre>
+          </div>
+        </div>
+        </div>
+        <div class="right-tool-panel" data-right-tool-panel="dynamics">
+          <section class="dynfit-card">
+            <div class="dynfit-header">
+              <div>
+                <div class="dynfit-title">UAV Dynamics Calibration</div>
+                <div class="dynfit-subtitle">0401 로그 기반 PID / 선회 반응 보정</div>
+              </div>
+              <span id="dynfit-profile-state" class="dynfit-pill">PROFILE -</span>
+            </div>
+            <div class="dynfit-form">
+              <label class="dynfit-label" for="dynfit-log-path">Log folder or 0401 file</label>
+              <textarea
+                id="dynfit-log-path"
+                class="dynfit-path"
+                spellcheck="false"
+                placeholder="Logs\260428_건대 송부 로그\Scenario_2026-04-28T114518_다음임무 인가 후 0501에서 보는 id 바뀜"
+              ></textarea>
+              <input
+                id="dynfit-folder-picker"
+                class="dynfit-file-input"
+                type="file"
+                webkitdirectory
+                directory
+                multiple
+                hidden
+              />
+              <div class="dynfit-actions">
+                <button id="dynfit-browse-log" type="button" class="dynfit-btn dynfit-btn-primary">Browse Log</button>
+                <button id="dynfit-analyze" type="button" class="dynfit-btn">Analyze</button>
+                <button id="dynfit-apply" type="button" class="dynfit-btn" disabled>Apply</button>
+                <button id="dynfit-disable" type="button" class="dynfit-btn dynfit-btn-ghost">Off</button>
+              </div>
+            </div>
+            <div id="dynfit-status" class="dynfit-status">대기 중</div>
+            <div id="dynfit-metrics" class="dynfit-metrics"></div>
+            <pre id="dynfit-proposal" class="dynfit-proposal"></pre>
+          </section>
+        </div>
+      </div>
+    </div>
+    <div id="mission-option-modal" class="mission-option-modal" aria-hidden="true">
+      <div class="mission-option-shell" role="dialog" aria-modal="true">
+        <div class="mission-option-header">
+          <div class="mission-option-header-left">
+            <div class="mission-option-title" data-option-title>0701 임무 선택</div>
+            <div class="mission-option-sub" data-option-time>수신: -</div>
+          </div>
+          <div class="mission-option-header-right">
+            <div class="mission-option-auto" data-option-auto>자동 실행: -</div>
+            <button type="button" class="mission-option-close" data-option-close>닫기</button>
+          </div>
+        </div>
+        <div class="mission-option-body" data-option-list></div>
+        <div class="mission-option-footer">
+          <button type="button" class="mission-option-keep" data-option-keep>
+            현재 임무 유지
+          </button>
+        </div>
+      </div>
+    </div>
+    <div id="mission-recommend-modal" class="mission-option-modal mission-recommend-modal" aria-hidden="true">
+      <div class="mission-option-shell mission-recommend-shell" role="dialog" aria-modal="true">
+        <div class="mission-option-header">
+          <div class="mission-option-header-left">
+            <div class="mission-option-title" data-recommend-title>0503 협업기저임무 완료</div>
+            <div class="mission-option-sub" data-recommend-time>수신: -</div>
+          </div>
+          <div class="mission-option-header-right">
+            <div class="mission-option-auto" data-recommend-state>systemRecommend: -</div>
+            <button type="button" class="mission-option-close" data-recommend-close>닫기</button>
+          </div>
+        </div>
+        <div class="mission-recommend-body" data-recommend-body>다음 행동을 선택하세요.</div>
+        <div class="mission-option-footer mission-recommend-footer">
+          <button type="button" class="mission-option-keep mission-recommend-next" data-recommend-next>
+            Next Mission
+          </button>
+          <button type="button" class="mission-option-keep mission-recommend-repeat" data-recommend-repeat>
+            Repeat Mission
+          </button>
+          <button type="button" class="mission-option-keep mission-recommend-ok is-hidden" data-recommend-ok>
+            확인
+          </button>
+        </div>
+      </div>
+    </div>
+    <div id="replan-notice-modal" class="replan-notice-modal" aria-hidden="true">
+      <div class="replan-notice-shell" role="dialog" aria-modal="true">
+        <div class="replan-notice-icon" data-notice-icon></div>
+        <div class="replan-notice-title" data-notice-title></div>
+        <div class="replan-notice-body" data-notice-body></div>
+        <div class="replan-notice-timer"><div class="replan-notice-timer-bar" data-notice-timer-bar></div></div>
+      </div>
+    </div>
+        <div id="status" class="status"></div>
+    <script src="/vendor/maplibre-gl.js"></script>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

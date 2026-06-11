@@ -13,6 +13,14 @@ from shapely.geometry import LineString, Point, Polygon
 from modules.mission_planning.runtime.next_collab_heading import (
     monitor_heading_to_planner_bearing_deg,
 )
+try:
+    from modules.mission_planning.MissionPlanner.data_def.dubins_turn_link import (
+        Pose2D as _DubinsPose2D,
+        dubins_shortest_path as _dubins_shortest_path,
+    )
+except Exception:
+    _DubinsPose2D = None
+    _dubins_shortest_path = None
 from modules.mission_planning.MissionPlanner.planning_enhanced.algo.split_runner import (
     run_split_pipeline,
 )
@@ -22,6 +30,7 @@ from modules.mission_planning.MissionPlanner.planning_enhanced.models import (
 )
 from modules.mission_planning.MissionPlanner.config import SWEEP_SPACING_MARGIN
 from modules.mission_planning.MissionPlanner.runtime_settings import (
+    MIN_LINE_FOV_DEG,
     apply_runtime_camera_adjusted_fov_deg,
     apply_runtime_camera_adjusted_search_speed,
     format_runtime_camera_fov_adjustment_log,
@@ -61,6 +70,23 @@ NEXT_COLLAB_ENTRY_TPRIME_RATIO_SCALE = 0.50
 NEXT_COLLAB_LINE_DB_WIDTH_WEIGHT = 0.30
 NEXT_COLLAB_LINE_DB_SEP_WEIGHT = 0.25
 NEXT_COLLAB_LINE_DB_FOV_WEIGHT = 0.45
+FOV_DB_SEP_SAFETY_FACTOR = 1.7
+LINE_OFFSET_CANDIDATE_SCALES = (0.45, 0.65, 0.85, 1.0)
+
+
+@dataclass(frozen=True)
+class _LineOffsetPlan:
+    start_side: float
+    end_side: float
+    offset_m: float
+    score: float
+    dubins_length_m: float | None = None
+    first_turn_sign: int = 0
+    clearance_m: float | None = None
+
+    def side_at(self, progress_ratio: float) -> float:
+        t = max(0.0, min(1.0, float(progress_ratio)))
+        return float(self.start_side) + ((float(self.end_side) - float(self.start_side)) * t)
 
 
 class _HeadlessLinePlanner:
@@ -110,6 +136,18 @@ def _distance_xy(start_xy: Tuple[float, float], end_xy: Tuple[float, float]) -> 
     return math.hypot(dx, dy)
 
 
+def _runtime_fov_db_sep_safety_factor(runtime_cfg: Dict[str, Any] | None = None) -> float:
+    factor = float(get_runtime_float("fov_db_sep_safety_factor", FOV_DB_SEP_SAFETY_FACTOR, runtime_cfg))
+    if factor <= 0.0:
+        factor = 1.0
+    return float(factor)
+
+
+def _db_sep_requirement_m(sep_m: float, runtime_cfg: Dict[str, Any] | None = None) -> float:
+    factor = _runtime_fov_db_sep_safety_factor(runtime_cfg)
+    return max(0.0, float(sep_m or 0.0)) * float(factor)
+
+
 def _runtime_line_density_scale(runtime_cfg: Dict[str, Any] | None = None) -> float:
     value = float(get_runtime_float("line_density_scale", LINE_SWEEP_DENSITY_SCALE, runtime_cfg))
     return max(value, 1e-6)
@@ -123,6 +161,77 @@ def _runtime_line_search_speed_weight(runtime_cfg: Dict[str, Any] | None = None)
 def _runtime_line_route_offset_scale(runtime_cfg: Dict[str, Any] | None = None) -> float:
     value = float(get_runtime_float("line_route_offset_scale", LINE_ROUTE_OFFSET_SCALE, runtime_cfg))
     return max(value, 0.0)
+
+
+def _fov_db_min_sep_for_fov(
+    planner: _HeadlessLinePlanner,
+    fov_deg: float,
+    *,
+    runtime_cfg: Dict[str, Any] | None = None,
+) -> float:
+    try:
+        target_fov = float(fov_deg)
+    except Exception:
+        return 0.0
+    if target_fov <= 0.0:
+        return 0.0
+    rows = planner._fov_db_rows() or []
+    if not rows:
+        return 0.0
+
+    matches: List[float] = []
+    for row in rows:
+        try:
+            row_fov = float(row.get("fov", 0.0) or 0.0)
+            row_sep = float(row.get("sep", 0.0) or 0.0)
+        except Exception:
+            continue
+        if row_fov <= 0.0 or row_sep <= 0.0:
+            continue
+        if abs(row_fov - target_fov) <= 0.05:
+            matches.append(float(row_sep))
+
+    if not matches:
+        for row in rows:
+            try:
+                row_fov = float(row.get("fov", 0.0) or 0.0)
+                row_sep = float(row.get("sep", 0.0) or 0.0)
+            except Exception:
+                continue
+            if row_fov <= 0.0 or row_sep <= 0.0:
+                continue
+            try:
+                adjusted_fov = float(
+                    apply_runtime_camera_adjusted_fov_deg(
+                        row_fov,
+                        runtime_cfg,
+                        minimum_fov_deg=MIN_LINE_FOV_DEG,
+                        context="NEXTCOLLAB LINE OFFSET_DB",
+                    )
+                )
+            except Exception:
+                adjusted_fov = row_fov
+            if abs(adjusted_fov - target_fov) <= 0.05:
+                matches.append(float(row_sep))
+
+    return min(matches) if matches else 0.0
+
+
+def _route_offset_sep_for_fov(
+    planner: _HeadlessLinePlanner,
+    fov_deg: float,
+    default_sep_m: float,
+    *,
+    runtime_cfg: Dict[str, Any] | None = None,
+) -> float:
+    try:
+        default_sep = float(default_sep_m)
+    except Exception:
+        default_sep = 0.0
+    min_sep = _fov_db_min_sep_for_fov(planner, float(fov_deg or 0.0), runtime_cfg=runtime_cfg)
+    if min_sep > 0.0:
+        return float(min_sep)
+    return max(float(default_sep), 0.0)
 
 
 def _runtime_line_route_wp_spacing_m(runtime_cfg: Dict[str, Any] | None = None) -> float:
@@ -159,7 +268,10 @@ def _sweep_spacing_m(*, separation_m: float, fov_deg: float, spacing_scale: floa
 
 def _line_raw_spacing_scale(runtime_cfg: Dict[str, Any] | None = None) -> float:
     density = _runtime_line_density_scale(runtime_cfg)
-    return max(1.0 / (density * _sweep_spacing_margin_for_density()), 1e-6)
+    sep_safety = _runtime_fov_db_sep_safety_factor(runtime_cfg)
+    if sep_safety <= 0.0:
+        sep_safety = 1.0
+    return max(1.0 / (density * sep_safety * _sweep_spacing_margin_for_density()), 1e-6)
 
 
 def _line_sweep_spacing_m(
@@ -188,7 +300,7 @@ def _runtime_line_manual_base_fov_deg(runtime_cfg: Dict[str, Any] | None = None)
     )
     if manual_fov_deg is None or manual_fov_deg <= 0.0:
         return None
-    return float(manual_fov_deg)
+    return _clamp_line_fov_deg(manual_fov_deg)
 
 
 def _runtime_line_manual_fov_deg(runtime_cfg: Dict[str, Any] | None = None) -> float | None:
@@ -198,9 +310,10 @@ def _runtime_line_manual_fov_deg(runtime_cfg: Dict[str, Any] | None = None) -> f
     adjusted_fov_deg = apply_runtime_camera_adjusted_fov_deg(
         manual_fov_deg,
         runtime_cfg,
+        minimum_fov_deg=MIN_LINE_FOV_DEG,
         context="NEXTCOLLAB LINE MANUAL",
     )
-    return float(adjusted_fov_deg) if adjusted_fov_deg > 0.0 else None
+    return _clamp_line_fov_deg(adjusted_fov_deg) if adjusted_fov_deg > 0.0 else None
 
 
 def _bearing_deg_from_xy(start_xy: Tuple[float, float], end_xy: Tuple[float, float]) -> float:
@@ -209,6 +322,468 @@ def _bearing_deg_from_xy(start_xy: Tuple[float, float], end_xy: Tuple[float, flo
     if abs(dx) < 1e-9 and abs(dy) < 1e-9:
         return 0.0
     return float((math.degrees(math.atan2(dx, dy)) + 360.0) % 360.0)
+
+
+def _bearing_unit_xy(bearing_deg: float) -> Tuple[float, float]:
+    theta = math.radians(float(bearing_deg) % 360.0)
+    return math.sin(theta), math.cos(theta)
+
+
+def _bearing_to_yaw_rad(bearing_deg: float) -> float:
+    return math.radians(90.0 - (float(bearing_deg) % 360.0))
+
+
+def _angle_delta_deg(left_deg: float, right_deg: float) -> float:
+    return abs(((float(left_deg) - float(right_deg) + 180.0) % 360.0) - 180.0)
+
+
+def _line_route_frame_xy(
+    route_line_xy: Sequence[Tuple[float, float]],
+) -> tuple[Tuple[float, float], Tuple[float, float], Tuple[float, float], Tuple[float, float]] | None:
+    if len(route_line_xy) < 2:
+        return None
+    start_xy = (float(route_line_xy[0][0]), float(route_line_xy[0][1]))
+    end_xy = (float(route_line_xy[-1][0]), float(route_line_xy[-1][1]))
+    dx = float(end_xy[0]) - float(start_xy[0])
+    dy = float(end_xy[1]) - float(start_xy[1])
+    norm = math.hypot(dx, dy)
+    if norm <= 1e-6:
+        return None
+    unit_xy = (dx / norm, dy / norm)
+    normal_xy = (-unit_xy[1], unit_xy[0])
+    return start_xy, end_xy, unit_xy, normal_xy
+
+
+def _project_to_route_ratio_xy(
+    point_xy: Tuple[float, float],
+    route_start_xy: Tuple[float, float],
+    route_end_xy: Tuple[float, float],
+) -> tuple[Tuple[float, float], float]:
+    sx, sy = float(route_start_xy[0]), float(route_start_xy[1])
+    ex, ey = float(route_end_xy[0]), float(route_end_xy[1])
+    px, py = float(point_xy[0]), float(point_xy[1])
+    dx = ex - sx
+    dy = ey - sy
+    denom = (dx * dx) + (dy * dy)
+    if denom <= 1e-9:
+        return (sx, sy), 0.0
+    t = (((px - sx) * dx) + ((py - sy) * dy)) / denom
+    t = max(0.0, min(1.0, float(t)))
+    return (sx + (dx * t), sy + (dy * t)), float(t)
+
+
+def _route_polyline_rows_xy(
+    route_line_xy: Sequence[Tuple[float, float]],
+) -> List[Tuple[float, float]]:
+    rows: List[Tuple[float, float]] = []
+    for row in route_line_xy or []:
+        if not isinstance(row, (tuple, list)) or len(row) < 2:
+            continue
+        try:
+            point_xy = (float(row[0]), float(row[1]))
+        except Exception:
+            continue
+        if rows and _distance_xy(rows[-1], point_xy) <= 0.5:
+            continue
+        rows.append(point_xy)
+    return rows
+
+
+def _project_to_route_polyline_xy(
+    point_xy: Tuple[float, float],
+    route_line_xy: Sequence[Tuple[float, float]],
+) -> tuple[Tuple[float, float], Tuple[float, float], float] | None:
+    rows = _route_polyline_rows_xy(route_line_xy)
+    if len(rows) < 2:
+        return None
+    total_len_m = 0.0
+    for idx in range(len(rows) - 1):
+        total_len_m += _distance_xy(rows[idx], rows[idx + 1])
+    if total_len_m <= 1e-6:
+        return None
+
+    px, py = float(point_xy[0]), float(point_xy[1])
+    walked_m = 0.0
+    best: tuple[float, Tuple[float, float], Tuple[float, float], float] | None = None
+    for idx in range(len(rows) - 1):
+        sx, sy = float(rows[idx][0]), float(rows[idx][1])
+        ex, ey = float(rows[idx + 1][0]), float(rows[idx + 1][1])
+        dx = ex - sx
+        dy = ey - sy
+        seg_len_m = math.hypot(dx, dy)
+        if seg_len_m <= 1e-6:
+            continue
+        denom = (dx * dx) + (dy * dy)
+        ratio = (((px - sx) * dx) + ((py - sy) * dy)) / max(denom, 1e-9)
+        ratio = max(0.0, min(1.0, float(ratio)))
+        center_xy = (sx + (dx * ratio), sy + (dy * ratio))
+        tangent_xy = (dx / seg_len_m, dy / seg_len_m)
+        progress_ratio = max(0.0, min(1.0, (walked_m + (seg_len_m * ratio)) / total_len_m))
+        dist_m = _distance_xy((px, py), center_xy)
+        if best is None or dist_m < best[0]:
+            best = (float(dist_m), center_xy, tangent_xy, float(progress_ratio))
+        walked_m += seg_len_m
+    if best is None:
+        return None
+    return best[1], best[2], best[3]
+
+
+def _line_anchor_from_route_plan_xy(
+    sweep_xy: Sequence[Tuple[float, float]],
+    *,
+    route_line_xy: Sequence[Tuple[float, float]],
+    offset_plan: _LineOffsetPlan,
+) -> Tuple[float, float] | None:
+    if len(sweep_xy) < 2:
+        return None
+    midpoint_xy = _midpoint_xy(sweep_xy)
+    if midpoint_xy is None:
+        return None
+    projected = _project_to_route_polyline_xy(midpoint_xy, route_line_xy)
+    if projected is not None:
+        center_xy, tangent_xy, progress_ratio = projected
+        normal_xy = (-float(tangent_xy[1]), float(tangent_xy[0]))
+        signed_offset_m = float(offset_plan.offset_m) * float(offset_plan.side_at(progress_ratio))
+        return (
+            float(center_xy[0]) + (float(normal_xy[0]) * signed_offset_m),
+            float(center_xy[1]) + (float(normal_xy[1]) * signed_offset_m),
+        )
+
+    frame = _line_route_frame_xy(route_line_xy)
+    if frame is None:
+        return None
+    route_start_xy, route_end_xy, _unit_xy, normal_xy = frame
+    center_xy, progress_ratio = _project_to_route_ratio_xy(midpoint_xy, route_start_xy, route_end_xy)
+    signed_offset_m = float(offset_plan.offset_m) * float(offset_plan.side_at(progress_ratio))
+    return (
+        float(center_xy[0]) + (float(normal_xy[0]) * signed_offset_m),
+        float(center_xy[1]) + (float(normal_xy[1]) * signed_offset_m),
+    )
+
+
+def _line_anchor_clearance_m(
+    anchor_xy: Tuple[float, float] | None,
+    sweep_xy: Sequence[Tuple[float, float]],
+) -> float | None:
+    if anchor_xy is None or len(sweep_xy) < 2:
+        return None
+    endpoints = [
+        (float(sweep_xy[0][0]), float(sweep_xy[0][1])),
+        (float(sweep_xy[-1][0]), float(sweep_xy[-1][1])),
+    ]
+    return max(_distance_xy(anchor_xy, endpoint_xy) for endpoint_xy in endpoints)
+
+
+def _route_endpoint_offset_xy(
+    route_line_xy: Sequence[Tuple[float, float]],
+    *,
+    side: float,
+    offset_m: float,
+    at_end: bool,
+) -> Tuple[float, float] | None:
+    rows = _route_polyline_rows_xy(route_line_xy)
+    if len(rows) < 2:
+        return None
+    if at_end:
+        endpoint_xy = rows[-1]
+        tangent_start_xy = rows[-2]
+        tangent_end_xy = rows[-1]
+    else:
+        endpoint_xy = rows[0]
+        tangent_start_xy = rows[0]
+        tangent_end_xy = rows[1]
+    dx = float(tangent_end_xy[0]) - float(tangent_start_xy[0])
+    dy = float(tangent_end_xy[1]) - float(tangent_start_xy[1])
+    norm = math.hypot(dx, dy)
+    if norm <= 1e-6:
+        return None
+    tangent_xy = (dx / norm, dy / norm)
+    normal_xy = (-float(tangent_xy[1]), float(tangent_xy[0]))
+    return (
+        float(endpoint_xy[0]) + (normal_xy[0] * float(offset_m) * float(side)),
+        float(endpoint_xy[1]) + (normal_xy[1] * float(offset_m) * float(side)),
+    )
+
+
+def _turn_sign_toward_xy(
+    *,
+    origin_xy: Tuple[float, float],
+    heading_deg: float,
+    target_xy: Tuple[float, float],
+) -> int:
+    hx, hy = _bearing_unit_xy(float(heading_deg))
+    vx = float(target_xy[0]) - float(origin_xy[0])
+    vy = float(target_xy[1]) - float(origin_xy[1])
+    norm = math.hypot(vx, vy)
+    if norm <= 1e-6:
+        return 0
+    cross = (hx * (vy / norm)) - (hy * (vx / norm))
+    if cross > 0.05:
+        return 1
+    if cross < -0.05:
+        return -1
+    return 0
+
+
+def _first_float(*values: Any) -> float | None:
+    for value in values:
+        parsed = _to_float(value)
+        if parsed is not None and math.isfinite(float(parsed)):
+            return float(parsed)
+    return None
+
+
+def _first_xy_from_aircraft_row(row: Dict[str, Any] | None) -> Tuple[float, float] | None:
+    if not isinstance(row, dict):
+        return None
+    for key in ("currentPositionXY", "positionXY"):
+        value = row.get(key)
+        if isinstance(value, (tuple, list)) and len(value) >= 2:
+            try:
+                return (float(value[0]), float(value[1]))
+            except Exception:
+                continue
+    return None
+
+
+def _dubins_length_m(
+    *,
+    start_xy: Tuple[float, float],
+    start_heading_deg: float,
+    end_xy: Tuple[float, float],
+    end_heading_deg: float,
+    radius_m: float | None,
+) -> float | None:
+    if _DubinsPose2D is None or _dubins_shortest_path is None:
+        return None
+    if radius_m is None or not math.isfinite(float(radius_m)) or float(radius_m) <= 1.0:
+        return None
+    try:
+        result = _dubins_shortest_path(
+            _DubinsPose2D(float(start_xy[0]), float(start_xy[1]), _bearing_to_yaw_rad(start_heading_deg)),
+            _DubinsPose2D(float(end_xy[0]), float(end_xy[1]), _bearing_to_yaw_rad(end_heading_deg)),
+            float(radius_m),
+            allow_ccc=False,
+        )
+        return float(result.get("length", 0.0) or 0.0)
+    except Exception:
+        return None
+
+
+def _score_line_offset_plan(
+    *,
+    route_start_xy: Tuple[float, float],
+    route_end_xy: Tuple[float, float],
+    normal_xy: Tuple[float, float],
+    start_side: float,
+    end_side: float,
+    offset_m: float,
+    aircraft_row: Dict[str, Any] | None,
+    fallback_origin_xy: Tuple[float, float] | None,
+    start_anchor_xy: Tuple[float, float] | None = None,
+    end_anchor_xy: Tuple[float, float] | None = None,
+) -> _LineOffsetPlan:
+    if start_anchor_xy is None:
+        start_anchor_xy = (
+            float(route_start_xy[0]) + (float(normal_xy[0]) * float(offset_m) * float(start_side)),
+            float(route_start_xy[1]) + (float(normal_xy[1]) * float(offset_m) * float(start_side)),
+        )
+    if end_anchor_xy is None:
+        end_anchor_xy = (
+            float(route_end_xy[0]) + (float(normal_xy[0]) * float(offset_m) * float(end_side)),
+            float(route_end_xy[1]) + (float(normal_xy[1]) * float(offset_m) * float(end_side)),
+        )
+    route_bearing_deg = _bearing_deg_from_xy(route_start_xy, route_end_xy)
+    planned_bearing_deg = _bearing_deg_from_xy(start_anchor_xy, end_anchor_xy)
+    origin_xy = _first_xy_from_aircraft_row(aircraft_row) or fallback_origin_xy or route_start_xy
+    heading_deg = _first_float((aircraft_row or {}).get("headingDeg")) if isinstance(aircraft_row, dict) else None
+    if heading_deg is None:
+        heading_deg = _bearing_deg_from_xy(origin_xy, start_anchor_xy)
+    turn_sign = 0
+    try:
+        turn_sign = int((aircraft_row or {}).get("turnSign") or 0)
+    except Exception:
+        turn_sign = 0
+    turn_radius_m = _first_float(
+        (aircraft_row or {}).get("turnRadiusM") if isinstance(aircraft_row, dict) else None,
+        (aircraft_row or {}).get("turnCircleRadiusM") if isinstance(aircraft_row, dict) else None,
+        (aircraft_row or {}).get("actualTurnRadiusM") if isinstance(aircraft_row, dict) else None,
+        (aircraft_row or {}).get("idealTurnRadiusM") if isinstance(aircraft_row, dict) else None,
+        TURN_PREVIEW_RADIUS_M,
+    )
+
+    distance_m = _distance_xy(origin_xy, start_anchor_xy)
+    initial_turn_sign = _turn_sign_toward_xy(
+        origin_xy=origin_xy,
+        heading_deg=float(heading_deg),
+        target_xy=start_anchor_xy,
+    )
+    hx, hy = _bearing_unit_xy(float(heading_deg))
+    approach_vx = float(start_anchor_xy[0]) - float(origin_xy[0])
+    approach_vy = float(start_anchor_xy[1]) - float(origin_xy[1])
+    forward_projection_m = (approach_vx * hx) + (approach_vy * hy)
+    behind_penalty_m = abs(min(0.0, float(forward_projection_m))) * 2.5
+    route_angle_penalty = _angle_delta_deg(planned_bearing_deg, route_bearing_deg) * 6.0
+    offset_penalty_m = float(offset_m) * 0.15
+    side_switch_penalty_m = 80.0 if float(start_side) != float(end_side) else 0.0
+
+    turn_penalty_m = 0.0
+    if turn_sign != 0 and initial_turn_sign != 0:
+        if int(turn_sign) == int(initial_turn_sign):
+            turn_penalty_m -= min(160.0, max(40.0, float(turn_radius_m or TURN_PREVIEW_RADIUS_M) * 0.25))
+        else:
+            turn_penalty_m += max(350.0, float(turn_radius_m or TURN_PREVIEW_RADIUS_M) * 0.9)
+
+    dubins_length_m = _dubins_length_m(
+        start_xy=origin_xy,
+        start_heading_deg=float(heading_deg),
+        end_xy=start_anchor_xy,
+        end_heading_deg=float(planned_bearing_deg),
+        radius_m=turn_radius_m,
+    )
+    dubins_penalty_m = 0.0
+    if dubins_length_m is not None and dubins_length_m > 0.0:
+        dubins_penalty_m = max(0.0, float(dubins_length_m) - float(distance_m)) * 0.35
+
+    score = (
+        float(distance_m)
+        + float(behind_penalty_m)
+        + float(route_angle_penalty)
+        + float(offset_penalty_m)
+        + float(side_switch_penalty_m)
+        + float(turn_penalty_m)
+        + float(dubins_penalty_m)
+    )
+    return _LineOffsetPlan(
+        start_side=float(start_side),
+        end_side=float(end_side),
+        offset_m=float(offset_m),
+        score=float(score),
+        dubins_length_m=dubins_length_m,
+        first_turn_sign=int(initial_turn_sign),
+    )
+
+
+def _choose_line_offset_plan(
+    route_line_xy: Sequence[Tuple[float, float]],
+    *,
+    route_offset_m: float,
+    db_sep_m: float,
+    aircraft_row: Dict[str, Any] | None,
+    fallback_origin_xy: Tuple[float, float] | None,
+) -> _LineOffsetPlan | None:
+    frame = _line_route_frame_xy(route_line_xy)
+    if frame is None:
+        return None
+    route_start_xy, route_end_xy, _unit_xy, normal_xy = frame
+    max_offset_m = max(1.0, float(route_offset_m))
+    if db_sep_m > 0.0:
+        max_offset_m = min(float(max_offset_m), float(db_sep_m))
+    candidates: List[_LineOffsetPlan] = []
+    side_pairs = ((1.0, 1.0), (-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0))
+    for scale in LINE_OFFSET_CANDIDATE_SCALES:
+        candidate_offset_m = max(1.0, float(max_offset_m) * float(scale))
+        for start_side, end_side in side_pairs:
+            start_anchor_xy = _route_endpoint_offset_xy(
+                route_line_xy,
+                side=float(start_side),
+                offset_m=float(candidate_offset_m),
+                at_end=False,
+            )
+            end_anchor_xy = _route_endpoint_offset_xy(
+                route_line_xy,
+                side=float(end_side),
+                offset_m=float(candidate_offset_m),
+                at_end=True,
+            )
+            candidates.append(
+                _score_line_offset_plan(
+                    route_start_xy=route_start_xy,
+                    route_end_xy=route_end_xy,
+                    normal_xy=normal_xy,
+                    start_side=float(start_side),
+                    end_side=float(end_side),
+                    offset_m=float(candidate_offset_m),
+                    aircraft_row=aircraft_row,
+                    fallback_origin_xy=fallback_origin_xy,
+                    start_anchor_xy=start_anchor_xy,
+                    end_anchor_xy=end_anchor_xy,
+                )
+            )
+    if not candidates:
+        return None
+    return min(
+        candidates,
+        key=lambda plan: (
+            float(plan.score),
+            float(plan.offset_m),
+            0 if float(plan.start_side) == float(plan.end_side) else 1,
+        ),
+    )
+
+
+def _clamp_line_offset_plan_to_sweep(
+    plan: _LineOffsetPlan | None,
+    *,
+    sweep_xy: Sequence[Tuple[float, float]],
+    route_line_xy: Sequence[Tuple[float, float]],
+    db_sep_m: float,
+) -> _LineOffsetPlan | None:
+    if plan is None or db_sep_m <= 0.0 or len(sweep_xy) < 2:
+        return plan
+    anchor_xy = _line_anchor_from_route_plan_xy(
+        sweep_xy,
+        route_line_xy=route_line_xy,
+        offset_plan=plan,
+    )
+    clearance_m = _line_anchor_clearance_m(anchor_xy, sweep_xy)
+    if clearance_m is None or clearance_m <= float(db_sep_m) + 1e-6:
+        return _LineOffsetPlan(
+            start_side=plan.start_side,
+            end_side=plan.end_side,
+            offset_m=plan.offset_m,
+            score=plan.score,
+            dubins_length_m=plan.dubins_length_m,
+            first_turn_sign=plan.first_turn_sign,
+            clearance_m=clearance_m,
+        )
+
+    lo = 0.0
+    hi = float(plan.offset_m)
+    best_clearance_m = clearance_m
+    for _ in range(32):
+        mid = (lo + hi) * 0.5
+        candidate = _LineOffsetPlan(
+            start_side=plan.start_side,
+            end_side=plan.end_side,
+            offset_m=float(mid),
+            score=plan.score,
+            dubins_length_m=plan.dubins_length_m,
+            first_turn_sign=plan.first_turn_sign,
+        )
+        candidate_anchor = _line_anchor_from_route_plan_xy(
+            sweep_xy,
+            route_line_xy=route_line_xy,
+            offset_plan=candidate,
+        )
+        candidate_clearance_m = _line_anchor_clearance_m(candidate_anchor, sweep_xy)
+        if candidate_clearance_m is None:
+            hi = mid
+            continue
+        best_clearance_m = float(candidate_clearance_m)
+        if candidate_clearance_m <= float(db_sep_m) + 1e-6:
+            lo = mid
+        else:
+            hi = mid
+    return _LineOffsetPlan(
+        start_side=plan.start_side,
+        end_side=plan.end_side,
+        offset_m=max(1.0, float(lo)),
+        score=plan.score,
+        dubins_length_m=plan.dubins_length_m,
+        first_turn_sign=plan.first_turn_sign,
+        clearance_m=float(best_clearance_m),
+    )
 
 
 def _ensure(condition: bool, message: str) -> None:
@@ -223,6 +798,15 @@ def _to_float(value: Any) -> float | None:
         return float(value)
     except Exception:
         return None
+
+
+def _clamp_line_fov_deg(value: Any, default: float | None = None) -> float:
+    fov_deg = _to_float(value)
+    if fov_deg is None or fov_deg <= 0.0:
+        fov_deg = _to_float(default)
+    if fov_deg is None or fov_deg <= 0.0:
+        fov_deg = float(MIN_LINE_FOV_DEG)
+    return max(float(MIN_LINE_FOV_DEG), float(fov_deg))
 
 
 def _normalize_coordinate(payload: object | None) -> Dict[str, float] | None:
@@ -364,6 +948,8 @@ def _normalize_aircraft_rows(
         position_xy = coord_to_xy(coord) if coord is not None else None
         if aircraft_id <= 0 or coord is None or position_xy is None:
             continue
+        current_coord = _normalize_coordinate(entry.get("currentCoordinate"))
+        current_position_xy = coord_to_xy(current_coord) if current_coord is not None else None
         heading_deg = _to_float(entry.get("headingDeg"))
         if heading_deg is None:
             heading_deg = _to_float(entry.get("heading"))
@@ -379,6 +965,17 @@ def _normalize_aircraft_rows(
             planner_heading = _bearing_deg_from_xy(position_xy, mission_center_xy)
         if planner_heading is None:
             planner_heading = 0.0
+        turn_sign = 0
+        try:
+            turn_sign = int(entry.get("turnSign") or 0)
+        except Exception:
+            turn_sign = 0
+        turn_radius_m = _first_float(
+            entry.get("turnRadiusM"),
+            entry.get("turnCircleRadiusM"),
+            entry.get("actualTurnRadiusM"),
+            entry.get("idealTurnRadiusM"),
+        )
         rows.append(
             {
                 "aircraftID": int(aircraft_id),
@@ -388,7 +985,20 @@ def _normalize_aircraft_rows(
                     "altitude": float(coord.get("altitude", 0.0) or 0.0),
                 },
                 "positionXY": (float(position_xy[0]), float(position_xy[1])),
+                "currentCoordinate": dict(current_coord) if current_coord is not None else None,
+                "currentPositionXY": (
+                    (float(current_position_xy[0]), float(current_position_xy[1]))
+                    if current_position_xy is not None
+                    else None
+                ),
                 "headingDeg": float(planner_heading),
+                "speedMps": _first_float(entry.get("speedMps"), entry.get("speed_mps")),
+                "turnRateDps": _first_float(entry.get("turnRateDps"), entry.get("turn_rate_dps")),
+                "turnSign": int(turn_sign),
+                "turnRadiusM": turn_radius_m,
+                "idealTurnRadiusM": _first_float(entry.get("idealTurnRadiusM")),
+                "actualTurnRadiusM": _first_float(entry.get("actualTurnRadiusM")),
+                "turnCircleRadiusM": _first_float(entry.get("turnCircleRadiusM")),
             }
         )
     rows.sort(key=lambda item: int(item["aircraftID"]))
@@ -475,13 +1085,21 @@ def _build_line_sweep_items(
     *,
     reference_xy: Tuple[float, float] | None,
     offset_m: float,
+    route_line_xy: Sequence[Tuple[float, float]] | None = None,
+    offset_plan: _LineOffsetPlan | None = None,
 ) -> List[Dict[str, Any]]:
     items: List[Dict[str, Any]] = []
     for sweep_xy in sweep_lines_xy:
         line_xy = [(float(x), float(y)) for x, y in sweep_xy]
         if len(line_xy) < 2:
             continue
-        anchor_xy = _line_anchor_xy_from_sweep(line_xy, offset_m=float(offset_m))
+        anchor_xy = _line_anchor_xy_from_sweep(
+            line_xy,
+            offset_m=float(offset_m),
+            route_line_xy=route_line_xy,
+            reference_xy=reference_xy,
+            offset_plan=offset_plan,
+        )
         if anchor_xy is None:
             continue
         items.append(
@@ -613,9 +1231,41 @@ def _line_anchor_xy_from_sweep(
     sweep_xy: Sequence[Tuple[float, float]],
     *,
     offset_m: float,
+    route_line_xy: Sequence[Tuple[float, float]] | None = None,
+    reference_xy: Tuple[float, float] | None = None,
+    offset_plan: _LineOffsetPlan | None = None,
 ) -> Tuple[float, float] | None:
     if len(sweep_xy) < 2:
         return None
+    if offset_plan is not None and route_line_xy is not None and len(route_line_xy) >= 2:
+        anchor_xy = _line_anchor_from_route_plan_xy(
+            sweep_xy,
+            route_line_xy=route_line_xy,
+            offset_plan=offset_plan,
+        )
+        if anchor_xy is not None:
+            return anchor_xy
+    if route_line_xy is not None and len(route_line_xy) >= 2:
+        midpoint_xy = _midpoint_xy(sweep_xy)
+        if midpoint_xy is not None:
+            projected = _project_to_route_polyline_xy(midpoint_xy, route_line_xy)
+            if projected is not None:
+                center_xy, tangent_xy, _progress_ratio = projected
+                normal_xy = (-float(tangent_xy[1]), float(tangent_xy[0]))
+                offset_abs_m = max(float(offset_m), 0.0)
+                candidates = [
+                    (
+                        float(center_xy[0]) + (normal_xy[0] * offset_abs_m),
+                        float(center_xy[1]) + (normal_xy[1] * offset_abs_m),
+                    ),
+                    (
+                        float(center_xy[0]) - (normal_xy[0] * offset_abs_m),
+                        float(center_xy[1]) - (normal_xy[1] * offset_abs_m),
+                    ),
+                ]
+                if reference_xy is not None:
+                    return min(candidates, key=lambda anchor: _distance_xy(reference_xy, anchor))
+                return candidates[0]
     (x1, y1), (x2, y2) = sweep_xy[0], sweep_xy[-1]
     mid_x = (float(x1) + float(x2)) * 0.5
     mid_y = (float(y1) + float(y2)) * 0.5
@@ -685,6 +1335,7 @@ def _orient_line_sweep_for_anchor(
     *,
     anchor_ref_xy: Tuple[float, float] | None,
     offset_m: float,
+    route_line_xy: Sequence[Tuple[float, float]] | None = None,
 ) -> List[Tuple[float, float]]:
     if len(sweep_xy) < 2:
         return [(float(x), float(y)) for x, y in sweep_xy]
@@ -695,8 +1346,18 @@ def _orient_line_sweep_for_anchor(
     reverse = [forward[-1], forward[0]]
     if anchor_ref_xy is None:
         return forward
-    anchor_forward = _line_anchor_xy_from_sweep(forward, offset_m=offset_m)
-    anchor_reverse = _line_anchor_xy_from_sweep(reverse, offset_m=offset_m)
+    anchor_forward = _line_anchor_xy_from_sweep(
+        forward,
+        offset_m=offset_m,
+        route_line_xy=route_line_xy,
+        reference_xy=anchor_ref_xy,
+    )
+    anchor_reverse = _line_anchor_xy_from_sweep(
+        reverse,
+        offset_m=offset_m,
+        route_line_xy=route_line_xy,
+        reference_xy=anchor_ref_xy,
+    )
     if anchor_forward is None:
         return reverse if anchor_reverse is not None else forward
     if anchor_reverse is None:
@@ -789,7 +1450,7 @@ def _centerline_sweep_distances(total_len_m: float, sweep_spacing_m: float) -> L
     while cursor_m < total_len_m - 1e-6:
         distances_m.append(float(cursor_m))
         cursor_m += float(sweep_spacing_m)
-    if abs(float(distances_m[-1]) - total_len_m) > max(5.0, sweep_spacing_m * 0.25):
+    if abs(float(distances_m[-1]) - total_len_m) > 1e-6:
         distances_m.append(total_len_m)
     return distances_m
 
@@ -801,21 +1462,29 @@ def _centerline_corridor_sweep_lines_xy(
     sweep_spacing_m: float,
     route_offset_m: float,
     origin_xy: Tuple[float, float] | None,
-) -> tuple[List[List[Tuple[float, float]]], List[Dict[str, Any]], Tuple[float, float] | None]:
+    db_sep_m: float = 0.0,
+    aircraft_row: Dict[str, Any] | None = None,
+) -> tuple[
+    List[List[Tuple[float, float]]],
+    List[Dict[str, Any]],
+    Tuple[float, float] | None,
+    _LineOffsetPlan | None,
+    float | None,
+]:
     piece_poly = planner._piece_polygon_xy(piece)
     centerline_xy = _piece_centerline_xy(piece)
     if piece_poly is None or piece_poly.is_empty or len(centerline_xy) < 2:
-        return [], [], None
+        return [], [], None, None, None
 
     sweep_spacing_m = float(sweep_spacing_m)
     route_offset_m = max(float(route_offset_m), 0.0)
     if sweep_spacing_m <= 0.0:
-        return [], [], None
+        return [], [], None, None, None
 
     centerline_xy = _orient_polyline_xy(centerline_xy, reference_xy=origin_xy)
     line = LineString(centerline_xy)
     if line.is_empty or float(line.length) <= 1e-6:
-        return [], [], None
+        return [], [], None, None, None
 
     min_x, min_y, max_x, max_y = piece_poly.bounds
     extend_m = max(
@@ -831,8 +1500,16 @@ def _centerline_corridor_sweep_lines_xy(
     route_side_ref_xy = origin_xy
     base_dir_xy: Tuple[float, float] | None = None
     first_anchor_xy: Tuple[float, float] | None = None
+    first_anchor_clearance_m: float | None = None
     scan_lines_xy: List[List[Tuple[float, float]]] = []
     line_sweep_items: List[Dict[str, Any]] = []
+    offset_plan = _choose_line_offset_plan(
+        centerline_xy,
+        route_offset_m=float(route_offset_m),
+        db_sep_m=float(db_sep_m),
+        aircraft_row=aircraft_row,
+        fallback_origin_xy=origin_xy,
+    )
 
     for idx, dist_m in enumerate(distances_m):
         center_xy = _point_on_linestring_xy(line, dist_m)
@@ -867,6 +1544,7 @@ def _centerline_corridor_sweep_lines_xy(
                 forward_sweep_xy,
                 anchor_ref_xy=route_side_ref_xy,
                 offset_m=float(route_offset_m),
+                route_line_xy=centerline_xy,
             )
             base_dir_xy = (
                 float(base_sweep_xy[-1][0]) - float(base_sweep_xy[0][0]),
@@ -882,9 +1560,23 @@ def _centerline_corridor_sweep_lines_xy(
                 + (float(reverse_sweep_xy[-1][1]) - float(reverse_sweep_xy[0][1])) * float(base_dir_xy[1])
             )
             base_sweep_xy = forward_sweep_xy if forward_dot >= reverse_dot else reverse_sweep_xy
-        anchor_xy = _line_anchor_xy_from_sweep(base_sweep_xy, offset_m=float(route_offset_m))
+        if idx == 0:
+            offset_plan = _clamp_line_offset_plan_to_sweep(
+                offset_plan,
+                sweep_xy=base_sweep_xy,
+                route_line_xy=centerline_xy,
+                db_sep_m=float(db_sep_m),
+            )
+        anchor_xy = _line_anchor_xy_from_sweep(
+            base_sweep_xy,
+            offset_m=float(route_offset_m),
+            route_line_xy=centerline_xy,
+            reference_xy=route_side_ref_xy,
+            offset_plan=offset_plan,
+        )
         if anchor_xy is not None and first_anchor_xy is None:
             first_anchor_xy = anchor_xy
+            first_anchor_clearance_m = _line_anchor_clearance_m(anchor_xy, base_sweep_xy)
         if anchor_xy is not None and route_side_ref_xy is None:
             route_side_ref_xy = anchor_xy
         scan_sweep_xy = list(base_sweep_xy)
@@ -899,7 +1591,7 @@ def _centerline_corridor_sweep_lines_xy(
                 }
             )
 
-    return scan_lines_xy, line_sweep_items, first_anchor_xy
+    return scan_lines_xy, line_sweep_items, first_anchor_xy, offset_plan, first_anchor_clearance_m
 
 
 def _corridor_sweep_lines_xy(
@@ -910,15 +1602,23 @@ def _corridor_sweep_lines_xy(
     sweep_spacing_m: float,
     route_offset_m: float,
     origin_xy: Tuple[float, float] | None,
-) -> tuple[List[List[Tuple[float, float]]], List[Dict[str, Any]], Tuple[float, float] | None]:
+    db_sep_m: float = 0.0,
+    aircraft_row: Dict[str, Any] | None = None,
+) -> tuple[
+    List[List[Tuple[float, float]]],
+    List[Dict[str, Any]],
+    Tuple[float, float] | None,
+    _LineOffsetPlan | None,
+    float | None,
+]:
     piece_poly = planner._piece_polygon_xy(piece)
     bounds = planner._overlay_st_bounds(overlay)
     if piece_poly is None or piece_poly.is_empty or bounds is None:
-        return [], [], None
+        return [], [], None, None, None
     sweep_spacing_m = float(sweep_spacing_m)
     route_offset_m = max(float(route_offset_m), 0.0)
     if sweep_spacing_m <= 0.0:
-        return [], [], None
+        return [], [], None, None, None
 
     _bearing_deg, ux, uy, vx, vy, min_s, max_s, min_t, max_t = bounds
     mid_t = 0.5 * (float(min_t) + float(max_t))
@@ -933,6 +1633,10 @@ def _corridor_sweep_lines_xy(
         start_s = float(min_s)
         end_s = float(max_s)
         step_sign = 1.0
+    route_axis_xy = [
+        planner._from_st_xy(float(start_s), float(mid_t), ux, uy, vx, vy),
+        planner._from_st_xy(float(end_s), float(mid_t), ux, uy, vx, vy),
+    ]
 
     s_values: List[float] = [float(start_s)]
     cursor_s = float(start_s)
@@ -951,8 +1655,16 @@ def _corridor_sweep_lines_xy(
     route_side_ref_xy = origin_xy
     base_dir_xy: Tuple[float, float] | None = None
     first_anchor_xy: Tuple[float, float] | None = None
+    first_anchor_clearance_m: float | None = None
     scan_lines_xy: List[List[Tuple[float, float]]] = []
     line_sweep_items: List[Dict[str, Any]] = []
+    offset_plan = _choose_line_offset_plan(
+        route_axis_xy,
+        route_offset_m=float(route_offset_m),
+        db_sep_m=float(db_sep_m),
+        aircraft_row=aircraft_row,
+        fallback_origin_xy=origin_xy,
+    )
 
     for idx, s_val in enumerate(s_values):
         guide = LineString(
@@ -979,6 +1691,7 @@ def _corridor_sweep_lines_xy(
                 forward_sweep_xy,
                 anchor_ref_xy=route_side_ref_xy,
                 offset_m=float(route_offset_m),
+                route_line_xy=route_axis_xy,
             )
             base_dir_xy = (
                 float(base_sweep_xy[-1][0]) - float(base_sweep_xy[0][0]),
@@ -994,9 +1707,23 @@ def _corridor_sweep_lines_xy(
                 + (float(reverse_sweep_xy[-1][1]) - float(reverse_sweep_xy[0][1])) * float(base_dir_xy[1])
             )
             base_sweep_xy = forward_sweep_xy if forward_dot >= reverse_dot else reverse_sweep_xy
-        anchor_xy = _line_anchor_xy_from_sweep(base_sweep_xy, offset_m=float(route_offset_m))
+        if idx == 0:
+            offset_plan = _clamp_line_offset_plan_to_sweep(
+                offset_plan,
+                sweep_xy=base_sweep_xy,
+                route_line_xy=route_axis_xy,
+                db_sep_m=float(db_sep_m),
+            )
+        anchor_xy = _line_anchor_xy_from_sweep(
+            base_sweep_xy,
+            offset_m=float(route_offset_m),
+            route_line_xy=route_axis_xy,
+            reference_xy=route_side_ref_xy,
+            offset_plan=offset_plan,
+        )
         if anchor_xy is not None and first_anchor_xy is None:
             first_anchor_xy = anchor_xy
+            first_anchor_clearance_m = _line_anchor_clearance_m(anchor_xy, base_sweep_xy)
         if anchor_xy is not None and route_side_ref_xy is None:
             route_side_ref_xy = anchor_xy
         scan_sweep_xy = list(base_sweep_xy)
@@ -1011,7 +1738,7 @@ def _corridor_sweep_lines_xy(
                 }
             )
 
-    return scan_lines_xy, line_sweep_items, first_anchor_xy
+    return scan_lines_xy, line_sweep_items, first_anchor_xy, offset_plan, first_anchor_clearance_m
 
 
 def _synthetic_line_overlay(
@@ -1232,7 +1959,7 @@ def _next_collab_resolved_db_row(
     runtime_cfg: Dict[str, Any] | None = None,
 ) -> Dict[str, float] | None:
     target_m = max(0.0, float(width_m))
-    limit_sep_m = max(0.0, float(sep_m))
+    limit_sep_m = _db_sep_requirement_m(float(sep_m), runtime_cfg)
     if target_m <= 0.0:
         return None
 
@@ -1325,6 +2052,34 @@ def _next_collab_resolved_db_row(
     return dict(best_row)
 
 
+def _line_db_row_covering_anchor_sep(
+    planner: _HeadlessLinePlanner,
+    *,
+    width_m: float,
+    required_sep_m: float,
+) -> Dict[str, float] | None:
+    target_width_m = max(0.0, float(width_m))
+    target_sep_m = max(0.0, float(required_sep_m))
+    if target_width_m <= 0.0 or target_sep_m <= 0.0:
+        return None
+    rows = [
+        dict(row)
+        for row in (planner._fov_db_rows() or [])
+        if float(row.get("width", 0.0) or 0.0) + 1e-6 >= target_width_m
+        and float(row.get("sep", 0.0) or 0.0) + 1e-6 >= target_sep_m
+    ]
+    if not rows:
+        return None
+    return min(
+        rows,
+        key=lambda row: (
+            float(row.get("fov", 0.0) or 0.0),
+            float(row.get("sep", 0.0) or 0.0),
+            float(row.get("width", 0.0) or 0.0),
+        ),
+    )
+
+
 def _line_entry_endpoints_xy(
     sweep_lines_xy: Sequence[Sequence[Tuple[float, float]]],
 ) -> List[Tuple[float, float]] | None:
@@ -1352,7 +2107,10 @@ def _resolve_line_entry_tprime_state(
 
     ep0 = entry_line_endpoints_xy[0]
     ep1 = entry_line_endpoints_xy[1]
-    sep_cand_m = (_distance_xy(tangent_xy, ep0) + _distance_xy(tangent_xy, ep1)) * 0.5
+    tprime_sep_m = max(
+        _distance_xy(tangent_xy, (float(ep0[0]), float(ep0[1]))),
+        _distance_xy(tangent_xy, (float(ep1[0]), float(ep1[1]))),
+    )
     target_sep_m = _next_collab_entry_tprime_target_sep_m(
         planner,
         float(part_width_m),
@@ -1363,7 +2121,7 @@ def _resolve_line_entry_tprime_state(
     ingress_dx = float(entry_target_xy[0]) - float(tangent_xy[0])
     ingress_dy = float(entry_target_xy[1]) - float(tangent_xy[1])
     ingress_len_m = math.hypot(ingress_dx, ingress_dy)
-    if sep_cand_m > target_sep_m > 0.0 and ingress_len_m > 1e-6:
+    if tprime_sep_m > target_sep_m > 0.0 and ingress_len_m > 1e-6:
         ux_i = ingress_dx / ingress_len_m
         uy_i = ingress_dy / ingress_len_m
         lo = 0.0
@@ -1374,7 +2132,10 @@ def _resolve_line_entry_tprime_state(
                 float(tangent_xy[0]) + (ux_i * mid),
                 float(tangent_xy[1]) + (uy_i * mid),
             )
-            test_sep_m = (_distance_xy(test_xy, ep0) + _distance_xy(test_xy, ep1)) * 0.5
+            test_sep_m = max(
+                _distance_xy(test_xy, (float(ep0[0]), float(ep0[1]))),
+                _distance_xy(test_xy, (float(ep1[0]), float(ep1[1]))),
+            )
             if test_sep_m > target_sep_m:
                 lo = mid
             else:
@@ -1383,7 +2144,12 @@ def _resolve_line_entry_tprime_state(
             float(tangent_xy[0]) + (ux_i * lo),
             float(tangent_xy[1]) + (uy_i * lo),
         )
-        sep_cand_m = (_distance_xy(entry_t_prime_xy, ep0) + _distance_xy(entry_t_prime_xy, ep1)) * 0.5
+        tprime_sep_m = max(
+            _distance_xy(entry_t_prime_xy, (float(ep0[0]), float(ep0[1]))),
+            _distance_xy(entry_t_prime_xy, (float(ep1[0]), float(ep1[1]))),
+        )
+
+    sep_cand_m = float(tprime_sep_m)
 
     resolved_db_row = _next_collab_resolved_db_row(
         planner,
@@ -1407,6 +2173,7 @@ def _augment_line_path_row(
     path_row: Dict[str, Any],
     *,
     shared_db_row: Dict[str, Any] | None = None,
+    aircraft_row: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     out = dict(path_row)
     runtime_cfg = load_runtime_settings()
@@ -1458,35 +2225,59 @@ def _augment_line_path_row(
         db_sep_m = max(30.0, float(width_ref_m) * 0.5)
     manual_line_base_fov_deg = _runtime_line_manual_base_fov_deg(runtime_cfg)
     manual_line_fov_deg = _runtime_line_manual_fov_deg(runtime_cfg)
-    resolved_base_fov_deg = float(manual_line_base_fov_deg or db_row.get("fov", out.get("resolvedFovDeg", 0.0)) or 0.0)
+    resolved_base_fov_deg = _clamp_line_fov_deg(
+        manual_line_base_fov_deg or db_row.get("fov", out.get("resolvedFovDeg", 0.0)),
+        MIN_LINE_FOV_DEG,
+    )
     if resolved_base_fov_deg <= 0.0:
-        resolved_base_fov_deg = float(db_row.get("fov", 0.0) or 0.0)
-    resolved_fov_deg = float(
+        resolved_base_fov_deg = _clamp_line_fov_deg(db_row.get("fov", 0.0), MIN_LINE_FOV_DEG)
+    resolved_fov_deg = _clamp_line_fov_deg(
         manual_line_fov_deg
         or apply_runtime_camera_adjusted_fov_deg(
             resolved_base_fov_deg,
             runtime_cfg,
+            minimum_fov_deg=MIN_LINE_FOV_DEG,
             context="NEXTCOLLAB LINE RESOLVED",
         )
-        or 0.0
+        or 0.0,
+        resolved_base_fov_deg,
     )
     route_wp_spacing_m = _runtime_line_route_wp_spacing_m(runtime_cfg)
 
     route_xy = out.get("routeXY") if isinstance(out.get("routeXY"), list) else []
-    origin_xy = (
+    route_origin_xy = (
         (float(route_xy[0][0]), float(route_xy[0][1]))
         if route_xy and isinstance(route_xy[0], (tuple, list)) and len(route_xy[0]) >= 2
         else None
     )
+    aircraft_entry_xy = _first_xy_from_aircraft_row(aircraft_row)
+    origin_xy = aircraft_entry_xy or route_origin_xy
     entry_t_prime_xy = (
         (float(out["entryTPrimeXY"][0]), float(out["entryTPrimeXY"][1]))
         if isinstance(out.get("entryTPrimeXY"), (tuple, list)) and len(out["entryTPrimeXY"]) >= 2
         else None
     )
     sep_cand_m = _to_float(out.get("sepCandM"))
+    explicit_route_offset_sep_m = _to_float(out.get("lineRouteOffsetSepM"))
+    # sepCandM is an ingress/T' clearance candidate. Keep route offset tied to
+    # the sweep DB separation so one aircraft's entry geometry cannot push the
+    # LINE anchors far away from the corridor.
+    route_offset_sep_m = _route_offset_sep_for_fov(
+        planner,
+        resolved_base_fov_deg or resolved_fov_deg,
+        (
+            explicit_route_offset_sep_m
+            or _to_float(out.get("dbSepM"))
+            or db_sep_m
+            or 0.0
+        ),
+        runtime_cfg=runtime_cfg,
+    )
     corridor_sweeps_xy: List[List[Tuple[float, float]]] = []
     corridor_sweep_items: List[Dict[str, Any]] = []
     first_anchor_xy: Tuple[float, float] | None = None
+    line_offset_plan: _LineOffsetPlan | None = None
+    first_anchor_clearance_m: float | None = None
     active_db_row = dict(forced_shared_row) if forced_shared_row is not None else (dict(db_row) if isinstance(db_row, dict) else {})
 
     def _db_row_signature(row: Dict[str, Any]) -> tuple[float, float, float]:
@@ -1500,48 +2291,77 @@ def _augment_line_path_row(
         active_db_sep_m = float(active_db_row.get("sep", db_sep_m) or db_sep_m or 0.0)
         if active_db_sep_m <= 0.0:
             active_db_sep_m = max(30.0, float(width_ref_m) * 0.5)
-        active_base_fov_deg = float(
+        active_base_fov_deg = _clamp_line_fov_deg(
             manual_line_base_fov_deg
             or active_db_row.get("fov", resolved_base_fov_deg)
             or resolved_base_fov_deg
-            or 0.0
+            or 0.0,
+            resolved_base_fov_deg,
         )
-        active_fov_deg = float(
+        active_fov_deg = _clamp_line_fov_deg(
             manual_line_fov_deg
             or apply_runtime_camera_adjusted_fov_deg(
                 active_base_fov_deg,
                 runtime_cfg,
+                minimum_fov_deg=MIN_LINE_FOV_DEG,
                 context="NEXTCOLLAB LINE ACTIVE_DB",
             )
-            or 0.0
+            or 0.0,
+            active_base_fov_deg,
         )
         if active_fov_deg <= 0.0:
-            active_fov_deg = max(float(resolved_fov_deg), 1.0)
+            active_fov_deg = _clamp_line_fov_deg(resolved_fov_deg)
         active_raw_sweep_spacing_m = _line_sweep_spacing_m(
             separation_m=float(active_db_sep_m),
             fov_deg=float(active_fov_deg or 1.0),
             runtime_cfg=runtime_cfg,
         )
+        active_route_offset_sep_m = _route_offset_sep_for_fov(
+            planner,
+            active_base_fov_deg or active_fov_deg,
+            (
+                explicit_route_offset_sep_m
+                or route_offset_sep_m
+                or active_db_sep_m
+            ),
+            runtime_cfg=runtime_cfg,
+        )
         active_route_offset_m = max(
-            float(active_db_sep_m) * float(_runtime_line_route_offset_scale(runtime_cfg)),
+            float(active_route_offset_sep_m) * float(_runtime_line_route_offset_scale(runtime_cfg)),
             1.0,
         )
 
-        corridor_sweeps_xy, corridor_sweep_items, first_anchor_xy = _centerline_corridor_sweep_lines_xy(
+        (
+            corridor_sweeps_xy,
+            corridor_sweep_items,
+            first_anchor_xy,
+            line_offset_plan,
+            first_anchor_clearance_m,
+        ) = _centerline_corridor_sweep_lines_xy(
             planner,
             piece,
             sweep_spacing_m=float(active_raw_sweep_spacing_m),
             route_offset_m=float(active_route_offset_m),
             origin_xy=origin_xy,
+            db_sep_m=float(active_db_sep_m),
+            aircraft_row=aircraft_row,
         )
         if not corridor_sweeps_xy:
-            corridor_sweeps_xy, corridor_sweep_items, first_anchor_xy = _corridor_sweep_lines_xy(
+            (
+                corridor_sweeps_xy,
+                corridor_sweep_items,
+                first_anchor_xy,
+                line_offset_plan,
+                first_anchor_clearance_m,
+            ) = _corridor_sweep_lines_xy(
                 planner,
                 piece,
                 overlay,
                 sweep_spacing_m=float(active_raw_sweep_spacing_m),
                 route_offset_m=float(active_route_offset_m),
                 origin_xy=origin_xy,
+                db_sep_m=float(active_db_sep_m),
+                aircraft_row=aircraft_row,
             )
         entry_line_endpoints_xy = _line_entry_endpoints_xy(corridor_sweeps_xy)
         entry_target_xy = (
@@ -1565,12 +2385,26 @@ def _augment_line_path_row(
             waypoint_start_xy = entry_t_prime_xy
         if computed_sep_cand_m is not None:
             sep_cand_m = float(computed_sep_cand_m)
+        if (
+            first_anchor_clearance_m is not None
+            and float(first_anchor_clearance_m) > float(active_db_sep_m) + 1e-6
+        ):
+            anchor_cover_row = _line_db_row_covering_anchor_sep(
+                planner,
+                width_m=float(width_ref_m),
+                required_sep_m=float(first_anchor_clearance_m),
+            )
+            if isinstance(anchor_cover_row, dict):
+                next_db_row = anchor_cover_row
 
         db_sep_m = float(active_db_sep_m)
         resolved_base_fov_deg = float(active_base_fov_deg)
         resolved_fov_deg = float(active_fov_deg)
         raw_sweep_spacing_m = float(active_raw_sweep_spacing_m)
+        route_offset_sep_m = float(active_route_offset_sep_m)
         route_offset_m = float(active_route_offset_m)
+        if line_offset_plan is not None and float(line_offset_plan.offset_m) > 0.0:
+            route_offset_m = float(line_offset_plan.offset_m)
 
         if forced_shared_row is not None:
             break
@@ -1584,20 +2418,23 @@ def _augment_line_path_row(
         active_db_row = dict(next_db_row)
 
     final_db_row = dict(forced_shared_row) if forced_shared_row is not None else (active_db_row if isinstance(active_db_row, dict) else {})
-    final_base_fov_deg = float(
+    final_base_fov_deg = _clamp_line_fov_deg(
         manual_line_base_fov_deg
         or final_db_row.get("fov", resolved_base_fov_deg)
         or resolved_base_fov_deg
-        or 0.0
+        or 0.0,
+        resolved_base_fov_deg,
     )
-    resolved_fov_deg = float(
+    resolved_fov_deg = _clamp_line_fov_deg(
         manual_line_fov_deg
         or apply_runtime_camera_adjusted_fov_deg(
             final_base_fov_deg,
             runtime_cfg,
+            minimum_fov_deg=MIN_LINE_FOV_DEG,
             context="NEXTCOLLAB LINE FINAL",
         )
-        or 0.0
+        or 0.0,
+        final_base_fov_deg,
     )
     out["resolvedBaseFovDeg"] = float(final_base_fov_deg)
     out["resolvedFovDeg"] = float(resolved_fov_deg)
@@ -1655,8 +2492,18 @@ def _augment_line_path_row(
     out["dbWidthM"] = float(out.get("dbWidthM", db_row.get("width", width_ref_m)) or 0.0)
     out["dbSepM"] = float(out.get("dbSepM", db_sep_m) or 0.0)
     out["lineSweepSpacingM"] = float(raw_sweep_spacing_m)
+    out["lineRouteOffsetSepM"] = float(route_offset_sep_m)
     out["lineRouteOffsetM"] = float(route_offset_m)
     out["lineRouteWpSpacingM"] = float(route_wp_spacing_m)
+    if line_offset_plan is not None:
+        out["lineRouteOffsetStartSide"] = float(line_offset_plan.start_side)
+        out["lineRouteOffsetEndSide"] = float(line_offset_plan.end_side)
+        out["lineRouteOffsetPlanScore"] = float(line_offset_plan.score)
+        out["lineRouteOffsetFirstTurnSign"] = int(line_offset_plan.first_turn_sign)
+        if line_offset_plan.dubins_length_m is not None:
+            out["lineRouteOffsetDubinsLengthM"] = float(line_offset_plan.dubins_length_m)
+        if first_anchor_clearance_m is not None:
+            out["lineRouteFirstAnchorClearanceM"] = float(first_anchor_clearance_m)
     out["resolvedBaseFovDeg"] = float(final_base_fov_deg)
     out["resolvedFovDeg"] = float(resolved_fov_deg)
     if out.get("resolvedVelMps") is None:
@@ -1692,6 +2539,8 @@ def _augment_line_path_row(
             out.get("sweepLineListXY") or [],
             reference_xy=reference_xy,
             offset_m=float(route_offset_m),
+            route_line_xy=centerline_xy,
+            offset_plan=line_offset_plan,
         )
     if line_sweep_items:
         if len(centerline_xy) >= 2:
@@ -1727,8 +2576,12 @@ def _augment_line_path_row(
 
 def _shared_line_db_row_from_expected_rows(
     expected_rows: Sequence[Dict[str, Any]],
+    *,
+    runtime_cfg: Dict[str, Any] | None = None,
 ) -> Dict[str, Any] | None:
     candidates: List[Dict[str, Any]] = []
+    required_sep_m = 0.0
+    required_width_m = 0.0
     for row in expected_rows:
         if not isinstance(row, dict):
             continue
@@ -1736,6 +2589,8 @@ def _shared_line_db_row_from_expected_rows(
         fov_deg = _to_float(row.get("resolvedFovDeg"))
         sep_m = _to_float(row.get("dbSepM"))
         width_m = _to_float(row.get("dbWidthM")) or _to_float(row.get("partWidthM"))
+        sep_cand_m = _to_float(row.get("sepCandM"))
+        part_width_m = _to_float(row.get("partWidthM"))
         vel_mps = _to_float(row.get("resolvedVelMps"))
         if spacing_m is None or spacing_m <= 0.0:
             continue
@@ -1743,6 +2598,10 @@ def _shared_line_db_row_from_expected_rows(
             continue
         if sep_m is None or sep_m <= 0.0:
             continue
+        if sep_cand_m is not None and sep_cand_m > 0.0:
+            required_sep_m = max(float(required_sep_m), _db_sep_requirement_m(float(sep_cand_m), runtime_cfg))
+        if part_width_m is not None and part_width_m > 0.0:
+            required_width_m = max(float(required_width_m), float(part_width_m))
         candidates.append(
             {
                 "spacing": float(spacing_m),
@@ -1754,8 +2613,14 @@ def _shared_line_db_row_from_expected_rows(
         )
     if not candidates:
         return None
+    covering_candidates = [
+        item for item in candidates
+        if float(item["sep"]) + 1e-6 >= float(required_sep_m)
+        and float(item["width"]) + 1e-6 >= float(required_width_m)
+    ]
+    pool = covering_candidates or candidates
     best = min(
-        candidates,
+        pool,
         key=lambda item: (
             float(item["spacing"]),
             float(item["sep"]),
@@ -1842,10 +2707,13 @@ def _bind_scaled_turn_methods(
             )
             candidates: List[Dict[str, Any]] = []
             branch_points = (("L", left_xy), ("R", right_xy))
+            # LINE ingress must not accept the opposite turn branch once the
+            # target-side branch is known; that can place T/T' outside the
+            # mission corridor when an aircraft is already turning away.
             if preferred_branch == "L":
-                branch_points = (("L", left_xy), ("R", right_xy))
+                branch_points = (("L", left_xy),)
             elif preferred_branch == "R":
-                branch_points = (("R", right_xy), ("L", left_xy))
+                branch_points = (("R", right_xy),)
             for branch, candidate_xy in branch_points:
                 if not self._line_avoids_turn_circles(
                     candidate_xy,
@@ -1964,6 +2832,7 @@ def run_next_collab_line_plan(
     mission_center_xy = _mission_center_xy(line_specs)
     aircraft_rows = _normalize_aircraft_rows(aircraft_entries, mission_center_xy=mission_center_xy)
     _ensure(bool(aircraft_rows), "next-collab line planner requires at least one aircraft entry.")
+    aircraft_row_by_id = {int(row["aircraftID"]): dict(row) for row in aircraft_rows}
 
     planner = _HeadlessLinePlanner()
     planner.hide()
@@ -1979,7 +2848,7 @@ def run_next_collab_line_plan(
     planner.state.uav_positions_xy = [row["positionXY"] for row in aircraft_rows]
     planner.state.uav_heading_deg = [float(row["headingDeg"]) for row in aircraft_rows]
     planner._selected_uav_count = max(1, len(planner.state.uav_ids))
-    _bind_scaled_turn_methods(planner, turn_radius_scale=float(turn_radius_scale or 1.4))
+    _bind_scaled_turn_methods(planner, turn_radius_scale=float(turn_radius_scale or 1.2))
 
     cmpk_payload = {
         "availableAircraftList": [{"aircraftID": int(row["aircraftID"])} for row in aircraft_rows],
@@ -2052,7 +2921,16 @@ def run_next_collab_line_plan(
             path_row = planner._make_path_row(piece, overlay)
             if not isinstance(path_row, dict):
                 continue
-            expected_rows.append(_augment_line_path_row(planner, piece, overlay, path_row))
+            piece_aircraft_id = int(piece.assigned_uav or path_row.get("aircraftID") or 0)
+            expected_rows.append(
+                _augment_line_path_row(
+                    planner,
+                    piece,
+                    overlay,
+                    path_row,
+                    aircraft_row=aircraft_row_by_id.get(piece_aircraft_id),
+                )
+            )
         if not expected_rows:
             if log is not None:
                 log("[NEXTCOLLAB][LINE] retrying path rows with alternate overlay target points.")
@@ -2063,9 +2941,18 @@ def run_next_collab_line_plan(
                 path_row = planner._make_path_row(piece, overlay, allow_alt_targets=True)
                 if not isinstance(path_row, dict):
                     continue
-                expected_rows.append(_augment_line_path_row(planner, piece, overlay, path_row))
+                piece_aircraft_id = int(piece.assigned_uav or path_row.get("aircraftID") or 0)
+                expected_rows.append(
+                    _augment_line_path_row(
+                        planner,
+                        piece,
+                        overlay,
+                        path_row,
+                        aircraft_row=aircraft_row_by_id.get(piece_aircraft_id),
+                    )
+                )
         _ensure(bool(expected_rows), "next-collab line planner produced no path rows.")
-        shared_db_row = _shared_line_db_row_from_expected_rows(expected_rows)
+        shared_db_row = _shared_line_db_row_from_expected_rows(expected_rows, runtime_cfg=runtime_cfg)
         if isinstance(shared_db_row, dict) and len(expected_rows) >= 2:
             shared_expected_rows: List[Dict[str, Any]] = []
             for row in expected_rows:
@@ -2082,6 +2969,7 @@ def run_next_collab_line_plan(
                         overlay,
                         row,
                         shared_db_row=shared_db_row,
+                        aircraft_row=aircraft_row_by_id.get(int(row.get("aircraftID") or piece.assigned_uav or 0)),
                     )
                 )
             expected_rows = shared_expected_rows
@@ -2105,7 +2993,7 @@ def run_next_collab_line_plan(
         f"[NEXTCOLLAB][LINE] mid-line refBearing={float(reference_bearing_deg):.1f}deg overlays={len(overlays)}",
         f"[NEXTCOLLAB][LINE] path rows={len(expected_rows)}",
     ]
-    shared_db_row = _shared_line_db_row_from_expected_rows(expected_rows)
+    shared_db_row = _shared_line_db_row_from_expected_rows(expected_rows, runtime_cfg=runtime_cfg)
     if isinstance(shared_db_row, dict):
         result_lines.append(
             "[NEXTCOLLAB][LINE] shared sweep row "

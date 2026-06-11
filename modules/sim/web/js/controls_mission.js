@@ -6,6 +6,7 @@ export const initMissionPanel = () => {
   const status = panel ? panel.querySelector("[data-mission-status]") : null;
   const statusText = status ? status.querySelector(".mission-status-text") : null;
   const loadBtn = document.getElementById("mission-load");
+  const reissueInput0201Btn = document.getElementById("mission-reinput-0201");
   const folderInput = document.getElementById("mission-folder-input");
   const seedSelect = document.getElementById("multi-seed-select");
   const seedModeInputs = Array.from(
@@ -732,6 +733,27 @@ export const initMissionPanel = () => {
         if (loadBtn) {
           loadBtn.disabled = false;
         }
+      }
+    });
+  }
+
+  if (reissueInput0201Btn) {
+    reissueInput0201Btn.addEventListener("click", async () => {
+      const sim = window.simClient;
+      if (!sim || typeof sim.reissueInput0201 !== "function") {
+        setStatusMessage("0201 reissue API unavailable");
+        return;
+      }
+      reissueInput0201Btn.disabled = true;
+      setStatusMessage("0201 재입력 준비 중...");
+      try {
+        const result = await sim.reissueInput0201();
+        if (result && result.ok) {
+          const packageId = result.newPackageID ?? "";
+          setStatusMessage(`0201 재입력 전송 완료${packageId ? ` (#${packageId})` : ""}`);
+        }
+      } finally {
+        reissueInput0201Btn.disabled = false;
       }
     });
   }

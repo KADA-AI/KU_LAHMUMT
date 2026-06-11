@@ -31,7 +31,9 @@ from ..mission.mission_plan_loader import (
     build_mission_plan_payload,
     normalize_input_mission_plan_float_fields,
 )
+from ..mission.input_mission_reissue import now_ms_2000, prepare_reissued_input_mission_0201
 from ..mission.monitoring_loader import build_monitoring_snapshot
+from ..mission.remaining_area_loader import build_remaining_area_snapshot
 from ..mission.mission_validator import validate_mission_payload, validate_mission_plan_result
 from ..runtime.sim_service import SimulationService
 from ..tune.log_dynamics_calibrator import (
@@ -285,6 +287,11 @@ class MapRequestHandler(BaseHTTPRequestHandler):
             result = integration.send_custom(msg_id, payload)
             self._send_json(result)
             return
+        if path == "/api/integration/payload_observation":
+            result = integration.record_payload_observation(body or {})
+            status = HTTPStatus.OK if result.get("ok") else HTTPStatus.BAD_REQUEST
+            self._send_json(result, status)
+            return
         if path == "/api/integration/settings":
             result = integration.update_settings(body or {})
             status = HTTPStatus.OK if result.get("ok") else HTTPStatus.BAD_REQUEST
@@ -366,6 +373,17 @@ class MapRequestHandler(BaseHTTPRequestHandler):
                     since = None
             self._send_json(sim.build_snapshot(since_step=since))
             return
+        if parsed.path == "/api/sim/remaining_areas":
+            query = parse_qs(parsed.query or "")
+            plan_val = (query.get("missionPlanID") or query.get("missionPlanId") or [None])[0]
+            plan_id = None
+            if plan_val is not None:
+                try:
+                    plan_id = int(float(plan_val))
+                except Exception:
+                    plan_id = None
+            self._send_json(build_remaining_area_snapshot(mission_plan_id=plan_id))
+            return
         if parsed.path == "/api/sim/dynamics_calibration/status":
             self._send_json(current_status())
             return
@@ -410,6 +428,63 @@ class MapRequestHandler(BaseHTTPRequestHandler):
         if path == "/api/sim/targets/clear":
             result = sim.clear_targets()
             self._send_json(result)
+            return
+        if path == "/api/sim/reissue_input_0201":
+            integration = getattr(self.server, "integration", None)
+            if integration is None:
+                self._send_json(
+                    {"ok": False, "error": "Integration unavailable"},
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                )
+                return
+            if not integration.ensure_ready():
+                self._send_json(
+                    {"ok": False, "error": integration.error or "Messenger not ready"},
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                )
+                return
+            payload = body or {}
+            source_package_id = None
+            for key in ("sourcePackageID", "sourcePackageId", "inputMissionPackageID", "inputMissionPackageId"):
+                if key not in payload:
+                    continue
+                try:
+                    source_package_id = int(payload.get(key))
+                except Exception:
+                    source_package_id = None
+                break
+            if source_package_id is None:
+                resolver = getattr(integration, "_resolve_reexecute_source_package_id", None)
+                if callable(resolver):
+                    try:
+                        source_package_id = resolver()
+                    except Exception:
+                        source_package_id = None
+
+            timestamp = now_ms_2000()
+            result = prepare_reissued_input_mission_0201(
+                source_package_id=source_package_id,
+                now_ms=lambda: timestamp,
+            )
+            if not result.get("ok"):
+                self._send_json(result, HTTPStatus.BAD_REQUEST)
+                return
+
+            send_body = {
+                "timestamp": int(result.get("timestamp") or timestamp),
+                "inputMissionPackageID": int(result.get("newPackageID")),
+            }
+            send_result = integration.send_custom("0201", send_body)
+            response = dict(result)
+            response["sendBody"] = send_body
+            response["send"] = send_result
+            if not send_result.get("ok"):
+                response["ok"] = False
+                response["error"] = send_result.get("error") or "0201 send failed"
+                self._send_json(response, HTTPStatus.SERVICE_UNAVAILABLE)
+                return
+            response["message"] = f"0201 sent with InputMissionPlan {send_body['inputMissionPackageID']}"
+            self._send_json(response)
             return
         if path == "/api/sim/next_mission":
             aircraft_id = None

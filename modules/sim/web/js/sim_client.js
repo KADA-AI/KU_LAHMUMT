@@ -16,11 +16,14 @@ const FORCE_COMMAND_ENDPOINT = "/api/sim/force_command";
 const TARGET_ADD_ENDPOINT = "/api/sim/targets/add";
 const ROI_ADD_ENDPOINT = "/api/sim/roi/add";
 const TARGET_CLEAR_ENDPOINT = "/api/sim/targets/clear";
+const REISSUE_INPUT_0201_ENDPOINT = "/api/sim/reissue_input_0201";
 const INTEGRATION_RESET_ENDPOINT = "/api/integration/reset";
 const INTEGRATION_SETTINGS_ENDPOINT = "/api/integration/settings";
 const INTEGRATION_ACTIVATE_ENDPOINT = "/api/integration/activate";
-const SIM_POLL_INTERVAL_MS = 120;
+const SIM_POLL_INTERVAL_MS = 90;
 const MONITOR_POLL_INTERVAL_MS = 200;
+const MAX_ANIMATION_QUEUE_FRAMES = 90;
+const MAX_HISTORY_FRAMES_PER_POLL = 24;
 
 const fetchJson = async (url, options) => {
   const response = await fetch(url, options);
@@ -199,10 +202,16 @@ export const initSimClient = () => {
       return history || [];
     }
     const speed = Number(speedFactor);
-    if (!Number.isFinite(speed) || speed <= 1) {
+    const maxFrames =
+      Number.isFinite(speed) && speed >= 8
+        ? Math.max(10, Math.floor(MAX_HISTORY_FRAMES_PER_POLL * 0.6))
+        : Number.isFinite(speed) && speed >= 3
+          ? Math.max(12, Math.floor(MAX_HISTORY_FRAMES_PER_POLL * 0.75))
+          : MAX_HISTORY_FRAMES_PER_POLL;
+    if (history.length <= maxFrames) {
       return history;
     }
-    const step = Math.max(2, Math.round(speed));
+    const step = Math.max(2, Math.ceil(history.length / maxFrames));
     const sampled = [];
     for (let i = 0; i < history.length; i += step) {
       sampled.push(history[i]);
@@ -219,6 +228,9 @@ export const initSimClient = () => {
       return;
     }
     frameQueue.push(...frames);
+    if (frameQueue.length > MAX_ANIMATION_QUEUE_FRAMES) {
+      frameQueue.splice(0, frameQueue.length - MAX_ANIMATION_QUEUE_FRAMES);
+    }
     if (!draining) {
       draining = true;
       requestAnimationFrame(drainQueue);
@@ -289,8 +301,7 @@ export const initSimClient = () => {
       }
       if (state && Array.isArray(state.history)) {
         const speedValue = Number(state.latest?.speedFactor);
-        const latestOnly =
-          (Number.isFinite(speedValue) && speedValue >= 3) || state.history.length > 80;
+        const latestOnly = state.history.length > 120 || frameQueue.length > MAX_ANIMATION_QUEUE_FRAMES;
         if (latestOnly) {
           const latest =
             state.latest ||
@@ -353,7 +364,13 @@ export const initSimClient = () => {
         if (state.history.length) {
           if (!suspendRender) {
             const historySpeed = Number.isFinite(speedValue) ? speedValue : lastSpeedFactor;
-            const sampled = downsampleHistory(state.history, historySpeed);
+            const frames = state.history.slice();
+            const latestStep = Number(state.latest?.step);
+            const lastHistoryStep = Number(frames[frames.length - 1]?.step);
+            if (state.latest && (!Number.isFinite(latestStep) || latestStep !== lastHistoryStep)) {
+              frames.push(state.latest);
+            }
+            const sampled = downsampleHistory(frames, historySpeed);
             enqueueFrames(sampled.map((frame) => ({ ok: true, ...frame })));
           }
           const last = state.history[state.history.length - 1];
@@ -747,6 +764,28 @@ export const initSimClient = () => {
     }
   };
 
+  const reissueInput0201 = async (payload) => {
+    try {
+      const result = await fetchJson(REISSUE_INPUT_0201_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload || {}),
+      });
+      if (!result.ok) {
+        throw new Error(result.error || "0201 reissue failed");
+      }
+      const packageId = result.newPackageID ?? result.inputMissionPackageID ?? "";
+      logStatus(`0201 재입력 전송 완료${packageId ? ` (#${packageId})` : ""}`, {
+        level: "success",
+        ttlMs: 4000,
+      });
+      return result;
+    } catch (err) {
+      logStatus(`0201 재입력 전송 실패: ${err.message}`, { level: "error", ttlMs: 6000 });
+      return { ok: false, error: err.message };
+    }
+  };
+
   const resetIntegration = async () => {
     try {
       return await fetchJson(INTEGRATION_RESET_ENDPOINT, { method: "POST" });
@@ -813,6 +852,7 @@ export const initSimClient = () => {
     addTarget,
     addRoi,
     clearTargets,
+    reissueInput0201,
     resetIntegration,
     getIntegrationSettings,
     saveIntegrationSettings,

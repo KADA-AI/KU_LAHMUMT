@@ -1,0 +1,44 @@
+{
+  "timestamp": 833865714002,
+  "Source": "DS_SAMPLE_0201",
+  "inputMissionPackageID": 1,
+  "inputMissionPackageType": 1,
+  "mainSensor": 1,
+  "availableAircraftList": [
+    {
+      "aircraftID": 1
+    },
+    {
+      "aircraftID": 2
+    }
+  ],
+  "inputMissionList": [
+    {
+      "inputMissionID": 1,
+      "inputMissionType": 1,
+      "regionType": 0,
+      "isDone": false,
+      "missionDetail": {
+        "coordinateList": [],
+        "lineList": [
+          {
+            "width": 1000,
+            "coordinateList": [
+              {
+                "latitude": 37.72171,
+                "longitude": 128.10747,
+                "altitude": 0
+              },
+              {
+                "latitude": 37.78118,
+                "longitude": 128.14006,
+                "altitude": 0
+              }
+            ]
+          }
+        ],
+        "areaList": []
+      }
+    }
+  ]
+}

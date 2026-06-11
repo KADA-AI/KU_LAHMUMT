@@ -24,6 +24,7 @@ from modules.common.process_console import (
     preferred_console_python,
     should_show_module_consoles,
 )
+from modules.common.process_cleanup import kill_python_processes_for_scripts
 from modules.mission_planning.MissionPlanner.runtime_settings import (
     fov_db_path as runtime_fov_db_path,
     set_runtime_fov_db_path,
@@ -57,7 +58,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(APP_TITLE)
-        self.resize(980, 620)
+        self.resize(1460, 760)
 
         self._db_path_line: QLineEdit = None
         self._fov_db_path_line: QLineEdit = None
@@ -70,6 +71,7 @@ class MainWindow(QMainWindow):
         self._scenario_status_label: Optional[QLabel] = None
         self._version_notes: Optional[QPlainTextEdit] = None
         self._version_notes_path: Path = CHANGE_LOG_PATH
+        self._dashboard_quality_monitor = None
 
         # Middleware widget references
         self._middleware_card: Optional[QWidget] = None
@@ -101,6 +103,8 @@ class MainWindow(QMainWindow):
 
     def _build_ui(self):
         root = QWidget(self)
+        root.setObjectName("AppRoot")
+        root.setAttribute(Qt.WA_StyledBackground, True)
         shell = QVBoxLayout(root)
         shell.setContentsMargins(18, 16, 18, 16)
         shell.setSpacing(12)
@@ -138,15 +142,15 @@ class MainWindow(QMainWindow):
         left_col.setSpacing(14)
         left_col.addWidget(self._build_scenario_card(), 0)
         left_col.addWidget(self._make_middleware_row(), 0)
+        left_col.addWidget(self._build_action_panel(horizontal=True), 0)
         left_col.addStretch(1)
-        content_row.addLayout(left_col, 7)
+        content_row.addLayout(left_col, 6)
 
-        action_panel = self._build_action_panel()
-        action_panel.setMinimumWidth(280)
-        action_panel.setMaximumWidth(320)
-        content_row.addWidget(action_panel, 3)
+        quality_panel = self._build_dashboard_quality_panel()
+        quality_panel.setMinimumWidth(620)
+        content_row.addWidget(quality_panel, 5)
 
-        shell.addLayout(content_row, 0)
+        shell.addLayout(content_row, 1)
         shell.addWidget(self._build_module_service_panel(), 0)
 
         self.operation_panel = None
@@ -184,7 +188,7 @@ class MainWindow(QMainWindow):
         title_lbl.setObjectName("MainTitle")
         title_lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         title_layout.addWidget(title_lbl)
-        subtitle_lbl = QLabel("최근 업데이트 날짜 : 26-05-21", title_wrap)
+        subtitle_lbl = QLabel("최근 업데이트 날짜 : 26-06-07", title_wrap)
         subtitle_lbl.setObjectName("MainSubtitle")
         subtitle_lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         title_layout.addWidget(subtitle_lbl)
@@ -356,7 +360,7 @@ class MainWindow(QMainWindow):
         updated_label.setObjectName("HeaderUpdatedDate")
         updated_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         updated_label.setStyleSheet(
-            "font-size: 17px; font-weight: bold; color: #1a73e8; letter-spacing: 0.5px;"
+            "font-size: 15px; font-weight: 700; color: #2563eb;"
         )
         right_col.addWidget(updated_label, 0, Qt.AlignRight | Qt.AlignVCenter)
 
@@ -480,60 +484,115 @@ class MainWindow(QMainWindow):
         self.update_scenario_status_indicator(False, "현재 선택된 경로를 사용 중입니다.")
         return card
 
-    def _build_action_panel(self) -> QWidget:
+    def _build_dashboard_quality_panel(self) -> QWidget:
         card = Card("", self, dense=True)
-        card.setObjectName("ActionPanel")
+        card.setObjectName("DashboardQualityPanel")
         card.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         body = getattr(card, "body_layout", None)
         if body is None:
             return card
-        body.setContentsMargins(16, 16, 16, 16)
-        body.setSpacing(12)
+        body.setContentsMargins(14, 14, 14, 12)
+        body.setSpacing(6)
+
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(8)
+        title = QLabel("공간해상도 모니터", card)
+        title.setObjectName("SectionLabel")
+        header.addWidget(title, 0, Qt.AlignLeft)
+        header.addStretch(1)
+        body.addLayout(header)
+
+        subtitle = QLabel("0401 footprint 기반 UAV별 GSD를 모니터링합니다.", card)
+        subtitle.setWordWrap(True)
+        subtitle.setStyleSheet("color:#64748b; font-size:10px;")
+        body.addWidget(subtitle)
+
+        try:
+            from modules.monitoring.gui.tabs.quality_monitor_tab import SpatialResolutionMonitorPanel
+
+            self._dashboard_quality_monitor = SpatialResolutionMonitorPanel(card, compact=True)
+            body.addWidget(self._dashboard_quality_monitor, 1)
+        except Exception as exc:
+            self._dashboard_quality_monitor = None
+            fallback = QLabel(f"공간해상도 모니터 로드 실패: {exc}", card)
+            fallback.setWordWrap(True)
+            fallback.setStyleSheet(
+                "padding:10px; border:1px solid #fecaca; border-radius:8px;"
+                " background:#fef2f2; color:#991b1b;"
+            )
+            body.addWidget(fallback, 1)
+
+        return card
+
+    def dashboard_quality_monitor(self):
+        return getattr(self, "_dashboard_quality_monitor", None)
+
+    def _build_action_panel(self, *, horizontal: bool = False) -> QWidget:
+        card = Card("", self, dense=True)
+        card.setObjectName("ActionPanel")
+        card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed if horizontal else QSizePolicy.Expanding)
+        body = getattr(card, "body_layout", None)
+        if body is None:
+            return card
+        body.setContentsMargins(16, 12 if horizontal else 16, 16, 12 if horizontal else 16)
+        body.setSpacing(8 if horizontal else 12)
 
         title = QLabel("Quick Actions", card)
         title.setObjectName("SectionLabel")
         body.addWidget(title, 0, Qt.AlignLeft)
 
-        button_stack = QVBoxLayout()
+        button_stack = QHBoxLayout() if horizontal else QVBoxLayout()
         button_stack.setContentsMargins(0, 4, 0, 0)
-        button_stack.setSpacing(12)
+        button_stack.setSpacing(8 if horizontal else 12)
 
         self.btn_simulation_run = QPushButton("Simulation 실행", card)
         self.btn_simulation_run.setObjectName("BtnSimulationRun")
-        self.btn_simulation_run.setFixedHeight(40)
+        self.btn_simulation_run.setFixedHeight(36 if horizontal else 40)
+        if horizontal:
+            self.btn_simulation_run.setMinimumWidth(112)
         self.btn_simulation_run.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.btn_simulation_run.clicked.connect(self._launch_simulation)
         button_stack.addWidget(self.btn_simulation_run)
 
         self.btn_log_analyzer_run = QPushButton("Log Analyzer 실행", card)
         self.btn_log_analyzer_run.setObjectName("BtnLogAnalyzerRun")
-        self.btn_log_analyzer_run.setFixedHeight(40)
+        self.btn_log_analyzer_run.setFixedHeight(36 if horizontal else 40)
+        if horizontal:
+            self.btn_log_analyzer_run.setMinimumWidth(118)
         self.btn_log_analyzer_run.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.btn_log_analyzer_run.clicked.connect(self._launch_log_analyzer)
         button_stack.addWidget(self.btn_log_analyzer_run)
 
         self.btn_overwrite_020x = QPushButton("0201/0203 덮어쓰기", card)
         self.btn_overwrite_020x.setObjectName("BtnOverwrite020x")
-        self.btn_overwrite_020x.setFixedHeight(40)
+        self.btn_overwrite_020x.setFixedHeight(36 if horizontal else 40)
+        if horizontal:
+            self.btn_overwrite_020x.setMinimumWidth(128)
         self.btn_overwrite_020x.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.btn_overwrite_020x.clicked.connect(self._handle_overwrite_020x)
         button_stack.addWidget(self.btn_overwrite_020x)
 
         self.btn_module_shutdown = QPushButton("모듈 종료", card)
         self.btn_module_shutdown.setObjectName("BtnModuleShutdown")
-        self.btn_module_shutdown.setFixedHeight(40)
+        self.btn_module_shutdown.setFixedHeight(36 if horizontal else 40)
+        if horizontal:
+            self.btn_module_shutdown.setMinimumWidth(96)
         self.btn_module_shutdown.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.btn_module_shutdown.clicked.connect(self._handle_module_shutdown)
         button_stack.addWidget(self.btn_module_shutdown)
 
         self.btn_decision_reset = QPushButton("의사결정 SW 초기화", card)
         self.btn_decision_reset.setObjectName("BtnDecisionReset")
-        self.btn_decision_reset.setFixedHeight(40)
+        self.btn_decision_reset.setFixedHeight(36 if horizontal else 40)
+        if horizontal:
+            self.btn_decision_reset.setMinimumWidth(132)
         self.btn_decision_reset.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         button_stack.addWidget(self.btn_decision_reset)
 
         body.addLayout(button_stack)
-        body.addStretch(1)
+        if not horizontal:
+            body.addStretch(1)
         return card
 
     def _build_module_service_panel(self) -> QWidget:
@@ -569,7 +628,7 @@ class MainWindow(QMainWindow):
             box.setAttribute(Qt.WA_StyledBackground, True)
             box.setStyleSheet(
                 "QWidget#ServiceBox {"
-                "background:#f8fafc; border:1px solid #dbe5ef; border-radius:8px;"
+                "background:#fbfcfe; border:1px solid #dde4ee; border-radius:10px;"
                 "}"
             )
             lay = QVBoxLayout(box)
@@ -772,7 +831,7 @@ class MainWindow(QMainWindow):
         }
 
     def _apply_middleware(self) -> dict:
-        """Persist middleware settings to every nFusionSettings.json in the project."""
+        """Persist middleware settings to the canonical project settings file."""
         settings = self._current_middleware_settings()
         name = settings["Name"]
         net = settings["NetworkAddress"]
@@ -793,12 +852,13 @@ class MainWindow(QMainWindow):
 
         updated_paths = []
         errors = []
-        for cfg_path in proj_root.rglob('nFusionSettings.json'):
-            try:
-                cfg_path.write_text(cfg_json, encoding='utf-8')
-                updated_paths.append(cfg_path)
-            except Exception as exc:
-                errors.append((cfg_path, exc))
+        cfg_path = proj_root / "settings" / "nFusionSettings.json"
+        try:
+            cfg_path.parent.mkdir(parents=True, exist_ok=True)
+            cfg_path.write_text(cfg_json, encoding='utf-8')
+            updated_paths.append(cfg_path)
+        except Exception as exc:
+            errors.append((cfg_path, exc))
 
         ip_prefix = net.split('.', 1)[0] if '.' in net else net
         msg = (f"[CFG] nFusionSettings updated ({len(updated_paths)} files) | "
@@ -822,7 +882,11 @@ class MainWindow(QMainWindow):
     def _load_middleware_config(self) -> None:
         """Load existing middleware configuration if available."""
         proj_root = self._find_project_root()
-        cfg_path = proj_root / "nFusionSettings.json"
+        cfg_path = proj_root / "settings" / "nFusionSettings.json"
+        if not cfg_path.exists():
+            legacy_path = proj_root / "nFusionSettings.json"
+            if legacy_path.exists():
+                cfg_path = legacy_path
         if not cfg_path.exists():
             return
 
@@ -896,11 +960,13 @@ class MainWindow(QMainWindow):
             return
         if ok:
             widget.setStyleSheet(
-                "QLineEdit { border: 1px solid #91d2ad; background: #f5fbf7; color: #14532d; }"
+                "QLineEdit { border: 1px solid #91d2ad; border-radius: 10px;"
+                " background: #f5fbf7; color: #14532d; padding: 8px 10px; }"
             )
         else:
             widget.setStyleSheet(
-                "QLineEdit { border: 1px solid #f0b4ad; background: #fff5f4; color: #912018; }"
+                "QLineEdit { border: 1px solid #f0b4ad; border-radius: 10px;"
+                " background: #fff5f4; color: #912018; padding: 8px 10px; }"
             )
 
     def _set_status_label(self, label: Optional[QLabel], *, ok: bool, text: str) -> None:
@@ -909,12 +975,12 @@ class MainWindow(QMainWindow):
         if ok:
             label.setStyleSheet(
                 "QLabel { color: #166534; background: #eef9f1; border: 1px solid #b7dfc6; "
-                "border-radius: 12px; padding: 6px 10px; font-weight: 600; }"
+                "border-radius: 10px; padding: 6px 10px; font-weight: 600; }"
             )
         else:
             label.setStyleSheet(
                 "QLabel { color: #b42318; background: #fef3f2; border: 1px solid #f0b4ad; "
-                "border-radius: 12px; padding: 6px 10px; font-weight: 600; }"
+                "border-radius: 10px; padding: 6px 10px; font-weight: 600; }"
             )
         label.setText(text)
         label.setToolTip(text)
@@ -973,6 +1039,8 @@ class MainWindow(QMainWindow):
             current_idx = candidates.index(default_host) if default_host in candidates else 0
 
             dialog = QDialog(self)
+            dialog.setObjectName("IpSelectDialog")
+            dialog.setAttribute(Qt.WA_StyledBackground, True)
             dialog.setWindowTitle("Simulation IP 선택")
             dialog.setModal(True)
             dialog.setMinimumWidth(320)
@@ -982,10 +1050,12 @@ class MainWindow(QMainWindow):
             layout.setSpacing(10)
 
             prompt = QLabel("Simulation 서버를 바인딩할 IP를 선택하세요.", dialog)
+            prompt.setObjectName("IpSelectPrompt")
             prompt.setWordWrap(True)
             layout.addWidget(prompt)
 
             list_widget = QListWidget(dialog)
+            list_widget.setObjectName("IpSelectList")
             list_widget.addItems(candidates)
             list_widget.setCurrentRow(current_idx)
             list_widget.setAlternatingRowColors(True)
@@ -999,6 +1069,7 @@ class MainWindow(QMainWindow):
             layout.addWidget(list_widget)
 
             buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=dialog)
+            buttons.setObjectName("IpSelectButtons")
             buttons.accepted.connect(dialog.accept)
             buttons.rejected.connect(dialog.reject)
             layout.addWidget(buttons)
@@ -1354,6 +1425,22 @@ class MainWindow(QMainWindow):
             return
 
         try:
+            killed = kill_python_processes_for_scripts(
+                root,
+                [script.name],
+                exclude_pids=[os.getpid()],
+                exclude_parent_pids=[os.getpid()],
+            )
+            if killed and target_log is not None:
+                target_log.append_log(f"[RUN] stale {script.name} process cleaned: {killed}")
+        except Exception as exc:
+            try:
+                if target_log is not None:
+                    target_log.append_log(f"[RUN WARN] stale process cleanup failed: {exc}")
+            except Exception:
+                pass
+
+        try:
             offset_map = {
                 "mission": "40,40",
                 "monitor": "130,90",
@@ -1421,6 +1508,11 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Simulation 실행 실패", message)
                 return
 
+            selected_host = self._select_simulation_host()
+            if not selected_host:
+                self._log_simulation(message="[RUN] Simulation launch cancelled (no IP selected)")
+                return
+
             existing = self._role_processes.get("sim")
             if existing:
                 exit_code = existing.poll()
@@ -1429,11 +1521,6 @@ class MainWindow(QMainWindow):
                     self._kill_process_tree(existing)
                     self._clear_simulation_pid(expected_pid=getattr(existing, "pid", None))
                     self._role_processes.pop("sim", None)
-
-            selected_host = self._select_simulation_host()
-            if not selected_host:
-                self._log_simulation(message="[RUN] Simulation launch cancelled (no IP selected)")
-                return
 
             self._kill_stale_simulation_processes(script)
             self._apply_middleware()
@@ -1612,6 +1699,8 @@ class MainWindow(QMainWindow):
         try:
             candidates = self._simulation_host_candidates()
             dialog = QDialog(self)
+            dialog.setObjectName("IpSelectDialog")
+            dialog.setAttribute(Qt.WA_StyledBackground, True)
             dialog.setWindowTitle("Log Analyzer IP 선택")
             dialog.setModal(True)
             dialog.setMinimumWidth(320)
@@ -1621,10 +1710,12 @@ class MainWindow(QMainWindow):
             layout.setSpacing(10)
 
             prompt = QLabel("Log Analyzer 서버를 바인딩할 IP를 선택하세요.", dialog)
+            prompt.setObjectName("IpSelectPrompt")
             prompt.setWordWrap(True)
             layout.addWidget(prompt)
 
             list_widget = QListWidget(dialog)
+            list_widget.setObjectName("IpSelectList")
             list_widget.addItems(candidates)
             list_widget.setCurrentRow(0)
             list_widget.setAlternatingRowColors(True)
@@ -1638,6 +1729,7 @@ class MainWindow(QMainWindow):
             layout.addWidget(list_widget)
 
             buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=dialog)
+            buttons.setObjectName("IpSelectButtons")
             buttons.accepted.connect(dialog.accept)
             buttons.rejected.connect(dialog.reject)
             layout.addWidget(buttons)
@@ -1699,9 +1791,9 @@ class MainWindow(QMainWindow):
 
     def _simulation_pid_path(self) -> Path:
         try:
-            return db_paths.PROJECT_ROOT / "DSS_Internal" / "runtime" / "simulation.pid"
+            return db_paths.get_db_subpath("DSS_Internal", "runtime", "simulation.pid")
         except Exception:
-            return Path.cwd() / "DSS_Internal" / "runtime" / "simulation.pid"
+            return db_paths.DEFAULT_SCENARIO_BASE / "ProcessFallback" / "SBC3" / "DSS_Internal" / "runtime" / "simulation.pid"
 
     def _read_simulation_pid(self) -> Optional[int]:
         path = self._simulation_pid_path()
@@ -2396,14 +2488,35 @@ class MainWindow(QMainWindow):
         path = QFileDialog.getExistingDirectory(self, "Select database directory")
         if path:
             selected = Path(path)
+            try:
+                selected_resolved = selected.resolve()
+                is_project_root = selected_resolved == db_paths.PROJECT_ROOT.resolve()
+                is_default_scenario_base = selected_resolved == db_paths.DEFAULT_SCENARIO_BASE.resolve()
+            except Exception:
+                is_project_root = False
+                is_default_scenario_base = False
             looks_like_db = (
-                selected.name.lower() == "database"
-                or (selected / "mission_plan_seq.txt").exists()
-                or (selected / "InputMissionPlan").exists()
-                or (selected / "MissionPlan").exists()
+                not is_project_root
+                and not is_default_scenario_base
+                and (
+                    selected.name.lower() == "database"
+                    or selected.name.startswith(db_paths.SCENARIO_PREFIX)
+                    or selected.parent.name.startswith(db_paths.SCENARIO_PREFIX)
+                    or (selected / "mission_plan_seq.txt").exists()
+                    or (selected / "InputMissionPlan").exists()
+                    or (selected / "MissionPlan").exists()
+                )
             )
             if looks_like_db:
-                info = db_paths.set_manual_db_root(path, source="manual-browse")
+                try:
+                    info = db_paths.set_manual_db_root(path, source="manual-browse")
+                except ValueError:
+                    info = db_paths.set_scenario_base_root(path)
+                    base_root = info.get("base_root")
+                    self.update_scenario_root(base_root)
+                    display = base_root or ""
+                    self.update_scenario_status_indicator(False, f"?쒕굹由ъ삤 踰좎씠??吏?? {display}")
+                    return
                 self._current_db_root = info.get("db_root") or path
                 self._db_path_line.setText(self._current_db_root)
                 self.update_scenario_root(info.get("base_root"))

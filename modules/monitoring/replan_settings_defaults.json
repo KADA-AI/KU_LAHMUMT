@@ -55,7 +55,21 @@
     "turn_radius_50_m": 560.0,
     "coord_heading_fallback_min_delta_deg": 25.0,
     "coord_heading_fallback_max_delta_deg": 120.0,
-    "coord_heading_fallback_max_turn_dps": 15.0
+    "coord_heading_fallback_max_turn_dps": 15.0,
+    "adaptive_enabled": true,
+    "adaptive_sample_min_interval_s": 0.75,
+    "adaptive_min_turn_rate_dps": 2.5,
+    "adaptive_min_speed_mps": 25.0,
+    "adaptive_max_speed_mps": 70.0,
+    "adaptive_min_radius_m": 80.0,
+    "adaptive_max_radius_m": 2000.0,
+    "adaptive_ema_alpha": 0.08,
+    "adaptive_warmup_samples": 4,
+    "adaptive_min_scale": 0.85,
+    "adaptive_max_scale": 1.45,
+    "adaptive_threshold_gain": 0.65,
+    "adaptive_threshold_down_gain": 0.35,
+    "adaptive_save_interval_s": 10.0
   },
   "quality_speed": {
     "lower_band_ratio": 0.9,
@@ -102,8 +116,8 @@
   },
   "post_attack_rejoin": {
     "closure_cooldown_ms": 30000,
-    "min_remaining_eta_s": 120,
-    "rejoin_margin_s": 45,
+    "min_remaining_eta_s": 30,
+    "rejoin_margin_s": 15,
     "turn_radius_m": 180.0,
     "default_cruise_speed_mps": 35.0
   },

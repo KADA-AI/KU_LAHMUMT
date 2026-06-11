@@ -37,9 +37,9 @@ class Card(QFrame):
 
         # 미세한 그림자
         shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(28)
-        shadow.setOffset(0, 10)
-        shadow.setColor(QColor(15, 23, 42, 18))
+        shadow.setBlurRadius(18)
+        shadow.setOffset(0, 6)
+        shadow.setColor(QColor(15, 23, 42, 14))
         self.setGraphicsEffect(shadow)
 
         self.body_layout = lay

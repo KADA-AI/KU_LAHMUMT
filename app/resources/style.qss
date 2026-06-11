@@ -4,12 +4,104 @@
 }
 
 QMainWindow,
-QWidget {
+QDialog,
+QMessageBox,
+QWidget#AppRoot {
   background: #f5f5f7;
+  color: #111827;
+}
+
+QMessageBox QWidget,
+QMessageBox QFrame {
+  background: #f5f5f7;
+  color: #111827;
+}
+
+QMessageBox QLabel {
+  background: transparent;
+  color: #111827;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+QMessageBox QTextEdit,
+QMessageBox QPlainTextEdit {
+  background: #ffffff;
+  color: #111827;
+  border: 1px solid #d8dee8;
+  border-radius: 10px;
+}
+
+QDialog QWidget {
+  color: #111827;
 }
 
 QLabel {
   background: transparent;
+}
+
+QDialog#IpSelectDialog {
+  background: #f5f5f7;
+}
+
+QLabel#IpSelectPrompt {
+  color: #475467;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+QListWidget#IpSelectList {
+  background: #ffffff;
+  color: #111827;
+  border: 1px solid #d8dee8;
+  border-radius: 10px;
+  padding: 6px;
+  outline: 0;
+  alternate-background-color: #fbfcfe;
+  selection-background-color: #e8f0ff;
+  selection-color: #0f172a;
+}
+
+QListWidget#IpSelectList::item {
+  min-height: 24px;
+  padding: 4px 8px;
+  border-radius: 8px;
+}
+
+QListWidget#IpSelectList::item:selected {
+  background: #e8f0ff;
+  color: #0f172a;
+}
+
+QListWidget#IpSelectList::item:hover {
+  background: #f3f6fb;
+}
+
+QListWidget {
+  background: #ffffff;
+  color: #111827;
+  border: 1px solid #d8dee8;
+  border-radius: 10px;
+  padding: 6px;
+  outline: 0;
+  alternate-background-color: #fbfcfe;
+  selection-background-color: #e8f0ff;
+  selection-color: #0f172a;
+}
+
+QListWidget::item {
+  min-height: 24px;
+  padding: 4px 8px;
+  border-radius: 8px;
+}
+
+QListWidget::item:selected {
+  background: #e8f0ff;
+  color: #0f172a;
+}
+
+QListWidget::item:hover {
+  background: #f3f6fb;
 }
 
 QWidget#Card,
@@ -22,27 +114,27 @@ QWidget#MiddlewareCard,
 QFrame#MiddlewareCard,
 QWidget#ActionPanel,
 QFrame#ActionPanel,
+QWidget#DashboardQualityPanel,
+QFrame#DashboardQualityPanel,
+QWidget#ModuleServicePanel,
+QFrame#ModuleServicePanel,
 QWidget#VersionCard,
 QFrame#VersionCard,
 QWidget#LEFT_PLACEHOLDER {
   background: #ffffff;
-  border: 1px solid #e5e7eb;
-  border-radius: 20px;
+  border: 1px solid #dde4ee;
+  border-radius: 14px;
 }
 
 QWidget#HeaderBar,
 QFrame#HeaderBar {
-  background: qlineargradient(
-    x1: 0, y1: 0, x2: 1, y2: 1,
-    stop: 0 #ffffff,
-    stop: 1 #f7f9fc
-  );
-  border-color: #e7ebf2;
+  background: #ffffff;
+  border-color: #dde4ee;
 }
 
 QWidget#ActionPanel,
 QFrame#ActionPanel {
-  background: #fbfbfc;
+  background: #ffffff;
 }
 
 #EyebrowLabel {
@@ -67,7 +159,7 @@ QFrame#ActionPanel {
 #HeaderBadge {
   background: #f3f4f6;
   border: 1px solid #e5e7eb;
-  border-radius: 11px;
+  border-radius: 10px;
   padding: 5px 10px;
   color: #475467;
   font-size: 11px;
@@ -104,7 +196,7 @@ QFrame#ActionPanel {
 QWidget#StatusCluster {
   background: #f8fafc;
   border: 1px solid #e5e7eb;
-  border-radius: 13px;
+  border-radius: 10px;
 }
 
 QWidget#FieldBlock {
@@ -149,7 +241,7 @@ QLabel#InfoBadge,
 QLabel#LatestInputBadge {
   background: #f5f7fb;
   border: 1px solid #e3e8ef;
-  border-radius: 12px;
+  border-radius: 10px;
   padding: 8px 12px;
   color: #475467;
   font-weight: 600;
@@ -159,7 +251,7 @@ QPushButton {
   background: #ffffff;
   color: #0f172a;
   border: 1px solid #d9dee7;
-  border-radius: 14px;
+  border-radius: 10px;
   padding: 0 14px;
   min-height: 36px;
   max-height: 36px;
@@ -182,7 +274,7 @@ QPushButton#SecondaryButton {
   background: #ffffff;
   color: #111827;
   border: 1px solid #d8dee8;
-  border-radius: 13px;
+  border-radius: 10px;
   font-size: 13px;
   font-weight: 700;
   padding: 0 16px;
@@ -204,9 +296,9 @@ QPushButton#BtnSimulationRun,
 QPushButton#BtnOverwrite020x,
 QPushButton#BtnModuleShutdown,
 QPushButton#BtnDecisionReset {
-  min-height: 40px;
-  max-height: 40px;
-  border-radius: 14px;
+  min-height: 36px;
+  max-height: 36px;
+  border-radius: 10px;
   padding: 0 14px;
   font-weight: 700;
 }
@@ -257,11 +349,13 @@ QPushButton#BtnDecisionReset:hover {
 
 QLineEdit,
 QComboBox,
+QSpinBox,
+QDoubleSpinBox,
 QTextEdit,
 QPlainTextEdit {
   background: #ffffff;
   border: 1px solid #d8dee8;
-  border-radius: 13px;
+  border-radius: 10px;
   padding: 8px 10px;
   selection-background-color: #dbeafe;
 }
@@ -278,9 +372,37 @@ QPlainTextEdit {
 
 QLineEdit:focus,
 QComboBox:focus,
+QSpinBox:focus,
+QDoubleSpinBox:focus,
 QTextEdit:focus,
 QPlainTextEdit:focus {
   border: 1px solid #82a9ff;
+}
+
+QSpinBox,
+QDoubleSpinBox {
+  padding: 2px 18px 2px 8px;
+  min-height: 24px;
+  max-height: 28px;
+}
+
+QSpinBox::up-button,
+QSpinBox::down-button,
+QDoubleSpinBox::up-button,
+QDoubleSpinBox::down-button {
+  background: #f8fafc;
+  border-left: 1px solid #d8dee8;
+  width: 16px;
+}
+
+QSpinBox::up-button,
+QDoubleSpinBox::up-button {
+  border-top-right-radius: 8px;
+}
+
+QSpinBox::down-button,
+QDoubleSpinBox::down-button {
+  border-bottom-right-radius: 8px;
 }
 
 QComboBox {

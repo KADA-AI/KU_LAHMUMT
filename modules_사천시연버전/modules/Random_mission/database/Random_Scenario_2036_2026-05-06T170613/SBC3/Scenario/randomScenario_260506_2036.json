@@ -1,0 +1,1224 @@
+{
+  "UnitListLock": {},
+  "ScenarioName": "randomScenario_260506_2036",
+  "ScenarioDesc": "",
+  "ScenarioTerrain": "",
+  "UnitObjectList": [
+    {
+      "HorizontalFov": 0.0,
+      "VerticalFov": 0.0,
+      "DiagonalFov": 0.0,
+      "SensorCenterLat": 0.0,
+      "SensorCenterLon": 0.0,
+      "SensorCenterAlt": 0,
+      "SlantRange": 0,
+      "FootPrintLeftTopLat": 0.0,
+      "FootPrintLeftTopLon": 0.0,
+      "FootPrintLeftTopAlt": 0,
+      "FootPrintRightTopLat": 0.0,
+      "FootPrintRightTopLon": 0.0,
+      "FootPrintRightTopAlt": 0,
+      "FootPrintRightBottomLat": 0.0,
+      "FootPrintRightBottomLon": 0.0,
+      "FootPrintRightBottomAlt": 0,
+      "FootPrintLeftBottomLat": 0.0,
+      "FootPrintLeftBottomLon": 0.0,
+      "FootPrintLeftBottomAlt": 0,
+      "ID": 1,
+      "Name": null,
+      "Type": 3,
+      "PlatformType": 0,
+      "Health": 100.0,
+      "Status": 1,
+      "PayLoadHealth": 1,
+      "FuelWarning": 1,
+      "entityAbnormalCause": {
+        "Hit": 0,
+        "Loss1": 0,
+        "Loss2": 0,
+        "Loss3": 0,
+        "FuelWarning": 0,
+        "FuelDanger": 0,
+        "FuelZero": 0,
+        "Crash": 0,
+        "Sensor": 0
+      },
+      "Identification": 1,
+      "IsLeader": 1,
+      "LOC": {
+        "Latitude": 38.02279,
+        "Longitude": 127.24694,
+        "Altitude": 1000
+      },
+      "velocity": {
+        "Speed": 0.0,
+        "Heading": 0.0
+      },
+      "weapons": {
+        "Type1": 100,
+        "Type2": 14,
+        "Type3": 2
+      },
+      "Fuel": 15.0,
+      "FuelConsumption": 3.23e-05,
+      "DetectRange": 1500.0,
+      "AttackRange": 1000.0,
+      "AttackAccuracy": 50.0,
+      "AttackDelay": 0.1,
+      "AttackDamage": 1.0,
+      "UAVTestMode": 0,
+      "DetectPixel": 10000.0,
+      "RecogPixel": 10.0,
+      "AttackFlag": 1,
+      "LAHStatus": 1
+    },
+    {
+      "HorizontalFov": 0.0,
+      "VerticalFov": 0.0,
+      "DiagonalFov": 0.0,
+      "SensorCenterLat": 0.0,
+      "SensorCenterLon": 0.0,
+      "SensorCenterAlt": 0,
+      "SlantRange": 0,
+      "FootPrintLeftTopLat": 0.0,
+      "FootPrintLeftTopLon": 0.0,
+      "FootPrintLeftTopAlt": 0,
+      "FootPrintRightTopLat": 0.0,
+      "FootPrintRightTopLon": 0.0,
+      "FootPrintRightTopAlt": 0,
+      "FootPrintRightBottomLat": 0.0,
+      "FootPrintRightBottomLon": 0.0,
+      "FootPrintRightBottomAlt": 0,
+      "FootPrintLeftBottomLat": 0.0,
+      "FootPrintLeftBottomLon": 0.0,
+      "FootPrintLeftBottomAlt": 0,
+      "ID": 2,
+      "Name": null,
+      "Type": 3,
+      "PlatformType": 0,
+      "Health": 100.0,
+      "Status": 1,
+      "PayLoadHealth": 1,
+      "FuelWarning": 1,
+      "entityAbnormalCause": {
+        "Hit": 0,
+        "Loss1": 0,
+        "Loss2": 0,
+        "Loss3": 0,
+        "FuelWarning": 0,
+        "FuelDanger": 0,
+        "FuelZero": 0,
+        "Crash": 0,
+        "Sensor": 0
+      },
+      "Identification": 1,
+      "IsLeader": 2,
+      "LOC": {
+        "Latitude": 38.032795,
+        "Longitude": 127.25346,
+        "Altitude": 1000
+      },
+      "velocity": {
+        "Speed": 0.0,
+        "Heading": 0.0
+      },
+      "weapons": {
+        "Type1": 100,
+        "Type2": 14,
+        "Type3": 2
+      },
+      "Fuel": 15.0,
+      "FuelConsumption": 3.23e-05,
+      "DetectRange": 1500.0,
+      "AttackRange": 1000.0,
+      "AttackAccuracy": 50.0,
+      "AttackDelay": 0.1,
+      "AttackDamage": 1.0,
+      "UAVTestMode": 0,
+      "DetectPixel": 10000.0,
+      "RecogPixel": 10.0,
+      "AttackFlag": 1,
+      "LAHStatus": 1
+    },
+    {
+      "HorizontalFov": 0.0,
+      "VerticalFov": 0.0,
+      "DiagonalFov": 0.0,
+      "SensorCenterLat": 0.0,
+      "SensorCenterLon": 0.0,
+      "SensorCenterAlt": 0,
+      "SlantRange": 0,
+      "FootPrintLeftTopLat": 0.0,
+      "FootPrintLeftTopLon": 0.0,
+      "FootPrintLeftTopAlt": 0,
+      "FootPrintRightTopLat": 0.0,
+      "FootPrintRightTopLon": 0.0,
+      "FootPrintRightTopAlt": 0,
+      "FootPrintRightBottomLat": 0.0,
+      "FootPrintRightBottomLon": 0.0,
+      "FootPrintRightBottomAlt": 0,
+      "FootPrintLeftBottomLat": 0.0,
+      "FootPrintLeftBottomLon": 0.0,
+      "FootPrintLeftBottomAlt": 0,
+      "ID": 3,
+      "Name": null,
+      "Type": 3,
+      "PlatformType": 0,
+      "Health": 100.0,
+      "Status": 1,
+      "PayLoadHealth": 1,
+      "FuelWarning": 1,
+      "entityAbnormalCause": {
+        "Hit": 0,
+        "Loss1": 0,
+        "Loss2": 0,
+        "Loss3": 0,
+        "FuelWarning": 0,
+        "FuelDanger": 0,
+        "FuelZero": 0,
+        "Crash": 0,
+        "Sensor": 0
+      },
+      "Identification": 1,
+      "IsLeader": 2,
+      "LOC": {
+        "Latitude": 38.02306,
+        "Longitude": 127.26685,
+        "Altitude": 1000
+      },
+      "velocity": {
+        "Speed": 0.0,
+        "Heading": 0.0
+      },
+      "weapons": {
+        "Type1": 100,
+        "Type2": 14,
+        "Type3": 2
+      },
+      "Fuel": 15.0,
+      "FuelConsumption": 3.23e-05,
+      "DetectRange": 1500.0,
+      "AttackRange": 1000.0,
+      "AttackAccuracy": 50.0,
+      "AttackDelay": 0.1,
+      "AttackDamage": 1.0,
+      "UAVTestMode": 0,
+      "DetectPixel": 10000.0,
+      "RecogPixel": 10.0,
+      "AttackFlag": 1,
+      "LAHStatus": 1
+    },
+    {
+      "HorizontalFov": 0.0,
+      "VerticalFov": 0.0,
+      "DiagonalFov": 0.0,
+      "SensorCenterLat": 0.0,
+      "SensorCenterLon": 0.0,
+      "SensorCenterAlt": 0,
+      "SlantRange": 0,
+      "FootPrintLeftTopLat": 0.0,
+      "FootPrintLeftTopLon": 0.0,
+      "FootPrintLeftTopAlt": 0,
+      "FootPrintRightTopLat": 0.0,
+      "FootPrintRightTopLon": 0.0,
+      "FootPrintRightTopAlt": 0,
+      "FootPrintRightBottomLat": 0.0,
+      "FootPrintRightBottomLon": 0.0,
+      "FootPrintRightBottomAlt": 0,
+      "FootPrintLeftBottomLat": 0.0,
+      "FootPrintLeftBottomLon": 0.0,
+      "FootPrintLeftBottomAlt": 0,
+      "ID": 4,
+      "Name": null,
+      "Type": 1,
+      "PlatformType": 0,
+      "Health": 100.0,
+      "Status": 1,
+      "PayLoadHealth": 1,
+      "FuelWarning": 1,
+      "entityAbnormalCause": {
+        "Hit": 0,
+        "Loss1": 0,
+        "Loss2": 0,
+        "Loss3": 0,
+        "FuelWarning": 0,
+        "FuelDanger": 0,
+        "FuelZero": 0,
+        "Crash": 0,
+        "Sensor": 0
+      },
+      "Identification": 1,
+      "IsLeader": 0,
+      "LOC": {
+        "Latitude": 38.04577796029805,
+        "Longitude": 127.424,
+        "Altitude": 1219
+      },
+      "velocity": {
+        "Speed": 0.0,
+        "Heading": 0.0
+      },
+      "weapons": {
+        "Type1": 0,
+        "Type2": 0,
+        "Type3": 0
+      },
+      "Fuel": 15.0,
+      "FuelConsumption": 3.23e-05,
+      "DetectRange": 1500.0,
+      "AttackRange": 1000.0,
+      "AttackAccuracy": 50.0,
+      "AttackDelay": 0.1,
+      "AttackDamage": 1.0,
+      "UAVTestMode": 0,
+      "DetectPixel": 10000.0,
+      "RecogPixel": 10.0,
+      "AttackFlag": 1,
+      "LAHStatus": 1
+    },
+    {
+      "HorizontalFov": 0.0,
+      "VerticalFov": 0.0,
+      "DiagonalFov": 0.0,
+      "SensorCenterLat": 0.0,
+      "SensorCenterLon": 0.0,
+      "SensorCenterAlt": 0,
+      "SlantRange": 0,
+      "FootPrintLeftTopLat": 0.0,
+      "FootPrintLeftTopLon": 0.0,
+      "FootPrintLeftTopAlt": 0,
+      "FootPrintRightTopLat": 0.0,
+      "FootPrintRightTopLon": 0.0,
+      "FootPrintRightTopAlt": 0,
+      "FootPrintRightBottomLat": 0.0,
+      "FootPrintRightBottomLon": 0.0,
+      "FootPrintRightBottomAlt": 0,
+      "FootPrintLeftBottomLat": 0.0,
+      "FootPrintLeftBottomLon": 0.0,
+      "FootPrintLeftBottomAlt": 0,
+      "ID": 5,
+      "Name": null,
+      "Type": 1,
+      "PlatformType": 0,
+      "Health": 100.0,
+      "Status": 1,
+      "PayLoadHealth": 1,
+      "FuelWarning": 1,
+      "entityAbnormalCause": {
+        "Hit": 0,
+        "Loss1": 0,
+        "Loss2": 0,
+        "Loss3": 0,
+        "FuelWarning": 0,
+        "FuelDanger": 0,
+        "FuelZero": 0,
+        "Crash": 0,
+        "Sensor": 0
+      },
+      "Identification": 1,
+      "IsLeader": 0,
+      "LOC": {
+        "Latitude": 38.044611019850976,
+        "Longitude": 127.42314449484797,
+        "Altitude": 1213
+      },
+      "velocity": {
+        "Speed": 0.0,
+        "Heading": 0.0
+      },
+      "weapons": {
+        "Type1": 0,
+        "Type2": 0,
+        "Type3": 0
+      },
+      "Fuel": 100.0,
+      "FuelConsumption": 0.0,
+      "DetectRange": 1500.0,
+      "AttackRange": 1000.0,
+      "AttackAccuracy": 50.0,
+      "AttackDelay": 0.1,
+      "AttackDamage": 1.0,
+      "UAVTestMode": 0,
+      "DetectPixel": 10000.0,
+      "RecogPixel": 10.0,
+      "AttackFlag": 1,
+      "LAHStatus": 1
+    },
+    {
+      "HorizontalFov": 0.0,
+      "VerticalFov": 0.0,
+      "DiagonalFov": 0.0,
+      "SensorCenterLat": 0.0,
+      "SensorCenterLon": 0.0,
+      "SensorCenterAlt": 0,
+      "SlantRange": 0,
+      "FootPrintLeftTopLat": 0.0,
+      "FootPrintLeftTopLon": 0.0,
+      "FootPrintLeftTopAlt": 0,
+      "FootPrintRightTopLat": 0.0,
+      "FootPrintRightTopLon": 0.0,
+      "FootPrintRightTopAlt": 0,
+      "FootPrintRightBottomLat": 0.0,
+      "FootPrintRightBottomLon": 0.0,
+      "FootPrintRightBottomAlt": 0,
+      "FootPrintLeftBottomLat": 0.0,
+      "FootPrintLeftBottomLon": 0.0,
+      "FootPrintLeftBottomAlt": 0,
+      "ID": 6,
+      "Name": null,
+      "Type": 1,
+      "PlatformType": 0,
+      "Health": 100.0,
+      "Status": 1,
+      "PayLoadHealth": 1,
+      "FuelWarning": 1,
+      "entityAbnormalCause": {
+        "Hit": 0,
+        "Loss1": 0,
+        "Loss2": 0,
+        "Loss3": 0,
+        "FuelWarning": 0,
+        "FuelDanger": 0,
+        "FuelZero": 0,
+        "Crash": 0,
+        "Sensor": 0
+      },
+      "Identification": 1,
+      "IsLeader": 0,
+      "LOC": {
+        "Latitude": 38.044611019850976,
+        "Longitude": 127.42485550515204,
+        "Altitude": 1269
+      },
+      "velocity": {
+        "Speed": 0.0,
+        "Heading": 0.0
+      },
+      "weapons": {
+        "Type1": 0,
+        "Type2": 0,
+        "Type3": 0
+      },
+      "Fuel": 100.0,
+      "FuelConsumption": 0.0,
+      "DetectRange": 1500.0,
+      "AttackRange": 1000.0,
+      "AttackAccuracy": 50.0,
+      "AttackDelay": 0.1,
+      "AttackDamage": 1.0,
+      "UAVTestMode": 0,
+      "DetectPixel": 10000.0,
+      "RecogPixel": 10.0,
+      "AttackFlag": 1,
+      "LAHStatus": 1
+    },
+    {
+      "HorizontalFov": 0.0,
+      "VerticalFov": 0.0,
+      "DiagonalFov": 0.0,
+      "SensorCenterLat": 0.0,
+      "SensorCenterLon": 0.0,
+      "SensorCenterAlt": 0,
+      "SlantRange": 0,
+      "FootPrintLeftTopLat": 0.0,
+      "FootPrintLeftTopLon": 0.0,
+      "FootPrintLeftTopAlt": 0,
+      "FootPrintRightTopLat": 0.0,
+      "FootPrintRightTopLon": 0.0,
+      "FootPrintRightTopAlt": 0,
+      "FootPrintRightBottomLat": 0.0,
+      "FootPrintRightBottomLon": 0.0,
+      "FootPrintRightBottomAlt": 0,
+      "FootPrintLeftBottomLat": 0.0,
+      "FootPrintLeftBottomLon": 0.0,
+      "FootPrintLeftBottomAlt": 0,
+      "ID": 7,
+      "Name": null,
+      "Type": 5,
+      "PlatformType": 3,
+      "Health": 100.0,
+      "Status": 1,
+      "PayLoadHealth": 1,
+      "FuelWarning": 1,
+      "entityAbnormalCause": {
+        "Hit": 0,
+        "Loss1": 0,
+        "Loss2": 0,
+        "Loss3": 0,
+        "FuelWarning": 0,
+        "FuelDanger": 0,
+        "FuelZero": 0,
+        "Crash": 0,
+        "Sensor": 0
+      },
+      "Identification": 2,
+      "IsLeader": 0,
+      "LOC": {
+        "Latitude": 38.172332050145634,
+        "Longitude": 127.35330538260914,
+        "Altitude": 421
+      },
+      "velocity": {
+        "Speed": 0.0,
+        "Heading": 0.0
+      },
+      "weapons": {
+        "Type1": 0,
+        "Type2": 0,
+        "Type3": 0
+      },
+      "Fuel": 0.0,
+      "FuelConsumption": 0.0,
+      "DetectRange": 1500.0,
+      "AttackRange": 1000.0,
+      "AttackAccuracy": 100.0,
+      "AttackDelay": 5.0,
+      "AttackDamage": 100.0,
+      "UAVTestMode": 0,
+      "DetectPixel": 20.0,
+      "RecogPixel": 10.0,
+      "AttackFlag": 1,
+      "LAHStatus": 1
+    }
+  ],
+  "InitScenario": {
+    "MessageID": 2,
+    "InputMissionPackage": {
+      "PresenceVector": 0,
+      "Timestamp": "AAAAAAA=",
+      "InputMissionPackageID": 2036,
+      "MissionType": 2,
+      "DateAndNight": 1,
+      "AircraftIDsN": 6,
+      "AircraftIDs": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "InputMissionListN": 15,
+      "InputMissionList": [
+        {
+          "InputMissionID": 70000001,
+          "SequenceNumber": 1,
+          "InputMissionType": 2,
+          "RegionType": 1,
+          "IsDone": false,
+          "ShapeType": 1,
+          "Coordinate": {
+            "Latitude": 38.06215810597485,
+            "Longitude": 127.424,
+            "Altitude": 0
+          },
+          "PolyLine": {
+            "Width": 0,
+            "CoordinateListN": 0,
+            "CoordinateList": []
+          },
+          "Polygons": {
+            "AreaListN": 0,
+            "AreaList": []
+          },
+          "IsDisplay": true
+        },
+        {
+          "InputMissionID": 70000002,
+          "SequenceNumber": 2,
+          "InputMissionType": 1,
+          "RegionType": 0,
+          "IsDone": false,
+          "ShapeType": 2,
+          "Coordinate": {
+            "Latitude": 0.0,
+            "Longitude": 0.0,
+            "Altitude": 700
+          },
+          "PolyLine": {
+            "Width": 1200,
+            "CoordinateListN": 3,
+            "CoordinateList": [
+              {
+                "Latitude": 38.06209545306517,
+                "Longitude": 127.42407034485909,
+                "Altitude": 651
+              },
+              {
+                "Latitude": 38.068703024429674,
+                "Longitude": 127.4150853354819,
+                "Altitude": 651
+              },
+              {
+                "Latitude": 38.071946659890266,
+                "Longitude": 127.40617171589012,
+                "Altitude": 651
+              }
+            ]
+          },
+          "Polygons": {
+            "AreaListN": 0,
+            "AreaList": []
+          },
+          "IsDisplay": true
+        },
+        {
+          "InputMissionID": 70000003,
+          "SequenceNumber": 3,
+          "InputMissionType": 2,
+          "RegionType": 2,
+          "IsDone": false,
+          "ShapeType": 1,
+          "Coordinate": {
+            "Latitude": 38.072709825126424,
+            "Longitude": 127.40511869919987,
+            "Altitude": 0
+          },
+          "PolyLine": {
+            "Width": 0,
+            "CoordinateListN": 0,
+            "CoordinateList": []
+          },
+          "Polygons": {
+            "AreaListN": 0,
+            "AreaList": []
+          },
+          "IsDisplay": true
+        },
+        {
+          "InputMissionID": 70000004,
+          "SequenceNumber": 4,
+          "InputMissionType": 1,
+          "RegionType": 0,
+          "IsDone": false,
+          "ShapeType": 2,
+          "Coordinate": {
+            "Latitude": 0.0,
+            "Longitude": 0.0,
+            "Altitude": 700
+          },
+          "PolyLine": {
+            "Width": 900,
+            "CoordinateListN": 2,
+            "CoordinateList": [
+              {
+                "Latitude": 38.072709825126424,
+                "Longitude": 127.40511869919987,
+                "Altitude": 1063
+              },
+              {
+                "Latitude": 38.09731381379973,
+                "Longitude": 127.38219404746151,
+                "Altitude": 1063
+              }
+            ]
+          },
+          "Polygons": {
+            "AreaListN": 0,
+            "AreaList": []
+          },
+          "IsDisplay": true
+        },
+        {
+          "InputMissionID": 70000005,
+          "SequenceNumber": 5,
+          "InputMissionType": 2,
+          "RegionType": 3,
+          "IsDone": false,
+          "ShapeType": 1,
+          "Coordinate": {
+            "Latitude": 38.09731381379973,
+            "Longitude": 127.38219404746151,
+            "Altitude": 0
+          },
+          "PolyLine": {
+            "Width": 0,
+            "CoordinateListN": 0,
+            "CoordinateList": []
+          },
+          "Polygons": {
+            "AreaListN": 0,
+            "AreaList": []
+          },
+          "IsDisplay": true
+        },
+        {
+          "InputMissionID": 70000006,
+          "SequenceNumber": 6,
+          "InputMissionType": 1,
+          "RegionType": 0,
+          "IsDone": false,
+          "ShapeType": 2,
+          "Coordinate": {
+            "Latitude": 0.0,
+            "Longitude": 0.0,
+            "Altitude": 700
+          },
+          "PolyLine": {
+            "Width": 600,
+            "CoordinateListN": 2,
+            "CoordinateList": [
+              {
+                "Latitude": 38.09731381379973,
+                "Longitude": 127.38219404746151,
+                "Altitude": 743
+              },
+              {
+                "Latitude": 38.1200733120811,
+                "Longitude": 127.37959198778394,
+                "Altitude": 743
+              }
+            ]
+          },
+          "Polygons": {
+            "AreaListN": 0,
+            "AreaList": []
+          },
+          "IsDisplay": true
+        },
+        {
+          "InputMissionID": 70000007,
+          "SequenceNumber": 7,
+          "InputMissionType": 2,
+          "RegionType": 4,
+          "IsDone": false,
+          "ShapeType": 3,
+          "Coordinate": {
+            "Latitude": 0.0,
+            "Longitude": 0.0,
+            "Altitude": 700
+          },
+          "PolyLine": {
+            "Width": 0,
+            "CoordinateListN": 0,
+            "CoordinateList": []
+          },
+          "Polygons": {
+            "AreaListN": 1,
+            "AreaList": [
+              {
+                "IsHole": false,
+                "CoordinateListN": 5,
+                "CoordinateList": [
+                  {
+                    "Latitude": 38.13205610090949,
+                    "Longitude": 127.36208497843825,
+                    "Altitude": 0
+                  },
+                  {
+                    "Latitude": 38.12124299844651,
+                    "Longitude": 127.36445635580012,
+                    "Altitude": 0
+                  },
+                  {
+                    "Latitude": 38.1200733120811,
+                    "Longitude": 127.37959198778394,
+                    "Altitude": 0
+                  },
+                  {
+                    "Latitude": 38.13418988805514,
+                    "Longitude": 127.38569410399353,
+                    "Altitude": 0
+                  },
+                  {
+                    "Latitude": 38.1392371969103,
+                    "Longitude": 127.37296711209595,
+                    "Altitude": 0
+                  }
+                ]
+              }
+            ]
+          },
+          "IsDisplay": true
+        },
+        {
+          "InputMissionID": 70000008,
+          "SequenceNumber": 8,
+          "InputMissionType": 1,
+          "RegionType": 0,
+          "IsDone": false,
+          "ShapeType": 2,
+          "Coordinate": {
+            "Latitude": 0.0,
+            "Longitude": 0.0,
+            "Altitude": 700
+          },
+          "PolyLine": {
+            "Width": 750,
+            "CoordinateListN": 5,
+            "CoordinateList": [
+              {
+                "Latitude": 38.1296845283317,
+                "Longitude": 127.36257378919893,
+                "Altitude": 1042
+              },
+              {
+                "Latitude": 38.12934838588652,
+                "Longitude": 127.33863873324871,
+                "Altitude": 1042
+              },
+              {
+                "Latitude": 38.12422961024499,
+                "Longitude": 127.32889677549605,
+                "Altitude": 1042
+              },
+              {
+                "Latitude": 38.119009116115166,
+                "Longitude": 127.3121176026161,
+                "Altitude": 1042
+              },
+              {
+                "Latitude": 38.11896862306356,
+                "Longitude": 127.30930217528788,
+                "Altitude": 1042
+              }
+            ]
+          },
+          "Polygons": {
+            "AreaListN": 0,
+            "AreaList": []
+          },
+          "IsDisplay": true
+        },
+        {
+          "InputMissionID": 70000009,
+          "SequenceNumber": 9,
+          "InputMissionType": 2,
+          "RegionType": 5,
+          "IsDone": false,
+          "ShapeType": 3,
+          "Coordinate": {
+            "Latitude": 0.0,
+            "Longitude": 0.0,
+            "Altitude": 700
+          },
+          "PolyLine": {
+            "Width": 0,
+            "CoordinateListN": 0,
+            "CoordinateList": []
+          },
+          "Polygons": {
+            "AreaListN": 1,
+            "AreaList": [
+              {
+                "IsHole": false,
+                "CoordinateListN": 5,
+                "CoordinateList": [
+                  {
+                    "Latitude": 38.11959710404479,
+                    "Longitude": 127.30788386234846,
+                    "Altitude": 0
+                  },
+                  {
+                    "Latitude": 38.13486198977841,
+                    "Longitude": 127.29448570556771,
+                    "Altitude": 0
+                  },
+                  {
+                    "Latitude": 38.12997192356547,
+                    "Longitude": 127.27897031837821,
+                    "Altitude": 0
+                  },
+                  {
+                    "Latitude": 38.11343094176413,
+                    "Longitude": 127.27405709155454,
+                    "Altitude": 0
+                  },
+                  {
+                    "Latitude": 38.107463988522255,
+                    "Longitude": 127.29150908513435,
+                    "Altitude": 0
+                  }
+                ]
+              }
+            ]
+          },
+          "IsDisplay": true
+        },
+        {
+          "InputMissionID": 70000010,
+          "SequenceNumber": 10,
+          "InputMissionType": 1,
+          "RegionType": 0,
+          "IsDone": false,
+          "ShapeType": 2,
+          "Coordinate": {
+            "Latitude": 0.0,
+            "Longitude": 0.0,
+            "Altitude": 700
+          },
+          "PolyLine": {
+            "Width": 900,
+            "CoordinateListN": 3,
+            "CoordinateList": [
+              {
+                "Latitude": 38.134189701236316,
+                "Longitude": 127.29535589554025,
+                "Altitude": 775
+              },
+              {
+                "Latitude": 38.15050552913632,
+                "Longitude": 127.29497612299049,
+                "Altitude": 775
+              },
+              {
+                "Latitude": 38.16682135259807,
+                "Longitude": 127.29459604241588,
+                "Altitude": 775
+              }
+            ]
+          },
+          "Polygons": {
+            "AreaListN": 0,
+            "AreaList": []
+          },
+          "IsDisplay": true
+        },
+        {
+          "InputMissionID": 70000011,
+          "SequenceNumber": 11,
+          "InputMissionType": 2,
+          "RegionType": 6,
+          "IsDone": false,
+          "ShapeType": 3,
+          "Coordinate": {
+            "Latitude": 0.0,
+            "Longitude": 0.0,
+            "Altitude": 700
+          },
+          "PolyLine": {
+            "Width": 0,
+            "CoordinateListN": 0,
+            "CoordinateList": []
+          },
+          "Polygons": {
+            "AreaListN": 1,
+            "AreaList": [
+              {
+                "IsHole": false,
+                "CoordinateListN": 4,
+                "CoordinateList": [
+                  {
+                    "Latitude": 38.16715491174467,
+                    "Longitude": 127.28338323855779,
+                    "Altitude": 0
+                  },
+                  {
+                    "Latitude": 38.20937553696924,
+                    "Longitude": 127.28338323855779,
+                    "Altitude": 0
+                  },
+                  {
+                    "Latitude": 38.20937553696924,
+                    "Longitude": 127.35424387430437,
+                    "Altitude": 0
+                  },
+                  {
+                    "Latitude": 38.16715491174467,
+                    "Longitude": 127.35424387430437,
+                    "Altitude": 0
+                  }
+                ]
+              }
+            ]
+          },
+          "IsDisplay": true
+        },
+        {
+          "InputMissionID": 70000012,
+          "SequenceNumber": 12,
+          "InputMissionType": 1,
+          "RegionType": 0,
+          "IsDone": false,
+          "ShapeType": 2,
+          "Coordinate": {
+            "Latitude": 0.0,
+            "Longitude": 0.0,
+            "Altitude": 700
+          },
+          "PolyLine": {
+            "Width": 1200,
+            "CoordinateListN": 2,
+            "CoordinateList": [
+              {
+                "Latitude": 38.16715491174467,
+                "Longitude": 127.28338323855779,
+                "Altitude": 1060
+              },
+              {
+                "Latitude": 38.09528181001595,
+                "Longitude": 127.2448259002656,
+                "Altitude": 1060
+              }
+            ]
+          },
+          "Polygons": {
+            "AreaListN": 0,
+            "AreaList": []
+          },
+          "IsDisplay": true
+        },
+        {
+          "InputMissionID": 70000013,
+          "SequenceNumber": 13,
+          "InputMissionType": 2,
+          "RegionType": 3,
+          "IsDone": false,
+          "ShapeType": 1,
+          "Coordinate": {
+            "Latitude": 38.09528181001595,
+            "Longitude": 127.2448259002656,
+            "Altitude": 0
+          },
+          "PolyLine": {
+            "Width": 0,
+            "CoordinateListN": 0,
+            "CoordinateList": []
+          },
+          "Polygons": {
+            "AreaListN": 0,
+            "AreaList": []
+          },
+          "IsDisplay": true
+        },
+        {
+          "InputMissionID": 70000014,
+          "SequenceNumber": 14,
+          "InputMissionType": 1,
+          "RegionType": 0,
+          "IsDone": false,
+          "ShapeType": 2,
+          "Coordinate": {
+            "Latitude": 0.0,
+            "Longitude": 0.0,
+            "Altitude": 700
+          },
+          "PolyLine": {
+            "Width": 1350,
+            "CoordinateListN": 2,
+            "CoordinateList": [
+              {
+                "Latitude": 38.09528181001595,
+                "Longitude": 127.2448259002656,
+                "Altitude": 807
+              },
+              {
+                "Latitude": 38.074966343336214,
+                "Longitude": 127.27267382456864,
+                "Altitude": 807
+              }
+            ]
+          },
+          "Polygons": {
+            "AreaListN": 0,
+            "AreaList": []
+          },
+          "IsDisplay": true
+        },
+        {
+          "InputMissionID": 70000015,
+          "SequenceNumber": 15,
+          "InputMissionType": 2,
+          "RegionType": 2,
+          "IsDone": false,
+          "ShapeType": 1,
+          "Coordinate": {
+            "Latitude": 38.074966343336214,
+            "Longitude": 127.27267382456864,
+            "Altitude": 0
+          },
+          "PolyLine": {
+            "Width": 0,
+            "CoordinateListN": 0,
+            "CoordinateList": []
+          },
+          "Polygons": {
+            "AreaListN": 0,
+            "AreaList": []
+          },
+          "IsDisplay": true
+        }
+      ]
+    },
+    "MissionReferencePackage": {
+      "PresenceVector": 0,
+      "Timestamp": "AAAAAAA=",
+      "TakeOverInfoListN": 3,
+      "TakeOverInfoList": [
+        {
+          "AircraftID": 4,
+          "CoordinateList": {
+            "Latitude": 38.04577796029805,
+            "Longitude": 127.424,
+            "Altitude": 1219
+          }
+        },
+        {
+          "AircraftID": 5,
+          "CoordinateList": {
+            "Latitude": 38.044611019850976,
+            "Longitude": 127.42314449484797,
+            "Altitude": 1213
+          }
+        },
+        {
+          "AircraftID": 6,
+          "CoordinateList": {
+            "Latitude": 38.044611019850976,
+            "Longitude": 127.42485550515204,
+            "Altitude": 1269
+          }
+        }
+      ],
+      "HandOverInfoListN": 3,
+      "HandOverInfoList": [
+        {
+          "AircraftID": 4,
+          "CoordinateList": {
+            "Latitude": 38.04577796029805,
+            "Longitude": 127.42742205696936,
+            "Altitude": 1187
+          }
+        },
+        {
+          "AircraftID": 5,
+          "CoordinateList": {
+            "Latitude": 38.044611019850976,
+            "Longitude": 127.42656649727601,
+            "Altitude": 1227
+          }
+        },
+        {
+          "AircraftID": 6,
+          "CoordinateList": {
+            "Latitude": 38.044611019850976,
+            "Longitude": 127.42827750758008,
+            "Altitude": 1177
+          }
+        }
+      ],
+      "RTBCoordinateListN": 3,
+      "RTBCoordinateList": [
+        {
+          "Latitude": 38.04577796029805,
+          "Longitude": 127.42057794303065,
+          "Altitude": 1101
+        },
+        {
+          "Latitude": 38.044611019850976,
+          "Longitude": 127.41972249241994,
+          "Altitude": 1123
+        },
+        {
+          "Latitude": 38.044611019850976,
+          "Longitude": 127.421433502724,
+          "Altitude": 1139
+        }
+      ],
+      "FlightAreaListN": 1,
+      "FlightAreaList": [
+        {
+          "AreaLatLonListN": 4,
+          "AreaLatLonList": [
+            {
+              "Latitude": 38.037074,
+              "Longitude": 127.206058
+            },
+            {
+              "Latitude": 38.220469,
+              "Longitude": 127.206058
+            },
+            {
+              "Latitude": 38.220469,
+              "Longitude": 127.429963
+            },
+            {
+              "Latitude": 38.037074,
+              "Longitude": 127.429963
+            }
+          ],
+          "AltitudeLimits": {
+            "LowerLimit": 0,
+            "UpperLimit": 5000
+          }
+        }
+      ],
+      "ProhibitedAreaListN": 2,
+      "ProhibitedAreaList": [
+        {
+          "AreaLatLonListN": 5,
+          "AreaLatLonList": [
+            {
+              "Latitude": 38.03792850483714,
+              "Longitude": 127.43396505236473
+            },
+            {
+              "Latitude": 38.037216845405595,
+              "Longitude": 127.44060758563758
+            },
+            {
+              "Latitude": 38.032021039056986,
+              "Longitude": 127.44180093559407
+            },
+            {
+              "Latitude": 38.029521513566124,
+              "Longitude": 127.43589593315481
+            },
+            {
+              "Latitude": 38.03317252820564,
+              "Longitude": 127.4310530909872
+            }
+          ],
+          "AltitudeLimits": {
+            "LowerLimit": 0,
+            "UpperLimit": 5000
+          }
+        },
+        {
+          "AreaLatLonListN": 5,
+          "AreaLatLonList": [
+            {
+              "Latitude": 38.25208547392446,
+              "Longitude": 127.27060313190465
+            },
+            {
+              "Latitude": 38.25362064177213,
+              "Longitude": 127.26416944448201
+            },
+            {
+              "Latitude": 38.25889981370941,
+              "Longitude": 127.26404064966285
+            },
+            {
+              "Latitude": 38.26062735355143,
+              "Longitude": 127.27039473750968
+            },
+            {
+              "Latitude": 38.25641585995344,
+              "Longitude": 127.27445057458569
+            }
+          ],
+          "AltitudeLimits": {
+            "LowerLimit": 0,
+            "UpperLimit": 5000
+          }
+        }
+      ]
+    }
+  },
+  "missionPlanManageList": {
+    "LAHMissionPlans": [],
+    "UAVMissionPlans": [],
+    "missionPlanOptionInfo": {
+      "MessageID": 53113,
+      "PresenceVector": 0,
+      "Timestamp": "AAAAAAA=",
+      "AutoExecution": false,
+      "OptionListN": 0,
+      "OptionList": []
+    },
+    "MovePlanModel": {
+      "unit_LAH_MovePlansList": []
+    }
+  }
+}

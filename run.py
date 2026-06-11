@@ -4,10 +4,15 @@
 # -------------------------------------------------------------
 
 from __future__ import annotations
-import os, sys, subprocess, threading, json, socket
+import os, sys, subprocess, threading, json, socket, time
 os.environ["KU_ROLE"] = "decision"
+os.environ.setdefault("KU_AREA_PASSED_KEEPBACK_RATIO", "0.10")
 from pathlib import Path
 from typing import Dict, List, Tuple
+
+RUNPY_GUI_UPDATE_VERSION = "v1.3.47"
+RUNPY_GUI_UPDATE_DATE = "2026-06-09(사천시험버전)"
+RUNPY_GUI_UPDATE_NOTE = "Area attack redistribution, LAH resume altitude guard, and 5s sweep lookahead"
 
 
 def _bootstrap_hidden_windows_launch() -> None:
@@ -65,6 +70,11 @@ from PyQt5.QtGui import QCursor, QTextCursor
 from PyQt5.QtWidgets import QApplication, QTextEdit, QPlainTextEdit
 
 from modules.common import db_paths
+from modules.common.settings_paths import (
+    ensure_fusion_license_file,
+    ensure_fusion_settings_file,
+    fusion_runtime_working_dir,
+)
 from modules.common.process_console import (
     creationflags_for_subprocess,
     emit_process_log,
@@ -73,6 +83,7 @@ from modules.common.process_console import (
     preferred_console_python,
     should_show_module_consoles,
 )
+from modules.common.process_cleanup import kill_python_processes_for_scripts
 try:
     from modules.monitoring.utils.vehicle_status import write_vehicle_status
 except ModuleNotFoundError:
@@ -228,35 +239,11 @@ def _load_qss(app: QApplication):
 # -------------------------------------------------------------
 # nFusion 설정/라이선스 정규화 + MessageLibrary 로드
 def _ensure_fusion_configs():
-    settings_candidates = [
-        PROJECT_ROOT / "nFusionSettings.json",
-        DS_DIR / "nFusionSettings.json",
-        COMMON_DIR / "nFusionSettings.json",
-        PROJECT_ROOT / "FusionSettings.json",
-        DS_DIR / "FusionSettings.json",
-        COMMON_DIR / "FusionSettings.json",
-        PROJECT_ROOT / "nFusion" / "FusionSettings.json",
-    ]
-    src = next((p for p in settings_candidates if p.exists()), None)
-    if src is None:
+    dst = ensure_fusion_settings_file(project_root=PROJECT_ROOT, common_dir=COMMON_DIR, ds_dir=DS_DIR)
+    if dst is None:
         sys.stderr.write("WARN: nFusionSettings.json/FusionSettings.json not found; running without bus.\n")
         return None
-    dst = PROJECT_ROOT / "nFusionSettings.json"
-    if src != dst:
-        dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
-    # license
-    lic_candidates = [
-        PROJECT_ROOT / "nFusionLicense.lic",
-        DS_DIR / "nFusionLicense.lic",
-        COMMON_DIR / "nFusionLicense.lic",
-        PROJECT_ROOT / "nFusion" / "nFusionLicense.lic",
-    ]
-    lic_src = next((p for p in lic_candidates if p.exists()), None)
-    if lic_src is not None:
-        lic_dst = PROJECT_ROOT / "nFusionLicense.lic"
-        if lic_src != lic_dst:
-            # License files can contain non-text bytes; copy as binary to avoid decode errors.
-            lic_dst.write_bytes(lic_src.read_bytes())
+    ensure_fusion_license_file(project_root=PROJECT_ROOT, common_dir=COMMON_DIR)
     return str(dst)
 
 def _load_msglib_and_deps():
@@ -478,11 +465,15 @@ ROLE_STARTUP_SHOW_DELAY_MS = 1800
 class DashboardOrchestrator(QObject):
     uiLog     = pyqtSignal(str)             # 글로벌/폴백용 단일 문자열
     uiLog2    = pyqtSignal(str, str)        # 역할 지정 (role, text)
+    quality0903 = pyqtSignal(object, object, object)
+    quality0702 = pyqtSignal(object)
+    qualityAgentStatus = pyqtSignal(object, object)
 
     def __init__(self, window: MainWindow):
         super().__init__(window)
         self.win = window
         self.widgets = self._resolve_widgets(window)
+        self._dashboard_quality_monitor = self._resolve_dashboard_quality_monitor(window)
         self._log_line_limit = self._resolve_log_limit()
         self._apply_log_limits()
         self._apply_dashboard_button_styles()
@@ -503,14 +494,32 @@ class DashboardOrchestrator(QObject):
             "decision": "초기화 모드",
             "info": "초기화 모드",
         }
+        self._fallback_log_role = os.getenv("KU_MON_FALLBACK_LOG", "decision")
 
         # 안전 로거 alias
         self._log_everywhere = getattr(self, "_log_everywhere", None) or (lambda text: self._append_log_global(str(text)))
         self._safe_log = lambda text: self._log_everywhere(text) if hasattr(self, "_log_everywhere") else self._append_log_global(text)
+        self._configure_dashboard_quality_monitor()
+        self._safe_log(f"[UPDATE] {RUNPY_GUI_UPDATE_DATE} {RUNPY_GUI_UPDATE_VERSION} - {RUNPY_GUI_UPDATE_NOTE}")
+        try:
+            root = Path(__file__).resolve().parent
+            killed = kill_python_processes_for_scripts(
+                root,
+                ROLE_SCRIPT_NAMES.values(),
+                exclude_pids=[os.getpid()],
+                exclude_parent_pids=[os.getpid()],
+                only_orphaned=True,
+            )
+            if killed:
+                self._safe_log(f"[RUN] stale orphan module processes cleaned: {killed}")
+        except Exception as exc:
+            self._safe_log(f"[RUN WARN] stale module cleanup failed: {exc}")
 
-        self._fallback_log_role = os.getenv("KU_MON_FALLBACK_LOG", "decision")
         self.uiLog.connect(self._append_log_global)       # 단일 문자열 -> 글로벌/폴백
         self.uiLog2.connect(self._log_to_role)            # (role, text) -> 해당 모듈
+        self.quality0903.connect(self._apply_dashboard_quality_0903)
+        self.quality0702.connect(self._apply_dashboard_quality_0702)
+        self.qualityAgentStatus.connect(self._apply_dashboard_quality_agent_status)
 
         self._init_rows()
         self._bind_service_gui_buttons()
@@ -679,6 +688,34 @@ class DashboardOrchestrator(QObject):
         }
 
         return {"log_edit": log_edit, **modules}
+
+    def _resolve_dashboard_quality_monitor(self, win):
+        getter = getattr(win, "dashboard_quality_monitor", None)
+        if callable(getter):
+            try:
+                monitor = getter()
+                if monitor is not None:
+                    return monitor
+            except Exception:
+                pass
+        return getattr(win, "_dashboard_quality_monitor", None)
+
+    def _configure_dashboard_quality_monitor(self) -> None:
+        monitor = getattr(self, "_dashboard_quality_monitor", None)
+        if monitor is None:
+            return
+        try:
+            setter = getattr(monitor, "set_log_callback", None)
+            if callable(setter):
+                setter(lambda text: self._safe_log(str(text)))
+        except Exception:
+            pass
+        try:
+            setter = getattr(monitor, "set_monitor_enabled", None)
+            if callable(setter):
+                setter(True)
+        except Exception:
+            pass
 
     def _resolve_log_limit(self) -> int:
         raw = (os.getenv("KU_MON_LOG_MAX_LINES") or "10").strip()
@@ -887,11 +924,12 @@ class DashboardOrchestrator(QObject):
         def _rx_setup():
             try:
                 from dll_files.nFusionImports import FusionNodeIoc, NodeMessenger  # noqa
-                FusionNodeIoc.Configure()
-                NodeMessenger.Initialize("CommonChannel")
-                NodeMessenger.RegistAllConsumerFromFusionNodeIoc()
-                NodeMessenger.InitAllSubscriberFromAssembly()
-                NodeMessenger.RegistAllProviderFromFusionNodeIoc()
+                with fusion_runtime_working_dir(project_root=PROJECT_ROOT):
+                    FusionNodeIoc.Configure()
+                    NodeMessenger.Initialize("CommonChannel")
+                    NodeMessenger.RegistAllConsumerFromFusionNodeIoc()
+                    NodeMessenger.InitAllSubscriberFromAssembly()
+                    NodeMessenger.RegistAllProviderFromFusionNodeIoc()
             except Exception as e:
                 sys.stderr.write(f"[WARN] NodeMessenger init failed: {e}\n")
         threading.Thread(target=_rx_setup, daemon=True).start()
@@ -956,6 +994,19 @@ class DashboardOrchestrator(QObject):
             self._handle_system_mode_message(payload, raw)
             return
 
+        if mid == "0401":
+            self._forward_dashboard_quality_0401(payload, raw)
+            return
+
+        if mid == "0903":
+            self._forward_dashboard_quality_0903(payload, raw)
+            return
+
+        # 0902 재계획 요청 수신 시점을 잡아 0305 완료 로그에 소요 시간을 붙인다.
+        if mid == "0902":
+            setattr(self, "_ops_replan_started_at_sec", time.time())
+            return
+
         # 0305 재계획 진행/완료 로깅
         if mid == "0305":
             status = None
@@ -965,17 +1016,116 @@ class DashboardOrchestrator(QObject):
                 status = int(status) if status is not None else None
             except Exception:
                 status = None
-            if status == 0:
+            if status == 1:
+                if getattr(self, "_ops_replan_started_at_sec", None) is None:
+                    setattr(self, "_ops_replan_started_at_sec", time.time())
                 self._safe_log("[OPS] 0305 재계획 진행 중")
-            elif status == 1:
-                self._safe_log("[OPS] 0305 재계획 완료 (모드 전환은 0101 수신만 반영)")
+            elif status == 2:
+                started_at = getattr(self, "_ops_replan_started_at_sec", None)
+                setattr(self, "_ops_replan_started_at_sec", None)
+                if isinstance(started_at, (int, float)) and started_at > 0:
+                    elapsed = max(0.0, time.time() - float(started_at))
+                    self._safe_log(f"[OPS] 0305 재계획 완료 ({elapsed:.2f}초, 모드 전환은 0101 수신만 반영)")
+                else:
+                    self._safe_log("[OPS] 0305 재계획 완료 (모드 전환은 0101 수신만 반영)")
             return
 
         # 0702는 계획/옵션 반영 신호로만 취급한다.
         # 실행 이후 모드 전이는 0101만 권한을 가진다.
         if mid == "0702":
+            self._forward_dashboard_quality_0702(payload, raw)
             self._safe_log("[OPS] 0702 수신 -> 모드 전환 없음 (0101 전용)")
             return
+
+    def _quality_parse_source(self, payload: dict | None, raw: bytes | None) -> object | None:
+        return payload if isinstance(payload, dict) and payload else raw
+
+    def _forward_dashboard_quality_0903(self, payload: dict | None, raw: bytes | None) -> None:
+        if getattr(self, "_dashboard_quality_monitor", None) is None:
+            return
+        try:
+            from modules.monitoring.logic.mission_update import extract_0903_info
+
+            ts, mpid, source, _body = extract_0903_info(self._quality_parse_source(payload, raw))
+        except Exception as exc:
+            self._safe_log(f"[DASHBOARD][QUALITY] 0903 parse failed: {exc}")
+            return
+        if mpid is None:
+            return
+        self.quality0903.emit(ts, mpid, source)
+
+    def _forward_dashboard_quality_0702(self, payload: dict | None, raw: bytes | None) -> None:
+        if getattr(self, "_dashboard_quality_monitor", None) is None:
+            return
+        try:
+            from modules.monitoring.logic.mission_update import extract_0702_decision
+
+            _ts, ignore_val, mission_plan_id, _source, _body = extract_0702_decision(
+                self._quality_parse_source(payload, raw)
+            )
+        except Exception as exc:
+            self._safe_log(f"[DASHBOARD][QUALITY] 0702 parse failed: {exc}")
+            return
+        try:
+            if int(ignore_val or 0) != 2:
+                return
+        except Exception:
+            return
+        if mission_plan_id is None:
+            return
+        self.quality0702.emit(mission_plan_id)
+
+    def _forward_dashboard_quality_0401(self, payload: dict | None, raw: bytes | None) -> None:
+        if getattr(self, "_dashboard_quality_monitor", None) is None:
+            return
+        try:
+            from modules.monitoring.logic.mission_update import extract_0401_agent_states
+
+            ts, states = extract_0401_agent_states(self._quality_parse_source(payload, raw))
+        except Exception as exc:
+            self._safe_log(f"[DASHBOARD][QUALITY] 0401 parse failed: {exc}")
+            return
+        if not states:
+            return
+        self.qualityAgentStatus.emit(ts, list(states or []))
+
+    @pyqtSlot(object, object, object)
+    def _apply_dashboard_quality_0903(self, timestamp_ms, mission_plan_id, source) -> None:
+        monitor = getattr(self, "_dashboard_quality_monitor", None)
+        if monitor is None:
+            return
+        try:
+            monitor.update_0903(
+                timestamp_ms=timestamp_ms,
+                mission_plan_id=mission_plan_id,
+                source=source,
+            )
+        except Exception as exc:
+            self._safe_log(f"[DASHBOARD][QUALITY] 0903 update failed: {exc}")
+
+    @pyqtSlot(object)
+    def _apply_dashboard_quality_0702(self, mission_plan_id) -> None:
+        monitor = getattr(self, "_dashboard_quality_monitor", None)
+        if monitor is None:
+            return
+        try:
+            monitor.apply_mission_plan_decision(mission_plan_id=mission_plan_id)
+        except Exception as exc:
+            self._safe_log(f"[DASHBOARD][QUALITY] 0702 update failed: {exc}")
+
+    @pyqtSlot(object, object)
+    def _apply_dashboard_quality_agent_status(self, timestamp_ms, agent_states) -> None:
+        monitor = getattr(self, "_dashboard_quality_monitor", None)
+        if monitor is None:
+            return
+        try:
+            monitor.update_agent_status(
+                timestamp_ms=timestamp_ms,
+                agent_states=list(agent_states or []),
+                fuel_state_map=None,
+            )
+        except Exception as exc:
+            self._safe_log(f"[DASHBOARD][QUALITY] 0401 update failed: {exc}")
 
     def _handle_system_mode_message(self, payload: dict | None, raw: bytes | None) -> None:
         obj = payload if isinstance(payload, dict) else self._extract_message_json(raw)
@@ -1475,6 +1625,21 @@ class DashboardOrchestrator(QObject):
                         pass
                 finally:
                     role_processes.pop(process_key, None)
+
+        try:
+            killed = kill_python_processes_for_scripts(
+                root,
+                [script_basename, script_alias],
+                exclude_pids=[os.getpid()],
+                exclude_parent_pids=[os.getpid()],
+            )
+            if killed:
+                self._safe_log(f"[RUN] stale {script_basename} process cleaned before launch: {killed}")
+        except Exception as exc:
+            try:
+                self._safe_log(f"[RUN WARN] stale {script_basename} cleanup failed: {exc}")
+            except Exception:
+                pass
 
         try:
             proc = subprocess.Popen(

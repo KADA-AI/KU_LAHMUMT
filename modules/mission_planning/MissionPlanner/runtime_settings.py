@@ -9,6 +9,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict
 
+from modules.common.settings_paths import uav_params_path
+
 
 _CACHE_LOCK = threading.Lock()
 _CACHE_SIG: tuple[int, int] | None = None
@@ -17,11 +19,13 @@ _FOV_DB_CACHE_SIG: tuple[str, int, int] | None = None
 _FOV_DB_MAX_WIDTH: float | None = None
 _FOV_DB_ROWS_CACHE_SIG: tuple[str, int, int] | None = None
 _FOV_DB_ROWS: list[Dict[str, float]] | None = None
+_FOV_DB_ROWS_BY_PATH_SIG: dict[tuple[str, int, int], list[Dict[str, float]]] = {}
 _THREAD_LOCAL = threading.local()
 
 DEFAULT_AREA_SWEEP_MODE = "vertical"
 DEFAULT_AREA_SPLIT_MODE = "single_stage"
 DEFAULT_UAV_PLAN_MODE = "dub_path"
+MIN_LINE_FOV_DEG = 1.2
 MANUAL_FOV_ROLLBACK_KEY = "_manual_fov_rollback_values"
 MANUAL_FOV_SYNC_KEYS = (
     "line_override_fov_deg",
@@ -82,12 +86,18 @@ DEFAULT_RUNTIME_VALUES: Dict[str, Any] = {
     "entry_hold_fov_deg": 10.0,
     "area_output_fov_scale": 1.0,
     "default_sweep_separation_m": 1000.0,
+    "fov_db_sep_safety_factor": 1.7,
     "fov_db_path": DEFAULT_FOV_DB_RELATIVE_PATH,
     "db_fov_weight": 1.0,
+    "fov_db_smaller_fov_steps": 3,
+    "area_fov_db_smaller_fov_steps": 1,
     "line_density_scale": 1.2,
     "area_density_scale": 1.2,
+    "next_collab_area_density_scale": 2.4,
     "line_route_offset_scale": 1.0,
     "area_route_offset_scale": 1.0,
+    "area_route_offset_sep_m": None,
+    "recon_route_offset_sep_m": None,
     "area_first_packet_search_speed_scale": 1.2,
     "area_first_packet_sweep_group_scale": 1.5,
     "uav_wp_interval_m": 1200.0,
@@ -97,8 +107,18 @@ DEFAULT_RUNTIME_VALUES: Dict[str, Any] = {
     "uav_climb_rate_mps": 5.0,
     "sweep_merge_heading_deg": 5.0,
     "sweep_line_interp_points": 3,
+    "ground_required_sample_step_m": 120.0,
+    "dense_linesearch_ground_sample_step_m": 240.0,
+    "dense_linesearch_ground_sample_min_interp_points": 3,
+    "linesearch_inner_parallel_min_coords": 512,
+    "linesearch_inner_parallel_workers": 2,
+    "formation_follower_postprocess_parallel_enabled": True,
+    "formation_follower_postprocess_parallel_min_followers": 2,
+    "formation_follower_postprocess_workers": 2,
     "min_sweep_len_m": 3.0,
     "min_route_spacing_m": 200.0,
+    "line_search_speed_min_transit_m": 1.0,
+    "line_search_speed_max_mps": 0.0,
     "enhanced_area_review_max_segment_m": 300.0,
     "recon_area_review_max_split_count": 0,
     "recon_area_review_min_segment_m": 0.0,
@@ -108,23 +128,26 @@ DEFAULT_RUNTIME_VALUES: Dict[str, Any] = {
     "recon_area_split_width_m": 600.0,
     "recon_area_fixed_fov_deg": 15.0,
     "recon_sweep_separation_scale": 0.50,
+    "recon_linesearch_interp_points_enabled": True,
+    "recon_linesearch_interp_points": 2,
+    "replan_collab_reexecute_schedule_delay_ms": 30,
     "entry_hold_gimbal_pitch": -90.0,
     "entry_hold_gimbal_yaw": 0.0,
     "loiter_radius_m": 800.0,
     "loiter_direction": 1,
     "loiter_time_s": 30.0,
     "loiter_speed_mps": 30.0,
-    "next_collab_entry_lead_time_s": 5.0,
     "next_collab_default_entry_strategy": "turn_projection",
     "next_collab_sweep_step_ratio": 0.60,
     "next_collab_entry_tprime_target_sep_ratio": 0.30,
     "next_collab_entry_tprime_ratio_scale": 0.50,
     "next_collab_area_path0_trigger_sep_m": 3000.0,
     "next_collab_area_path0_target_sep_ratio": 0.20,
-    "next_collab_turn_radius_scale": 1.40,
+    "next_collab_turn_radius_scale": 1.20,
     "next_collab_takeover_first_step_ratio": 0.40,
     "next_collab_area_fov_scale": 1.00,
-    "next_collab_area_search_speed_scale": 1.00,
+    "next_collab_area_search_speed_scale": 1.30,
+    "next_collab_area_gsd_margin_ratio": 0.90,
     "next_collab_auto_sweep_points": False,
     "next_collab_sweep_points_per_leg": 3,
     "next_collab_line_db_width_weight": 0.30,
@@ -132,7 +155,32 @@ DEFAULT_RUNTIME_VALUES: Dict[str, Any] = {
     "next_collab_line_db_fov_weight": 0.45,
     "next_collab_first_line_fov_scale": 1.35,
     "next_collab_first_line_fov_max_deg": 15.4,
+    "next_collab_replacement_path_build_workers": 1,
+    "next_collab_line_replacement_path_build_workers": 2,
     "replan_sweep_speed_scale": 1.3,
+    "replan_variant_parallel_enabled": True,
+    "replan_current_remaining_variant_parallel_enabled": True,
+    "replan_reexecute_current_fast_path_enabled": True,
+    "replan_variant_workers": 3,
+    "replan_variant_waypoint_block_size": 5000,
+    "replan_recon_worker_cap": 0,
+    "replan_current_remaining_precompute_workers": 2,
+    "replan_store_prepare_workers": 2,
+    "replan_store_prepare_out_of_order": True,
+    "replan_store_commit_workers": 2,
+    "replan_store_json_write_workers": 2,
+    "replan_store_path_id_cross_variant_bulk": True,
+    "replan_store_snapshot_post_delivery": True,
+    "replan_0303_aircraft_workers": 3,
+    "replan_0303_dependency_parallel_enabled": True,
+    "replan_0303_dependency_workers": 3,
+    "replan_0303_altitude_precompute_enabled": True,
+    "ground_required_final_prepass_fresh_skip_enabled": True,
+    "ground_required_process_cache_waiter_batch_local_fast_path_enabled": False,
+    "ground_required_process_cache_waiter_batch_local_fast_path_grace_ms": 0.0,
+    "replan_0303_recompute_line_search_speed": False,
+    "filming_altitude_batch_enabled": True,
+    "replan_dem_batch_enabled": True,
     "lah_path_mode": "linear",
     "lah_rl_hex_step": 50,
     "lah_rl_area_km": 10.0,
@@ -169,7 +217,6 @@ DEFAULT_ATTACK_MISSION_VALUES: Dict[str, Any] = {
     "target_type_priority": list(DEFAULT_ATTACK_TARGET_TYPE_PRIORITY),
     "entry_offset_m": 100.0,
     "resume_offset_m": 20.0,
-    "collab_replan_lookahead_s": 9.0,
     "weapon_type": 2,
     "weapon_for_target_type_1": 2,
     "weapon_for_target_type_2": 2,
@@ -177,11 +224,15 @@ DEFAULT_ATTACK_MISSION_VALUES: Dict[str, Any] = {
     "weapon_for_target_type_4": 3,
     "weapon_for_target_type_5": 2,
     "weapon_for_target_type_6": 1,
-    "lah_hold_seconds": 50,
+    "lah_hold_seconds": 300,
     "lah_hold_near_resume_offset_m": 30.0,
     "resume_search_speed_scale": 1.3,
+    "json_write_workers": 4,
     "fast_num_arc_rays": 180,
     "point_cache_max": 16,
+    "attack_point_inprocess_enabled": 1,
+    "attack_point_cache_friendly_decimals": 4,
+    "attack_point_cache_target_decimals": 5,
     "attack_min_standoff_m": 300.0,
     "attack_preferred_standoff_m": 2000.0,
     "attack_point_altitude_offset_m": 300.0,
@@ -205,21 +256,26 @@ def _legacy_settings_path() -> Path:
 
 
 def _ensure_root_settings_file(path: Path) -> None:
-    legacy_path = _legacy_settings_path()
+    legacy_candidates = (
+        _project_root() / "uav_params.json",
+        _legacy_settings_path(),
+    )
     try:
         if path.exists():
             return
-        if not legacy_path.exists():
+        legacy_path = next((candidate for candidate in legacy_candidates if candidate.exists()), None)
+        if legacy_path is None:
             return
         if legacy_path.resolve() == path.resolve():
             return
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(legacy_path.read_text(encoding="utf-8"), encoding="utf-8")
     except Exception:
         return
 
 
 def settings_path() -> Path:
-    path = _project_root() / "uav_params.json"
+    path = uav_params_path()
     _ensure_root_settings_file(path)
     return path
 
@@ -279,6 +335,7 @@ def clear_runtime_settings_cache() -> None:
         _FOV_DB_MAX_WIDTH = None
         _FOV_DB_ROWS_CACHE_SIG = None
         _FOV_DB_ROWS = None
+        _FOV_DB_ROWS_BY_PATH_SIG.clear()
 
 
 def set_runtime_fov_db_path(path: str | Path) -> Path:
@@ -296,6 +353,7 @@ def set_runtime_fov_db_path(path: str | Path) -> Path:
         values = {}
     values["fov_db_path"] = stored_value
     payload["values"] = values
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
     cfg_path.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2),
         encoding="utf-8",
@@ -307,7 +365,7 @@ def set_runtime_fov_db_path(path: str | Path) -> Path:
 def load_runtime_settings() -> Dict[str, Any]:
     override = getattr(_THREAD_LOCAL, "override_payload", None)
     if isinstance(override, dict):
-        return canonicalize_runtime_payload(copy.deepcopy(override))
+        return copy.deepcopy(override)
     global _CACHE_SIG, _CACHE_DATA
     path = settings_path()
     try:
@@ -542,7 +600,9 @@ def canonicalize_runtime_payload(payload: Dict[str, Any] | None = None) -> Dict[
     line_param_override_active = capture_param_manual and line_override_enabled
     area_param_override_active = capture_param_manual and area_override_enabled
 
-    line_fov = _as_float(values.get("line_override_fov_deg"), global_fov) if line_override_enabled else global_fov
+    line_override_fov = max(MIN_LINE_FOV_DEG, _as_float(values.get("line_override_fov_deg"), global_fov))
+    values["line_override_fov_deg"] = line_override_fov
+    line_fov = line_override_fov if line_override_enabled else max(MIN_LINE_FOV_DEG, global_fov)
     area_fov = _as_float(values.get("area_override_fov_deg"), global_fov) if area_override_enabled else global_fov
     values["line_custom_fov_deg"] = line_fov
     values["area_custom_fov_deg"] = area_fov
@@ -576,6 +636,36 @@ def canonicalize_runtime_payload(payload: Dict[str, Any] | None = None) -> Dict[
     values["recon_area_split_width_m"] = (
         _as_float(values.get("recon_override_split_width_m"), 600.0) if recon_override_enabled else 600.0
     )
+    values["fov_db_sep_safety_factor"] = max(
+        1.0,
+        _as_float(values.get("fov_db_sep_safety_factor"), 1.7),
+    )
+    values["fov_db_smaller_fov_steps"] = max(
+        0,
+        min(20, int(_as_float(values.get("fov_db_smaller_fov_steps"), 3))),
+    )
+    values["area_fov_db_smaller_fov_steps"] = max(
+        0,
+        min(20, int(_as_float(values.get("area_fov_db_smaller_fov_steps"), 1))),
+    )
+    values["next_collab_area_density_scale"] = max(
+        0.2,
+        min(
+            10.0,
+            _as_float(
+                values.get("next_collab_area_density_scale"),
+                max(_as_float(values.get("area_density_scale"), 1.2), 2.4),
+            ),
+        ),
+    )
+    values["next_collab_area_gsd_margin_ratio"] = max(
+        0.10,
+        min(1.0, _as_float(values.get("next_collab_area_gsd_margin_ratio"), 0.90)),
+    )
+    values["next_collab_area_search_speed_scale"] = max(
+        0.10,
+        min(5.0, _as_float(values.get("next_collab_area_search_speed_scale"), 1.30)),
+    )
 
     manual_fov_keys = tuple(MANUAL_FOV_SYNC_KEYS) + tuple(MANUAL_FOV_DERIVED_KEYS)
     snapshot_raw = values.get(MANUAL_FOV_ROLLBACK_KEY)
@@ -590,9 +680,10 @@ def canonicalize_runtime_payload(payload: Dict[str, Any] | None = None) -> Dict[
                 if key in values
             }
         manual_fov = max(0.1, min(120.0, _as_float(values.get("global_manual_fov_deg"), global_fov)))
+        line_manual_fov = max(MIN_LINE_FOV_DEG, manual_fov)
         for key in MANUAL_FOV_SYNC_KEYS:
-            values[key] = float(manual_fov)
-        values["line_custom_fov_deg"] = float(manual_fov)
+            values[key] = float(line_manual_fov if key == "line_override_fov_deg" else manual_fov)
+        values["line_custom_fov_deg"] = float(line_manual_fov)
         values["area_custom_fov_deg"] = float(manual_fov)
         values["area_nadir_fov_deg"] = float(manual_fov)
         values["recon_area_fixed_fov_deg"] = float(manual_fov)
@@ -602,6 +693,15 @@ def canonicalize_runtime_payload(payload: Dict[str, Any] | None = None) -> Dict[
             if key in snapshot:
                 values[key] = copy.deepcopy(snapshot[key])
         values[MANUAL_FOV_ROLLBACK_KEY] = {}
+
+    values["line_override_fov_deg"] = max(
+        MIN_LINE_FOV_DEG,
+        min(120.0, _as_float(values.get("line_override_fov_deg"), MIN_LINE_FOV_DEG)),
+    )
+    values["line_custom_fov_deg"] = max(
+        MIN_LINE_FOV_DEG,
+        min(120.0, _as_float(values.get("line_custom_fov_deg"), values["line_override_fov_deg"])),
+    )
 
     raw_flyover = payload.get("flyover")
     if isinstance(raw_flyover, dict):
@@ -935,10 +1035,12 @@ def get_runtime_manual_fov_deg(
         fov_deg = float(values.get(key, fallback))
     except Exception:
         fov_deg = fallback
+    minimum_fov_deg = MIN_LINE_FOV_DEG if key in {"line_custom_fov_deg", "line_override_fov_deg"} else 0.1
     if fov_deg <= 0.0:
         fov_deg = fallback if fallback > 0.0 else float(default)
+    fov_deg = max(float(fov_deg), float(minimum_fov_deg))
     if camera_adjust:
-        return apply_runtime_camera_adjusted_fov_deg(fov_deg, data)
+        return apply_runtime_camera_adjusted_fov_deg(fov_deg, data, minimum_fov_deg=minimum_fov_deg)
     return float(fov_deg)
 
 
@@ -1242,6 +1344,12 @@ def read_fov_db_rows_from_path(path: str | Path) -> list[Dict[str, float]]:
     db_path = Path(path)
     if not db_path.exists():
         return []
+    sig = _path_sig(db_path)
+    if sig is not None:
+        with _CACHE_LOCK:
+            cached = _FOV_DB_ROWS_BY_PATH_SIG.get(sig)
+            if isinstance(cached, list):
+                return [dict(row) for row in cached]
 
     rows: list[Dict[str, float]] = []
     try:
@@ -1264,6 +1372,13 @@ def read_fov_db_rows_from_path(path: str | Path) -> list[Dict[str, float]]:
             rows.append(parsed)
     except Exception:
         return []
+    if sig is not None:
+        with _CACHE_LOCK:
+            resolved = sig[0]
+            stale_keys = [key for key in _FOV_DB_ROWS_BY_PATH_SIG if key[0] == resolved and key != sig]
+            for key in stale_keys:
+                _FOV_DB_ROWS_BY_PATH_SIG.pop(key, None)
+            _FOV_DB_ROWS_BY_PATH_SIG[sig] = [dict(row) for row in rows]
     return rows
 
 

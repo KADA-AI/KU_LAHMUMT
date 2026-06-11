@@ -11,6 +11,7 @@ import re
 import time
 import traceback
 import faulthandler
+import atexit
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable
@@ -27,6 +28,7 @@ from modules.common.qt_env import ensure_qt_platform
 ensure_qt_platform()
 from modules.common.gui_style import load_shared_stylesheet, polish_tabs, position_window_from_env
 from modules.common.process_console import emit_process_log, ensure_console, install_process_file_logging
+from modules.common.qt_safety import set_text_if_changed, set_tooltip_if_changed
 from modules.common.string_limits import limit_utf8_bytes
 
 ensure_console(os.getenv("KU_CONSOLE_TITLE", "KU Monitoring Console"))
@@ -223,12 +225,50 @@ class VisualizationGateWidget(QWidget):
             pass
         self._sync_controls()
 
+_QT_MESSAGE_LOCK = threading.Lock()
+_QT_MESSAGE_LAST_LOG: dict[str, float] = {}
+
+
+def _write_monitoring_diag_line(filename: str, line: str) -> None:
+    try:
+        from modules.common import db_paths as _diag_db_paths
+
+        base = _diag_db_paths.get_db_subpath("DSS_Internal", "monitoring_diagnostics")
+    except Exception:
+        base = Path.cwd() / "DSS_Internal" / "monitoring_diagnostics"
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+        with (base / filename).open("a", encoding="utf-8", buffering=1, errors="replace") as handle:
+            handle.write(line.rstrip("\n") + "\n")
+    except Exception:
+        pass
 
 
 def _qt_silent_handler(mode: QtMsgType, context, message: str):
-    if "Cannot queue arguments of type" in message:
+    text = str(message or "")
+    if "Cannot queue arguments of type" in text:
         return
-    sys.stderr.write(message + "\n")
+    try:
+        sys.stderr.write("[QT] " + text + "\n")
+    except Exception:
+        pass
+
+    now = time.monotonic()
+    key = text[:200]
+    with _QT_MESSAGE_LOCK:
+        last = float(_QT_MESSAGE_LAST_LOG.get(key, 0.0) or 0.0)
+        if now - last < 1.0:
+            return
+        _QT_MESSAGE_LAST_LOG[key] = now
+    stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    mode_name = getattr(mode, "name", str(mode))
+    file_name = getattr(context, "file", "") or ""
+    line_no = getattr(context, "line", 0) or 0
+    function_name = getattr(context, "function", "") or ""
+    _write_monitoring_diag_line(
+        "qt_messages.log",
+        f"[{stamp}] mode={mode_name} file={file_name}:{line_no} func={function_name} message={text}",
+    )
 
 
 qInstallMessageHandler(_qt_silent_handler)
@@ -255,16 +295,17 @@ PROJECT_ROOT, COMMON_DIR = _bootstrap_paths()
 from modules.common import db_paths
 from modules.common import agent_status_snapshot
 from modules.common.ctrl_listener import start_ctrl_listener, env_ctrl_port
-from modules.common.fusion_files import copy_file_with_retry
+from modules.common.settings_paths import (
+    ensure_fusion_license_file,
+    ensure_fusion_settings_file,
+    fusion_runtime_working_dir,
+)
 from modules.common.gui_process_control import (
     apply_initial_visibility,
     handle_window_control,
     hide_instead_of_close,
 )
 from modules.monitoring.gui.tabs.mission_schedule_tab import MissionScheduleTab
-from modules.monitoring.gui.tabs.mission_progress_area_management_tab import (
-    MissionProgressAreaManagementTab,
-)
 from modules.monitoring.gui.tabs.quality_monitor_tab import QualityMonitorTab
 from modules.monitoring.gui.tabs.replan_management_tab import ReplanManagementTab
 from modules.monitoring.gui.tabs.replan_queue_tab import ReplanQueueTab
@@ -293,14 +334,13 @@ from modules.monitoring.logic.collab_reexecute import CollabReexecuteCoordinator
 from modules.monitoring.logic.fuel_warning import FuelWarningCoordinator
 from modules.monitoring.logic.forced_command_replan import ForcedCommandReplanCoordinator
 from modules.monitoring.logic.imaging_schedule_replan import ImagingScheduleReplanCoordinator
+from modules.monitoring.logic.line_scan_progress_monitor import LineScanProgressWorker
 from modules.monitoring.logic.next_collab_replan import (
     NextCollabMissionReplanCoordinator,
     _centroid_coordinate,
     _coerce_float,
     _normalize_coordinate,
-    _planner_entry_lead_time_s,
     _planner_turn_radius_scale,
-    project_coordinate_forward,
 )
 from modules.monitoring.logic.quality_speed_replan import QualitySpeedReplanCoordinator
 from modules.monitoring.logic.input_refresh_replan import InputRefreshReplanCoordinator
@@ -354,30 +394,10 @@ except Exception:
 
 
 def _ensure_fusion_configs():
-    cands = [
-        PROJECT_ROOT / "nFusionSettings.json",
-        COMMON_DIR / "nFusionSettings.json",
-        PROJECT_ROOT / "FusionSettings.json",
-        COMMON_DIR / "FusionSettings.json",
-        PROJECT_ROOT / "nFusion" / "FusionSettings.json",
-    ]
-    src = next((p for p in cands if p.exists()), None)
-    if src is None:
+    dst = ensure_fusion_settings_file(project_root=PROJECT_ROOT, common_dir=COMMON_DIR)
+    if dst is None:
         raise FileNotFoundError("nFusionSettings.json/FusionSettings.json is missing.")
-    dst = PROJECT_ROOT / "nFusionSettings.json"
-    if src != dst:
-        copy_file_with_retry(src, dst)
-
-    lcands = [
-        PROJECT_ROOT / "nFusionLicense.lic",
-        COMMON_DIR / "nFusionLicense.lic",
-        PROJECT_ROOT / "nFusion" / "nFusionLicense.lic",
-    ]
-    lsrc = next((p for p in lcands if p.exists()), None)
-    if lsrc:
-        ldst = PROJECT_ROOT / "nFusionLicense.lic"
-        if lsrc != ldst:
-            copy_file_with_retry(lsrc, ldst)
+    ensure_fusion_license_file(project_root=PROJECT_ROOT, common_dir=COMMON_DIR)
     return str(dst)
 
 
@@ -455,6 +475,7 @@ class MainWindow(QMainWindow):
         self._mode_manual_override = False
         self._mode_update_source: str | None = None
         self._last_ignored_external_mode_code: int | None = None
+        self._bus_ready = False
         self._send_0501_timer = None
         self._last_0501_attempt_monotonic = 0.0
         self._last_0501_payload_monotonic = 0.0
@@ -465,6 +486,12 @@ class MainWindow(QMainWindow):
         self._0501_timestamp_error_style_state: str | None = None
         self._0501_timestamp_lock = threading.Lock()
         self._send_0501_lock = threading.Lock()
+        self._nfusion_push_lock = self._send_0501_lock
+        self._hb_0102_enabled = False
+        self._hb_0102_interval_sec = 0.2
+        self._hb_0102_stop = threading.Event()
+        self._hb_0102_thread = None
+        self._last_0102_send_monotonic = 0.0
         self._hb_0501_enabled = False
         self._hb_0501_interval_sec = 0.2
         self._hb_0501_stop = threading.Event()
@@ -479,6 +506,7 @@ class MainWindow(QMainWindow):
         self._plan_apply_generation = 0
         self._replan_queue_drain_scheduled = False
         self._replan_queue_draining = False
+        self._replan_queue_drain_not_before_ms = 0
         self._active_0401_notice_keys: set[tuple[int, str]] = set()
         self._path_deviation_guard_until_ms = 0
         self._path_deviation_guard_notice_key: tuple[object, ...] | None = None
@@ -501,6 +529,18 @@ class MainWindow(QMainWindow):
         self._dl_replan_last_ts = 0.0
         self._dl_timer = None
         self._dl_lock = threading.Lock()
+        self._0401_pending_lock = threading.Lock()
+        self._0401_pending_payload = None
+        self._0401_pending_scheduled = False
+        self._0401_last_signature: bytes | None = None
+        self._0401_coalesce_ms = int(max(20, min(500, self._env_float("MSM_0401_COALESCE_MS", 80.0))))
+        self._0401_drain_timer = None
+        self._0402_pending_lock = threading.Lock()
+        self._0402_pending_payload = None
+        self._0402_pending_scheduled = False
+        self._0402_last_signature: bytes | None = None
+        self._0402_coalesce_ms = int(max(20, min(1000, self._env_float("MSM_0402_COALESCE_MS", 120.0))))
+        self._0402_drain_timer = None
         self._input_refresh_replan_enabled = get_replan_toggle("input_refresh", True)
         self._prior_mission_replan_enabled = get_replan_toggle("prior_mission", True)
         self._target_detection_replan_enabled = get_replan_toggle("target_detection", True)
@@ -517,6 +557,8 @@ class MainWindow(QMainWindow):
         self._fatal_log_handle = None
         self._init_0401_trace()
         self._enable_monitoring_faulthandler()
+        self._install_monitoring_exception_hooks()
+        self._start_monitoring_lifecycle_heartbeat()
         self._init_0501_watchdog()
 
         tabs = QTabWidget()
@@ -546,7 +588,6 @@ class MainWindow(QMainWindow):
         self._schedule_tab.set_next_collab_trigger_enabled(self._next_collab_replan_trigger_enabled)
         self._schedule_tab.set_fuel_threshold_toggle_callback(self._on_fuel_threshold_logic_toggled)
         self._schedule_tab.set_fuel_threshold_enabled(self._fuel_threshold_logic_enabled)
-        self._mission_progress_area_tab = MissionProgressAreaManagementTab()
         self._dl_risk_tab = RealtimeRiskPredictionTab()
         self._replan_management_tab = ReplanManagementTab()
         self._replan_management_tab.set_log_callback(self._append_log_line)
@@ -623,14 +664,12 @@ class MainWindow(QMainWindow):
             now_fn=_now_ms_since_2000,
             logger=self._append_log_line,
         )
+        self._start_line_scan_progress_worker()
+        self._start_area_snapshot_worker()
         self._replan_management_gate = VisualizationGateWidget(self._replan_management_tab, "임무 재계획 관리")
         self._replan_queue_gate = VisualizationGateWidget(self._replan_queue_tab, "재계획 Queue")
         self._dl_risk_gate = VisualizationGateWidget(self._dl_risk_tab, "실시간 위험도 예측")
         self._schedule_gate = VisualizationGateWidget(self._schedule_tab, "스케줄 모니터")
-        self._mission_progress_area_gate = VisualizationGateWidget(
-            self._mission_progress_area_tab,
-            "임무 진행영역 관리",
-        )
         self._quality_gate = VisualizationGateWidget(self._quality_tab, "촬영품질")
         self._turn_radius_tab = TurnRadiusMonitorTab()
         self._turn_radius_gate = VisualizationGateWidget(self._turn_radius_tab, "경로추종 모니터링")
@@ -639,10 +678,6 @@ class MainWindow(QMainWindow):
         self._viz_tab_index = tabs.addTab(self._viz_tab, "모니터링 시각화")
         self._dl_risk_tab_index = tabs.addTab(self._dl_risk_gate, "실시간 위험도 예측")
         self._schedule_tab_index = tabs.addTab(self._schedule_gate, "스케줄 모니터")
-        self._mission_progress_area_tab_index = tabs.addTab(
-            self._mission_progress_area_gate,
-            "임무 진행영역 관리",
-        )
         self._quality_tab_index = tabs.addTab(self._quality_gate, "촬영품질")
         self._turn_radius_tab_index = tabs.addTab(self._turn_radius_gate, "경로추종 모니터링")
         tabs.currentChanged.connect(self._on_tab_changed)
@@ -712,6 +747,8 @@ class MainWindow(QMainWindow):
             self._append_log_line(f"[CTRL] listener start failed: {exc}")
         self._set_mode_slider_by_text("초기화 모드")
         self._apply_power_state()
+        self._init_0401_dispatcher()
+        self._init_0402_dispatcher()
 
         threading.Thread(target=self._rx_setup, daemon=True).start()
         self._init_0102_autostart()
@@ -791,7 +828,20 @@ class MainWindow(QMainWindow):
         if cmd in {"db_root", "debug_db_root", "log_db_root"}:
             self._refresh_db_root(log_first=True)
             return
-        if cmd in {"self_check", "power", "power_on", "poweroff", "mode", "system_mode"}:
+        if cmd == "self_check":
+            try:
+                raw_status = payload.get("status", payload.get("on", 1))
+                if isinstance(raw_status, str):
+                    status = 0 if raw_status.strip().lower() in {"0", "false", "off"} else 1
+                else:
+                    status = 1 if bool(raw_status) else 0
+            except Exception:
+                status = 1
+            self._append_log_line(f"[CTRL] self_check status={status}")
+            self._ensure_0102(status == 1)
+            self._send_self_check_0102(status=status)
+            return
+        if cmd in {"power", "power_on", "poweroff", "mode", "system_mode"}:
             self._append_log_line(f"[CTRL] {payload}")
             return
 
@@ -843,6 +893,227 @@ class MainWindow(QMainWindow):
                 emit_process_log("monitoring", f"[UI] invoke failed: {exc}")
             except Exception:
                 pass
+
+    def _start_line_scan_progress_worker(self) -> None:
+        self._line_scan_progress_enabled = not self._env_true("MSM_LINE_SCAN_PROGRESS_DISABLE")
+        self._line_scan_progress_worker = None
+        if not self._line_scan_progress_enabled:
+            return
+        try:
+            min_update_ms = max(50, int(self._env_float("MSM_LINE_SCAN_UPDATE_INTERVAL_MS", 200.0)))
+            persist_ms = max(100, int(self._env_float("MSM_LINE_SCAN_PERSIST_INTERVAL_MS", 500.0)))
+            worker = LineScanProgressWorker(
+                logger=self._append_log_line,
+                min_update_interval_ms=min_update_ms,
+                persist_interval_ms=persist_ms,
+            )
+            self._line_scan_progress_worker = worker
+            worker.start()
+        except Exception as exc:
+            self._line_scan_progress_enabled = False
+            self._append_log_line(f"[LINE] progress worker start failed: {exc}")
+
+    def _line_scan_apply_mission_plan(self, mission_plan_id: int | None) -> None:
+        worker = getattr(self, "_line_scan_progress_worker", None)
+        if worker is None:
+            return
+        try:
+            worker.apply_mission_plan(mission_plan_id)
+        except Exception as exc:
+            self._append_log_line(f"[LINE] plan queue failed: {exc}")
+
+    def _line_scan_submit_agent_status(
+        self,
+        *,
+        timestamp_ms: int | None,
+        agent_states: list[dict[str, Any]],
+    ) -> None:
+        worker = getattr(self, "_line_scan_progress_worker", None)
+        if worker is None:
+            return
+        try:
+            worker.submit_agent_status(timestamp_ms=timestamp_ms, agent_states=agent_states)
+        except Exception as exc:
+            self._append_log_line(f"[LINE] 0401 queue failed: {exc}")
+
+    def _stop_line_scan_progress_worker(self) -> None:
+        worker = getattr(self, "_line_scan_progress_worker", None)
+        if worker is None:
+            return
+        try:
+            worker.stop()
+        except Exception:
+            pass
+        self._line_scan_progress_worker = None
+
+    def _start_area_snapshot_worker(self) -> None:
+        area_snapshot_env = os.getenv("MSM_AREA_SNAPSHOT_ENABLE", "").strip()
+        self._area_snapshot_enabled = True if not area_snapshot_env else self._env_true("MSM_AREA_SNAPSHOT_ENABLE")
+        self._area_snapshot_lock = threading.Lock()
+        self._area_snapshot_event = threading.Event()
+        self._area_snapshot_stop = threading.Event()
+        self._area_snapshot_plan_jobs: list[dict[str, Any]] = []
+        self._area_snapshot_latest_status: tuple[int | None, list[dict[str, Any]]] | None = None
+        self._area_snapshot_thread = None
+        if not self._area_snapshot_enabled:
+            return
+        thread = threading.Thread(
+            target=self._run_area_snapshot_worker,
+            name="MSM-AreaSnapshot",
+            daemon=True,
+        )
+        self._area_snapshot_thread = thread
+        thread.start()
+
+    def _area_snapshot_log(self, message: str) -> None:
+        try:
+            self._invoke_on_ui_thread(self._append_log_line, str(message))
+        except Exception:
+            try:
+                emit_process_log("monitoring", str(message))
+            except Exception:
+                pass
+
+    def _run_area_snapshot_worker(self) -> None:
+        try:
+            from modules.monitoring.logic.mission_area_progress_monitor import (
+                MissionProgressAreaSnapshotMonitor,
+            )
+
+            interval_ms = max(200, int(self._env_float("MSM_AREA_SNAPSHOT_INTERVAL_MS", 1000.0)))
+            update_interval_sec = (
+                max(200, int(self._env_float("MSM_AREA_SNAPSHOT_UPDATE_INTERVAL_MS", 200.0)))
+                / 1000.0
+            )
+            monitor = MissionProgressAreaSnapshotMonitor(snapshot_persist_interval_ms=interval_ms)
+        except Exception as exc:
+            self._area_snapshot_log(f"[AREA] snapshot worker init failed: {exc}")
+            return
+        stop = getattr(self, "_area_snapshot_stop", None)
+        event = getattr(self, "_area_snapshot_event", None)
+        if stop is None or event is None:
+            return
+        last_status_update_monotonic = 0.0
+        while not stop.is_set():
+            event.wait(0.5)
+            event.clear()
+            while not stop.is_set():
+                with self._area_snapshot_lock:
+                    plan_jobs = list(self._area_snapshot_plan_jobs)
+                    self._area_snapshot_plan_jobs.clear()
+                    latest_status = self._area_snapshot_latest_status
+                    self._area_snapshot_latest_status = None
+                if not plan_jobs and latest_status is None:
+                    break
+                for job in plan_jobs:
+                    try:
+                        plan_id = job.get("plan_id")
+                        if job.get("prefer_apply"):
+                            monitor.apply_mission_plan_decision(mission_plan_id=plan_id)
+                        else:
+                            monitor.update_0903(
+                                timestamp_ms=job.get("timestamp_ms"),
+                                mission_plan_id=plan_id,
+                                source=job.get("source"),
+                            )
+                    except Exception as exc:
+                        self._area_snapshot_log(f"[AREA] plan snapshot update failed: {exc}")
+                if latest_status is None:
+                    continue
+                now = time.monotonic()
+                wait_sec = float(update_interval_sec) - (now - float(last_status_update_monotonic))
+                if wait_sec > 0.0:
+                    stop.wait(wait_sec)
+                    with self._area_snapshot_lock:
+                        newer_status = self._area_snapshot_latest_status
+                        self._area_snapshot_latest_status = None
+                    if newer_status is not None:
+                        latest_status = newer_status
+                try:
+                    timestamp_ms, agent_states = latest_status
+                    monitor.update_agent_status(
+                        timestamp_ms=timestamp_ms,
+                        agent_states=agent_states,
+                        fuel_state_map=None,
+                    )
+                    last_status_update_monotonic = time.monotonic()
+                except Exception as exc:
+                    self._area_snapshot_log(f"[AREA] 0401 snapshot update failed: {exc}")
+
+    def _queue_area_snapshot_plan_update(
+        self,
+        *,
+        plan_id: int | None,
+        timestamp_ms: int | None,
+        source: str | None,
+        prefer_apply: bool,
+    ) -> None:
+        if not getattr(self, "_area_snapshot_enabled", False):
+            return
+        if plan_id is None:
+            return
+        try:
+            job = {
+                "plan_id": int(plan_id),
+                "timestamp_ms": int(timestamp_ms) if timestamp_ms is not None else None,
+                "source": source,
+                "prefer_apply": bool(prefer_apply),
+            }
+        except Exception:
+            return
+        try:
+            with self._area_snapshot_lock:
+                self._area_snapshot_plan_jobs.append(job)
+                if len(self._area_snapshot_plan_jobs) > 16:
+                    self._area_snapshot_plan_jobs = self._area_snapshot_plan_jobs[-16:]
+            self._area_snapshot_event.set()
+        except Exception:
+            pass
+
+    def _queue_area_snapshot_status_update(
+        self,
+        *,
+        timestamp_ms: int | None,
+        agent_states: list[dict[str, Any]],
+    ) -> None:
+        if not getattr(self, "_area_snapshot_enabled", False):
+            return
+        try:
+            keep_keys = {
+                "aircraft_id",
+                "current_waypoint_id",
+                "flying",
+                "filming",
+                "sensor_center_coordinate",
+                "coordinate",
+                "footprint_corners",
+            }
+            rows = [
+                {key: item.get(key) for key in keep_keys if key in item}
+                for item in (agent_states or [])
+                if isinstance(item, dict)
+            ]
+            ts = int(timestamp_ms) if timestamp_ms is not None else None
+            with self._area_snapshot_lock:
+                self._area_snapshot_latest_status = (ts, rows)
+            self._area_snapshot_event.set()
+        except Exception:
+            pass
+
+    def _stop_area_snapshot_worker(self) -> None:
+        if not getattr(self, "_area_snapshot_enabled", False):
+            return
+        try:
+            self._area_snapshot_stop.set()
+            self._area_snapshot_event.set()
+        except Exception:
+            return
+        try:
+            thread = getattr(self, "_area_snapshot_thread", None)
+            if thread is not None and thread.is_alive():
+                thread.join(timeout=1.0)
+        except Exception:
+            pass
 
     def _persist_replan_toggle(self, key: str, enabled: bool) -> None:
         try:
@@ -1065,6 +1336,150 @@ class MainWindow(QMainWindow):
                 emit_process_log("monitoring", f"[TRACE] faulthandler enable failed: {exc}")
             except Exception:
                 pass
+
+    def _write_monitoring_fatal_line(self, message: str) -> None:
+        stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        line = f"[{stamp}] {message}"
+        try:
+            handle = getattr(self, "_fatal_log_handle", None)
+            if handle is not None:
+                handle.write(line.rstrip("\n") + "\n")
+                handle.flush()
+        except Exception:
+            pass
+        try:
+            _write_monitoring_diag_line("monitoring_fatal_events.log", line)
+        except Exception:
+            pass
+
+    def _write_monitoring_lifecycle_event(self, event: str, **extra: object) -> None:
+        payload = {
+            "event": str(event),
+            "pid": int(os.getpid()),
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "time_unix": time.time(),
+            "mode_code": getattr(self, "_system_mode_code", None),
+            "mission_plan_id": getattr(self, "_current_mission_plan_id", None),
+            "thread_count": threading.active_count(),
+        }
+        try:
+            with self._0401_trace_lock:
+                payload["last_0401_state"] = dict(getattr(self, "_0401_trace_state", {}) or {})
+        except Exception:
+            pass
+        try:
+            last_0102 = float(
+                getattr(self, "_last_0102_send_monotonic", 0.0)
+                or getattr(self, "_hb_0102_last_send_monotonic", 0.0)
+                or 0.0
+            )
+            payload["last_0102_send_age_sec"] = round(
+                time.monotonic() - last_0102,
+                3,
+            ) if last_0102 > 0.0 else None
+        except Exception:
+            pass
+        try:
+            last_0501 = float(getattr(self, "_last_0501_send_monotonic", 0.0) or 0.0)
+            payload["last_0501_send_age_sec"] = round(time.monotonic() - last_0501, 3) if last_0501 > 0.0 else None
+        except Exception:
+            pass
+        payload.update({str(k): self._json_safe(v) for k, v in extra.items()})
+        try:
+            _write_monitoring_diag_line(
+                f"monitoring_lifecycle_{os.getpid()}.jsonl",
+                json.dumps(payload, ensure_ascii=False, default=str),
+            )
+        except Exception:
+            pass
+
+    def _install_monitoring_exception_hooks(self) -> None:
+        if getattr(self, "_monitoring_exception_hooks_installed", False):
+            return
+        self._monitoring_exception_hooks_installed = True
+        previous_excepthook = sys.excepthook
+        previous_unraisablehook = getattr(sys, "unraisablehook", None)
+        previous_threading_hook = getattr(threading, "excepthook", None)
+
+        def _write_exception(kind: str, exc_type, exc_value, exc_tb, *, thread_name: str | None = None) -> None:
+            try:
+                trace_text = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+            except Exception:
+                trace_text = f"{exc_type}: {exc_value}"
+            detail = {
+                "kind": kind,
+                "thread": thread_name,
+                "exception": f"{getattr(exc_type, '__name__', exc_type)}: {exc_value}",
+                "traceback": trace_text,
+            }
+            self._write_monitoring_lifecycle_event("unhandled_exception", **detail)
+            self._write_monitoring_fatal_line(
+                f"unhandled_exception kind={kind} thread={thread_name} exception={detail['exception']}\n"
+                f"{detail['traceback']}"
+            )
+
+        def _sys_excepthook(exc_type, exc_value, exc_tb):
+            _write_exception("sys.excepthook", exc_type, exc_value, exc_tb)
+            if callable(previous_excepthook) and previous_excepthook is not _sys_excepthook:
+                previous_excepthook(exc_type, exc_value, exc_tb)
+
+        def _threading_excepthook(args):
+            thread_obj = getattr(args, "thread", None)
+            _write_exception(
+                "threading.excepthook",
+                getattr(args, "exc_type", None),
+                getattr(args, "exc_value", None),
+                getattr(args, "exc_traceback", None),
+                thread_name=getattr(thread_obj, "name", None),
+            )
+            if callable(previous_threading_hook) and previous_threading_hook is not _threading_excepthook:
+                previous_threading_hook(args)
+
+        def _unraisablehook(args):
+            exc_type = getattr(args, "exc_type", None)
+            exc_value = getattr(args, "exc_value", None)
+            exc_tb = getattr(args, "exc_traceback", None)
+            object_text = repr(getattr(args, "object", None))
+            _write_exception("sys.unraisablehook", exc_type, exc_value, exc_tb, thread_name=object_text[:160])
+            if callable(previous_unraisablehook) and previous_unraisablehook is not _unraisablehook:
+                previous_unraisablehook(args)
+
+        sys.excepthook = _sys_excepthook
+        if previous_threading_hook is not None:
+            threading.excepthook = _threading_excepthook
+        if previous_unraisablehook is not None:
+            sys.unraisablehook = _unraisablehook
+        self._write_monitoring_lifecycle_event("hooks_installed")
+
+    def _start_monitoring_lifecycle_heartbeat(self) -> None:
+        if getattr(self, "_monitoring_lifecycle_thread", None) is not None:
+            return
+        stop = threading.Event()
+        self._monitoring_lifecycle_stop = stop
+        self._write_monitoring_lifecycle_event("start")
+
+        def _on_atexit() -> None:
+            self._write_monitoring_lifecycle_event("atexit")
+            self._write_monitoring_fatal_line("atexit reached")
+
+        try:
+            atexit.register(_on_atexit)
+            self._monitoring_atexit_hook = _on_atexit
+        except Exception:
+            pass
+
+        def _run() -> None:
+            interval = max(1.0, self._env_float("MSM_MONITORING_LIFECYCLE_HEARTBEAT_SEC", 5.0))
+            while not stop.wait(interval):
+                self._write_monitoring_lifecycle_event("heartbeat")
+
+        thread = threading.Thread(
+            target=_run,
+            name="MSM-LIFECYCLE",
+            daemon=True,
+        )
+        self._monitoring_lifecycle_thread = thread
+        thread.start()
 
     def _init_0401_trace(self) -> None:
         self._0401_trace_enabled = not self._env_true("MSM_0401_TRACE_DISABLE")
@@ -1663,7 +2078,6 @@ class MainWindow(QMainWindow):
                 ("_replan_queue_gate", "_replan_queue_tab", "_replan_queue_tab_index"),
                 ("_dl_risk_gate", "_dl_risk_tab", "_dl_risk_tab_index"),
                 ("_schedule_gate", "_schedule_tab", "_schedule_tab_index"),
-                ("_mission_progress_area_gate", "_mission_progress_area_tab", "_mission_progress_area_tab_index"),
                 ("_quality_gate", "_quality_tab", "_quality_tab_index"),
                 ("_turn_radius_gate", "_turn_radius_tab", "_turn_radius_tab_index"),
             )
@@ -2164,8 +2578,9 @@ class MainWindow(QMainWindow):
             return
         if idle_text is not None:
             self._last_0501_timestamp_error_ms = None
-            label.setText(f"0501 시간오차: {idle_text}")
-            label.setToolTip(
+            set_text_if_changed(label, f"0501 시간오차: {idle_text}")
+            set_tooltip_if_changed(
+                label,
                 "0501 payload timestamp와 송신 호출 시각의 차이(now - timestamp)"
             )
             self._style_0501_timestamp_error_label("idle")
@@ -2175,20 +2590,21 @@ class MainWindow(QMainWindow):
             now = int(now_ms) if now_ms is not None else int(_now_ms_since_2000())
         except Exception:
             self._last_0501_timestamp_error_ms = None
-            label.setText("0501 시간오차: 계산 실패")
+            set_text_if_changed(label, "0501 시간오차: 계산 실패")
             self._style_0501_timestamp_error_label("bad")
             return
         if ts is None or ts <= 0:
             self._last_0501_timestamp_error_ms = None
-            label.setText("0501 시간오차: timestamp 없음")
+            set_text_if_changed(label, "0501 시간오차: timestamp 없음")
             self._style_0501_timestamp_error_label("bad")
             return
         error_ms = int(now - ts)
         self._last_0501_timestamp_error_ms = error_ms
         abs_error = abs(error_ms)
         state = "ok" if abs_error <= 50 else "warn" if abs_error <= 200 else "bad"
-        label.setText(f"0501 시간오차: {error_ms:+d} ms")
-        label.setToolTip(
+        set_text_if_changed(label, f"0501 시간오차: {error_ms:+d} ms")
+        set_tooltip_if_changed(
+            label,
             "0501 timestamp 실시간성 확인\n"
             f"now - payload.timestamp = {error_ms:+d} ms\n"
             f"payload.timestamp = {ts}\n"
@@ -2446,48 +2862,237 @@ class MainWindow(QMainWindow):
     def _start_0102_autostart(self, _retry: int = 0) -> None:
         if not self._power_on:
             return
-        if not self._ensure_0102_periodic():
+        if not getattr(self, "_bus_ready", False):
+            if _retry == 0:
+                self._append_log_line("[0102] NodeMessenger 초기화 대기 중 - heartbeat 시작 보류")
+            if _retry < 30:
+                QTimer.singleShot(300, lambda: self._start_0102_autostart(_retry + 1))
+                return
+            self._append_log_line("[WARN] NodeMessenger 준비 지연 - 0102 heartbeat 강제 시작")
+        if not self._ensure_0102(True):
             if _retry < 10:
                 QTimer.singleShot(300, lambda: self._start_0102_autostart(_retry + 1))
             return
-        self._send_self_check_0102()
+        self._send_self_check_0102(status=1)
 
     def _ensure_0102_periodic(self) -> bool:
-        tab = getattr(self, "_tab", None)
-        if tab is None:
+        return self._ensure_0102(True)
+
+    def _set_0102_tx_state(self, running: bool) -> None:
+        try:
+            row = self._find_tx_row("0102")
+            if row < 0:
+                return
+            state_item = self._tab.tbl_tx.item(row, 2)
+            if state_item is None:
+                return
+            if running:
+                state_item.setText("주기송신(5Hz/HB)")
+                state_item.setForeground(QColor("blue"))
+            else:
+                state_item.setText("전송 정지")
+        except Exception:
+            pass
+
+    def _build_0102_body(self, *, status: int = 1) -> dict:
+        return {
+            "timestamp": _now_ms_since_2000(),
+            "status": int(status),
+            "source": "MSM",
+        }
+
+    def _stop_tab_periodic_0102_if_running(self) -> None:
+        try:
+            tab = getattr(self, "_tab", None)
+            timers = getattr(tab, "periodic_timers", {}) if tab is not None else {}
+            timer = timers.get("0102")
+            if timer is not None:
+                timer.stop()
+                timer.deleteLater()
+                del timers["0102"]
+            templates = getattr(tab, "_periodic_payload_templates", None)
+            if isinstance(templates, dict):
+                templates.pop("0102", None)
+        except Exception:
+            pass
+
+    def _ensure_0102(self, on: bool) -> bool:
+        if on and not self._power_on:
+            self._append_log_line("[BLOCK] Power OFF - 0102 heartbeat 차단")
             return False
-        if "0102" in getattr(tab, "periodic_timers", {}):
-            return True
         row = self._find_tx_row("0102")
         if row < 0:
             self._append_log_line("[0102] TX table row not found")
             return False
         try:
-            if hasattr(tab, "send_tx_row"):
-                return bool(tab.send_tx_row(row, interactive=False))
-            tab._on_tx_button_clicked(row)
+            self._set_0102_heartbeat_enabled(bool(on))
             return True
         except Exception as exc:
-            self._append_log_line(f"[0102] Auto-start failed: {exc}")
+            self._append_log_line(f"[0102] heartbeat control failed: {exc}")
             return False
 
-    def _send_self_check_0102(self) -> bool:
+    def _set_0102_heartbeat_enabled(self, enabled: bool) -> None:
+        self._hb_0102_enabled = bool(enabled)
+        self._stop_tab_periodic_0102_if_running()
+        if self._hb_0102_enabled:
+            self._start_0102_heartbeat_worker_if_needed()
+            self._set_0102_tx_state(True)
+        else:
+            self._set_0102_tx_state(False)
+            try:
+                self._hb_0102_stop.set()
+            except Exception:
+                pass
+
+    def _start_0102_heartbeat_worker_if_needed(self) -> None:
+        th = getattr(self, "_hb_0102_thread", None)
+        if th is not None and th.is_alive():
+            return
+        self._hb_0102_stop.clear()
+        self._hb_0102_thread = threading.Thread(
+            target=self._run_0102_heartbeat_worker,
+            name="MSM-0102-HB",
+            daemon=True,
+        )
+        self._hb_0102_thread.start()
+        try:
+            emit_process_log("monitoring", "[0102] heartbeat worker started (5Hz)")
+        except Exception:
+            pass
+
+    def _push_0102_body(self, push_message, body: dict, *, wait_sec: float = 0.0) -> tuple[bool, bytes | None, str]:
+        raw_holder: dict[str, bytes | None] = {"raw": None}
+
+        def _on_done(_mid: str, raw: bytes | None) -> None:
+            raw_holder["raw"] = raw
+
+        lock = getattr(self, "_nfusion_push_lock", None)
+        acquired = False
+        if lock is not None:
+            try:
+                wait = max(0.0, float(wait_sec))
+                acquired = lock.acquire(timeout=wait) if wait > 0.0 else lock.acquire(blocking=False)
+            except Exception:
+                acquired = False
+            if not acquired:
+                return False, None, "push lock busy"
+        try:
+            ok = bool(push_message("0102", NodeMessenger, body_dict=body, on_done=_on_done))
+            return ok, raw_holder.get("raw"), "" if ok else "push_message returned False"
+        except Exception as exc:
+            return False, None, str(exc)
+        finally:
+            if lock is not None and acquired:
+                try:
+                    lock.release()
+                except Exception:
+                    pass
+
+    def _mark_0102_sent(self, raw: bytes | None) -> None:
+        tab = getattr(self, "_tab", None)
+        if tab is not None and hasattr(tab, "mark_sent"):
+            try:
+                tab.mark_sent("0102", raw)
+            except Exception:
+                pass
+
+    def _run_0102_heartbeat_worker(self) -> None:
+        try:
+            from push_center import push_message
+        except Exception as exc:
+            try:
+                emit_process_log("monitoring", f"[0102] heartbeat import failed: {exc}")
+            except Exception:
+                pass
+            return
+
+        try:
+            interval = max(0.05, float(getattr(self, "_hb_0102_interval_sec", 0.2) or 0.2))
+        except Exception:
+            interval = 0.2
+        next_due = time.monotonic() + interval
+        last_warn = 0.0
+
+        while not self._hb_0102_stop.is_set():
+            if (
+                not bool(getattr(self, "_hb_0102_enabled", False))
+                or not bool(getattr(self, "_power_on", True))
+                or not bool(getattr(self, "_bus_ready", False))
+            ):
+                self._hb_0102_stop.wait(0.1)
+                next_due = time.monotonic() + interval
+                continue
+
+            now = time.monotonic()
+            if now < next_due:
+                self._hb_0102_stop.wait(min(0.05, next_due - now))
+                continue
+            if now - next_due > interval:
+                next_due = now + interval
+            else:
+                next_due += interval
+
+            body = self._build_0102_body(status=1)
+            push_started = time.monotonic()
+            ok, raw, reason = self._push_0102_body(push_message, body, wait_sec=0.2)
+            elapsed = time.monotonic() - push_started
+            if ok:
+                self._last_0102_send_monotonic = time.monotonic()
+                self._invoke_on_ui_thread(self._mark_0102_sent, raw)
+                if elapsed >= 0.2 and time.monotonic() - last_warn >= 5.0:
+                    try:
+                        emit_process_log("monitoring", f"[0102] heartbeat slow push elapsed={elapsed:.3f}s")
+                    except Exception:
+                        pass
+                    last_warn = time.monotonic()
+            elif time.monotonic() - last_warn >= 5.0:
+                try:
+                    emit_process_log("monitoring", f"[0102] heartbeat send skipped: {reason}")
+                except Exception:
+                    pass
+                last_warn = time.monotonic()
+        try:
+            emit_process_log("monitoring", "[0102] heartbeat worker stopped")
+        except Exception:
+            pass
+
+    def _stop_0102_sender(self) -> None:
+        self._set_0102_heartbeat_enabled(False)
+
+    def _send_self_check_0102(self, status: int = 1, _retry: int = 0) -> bool:
+        try:
+            status_int = int(status)
+        except Exception:
+            status_int = 1
+        if _retry == 0:
+            try:
+                self._ensure_0102(status_int == 1)
+            except Exception:
+                pass
+        if not self._power_on:
+            self._append_log_line("[BLOCK] Power OFF - 0102 단발 송신 차단")
+            return False
+        if not getattr(self, "_bus_ready", False):
+            if _retry == 0:
+                self._append_log_line("[0102] NodeMessenger 초기화 대기 중 - 단발 송신 보류")
+            if _retry < 10:
+                QTimer.singleShot(300, lambda: self._send_self_check_0102(status=status_int, _retry=_retry + 1))
+                return False
+            self._append_log_line("[WARN] NodeMessenger 준비 지연 - 0102 단발 강제 송신")
         try:
             from push_center import push_message
         except Exception as exc:
             self._append_log_line(f"[0102] push import failed: {exc}")
             return False
-        body = {
-            "timestamp": _now_ms_since_2000(),
-            "status": 1,
-            "source": "MSM",
-        }
+        body = self._build_0102_body(status=status_int)
         try:
-            ok = push_message("0102", NodeMessenger, body_dict=body)
+            ok, raw, reason = self._push_0102_body(push_message, body, wait_sec=0.0)
             if ok:
-                self._append_log_line("[0102] status=1 sent")
+                self._last_0102_send_monotonic = time.monotonic()
+                self._mark_0102_sent(raw)
+                self._append_log_line(f"[0102] status={status_int} sent")
             else:
-                self._append_log_line("[0102] send failed")
+                self._append_log_line(f"[0102] send failed: {reason}")
             return bool(ok)
         except Exception as exc:
             self._append_log_line(f"[0102] send error: {exc}")
@@ -2615,6 +3220,7 @@ class MainWindow(QMainWindow):
             self._append_log_line("[POWER] periodic TX 정지")
         except Exception:
             pass
+        self._stop_0102_sender()
         self._stop_0501_sender()
 
     def _on_0503_recommend(self, recommend: int, input_id: int | None = None) -> None:
@@ -2793,6 +3399,8 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _extract_positive_int(value: object) -> int | None:
+        if value is None:
+            return None
         try:
             parsed = int(value)
         except Exception:
@@ -3087,10 +3695,20 @@ class MainWindow(QMainWindow):
         )
         self._queue_0402_replan_payloads(replan_payloads)
 
-    def _schedule_replan_queue_drain(self) -> None:
+    def _schedule_replan_queue_drain(self, delay_ms: int = 0) -> None:
         if not self._is_ui_thread():
-            self._invoke_on_ui_thread(self._schedule_replan_queue_drain)
+            self._invoke_on_ui_thread(lambda: self._schedule_replan_queue_drain(delay_ms=delay_ms))
             return
+        try:
+            delay_value = max(0, int(delay_ms))
+        except Exception:
+            delay_value = 0
+        if delay_value > 0:
+            hold_until = int(time.time() * 1000) + int(delay_value)
+            self._replan_queue_drain_not_before_ms = max(
+                int(getattr(self, "_replan_queue_drain_not_before_ms", 0) or 0),
+                int(hold_until),
+            )
         # Avoid re-entrant 0902 sends while we are still inside an incoming
         # message callback (notably 0001 option-suppression after 0402 bursts).
         if self._replan_queue_draining:
@@ -3099,7 +3717,11 @@ class MainWindow(QMainWindow):
         if self._replan_queue_drain_scheduled:
             return
         self._replan_queue_drain_scheduled = True
-        QTimer.singleShot(0, self._drain_replan_queue)
+        hold_remaining_ms = max(
+            0,
+            int(getattr(self, "_replan_queue_drain_not_before_ms", 0) or 0) - int(time.time() * 1000),
+        )
+        QTimer.singleShot(max(delay_value, hold_remaining_ms), self._drain_replan_queue)
 
     def _drain_replan_queue(self) -> None:
         if not self._is_ui_thread():
@@ -3111,6 +3733,14 @@ class MainWindow(QMainWindow):
         manager = getattr(self, "_replan_queue_manager", None)
         if manager is None:
             self._replan_queue_drain_scheduled = False
+            return
+        hold_remaining_ms = max(
+            0,
+            int(getattr(self, "_replan_queue_drain_not_before_ms", 0) or 0) - int(time.time() * 1000),
+        )
+        if hold_remaining_ms > 0:
+            self._replan_queue_drain_scheduled = True
+            QTimer.singleShot(hold_remaining_ms, self._drain_replan_queue)
             return
         self._replan_queue_drain_scheduled = False
         self._replan_queue_draining = True
@@ -3150,7 +3780,11 @@ class MainWindow(QMainWindow):
         finally:
             self._replan_queue_draining = False
             if self._replan_queue_drain_scheduled:
-                QTimer.singleShot(0, self._drain_replan_queue)
+                hold_remaining_ms = max(
+                    0,
+                    int(getattr(self, "_replan_queue_drain_not_before_ms", 0) or 0) - int(time.time() * 1000),
+                )
+                QTimer.singleShot(hold_remaining_ms, self._drain_replan_queue)
 
     def _push_0902_now(self, payload: dict, *, already_prepared: bool = False) -> bool:
         try:
@@ -3347,6 +3981,64 @@ class MainWindow(QMainWindow):
         meta = self._replan_option_meta_by_plan_id.get(int(mission_plan_id))
         return dict(meta) if isinstance(meta, dict) else None
 
+    def _clear_attack_tracking_for_exclusion_targets(self, target_entries: list[dict[str, int | None]]) -> None:
+        target_ids = {
+            int(entry["targetID"])
+            for entry in target_entries
+            if isinstance(entry, dict) and self._extract_positive_int(entry.get("targetID")) is not None
+        }
+        watcher_target_by_aircraft: dict[int, int | None] = {}
+        for entry in target_entries:
+            if not isinstance(entry, dict):
+                continue
+            watcher_id = self._extract_positive_int(entry.get("watcherID"))
+            if watcher_id is None:
+                continue
+            watcher_target_by_aircraft[int(watcher_id)] = self._extract_positive_int(entry.get("targetID"))
+        if not target_ids and not watcher_target_by_aircraft:
+            return
+
+        try:
+            from modules.mission_planning.runtime.state.attack_tracking import (
+                clear_tracking_assignment,
+                list_active_tracking_assignments,
+            )
+        except Exception as exc:
+            self._append_log_line(f"[0702] 공격 배제 추적 해제 모듈 로드 실패: {exc}")
+            return
+
+        cleared_ids: list[int] = []
+        try:
+            for assignment in list_active_tracking_assignments():
+                if not isinstance(assignment, dict):
+                    continue
+                aircraft_id = self._extract_positive_int(assignment.get("aircraft_id"))
+                assigned_target_id = self._extract_positive_int(assignment.get("target_id"))
+                if aircraft_id is None:
+                    continue
+
+                should_clear = assigned_target_id is not None and assigned_target_id in target_ids
+                expected_target_id = watcher_target_by_aircraft.get(int(aircraft_id))
+                if not should_clear and int(aircraft_id) in watcher_target_by_aircraft:
+                    should_clear = (
+                        expected_target_id is None
+                        or assigned_target_id is None
+                        or int(assigned_target_id) == int(expected_target_id)
+                    )
+                if not should_clear:
+                    continue
+                clear_tracking_assignment(int(aircraft_id))
+                cleared_ids.append(int(aircraft_id))
+        except Exception as exc:
+            self._append_log_line(f"[0702] 공격 배제 추적 해제 실패: {exc}")
+            return
+
+        if cleared_ids:
+            aircraft_text = ",".join(str(aid) for aid in sorted(set(cleared_ids)))
+            self._append_log_line(
+                f"[0702] 공격 배제 선택 -> UAV 추적 해제 반영 (aircraftID={aircraft_text})"
+            )
+
     def _apply_attack_exclusion_ignore(self, mission_plan_id: int) -> bool:
         meta = self._plan_option_meta(mission_plan_id)
         if not isinstance(meta, dict):
@@ -3393,6 +4085,7 @@ class MainWindow(QMainWindow):
             self._append_log_line(
                 f"[0702] 공격 배제 ignore 반영 실패: {exc}"
             )
+        self._clear_attack_tracking_for_exclusion_targets(target_entries)
         return True
 
     def _commit_pending_attack_slot(self, mission_plan_id: int) -> None:
@@ -3801,22 +4494,141 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self._append_log_line(f"[0202] listener registration failed: {exc}")
 
+    def _init_0401_dispatcher(self) -> None:
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+        timer.setInterval(int(getattr(self, "_0401_coalesce_ms", 80) or 80))
+        timer.timeout.connect(self._drain_0401_payload)
+        self._0401_drain_timer = timer
+
+    def _init_0402_dispatcher(self) -> None:
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+        timer.setInterval(int(getattr(self, "_0402_coalesce_ms", 120) or 120))
+        timer.timeout.connect(self._drain_0402_payload)
+        self._0402_drain_timer = timer
+
+    def _payload_signature(self, payload: object | None) -> bytes | None:
+        if payload is None:
+            return None
+        if isinstance(payload, bytes):
+            raw = payload
+        elif isinstance(payload, bytearray):
+            raw = bytes(payload)
+        elif isinstance(payload, str):
+            raw = payload.encode("utf-8", "ignore")
+        else:
+            try:
+                raw = json.dumps(
+                    payload,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    default=str,
+                ).encode("utf-8", "ignore")
+            except Exception:
+                raw = repr(payload).encode("utf-8", "ignore")
+        try:
+            text = raw.decode("utf-8", "ignore")
+            match = re.search(r"\{.*\}", text, flags=re.S)
+            if match:
+                obj = json.loads(match.group(0))
+                return json.dumps(
+                    obj,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    default=str,
+                ).encode("utf-8", "ignore")
+        except Exception:
+            pass
+        return raw
+
+    def _enqueue_0401_payload(self, payload: object | None) -> None:
+        signature = self._payload_signature(payload)
+        with self._0401_pending_lock:
+            if signature is not None and signature == self._0401_last_signature:
+                return
+            self._0401_last_signature = signature
+            self._0401_pending_payload = payload
+            if self._0401_pending_scheduled:
+                return
+            self._0401_pending_scheduled = True
+        self._invoke_on_ui_thread(self._schedule_0401_drain)
+
+    def _schedule_0401_drain(self) -> None:
+        timer = getattr(self, "_0401_drain_timer", None)
+        if timer is None:
+            self._drain_0401_payload()
+            return
+        if not timer.isActive():
+            timer.start(int(getattr(self, "_0401_coalesce_ms", 80) or 80))
+
+    def _drain_0401_payload(self) -> None:
+        with self._0401_pending_lock:
+            payload = self._0401_pending_payload
+            self._0401_pending_payload = None
+            self._0401_pending_scheduled = False
+        if payload is None:
+            return
+        self._on_rx_0401(payload)
+        should_reschedule = False
+        with self._0401_pending_lock:
+            if self._0401_pending_payload is not None and not self._0401_pending_scheduled:
+                self._0401_pending_scheduled = True
+                should_reschedule = True
+        if should_reschedule:
+            self._schedule_0401_drain()
+
+    def _enqueue_0402_payload(self, payload: object | None) -> None:
+        signature = self._payload_signature(payload)
+        with self._0402_pending_lock:
+            if signature is not None and signature == self._0402_last_signature:
+                return
+            self._0402_last_signature = signature
+            self._0402_pending_payload = payload
+            if self._0402_pending_scheduled:
+                return
+            self._0402_pending_scheduled = True
+        self._invoke_on_ui_thread(self._schedule_0402_drain)
+
+    def _schedule_0402_drain(self) -> None:
+        timer = getattr(self, "_0402_drain_timer", None)
+        if timer is None:
+            self._drain_0402_payload()
+            return
+        if not timer.isActive():
+            timer.start(int(getattr(self, "_0402_coalesce_ms", 120) or 120))
+
+    def _drain_0402_payload(self) -> None:
+        with self._0402_pending_lock:
+            payload = self._0402_pending_payload
+            self._0402_pending_payload = None
+            self._0402_pending_scheduled = False
+        if payload is None:
+            return
+        self._on_rx_0402(payload)
+        should_reschedule = False
+        with self._0402_pending_lock:
+            if self._0402_pending_payload is not None and not self._0402_pending_scheduled:
+                self._0402_pending_scheduled = True
+                should_reschedule = True
+        if should_reschedule:
+            self._schedule_0402_drain()
+
     def _install_0401_listener(self) -> None:
         def _rx_0401(_msg_id: str, payload: object | None):
             try:
                 raw_latest = self._unwrap_payload(payload)
                 if raw_latest:
-                    last_raw = getattr(self, "_last_0401_raw", None)
-                    if last_raw is not None and raw_latest == last_raw:
-                        return
                     self._last_0401_raw = raw_latest
-                    self._invoke_on_ui_thread(self._on_rx_0401, raw_latest)
-                    return
-                self._invoke_on_ui_thread(self._on_rx_0401, payload)
+                    self._enqueue_0401_payload(raw_latest)
+                else:
+                    self._enqueue_0401_payload(payload)
             except Exception:
                 pass
 
         try:
+            _rx_0401.receive_coalesce_messages = {"0401": self._0401_coalesce_ms}
             self._rx0401_handler = _rx_0401
             register_listener("0401", self._rx0401_handler)
         except Exception as exc:
@@ -3839,11 +4651,12 @@ class MainWindow(QMainWindow):
                         self._last_0402_ms = int(time.time() * 1000)
                     except Exception:
                         pass
-                self._invoke_on_ui_thread(self._on_rx_0402, raw_latest if raw_latest else payload)
+                self._enqueue_0402_payload(raw_latest if raw_latest else payload)
             except Exception:
                 pass
 
         try:
+            _rx_0402.receive_coalesce_messages = {"0402": self._0402_coalesce_ms}
             self._rx0402_handler = _rx_0402
             register_listener("0402", self._rx0402_handler)
         except Exception as exc:
@@ -3898,6 +4711,7 @@ class MainWindow(QMainWindow):
             released, logs = manager.handle_0305(payload)
             for line in logs:
                 self._append_log_line(line)
+            self._recover_suppressed_target_replan(manager, "0305")
             self._refresh_replan_queue_snapshot()
             if released:
                 self._schedule_replan_queue_drain()
@@ -3926,12 +4740,9 @@ class MainWindow(QMainWindow):
             released, logs = manager.handle_0001(payload)
             for line in logs:
                 self._append_log_line(line)
+            self._recover_suppressed_target_replan(manager, "0001")
             self._refresh_replan_queue_snapshot()
             if released:
-                try:
-                    self._unmark_suppressed_target(manager)
-                except Exception as exc:
-                    self._append_log_line(f"[RQUEUE] target unmark failed: {exc}")
                 self._schedule_replan_queue_drain()
         except Exception as exc:
             self._append_log_line(f"[RQUEUE] 0001 handling error: {exc}")
@@ -3967,15 +4778,60 @@ class MainWindow(QMainWindow):
 
         return target_ids
 
-    def _unmark_suppressed_target(self, manager: object) -> None:
+    def _recover_suppressed_target_replan(self, manager: object, signal_name: str) -> None:
+        reset_target_ids = self._unmark_suppressed_target(manager)
+        if not reset_target_ids:
+            return
+
+        coord = getattr(self, "_target_detection_coord", None)
+        if coord is None:
+            return
+        try:
+            clearer = getattr(coord, "clear_target_trigger_history", None)
+            if callable(clearer):
+                cleared_ids = clearer(reset_target_ids)
+                if cleared_ids:
+                    self._append_log_line(
+                        "[RQUEUE] target trigger cooldown cleared for targetIDs="
+                        + ",".join(str(target_id) for target_id in sorted(cleared_ids))
+                        + f" (option_suppressed/{signal_name})"
+                    )
+        except Exception as exc:
+            self._append_log_line(f"[RQUEUE] target trigger cooldown clear failed: {exc}")
+
+        if not bool(getattr(self, "_target_detection_replan_enabled", False)):
+            return
+        if not hasattr(coord, "on_situation_awareness"):
+            return
+        try:
+            replan_payloads, logs = coord.on_situation_awareness(
+                None,
+                system_mode=self._system_mode_code,
+                current_mission_plan_id=self._current_mission_plan_id,
+            )
+        except Exception as exc:
+            self._append_log_line(f"[RQUEUE] suppressed target retry build failed: {exc}")
+            return
+        for line in logs:
+            self._append_log_line(line)
+        if not replan_payloads:
+            return
+        self._append_log_line(
+            "[RQUEUE] target replan retry queued after option_suppressed: targetIDs="
+            + ",".join(str(target_id) for target_id in sorted(reset_target_ids))
+        )
+        self._queue_0402_replan_payloads(replan_payloads)
+
+    def _unmark_suppressed_target(self, manager: object) -> set[int]:
         """option_suppressed로 완료된 항목의 표적 isUsed를 해제하여 다음 재계획 번들에 포함되게 한다."""
+        reset_ids: set[int] = set()
         try:
             history = getattr(manager, "_history", None)
             if not history:
-                return
+                return reset_ids
             last = history[0]
             if str(getattr(last, "status", "")) != "option_suppressed":
-                return
+                return reset_ids
             plan_ids = [
                 int(plan_id)
                 for plan_id in (getattr(last, "plan_ids", None) or [])
@@ -3989,7 +4845,7 @@ class MainWindow(QMainWindow):
                 )
             suppressed_target_ids = self._extract_target_ids_from_replan_queue_item(last)
             if not suppressed_target_ids:
-                return
+                return reset_ids
 
             protected_target_ids: set[int] = set()
             active = getattr(manager, "_active", None)
@@ -4006,12 +4862,12 @@ class MainWindow(QMainWindow):
                 if int(target_id) not in protected_target_ids
             }
             if not reset_target_ids:
-                return
+                return reset_ids
 
             info = load_target_info()
             target_map = info.get("targetList")
             if not isinstance(target_map, dict):
-                return
+                return reset_ids
             changed = False
             for entry in target_map.values():
                 if not isinstance(entry, dict):
@@ -4021,17 +4877,19 @@ class MainWindow(QMainWindow):
                     continue
                 if entry_tid in reset_target_ids and entry.get("isUsed") == 1:
                     entry["isUsed"] = 0
+                    reset_ids.add(int(entry_tid))
                     changed = True
             if changed:
                 from modules.monitoring.logic.target_info import save_target_info
                 save_target_info(info)
                 self._append_log_line(
                     "[RQUEUE] target isUsed reset for targetIDs="
-                    + ",".join(str(target_id) for target_id in sorted(reset_target_ids))
+                    + ",".join(str(target_id) for target_id in sorted(reset_ids))
                     + " (option_suppressed)"
                 )
         except Exception as exc:
             self._append_log_line(f"[RQUEUE] target unmark failed: {exc}")
+        return reset_ids
 
     def _on_rx_0903(self, payload: object | None) -> None:
         ts, mpid, source, _body = extract_0903_info(payload)
@@ -4041,6 +4899,13 @@ class MainWindow(QMainWindow):
         if mpid is None:
             return
         generation = self._next_plan_apply_generation()
+        self._line_scan_apply_mission_plan(mpid)
+        self._queue_area_snapshot_plan_update(
+            plan_id=mpid,
+            timestamp_ms=ts,
+            source=source,
+            prefer_apply=False,
+        )
         viz = getattr(self, "_viz_tab", None)
         if viz is None or not hasattr(viz, "update_0903"):
             viz = None
@@ -4053,6 +4918,13 @@ class MainWindow(QMainWindow):
             pass
         if viz_applied:
             self._kick_0501_sender()
+        self._line_scan_apply_mission_plan(mpid)
+        self._queue_area_snapshot_plan_update(
+            plan_id=mpid,
+            timestamp_ms=ts,
+            source=source,
+            prefer_apply=True,
+        )
         self._defer_plan_tab_updates(
             plan_id=mpid,
             timestamp_ms=ts,
@@ -4062,7 +4934,6 @@ class MainWindow(QMainWindow):
             log_prefix="[0903]",
             tab_jobs=(
                 ("_schedule_tab", "schedule tab", 20),
-                ("_mission_progress_area_tab", "mission-area tab", 60),
                 ("_quality_tab", "quality tab", 100),
             ),
         )
@@ -4095,7 +4966,7 @@ class MainWindow(QMainWindow):
                 self._append_log_line(line)
             self._refresh_replan_queue_snapshot()
             if released:
-                self._schedule_replan_queue_drain()
+                self._schedule_replan_queue_drain(delay_ms=1000)
             self._maybe_resume_deferred_attack_replans("0702")
         except Exception as exc:
             self._append_log_line(f"[RQUEUE] 0702 handling error: {exc}")
@@ -4153,6 +5024,25 @@ class MainWindow(QMainWindow):
             self._handle_replan_queue_0702(payload)
             return
 
+        manager = getattr(self, "_replan_queue_manager", None)
+        if manager is not None and hasattr(manager, "validate_0702_decision"):
+            try:
+                accepted, validation_logs = manager.validate_0702_decision(
+                    mission_plan_id=plan_id_int,
+                    ignore_value=ignore_val,
+                )
+            except Exception as exc:
+                accepted, validation_logs = True, [f"[RQUEUE] 0702 validation failed: {exc}"]
+            for line in validation_logs:
+                self._append_log_line(line)
+            if not accepted:
+                detail = f"시간: {ts_text}\nmissionPlanID: {plan_id_int}"
+                if source:
+                    detail = f"{detail}\nsource: {source}"
+                self._update_0702_status(status="무시됨(stale)", detail=detail)
+                self._refresh_replan_queue_snapshot()
+                return
+
         applied = self._try_apply_0702_plan(
             plan_id_int,
             timestamp_ms=ts,
@@ -4194,6 +5084,25 @@ class MainWindow(QMainWindow):
         ts = getattr(self, "_pending_0702_ts", None)
         source = getattr(self, "_pending_0702_source", None)
         decision_key = getattr(self, "_pending_0702_key", None) or (ts, 2, plan_id)
+        manager = getattr(self, "_replan_queue_manager", None)
+        if manager is not None and hasattr(manager, "validate_0702_decision"):
+            try:
+                accepted, validation_logs = manager.validate_0702_decision(
+                    mission_plan_id=int(plan_id),
+                    ignore_value=2,
+                )
+            except Exception as exc:
+                accepted, validation_logs = True, [f"[RQUEUE] pending 0702 validation failed: {exc}"]
+            for line in validation_logs:
+                self._append_log_line(line)
+            if not accepted:
+                self._update_0702_status(
+                    status="무시됨(stale)",
+                    detail=f"시간: {format_timestamp_ms(ts)}\nmissionPlanID: {int(plan_id)}",
+                )
+                self._clear_pending_0702()
+                self._refresh_replan_queue_snapshot()
+                return
         applied = self._try_apply_0702_plan(
             int(plan_id),
             timestamp_ms=ts,
@@ -4272,7 +5181,6 @@ class MainWindow(QMainWindow):
             tab_jobs=(
                 ("_schedule_tab", "schedule tab", 20),
                 ("_quality_tab", "quality tab", 60),
-                ("_mission_progress_area_tab", "mission-area tab", 100),
             ),
         )
         try:
@@ -4381,6 +5289,7 @@ class MainWindow(QMainWindow):
             self._apply_forced_availability(stage="0201")
         reexecute_active = False
         reexecute_dispatched = False
+        reexecute_consumed_input = False
         try:
             coord = getattr(self, "_reexecute_coord", None)
             if coord is not None:
@@ -4402,6 +5311,10 @@ class MainWindow(QMainWindow):
                     reexecute_dispatched = True
                     self._queue_replan_payloads([replan_payload], source="reexecute_0201")
                 try:
+                    reexecute_consumed_input = bool(coord.has_dispatched_input_plan(payload))
+                except Exception:
+                    reexecute_consumed_input = False
+                try:
                     reexecute_active = bool(reexecute_active or reexecute_dispatched or coord.is_active())
                 except Exception:
                     pass
@@ -4414,13 +5327,15 @@ class MainWindow(QMainWindow):
             input_refresh_cfg = get_input_refresh_settings()
             block_when_reexecute_active = bool(input_refresh_cfg.get("block_when_reexecute_active", True))
             refresh_blocked = bool(
-                reexecute_dispatched or (reexecute_active and block_when_reexecute_active)
+                reexecute_dispatched
+                or reexecute_consumed_input
+                or (reexecute_active and block_when_reexecute_active)
             )
             if not self._input_refresh_replan_enabled:
                 self._append_log_line("[REINPUT] monitoring trigger OFF -> skip 0902 replan on 0201")
                 return
             if refresh_blocked:
-                if reexecute_dispatched:
+                if reexecute_dispatched or reexecute_consumed_input:
                     self._append_log_line("[REINPUT] skipped: reexecute 0201 already handled")
                 else:
                     self._append_log_line("[REINPUT] skipped: reexecute-wait mode is active")
@@ -4485,6 +5400,14 @@ class MainWindow(QMainWindow):
                     self._latest_0401_agent_states = list(states or [])
                 except Exception:
                     pass
+                self._line_scan_submit_agent_status(
+                    timestamp_ms=ts,
+                    agent_states=list(states or []),
+                )
+                self._queue_area_snapshot_status_update(
+                    timestamp_ms=ts,
+                    agent_states=list(states or []),
+                )
 
             with self._trace_0401_phase(seq, "availability_bootstrap", state_count=len(states)):
                 try:
@@ -4615,22 +5538,6 @@ class MainWindow(QMainWindow):
                     self._log_suppressed_exception(
                         "0401_quality_tab",
                         "[0401] quality tab update failed",
-                        exc,
-                    )
-
-            with self._trace_0401_phase(seq, "area_tab"):
-                area_tab = getattr(self, "_mission_progress_area_tab", None)
-                try:
-                    if area_tab is not None and hasattr(area_tab, "update_agent_status"):
-                        area_tab.update_agent_status(
-                            timestamp_ms=ts,
-                            agent_states=states,
-                            fuel_state_map=fuel_state_map,
-                        )
-                except Exception as exc:
-                    self._log_suppressed_exception(
-                        "0401_area_tab",
-                        "[0401] area tab update failed",
                         exc,
                     )
 
@@ -4896,21 +5803,78 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self._append_log_line(f"[0902] forced-command-on-0802 error: {exc}")
 
+    def _replan_queue_blocker_for_0803(self) -> dict[str, Any] | None:
+        manager = getattr(self, "_replan_queue_manager", None)
+        if manager is None or not hasattr(manager, "find_0803_option_decision_blocker"):
+            return None
+        try:
+            blocker = manager.find_0803_option_decision_blocker()
+        except Exception as exc:
+            self._append_log_line(f"[0803] option-decision queue check failed: {exc}")
+            return None
+        return dict(blocker) if isinstance(blocker, dict) else None
+
     def _on_rx_0803(self, payload: object | None) -> None:
         _ts, execute, _source, _body = extract_0803_execute(payload)
         if execute is None:
             return
-        try:
-            coord = getattr(self, "_reexecute_coord", None)
-            if coord is not None:
-                for line in coord.on_execute(execute):
-                    self._append_log_line(line)
-        except Exception as exc:
-            self._append_log_line(f"[0902] reexecute-on-0803 error: {exc}")
-
+        reexecute_handled = False
         next_collab_trigger_enabled = bool(getattr(self, "_next_collab_replan_trigger_enabled", False))
         if int(execute) == 1 and next_collab_trigger_enabled:
             try:
+                try:
+                    next_collab_0803_signature = json.dumps(
+                        {
+                            "timestamp": _ts,
+                            "execute": execute,
+                            "source": _source,
+                            "body": _body,
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        default=str,
+                    )
+                except Exception:
+                    next_collab_0803_signature = repr((_ts, execute, _source, _body))
+                now_wall_ms = int(time.time() * 1000)
+                last_signature = getattr(self, "_last_next_collab_0803_signature", None)
+                last_signature_ms = getattr(self, "_last_next_collab_0803_signature_ms", 0)
+                try:
+                    last_signature_ms_int = int(last_signature_ms or 0)
+                except Exception:
+                    last_signature_ms_int = 0
+                if (
+                    last_signature == next_collab_0803_signature
+                    and last_signature_ms_int > 0
+                    and now_wall_ms - last_signature_ms_int <= 5000
+                ):
+                    self._append_log_line("[0803] duplicate next-collab execute ignored")
+                    return
+                blocker = self._replan_queue_blocker_for_0803()
+                if blocker is not None:
+                    reason = str(blocker.get("reason") or "-").strip() or "-"
+                    source_label = str(blocker.get("source_label") or "").strip()
+                    queue_id = blocker.get("queue_id")
+                    queue_text = f"#{queue_id} " if queue_id is not None else ""
+                    label_text = f"{source_label}: " if source_label else ""
+                    notice = f"임무계획이 진행중입니다. 진행중인 재계획 사유: {label_text}{reason}"
+                    self._send_0001_notice(notice)
+                    self._append_log_line(
+                        "[0803] next-collab replan blocked: option decision pending "
+                        f"({queue_text}{label_text}{reason})"
+                    )
+                    self._last_next_collab_0803_signature = next_collab_0803_signature
+                    self._last_next_collab_0803_signature_ms = now_wall_ms
+                    return
+                try:
+                    reexecute_coord = getattr(self, "_reexecute_coord", None)
+                    if reexecute_coord is not None:
+                        for line in reexecute_coord.on_execute(execute):
+                            self._append_log_line(line)
+                    reexecute_handled = True
+                except Exception as exc:
+                    reexecute_handled = True
+                    self._append_log_line(f"[0902] reexecute-on-0803 error: {exc}")
                 coord = getattr(self, "_next_collab_replan_coord", None)
                 viz = getattr(self, "_viz_tab", None)
                 turn_tab = getattr(self, "_turn_radius_tab", None)
@@ -4942,11 +5906,22 @@ class MainWindow(QMainWindow):
                                 )
                         except Exception as exc:
                             self._append_log_line(f"[0803] execute-next transition note failed: {exc}")
+                        self._last_next_collab_0803_signature = next_collab_0803_signature
+                        self._last_next_collab_0803_signature_ms = now_wall_ms
                         self._queue_replan_payloads([replan_payload], source="next_collab")
                         return
             except Exception as exc:
                 self._append_log_line(f"[0902] next-collab-on-0803 error: {exc}")
             self._append_log_line("[NEXTCOLLAB] 0902 next-collab skipped -> falling back to normal execute=1 handling")
+        if not reexecute_handled:
+            try:
+                coord = getattr(self, "_reexecute_coord", None)
+                if coord is not None:
+                    for line in coord.on_execute(execute):
+                        self._append_log_line(line)
+            except Exception as exc:
+                self._append_log_line(f"[0902] reexecute-on-0803 error: {exc}")
+
         if int(execute) == 1 and not next_collab_trigger_enabled:
             self._append_log_line("[NEXTCOLLAB] monitoring trigger OFF -> skip 0902 replan on 0803 execute=1")
 
@@ -5472,7 +6447,7 @@ class MainWindow(QMainWindow):
             if not raw_latest or (self._last_0401_raw is not None and raw_latest == self._last_0401_raw):
                 return
             self._last_0401_raw = raw_latest
-            self._on_rx_0401(raw_latest)
+            self._enqueue_0401_payload(raw_latest)
         except Exception:
             pass
 
@@ -5512,7 +6487,7 @@ class MainWindow(QMainWindow):
             self._last_0402_raw = raw_latest
             if latest_ms is not None:
                 self._last_0402_ms = int(latest_ms)
-            self._on_rx_0402(raw_latest)
+            self._enqueue_0402_payload(raw_latest)
         except Exception:
             pass
 
@@ -5854,7 +6829,6 @@ class MainWindow(QMainWindow):
                 self._append_log_line("[CURRENT] reexecute snapshot context skipped: no 0401 snapshot rows")
                 return False
 
-            lead_s = _planner_entry_lead_time_s()
             turn_radius_scale = _planner_turn_radius_scale()
             entries: list[dict[str, Any]] = []
             coords_for_centroid: list[dict[str, float]] = []
@@ -5872,23 +6846,13 @@ class MainWindow(QMainWindow):
                     )
                     continue
                 heading_deg = _state_heading_deg(row)
-                heading_rad = _state_heading_rad(row)
-                speed_mps = _state_speed_mps(row)
-                projected_coord, eta_s = project_coordinate_forward(
-                    position_coord,
-                    speed_mps=speed_mps,
-                    lead_s=lead_s,
-                    raw_heading_deg=heading_deg,
-                    heading_rad=heading_rad,
-                )
-                entry_coord = dict(projected_coord or position_coord)
+                eta_s = 0.0
+                entry_coord = dict(position_coord)
                 altitude = _coerce_float(entry_coord.get("altitude"))
                 if altitude is not None:
                     entry_coord["altitude"] = int(round(float(altitude)))
                 coords_for_centroid.append(entry_coord)
                 source = "snapshotCurrentPosition0401"
-                if eta_s is not None and float(eta_s) > 0.0:
-                    source = f"snapshotForwardProjection{int(round(float(eta_s)))}s"
                 entry: dict[str, Any] = {
                     "aircraftID": int(aircraft_id),
                     "coordinate": entry_coord,
@@ -5907,7 +6871,6 @@ class MainWindow(QMainWindow):
             detail["currentRemainingCollaborativeReplan"] = True
             detail["currentInputMissionID"] = int(attach_input_id)
             detail["entryStrategy"] = "turn_projection"
-            detail["entryLeadTimeS"] = float(lead_s)
             detail["turnRadiusScale"] = float(turn_radius_scale)
             detail["entryAircraftList"] = entries
             detail.pop("currentRemainingApplyOptionOrdinals", None)
@@ -5933,7 +6896,7 @@ class MainWindow(QMainWindow):
                 detail["representativeEntryCoordinate"] = dict(representative_entry)
             body["replanDetail"] = detail
             self._append_log_line(
-                f"[CURRENT] reexecute snapshot entries resolved: count={len(entries)}, lead={float(lead_s):.1f}s"
+                f"[CURRENT] reexecute snapshot entries resolved: count={len(entries)}"
             )
             self._append_log_line(
                 "[CURRENT] reexecute current-position hybrid attached for all options"
@@ -6000,7 +6963,6 @@ class MainWindow(QMainWindow):
         detail["currentRemainingCollaborativeReplan"] = True
         detail["currentInputMissionID"] = int(context_payload.get("current_input_mission_id"))
         detail["entryStrategy"] = str(context_payload.get("entry_strategy") or "turn_projection")
-        detail["entryLeadTimeS"] = float(get_runtime_float("next_collab_entry_lead_time_s", 5.0))
         detail["turnRadiusScale"] = float(turn_radius_scale)
         detail["entryAircraftList"] = entries
         if representative_entry is not None:
@@ -6010,12 +6972,19 @@ class MainWindow(QMainWindow):
 
     def _rx_setup(self):
         try:
-            FusionNodeIoc.Configure()
-            NodeMessenger.Initialize("MSM_ReceiveNode")
-            NodeMessenger.RegistAllConsumerFromFusionNodeIoc()
-            NodeMessenger.InitAllSubscriberFromAssembly()
-            NodeMessenger.RegistAllProviderFromFusionNodeIoc()
+            with fusion_runtime_working_dir(project_root=PROJECT_ROOT):
+                FusionNodeIoc.Configure()
+                NodeMessenger.Initialize("MSM_ReceiveNode")
+                NodeMessenger.RegistAllConsumerFromFusionNodeIoc()
+                NodeMessenger.InitAllSubscriberFromAssembly()
+                NodeMessenger.RegistAllProviderFromFusionNodeIoc()
+            self._bus_ready = True
+            try:
+                self._append_log_line("[BUS] MSM NodeMessenger 초기화 완료")
+            except Exception:
+                pass
         except Exception as exc:
+            self._bus_ready = False
             try:
                 sys.stderr.write(f"[WARN] MSM bus init failed: {exc}\n")
             except Exception:
@@ -6025,12 +6994,33 @@ class MainWindow(QMainWindow):
         if hide_instead_of_close(self, event, log=self._append_log_line):
             return
         try:
+            self._hb_0102_enabled = False
+            self._hb_0102_stop.set()
+        except Exception:
+            pass
+        try:
             self._hb_0501_enabled = False
             self._hb_0501_stop.set()
         except Exception:
             pass
         try:
             self._0401_trace_watchdog_stop.set()
+        except Exception:
+            pass
+        try:
+            self._stop_line_scan_progress_worker()
+        except Exception:
+            pass
+        try:
+            self._stop_area_snapshot_worker()
+        except Exception:
+            pass
+        try:
+            self._write_monitoring_lifecycle_event("graceful_close")
+            self._write_monitoring_fatal_line("graceful_close reached")
+            stop = getattr(self, "_monitoring_lifecycle_stop", None)
+            if stop is not None:
+                stop.set()
         except Exception:
             pass
         try:

@@ -1,0 +1,57 @@
+{
+  "timestamp": 833865714175,
+  "source": "DS_SAMPLE_0203",
+  "missionReferencePackageID": 1,
+  "inputTimestamp": 833865714175,
+  "takeOverInfoList": [
+    {
+      "aircraftID": 1,
+      "coordinate": {
+        "latitude": 37.72171,
+        "longitude": 128.10747,
+        "altitude": 1000
+      }
+    }
+  ],
+  "handOverInfoList": [
+    {
+      "aircraftID": 1,
+      "coordinate": {
+        "latitude": 37.718754,
+        "longitude": 128.1783,
+        "altitude": 1000
+      }
+    }
+  ],
+  "rtbCoordinateList": [
+    {
+      "latitude": 37.746788,
+      "longitude": 128.10431,
+      "altitude": 1000
+    }
+  ],
+  "flightAreaList": [
+    {
+      "flightAreaID": 1,
+      "areaLatLonList": [
+        {
+          "latitude": 37.942802,
+          "longitude": 128.02242
+        },
+        {
+          "latitude": 37.63132,
+          "longitude": 127.98809
+        },
+        {
+          "latitude": 37.64383,
+          "longitude": 128.41106
+        }
+      ],
+      "altitudeLimits": {
+        "lowerLimit": 100,
+        "upperLimit": 3000
+      }
+    }
+  ],
+  "prohibitedAreaList": []
+}

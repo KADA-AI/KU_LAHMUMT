@@ -1,0 +1,42 @@
+{
+  "timestamp": 833886405198,
+  "source": "MSM_SAMPLE_0902",
+  "replanRequestTime": {
+    "replanRequestTimestamp": 833886405198
+  },
+  "replanLevel": 3,
+  "inputMissionIDList": [
+    {
+      "inputMissionID": 1
+    },
+    {
+      "inputMissionID": 2
+    }
+  ],
+  "missionPlanIDList": [
+    {
+      "missionPlanID": 700000099
+    }
+  ],
+  "optionList": [
+    {
+      "optionID": 1,
+      "optionName": "baseline-option",
+      "missionPlanID": 700000001
+    }
+  ],
+  "pendingOptionList": [
+    {
+      "optionID": 2,
+      "optionName": "pending-not-selected",
+      "missionPlanID": 700000002
+    }
+  ],
+  "replanDetail": {
+    "trigger": "0401",
+    "triggerType": "communicationLossRTB",
+    "missionPlanID": 700000003
+  },
+  "replanRequest": "sample communication-loss replan",
+  "replanReason": "sample communication-loss replan"
+}

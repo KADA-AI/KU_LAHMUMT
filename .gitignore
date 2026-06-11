@@ -1,7 +1,20 @@
 # Python cache files
 __pycache__/
 *.py[cod]
+.pytest_cache/
 run_debug.log
 
-# Local scratch space
+# Local tool/runtime scratch space
 tmp/
+/temp/
+/Logs/
+/ref/
+/tools/
+/.claude/
+/DSS_Internal/
+/current_scenario.json.test.lock
+~$*
+
+# Local backup/quarantine copies
+/modules copy/
+/modules_bkup/

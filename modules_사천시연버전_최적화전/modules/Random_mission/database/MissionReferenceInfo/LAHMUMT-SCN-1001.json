@@ -1,0 +1,161 @@
+{
+  "timestamp": 823483827259,
+  "missionReferencePackageID": 1001,
+  "inputTimestamp": 823483827259,
+  "takeOverInfoList": [
+    {
+      "aircraftID": 4,
+      "coordinate": {
+        "latitude": 38.100777960298046,
+        "longitude": 127.212,
+        "altitude": 716
+      }
+    },
+    {
+      "aircraftID": 5,
+      "coordinate": {
+        "latitude": 38.099611019850975,
+        "longitude": 127.21114385131881,
+        "altitude": 705
+      }
+    },
+    {
+      "aircraftID": 6,
+      "coordinate": {
+        "latitude": 38.099611019850975,
+        "longitude": 127.2128561486812,
+        "altitude": 704
+      }
+    }
+  ],
+  "handOverInfoList": [
+    {
+      "aircraftID": 4,
+      "coordinate": {
+        "latitude": 38.100777960298046,
+        "longitude": 127.21542463118541,
+        "altitude": 755
+      }
+    },
+    {
+      "aircraftID": 5,
+      "coordinate": {
+        "latitude": 38.099611019850975,
+        "longitude": 127.21456842781384,
+        "altitude": 708
+      }
+    },
+    {
+      "aircraftID": 6,
+      "coordinate": {
+        "latitude": 38.099611019850975,
+        "longitude": 127.21628072517623,
+        "altitude": 706
+      }
+    }
+  ],
+  "rtbCoordinateList": [
+    {
+      "latitude": 38.100777960298046,
+      "longitude": 127.20857536881459,
+      "altitude": 707
+    },
+    {
+      "latitude": 38.099611019850975,
+      "longitude": 127.20771927482377,
+      "altitude": 715
+    },
+    {
+      "latitude": 38.099611019850975,
+      "longitude": 127.20943157218616,
+      "altitude": 705
+    }
+  ],
+  "flightAreaList": [
+    {
+      "flightAreaID": 1,
+      "areaLatLonList": [
+        {
+          "latitude": 38.037074,
+          "longitude": 127.206058
+        },
+        {
+          "latitude": 38.220469,
+          "longitude": 127.206058
+        },
+        {
+          "latitude": 38.220469,
+          "longitude": 127.429963
+        },
+        {
+          "latitude": 38.037074,
+          "longitude": 127.429963
+        }
+      ],
+      "altitudeLimits": {
+        "lowerLimit": 0,
+        "upperLimit": 5000
+      }
+    }
+  ],
+  "prohibitedAreaList": [
+    {
+      "prohibitedAreaID": 1,
+      "areaLatLonList": [
+        {
+          "latitude": 38.051394803587044,
+          "longitude": 127.17813277380927
+        },
+        {
+          "latitude": 38.054719310572324,
+          "longitude": 127.17482334669775
+        },
+        {
+          "latitude": 38.05822500972582,
+          "longitude": 127.17781605680256
+        },
+        {
+          "latitude": 38.057067143971715,
+          "longitude": 127.18297508047732
+        },
+        {
+          "latitude": 38.052845844427786,
+          "longitude": 127.18317082235228
+        }
+      ],
+      "altitudeLimits": {
+        "lowerLimit": 0,
+        "upperLimit": 5000
+      }
+    },
+    {
+      "prohibitedAreaID": 2,
+      "areaLatLonList": [
+        {
+          "latitude": 38.256077370239744,
+          "longitude": 127.25993102648648
+        },
+        {
+          "latitude": 38.25757891141196,
+          "longitude": 127.26495887027014
+        },
+        {
+          "latitude": 38.25428792565993,
+          "longitude": 127.26833110077983
+        },
+        {
+          "latitude": 38.25075244343646,
+          "longitude": 127.26538741006908
+        },
+        {
+          "latitude": 38.25185838100777,
+          "longitude": 127.26019587864776
+        }
+      ],
+      "altitudeLimits": {
+        "lowerLimit": 0,
+        "upperLimit": 5000
+      }
+    }
+  ]
+}

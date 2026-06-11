@@ -17,11 +17,15 @@ import numpy as np
 import tifffile
 
 from ..config import (
+    DEM_DIR,
     SIM_BASE_DT,
     SIM_0401_ACTIVE_HZ,
     SIM_0402_HISTORY_MAX,
     SIM_HISTORY_MAX,
+    SIM_HISTORY_RESPONSE_MAX,
+    SIM_HISTORY_SAMPLE_HZ,
     SIM_INTERNAL_STEP_HZ,
+    SIM_MAX_STEPS_PER_LOOP,
     SIM_POS_TOL,
     SIM_PROJECTILE_HIT_RADIUS_GUN,
     SIM_PROJECTILE_HIT_RADIUS_MISSILE,
@@ -484,6 +488,9 @@ _FOOTPRINT_RAY_EXTRA_RANGE_M = 2000.0
 _FOOTPRINT_RAY_MIN_RANGE_M = 1000.0
 _FOOTPRINT_MIN_RAY_STEP_M = 1.0
 _FOOTPRINT_MAX_DISTANCE_M = 50_000.0
+_FOOTPRINT_LINE_AXIS_RATE_DPS = 30.0
+_FOOTPRINT_LINE_AXIS_MAX_BIAS_DEG = 18.0
+_FOOTPRINT_MIN_PREFERRED_RIGHT_PROJECTION = 0.20
 _FOOTPRINT_FOV_INTERPRETATION = "diagonal_full"
 _FOOTPRINT_EARTH_RADIUS_M = 6_378_137.0
 _FOOTPRINT_CORNER_DEFINITIONS = (
@@ -492,7 +499,7 @@ _FOOTPRINT_CORNER_DEFINITIONS = (
     (1.0, -1.0),
     (-1.0, -1.0),
 )
-_FOOTPRINT_DEM_DIR = Path(__file__).resolve().parents[3] / "resource"
+_FOOTPRINT_DEM_DIR = Path(DEM_DIR)
 _FOOTPRINT_DEM_TILE_RE = re.compile(r"([ns])(\d+)_([ew])(\d+)", re.IGNORECASE)
 _FOOTPRINT_MODEL_PIXEL_SCALE_TAG = 33550
 _FOOTPRINT_MODEL_TIEPOINT_TAG = 33922
@@ -614,13 +621,30 @@ def _build_footprint_camera_axes(
     origin: tuple[float, float, float],
     focus: tuple[float, float, float],
     fallback_right: tuple[float, float, float] | None = None,
+    preferred_right: tuple[float, float, float] | None = None,
 ) -> tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float], float]:
     fwd_x = float(focus[0] - origin[0])
     fwd_y = float(focus[1] - origin[1])
     fwd_z = float(focus[2] - origin[2])
     forward = _normalize3(fwd_x, fwd_y, fwd_z)
     world_up = (0.0, 0.0, 1.0)
-    right = _cross3(forward[0], forward[1], forward[2], world_up[0], world_up[1], world_up[2])
+    right = (0.0, 0.0, 0.0)
+    if preferred_right is not None:
+        dot = _dot3(
+            preferred_right[0],
+            preferred_right[1],
+            preferred_right[2],
+            forward[0],
+            forward[1],
+            forward[2],
+        )
+        right = (
+            preferred_right[0] - (dot * forward[0]),
+            preferred_right[1] - (dot * forward[1]),
+            preferred_right[2] - (dot * forward[2]),
+        )
+    if _vector_norm3(*right) < float(_FOOTPRINT_MIN_PREFERRED_RIGHT_PROJECTION):
+        right = _cross3(forward[0], forward[1], forward[2], world_up[0], world_up[1], world_up[2])
     if _vector_norm3(*right) < 1e-8:
         if fallback_right is not None:
             dot = _dot3(
@@ -784,6 +808,9 @@ class Projectile:
     source_id: object
     target_kind: str
     target_id: object
+    target_x: float
+    target_y: float
+    target_z: float
     x: float
     y: float
     z: float
@@ -917,6 +944,7 @@ class SimulationService:
         self._filming_max_sep_m: dict[str, float | None] = {}
         self._line_search_state: dict[str, object | None] = {}
         self._line_search_debug: dict[str, object | None] = {}
+        self._footprint_line_right_axis: dict[str, tuple[float, float, float]] = {}
         self._tracking_state: dict[str, TrackingState] = {}
         self._tracking_preview_state: dict[str, TrackingPreviewState] = {}
         self._tracking_target_owner: dict[int, str] = {}
@@ -930,6 +958,10 @@ class SimulationService:
         self._formation_by_aircraft: dict[int, FormationSpec] = {}
         self._formation_by_path_id: dict[int, FormationSpec] = {}
         self._history = deque(maxlen=int(SIM_HISTORY_MAX))
+        self._history_sample_hz = max(1.0, float(SIM_HISTORY_SAMPLE_HZ))
+        self._history_response_max = max(1, int(SIM_HISTORY_RESPONSE_MAX))
+        self._max_steps_per_loop = max(1, int(SIM_MAX_STEPS_PER_LOOP))
+        self._last_history_record_sim_time: float | None = None
         self._events_0402 = deque(maxlen=int(SIM_0402_HISTORY_MAX))
         self._reported_0402_roi: set[tuple[int, int]] = set()
         self._reported_0402_list: set[tuple[int, int]] = set()
@@ -992,6 +1024,7 @@ class SimulationService:
         with self._lock:
             self.speed_factor = factor
             self._speed_change_seq += 1
+            self._last_history_record_sim_time = None
         return factor
 
     def _sync_sim_timestamp_anchor(self) -> None:
@@ -1526,8 +1559,10 @@ class SimulationService:
             self._filming_max_sep_m = {}
             self._line_search_state = {}
             self._line_search_debug = {}
+            self._footprint_line_right_axis = {}
             self._tracking_preview_state = {}
             self._history.clear()
+            self._last_history_record_sim_time = None
             self._reset_persistent_target_detection_state()
             self._reset_0402_state()
             self._tracking_overrides = {}
@@ -1579,6 +1614,7 @@ class SimulationService:
                 except Exception:
                     continue
             self._history.clear()
+            self._last_history_record_sim_time = None
             self._reset_persistent_target_detection_state()
             self._reset_0402_state()
             self._tracking_preview_state = {}
@@ -1678,6 +1714,14 @@ class SimulationService:
                 self.current_input_mission_idx_by_aircraft[int(aircraft_id)] = int(idx)
                 return True
         return False
+
+    def _sync_current_input_idx_to_controller_target(self, simv: SimVehicle) -> bool:
+        try:
+            target = simv.controller.current_target()
+        except Exception:
+            target = None
+        input_id = _coerce_int(getattr(target, "input_mission_id", None), None)
+        return self._set_current_input_idx_for_id(int(simv.aircraft_id), input_id)
 
     def _advance_current_input_idx_from_id(self, aircraft_id: int, input_id: int | None) -> None:
         if input_id is None:
@@ -1882,6 +1926,10 @@ class SimulationService:
             ctrl.loiter_timer = 0.0
             ctrl.hover_timer = 0.0
             ctrl.curr_idx = next_idx
+            try:
+                ctrl._skip_done_targets()
+            except Exception:
+                pass
             ctrl.finished = False
             ctrl.yaw_int = 0.0
             ctrl.alt_int = 0.0
@@ -2029,6 +2077,9 @@ class SimulationService:
             source_id=source_id,
             target_kind=str(target_kind),
             target_id=target_id,
+            target_x=float(tx),
+            target_y=float(ty),
+            target_z=float(tz),
             x=float(sx),
             y=float(sy),
             z=float(sz),
@@ -2581,8 +2632,9 @@ class SimulationService:
                     pass_type = None
                 hover_time = _extract_hover_time(wp)
                 loiter = _normalize_loiter(wp)
+                wp_is_done = _coerce_bool(wp.get("isDone"), False)
                 filming = wp.get("filmingProperty")
-                if aircraft_id >= 4:
+                if aircraft_id >= 4 and not wp_is_done:
                     override = self._build_tracking_override(filming, loiter)
                     if override:
                         tracking_overrides_by_aircraft[aircraft_id] = override
@@ -2599,7 +2651,7 @@ class SimulationService:
                         "alt": alt,
                         "speed": speed,
                         "wp_id": wp_id,
-                        "is_done": _coerce_bool(wp.get("isDone"), False),
+                        "is_done": wp_is_done,
                         "hover_time": hover_time,
                         "loiter": loiter,
                         "pass_type": pass_type,
@@ -2846,8 +2898,9 @@ class SimulationService:
                             pass_type = None
                         hover_time = _extract_hover_time(wp)
                         loiter = _normalize_loiter(wp)
+                        wp_is_done = _coerce_bool(wp.get("isDone"), False)
                         filming = wp.get("filmingProperty")
-                        if aircraft_id >= 4:
+                        if aircraft_id >= 4 and not wp_is_done:
                             override = self._build_tracking_override(filming, loiter)
                             if override:
                                 tracking_overrides_by_aircraft[aircraft_id] = override
@@ -2873,7 +2926,7 @@ class SimulationService:
                                 "alt": alt,
                                 "speed": speed,
                                 "wp_id": wp_id,
-                                "is_done": _coerce_bool(wp.get("isDone"), False),
+                                "is_done": wp_is_done,
                                 "hover_time": hover_time,
                                 "loiter": loiter,
                                 "pass_type": pass_type,
@@ -2988,8 +3041,9 @@ class SimulationService:
                             pass_type = None
                         hover_time = _extract_hover_time(wp)
                         loiter = _normalize_loiter(wp)
+                        wp_is_done = _coerce_bool(wp.get("isDone"), False)
                         filming = wp.get("filmingProperty")
-                        if aircraft_id >= 4:
+                        if aircraft_id >= 4 and not wp_is_done:
                             override = self._build_tracking_override(filming, loiter)
                             if override:
                                 tracking_overrides_by_aircraft[aircraft_id] = override
@@ -3015,7 +3069,7 @@ class SimulationService:
                                 "alt": alt,
                                 "speed": speed,
                                 "wp_id": wp_id,
-                                "is_done": _coerce_bool(wp.get("isDone"), False),
+                                "is_done": wp_is_done,
                                 "hover_time": hover_time,
                                 "loiter": loiter,
                                 "pass_type": pass_type,
@@ -3084,8 +3138,9 @@ class SimulationService:
                         pass_type = None
                     hover_time = _extract_hover_time(wp)
                     loiter = _normalize_loiter(wp)
+                    wp_is_done = _coerce_bool(wp.get("isDone"), False)
                     filming = wp.get("filmingProperty")
-                    if aircraft_id >= 4:
+                    if aircraft_id >= 4 and not wp_is_done:
                         override = self._build_tracking_override(filming, loiter)
                         if override:
                             tracking_overrides_by_aircraft[aircraft_id] = override
@@ -3111,7 +3166,7 @@ class SimulationService:
                             "alt": alt,
                             "speed": speed,
                             "wp_id": wp_id,
-                            "is_done": _coerce_bool(wp.get("isDone"), False),
+                            "is_done": wp_is_done,
                             "hover_time": hover_time,
                             "loiter": loiter,
                             "pass_type": pass_type,
@@ -3274,6 +3329,9 @@ class SimulationService:
             # Replan loads preserve targetInfo; keep the 0402 target ID map in
             # lockstep so destroyed IDs are not reused for later detections.
             self._build_vehicles(paths, reset_detection_state=not preserve_state)
+            if seq_by_aircraft:
+                for simv in self.vehicles.values():
+                    self._sync_current_input_idx_to_controller_target(simv)
             retained_labels: set[str] = set()
             retained_aircraft_ids: set[int] = set()
             compatible_updated_labels: set[str] = set()
@@ -3297,6 +3355,7 @@ class SimulationService:
                     if snapshot is None:
                         continue
                     if self._restore_controller_progress(simv.controller, snapshot):
+                        self._sync_current_input_idx_to_controller_target(simv)
                         compatible_updated_labels.add(simv.label)
                         compatible_updated_aircraft_ids.add(aircraft_id)
             if preserve_state and prev_vehicles:
@@ -3744,6 +3803,80 @@ class SimulationService:
         yaw_rad = math.radians(float(getattr(simv.vehicle.s, "yaw", 0.0)))
         return (-math.sin(yaw_rad), -math.cos(yaw_rad), 0.0)
 
+    def _rotate_xy_axis(
+        self,
+        axis: tuple[float, float, float],
+        angle_deg: float,
+    ) -> tuple[float, float, float]:
+        ang = math.radians(float(angle_deg))
+        c = math.cos(ang)
+        s = math.sin(ang)
+        x = float(axis[0])
+        y = float(axis[1])
+        return ((x * c) - (y * s), (x * s) + (y * c), 0.0)
+
+    def _line_search_debug_target_right_axis(
+        self,
+        simv: SimVehicle,
+        debug: object,
+    ) -> tuple[float, float, float] | None:
+        if not isinstance(debug, dict):
+            return None
+        try:
+            seg_t = max(0.0, min(1.0, float(debug.get("segmentT", 0.5))))
+        except Exception:
+            seg_t = 0.5
+        base_axis = self._footprint_body_right_axis(simv)
+        bias = (0.5 - seg_t) * 2.0 * float(_FOOTPRINT_LINE_AXIS_MAX_BIAS_DEG)
+        return self._rotate_xy_axis(base_axis, bias)
+
+    def _line_search_operation_active(self, label: str) -> bool:
+        filming_prop = self._filming_props.get(str(label))
+        if not isinstance(filming_prop, dict):
+            return False
+        try:
+            op_mode = int(filming_prop.get("operationMode") or filming_prop.get("operationalMode") or 0)
+        except Exception:
+            op_mode = 0
+        return op_mode == 2
+
+    def _clear_footprint_line_right_axis(self, label: str) -> None:
+        self._footprint_line_right_axis.pop(str(label), None)
+
+    def _update_footprint_line_right_axis(
+        self,
+        label: str,
+        target_axis: tuple[float, float, float] | None,
+        dt: float,
+    ) -> None:
+        label = str(label)
+        if target_axis is None:
+            self._clear_footprint_line_right_axis(label)
+            return
+        prev_axis = self._footprint_line_right_axis.get(label)
+        if prev_axis is None or float(dt or 0.0) <= 0.0:
+            self._footprint_line_right_axis[label] = target_axis
+            return
+
+        prev_ang = math.atan2(float(prev_axis[1]), float(prev_axis[0]))
+        target_ang = math.atan2(float(target_axis[1]), float(target_axis[0]))
+        delta = ((target_ang - prev_ang + math.pi) % (math.pi * 2.0)) - math.pi
+        max_delta = math.radians(float(_FOOTPRINT_LINE_AXIS_RATE_DPS)) * max(0.0, float(dt or 0.0))
+        if max_delta <= 0.0 or abs(delta) <= max_delta:
+            new_ang = target_ang
+        else:
+            new_ang = prev_ang + math.copysign(max_delta, delta)
+        self._footprint_line_right_axis[label] = (math.cos(new_ang), math.sin(new_ang), 0.0)
+
+    def _footprint_line_search_right_axis(self, simv: SimVehicle) -> tuple[float, float, float] | None:
+        label = str(simv.label)
+        if not self._line_search_operation_active(label):
+            return None
+        axis = self._footprint_line_right_axis.get(label)
+        if axis is not None:
+            return axis
+        return self._line_search_debug_target_right_axis(simv, self._line_search_debug.get(label))
+
     def _resolve_footprint_projection(
         self,
         simv: SimVehicle,
@@ -3765,6 +3898,7 @@ class SimulationService:
                 origin,
                 focus,
                 fallback_right=self._footprint_body_right_axis(simv),
+                preferred_right=self._footprint_line_search_right_axis(simv),
             )
         except Exception:
             return None
@@ -3781,11 +3915,11 @@ class SimulationService:
 
         tan_h = math.tan(math.radians(horizontal_fov_deg) / 2.0)
         tan_v = math.tan(math.radians(vertical_fov_deg) / 2.0)
-        corners: list[tuple[float, float, float]] = []
-        for sx, sy in _FOOTPRINT_CORNER_DEFINITIONS:
-            dir_x = forward[0] + (sx * tan_h * right[0]) + (sy * tan_v * up[0])
-            dir_y = forward[1] + (sx * tan_h * right[1]) + (sy * tan_v * up[1])
-            dir_z = forward[2] + (sx * tan_h * right[2]) + (sy * tan_v * up[2])
+
+        def _project_sensor_point(sensor_x: float, sensor_y: float) -> tuple[float, float, float] | None:
+            dir_x = forward[0] + (sensor_x * tan_h * right[0]) + (sensor_y * tan_v * up[0])
+            dir_y = forward[1] + (sensor_x * tan_h * right[1]) + (sensor_y * tan_v * up[1])
+            dir_z = forward[2] + (sensor_x * tan_h * right[2]) + (sensor_y * tan_v * up[2])
             try:
                 dir_x, dir_y, dir_z = _normalize3(dir_x, dir_y, dir_z)
             except ValueError:
@@ -3806,18 +3940,25 @@ class SimulationService:
                 max_distance_m=float(_FOOTPRINT_MAX_DISTANCE_M),
                 binary_steps=int(_FOOTPRINT_RAY_BINARY_STEPS),
             )
+            if hit is not None:
+                return hit
+            if abs(dir_z) < 1e-6:
+                return None
+            plane_z = float(center_hit[2])
+            t = (plane_z - origin[2]) / dir_z
+            if t <= 0.0:
+                return None
+            return (
+                float(origin[0] + (dir_x * t)),
+                float(origin[1] + (dir_y * t)),
+                plane_z,
+            )
+
+        corners: list[tuple[float, float, float]] = []
+        for sx, sy in _FOOTPRINT_CORNER_DEFINITIONS:
+            hit = _project_sensor_point(float(sx), float(sy))
             if hit is None:
-                if abs(dir_z) < 1e-6:
-                    return None
-                plane_z = float(center_hit[2])
-                t = (plane_z - origin[2]) / dir_z
-                if t <= 0.0:
-                    return None
-                hit = (
-                    float(origin[0] + (dir_x * t)),
-                    float(origin[1] + (dir_y * t)),
-                    plane_z,
-                )
+                return None
             corners.append(hit)
 
         return _FootprintProjection(
@@ -3921,6 +4062,43 @@ class SimulationService:
             return False
         return self._point_in_poly(float(target.x), float(target.y), poly)
 
+    def _camera_view_polygon(
+        self,
+        simv: SimVehicle,
+        fov_deg: float,
+    ) -> list[tuple[float, float]] | None:
+        if fov_deg <= 0.0:
+            return None
+        focus = self._filming_targets.get(simv.label)
+        if focus is None:
+            focus = self._default_downward_target(simv.vehicle)
+        return self._footprint_polygon(simv, focus, fov_deg)
+
+    def _point_in_camera_view_with_polygon(
+        self,
+        simv: SimVehicle,
+        *,
+        x: float,
+        y: float,
+        z: float,
+        fov_deg: float,
+        polygon: list[tuple[float, float]] | None,
+    ) -> bool:
+        s = simv.vehicle.s
+        dx = float(x - s.x)
+        dy = float(y - s.y)
+        dz = float(z - s.z)
+        dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+        if self.uav_detection_range_m > 0.0 and dist > self.uav_detection_range_m:
+            return False
+        if not self._check_los_flat(s.x, s.y, s.z, x, y, z):
+            return False
+        if fov_deg <= 0.0:
+            return True
+        if not polygon:
+            return False
+        return self._point_in_poly(float(x), float(y), polygon)
+
     def _load_target_info_map(self) -> dict[str, dict[str, Any]]:
         path = db_paths.get_db_subpath("DSS_Internal", "targetInfo.json")
         try:
@@ -3951,6 +4129,53 @@ class SimulationService:
         self._target_info_cache_mtime_ns = mtime_ns
         self._target_info_cache_map = normalized
         return normalized
+
+    def _target_info_visibility_context(self) -> dict[str, Any]:
+        target_map = self._load_target_info_map()
+        entries_by_id: dict[int, list[dict[str, Any]]] = {}
+        ignored_ids: set[int] = set()
+        ignored_xy: list[tuple[float, float]] = []
+        if not target_map:
+            return {
+                "entries_by_id": entries_by_id,
+                "ignored_ids": ignored_ids,
+                "ignored_xy": ignored_xy,
+            }
+
+        for entry in target_map.values():
+            if not isinstance(entry, dict):
+                continue
+            try:
+                entry_id = int(entry.get("targetID", -1))
+            except Exception:
+                entry_id = -1
+            if entry_id > 0:
+                entries_by_id.setdefault(entry_id, []).append(entry)
+
+            try:
+                ignored = int(entry.get("isIgnored") or 0) != 0
+            except Exception:
+                ignored = False
+            if not ignored:
+                continue
+            if entry_id > 0:
+                ignored_ids.add(entry_id)
+            coord = entry.get("coordinate")
+            if not isinstance(coord, dict) or self.geo is None:
+                continue
+            try:
+                lat = float(coord.get("latitude"))
+                lon = float(coord.get("longitude"))
+                x, y = self.geo.lonlat_to_xy(lon, lat)
+                ignored_xy.append((float(x), float(y)))
+            except Exception:
+                continue
+
+        return {
+            "entries_by_id": entries_by_id,
+            "ignored_ids": ignored_ids,
+            "ignored_xy": ignored_xy,
+        }
 
     def _target_is_ignored_in_info(self, target_id: int) -> bool:
         try:
@@ -4071,18 +4296,15 @@ class SimulationService:
         return False
 
     def _target_in_view(self, simv: SimVehicle, tgt: GroundTarget, fov_deg: float) -> bool:
-        s = simv.vehicle.s
-        dx = float(tgt.x - s.x)
-        dy = float(tgt.y - s.y)
-        dz = float(tgt.z - s.z)
-        dist = math.sqrt(dx * dx + dy * dy + dz * dz)
-        if self.uav_detection_range_m > 0.0 and dist > self.uav_detection_range_m:
-            return False
-        if not self._check_los_flat(s.x, s.y, s.z, tgt.x, tgt.y, tgt.z):
-            return False
-        if fov_deg <= 0.0:
-            return True
-        return self._footprint_contains(simv, tgt, fov_deg)
+        polygon = self._camera_view_polygon(simv, float(fov_deg))
+        return self._point_in_camera_view_with_polygon(
+            simv,
+            x=float(tgt.x),
+            y=float(tgt.y),
+            z=float(tgt.z),
+            fov_deg=float(fov_deg),
+            polygon=polygon,
+        )
 
     def _visible_tracking_targets(
         self,
@@ -4095,22 +4317,84 @@ class SimulationService:
             return []
         visible: list[tuple[float, int, GroundTarget]] = []
         s = simv.vehicle.s
+        polygon = self._camera_view_polygon(simv, float(fov_deg)) if float(fov_deg) > 0.0 else None
+        if float(fov_deg) > 0.0 and not polygon:
+            return []
+        info_context = self._target_info_visibility_context()
+        entries_by_id: dict[int, list[dict[str, Any]]] = info_context.get("entries_by_id") or {}
+        ignored_ids: set[int] = info_context.get("ignored_ids") or set()
+        ignored_xy: list[tuple[float, float]] = info_context.get("ignored_xy") or []
+        related_cache: dict[int, set[int]] = {}
+        destroyed_info_cache: dict[int, bool] = {}
+
+        def _related_ids(target_id: int) -> set[int]:
+            try:
+                target_id = int(target_id)
+            except Exception:
+                return set()
+            if target_id <= 0:
+                return set()
+            cached = related_cache.get(target_id)
+            if cached is not None:
+                return cached
+            related = self._related_target_ids_in_info(target_id)
+            related.add(int(target_id))
+            related_cache[target_id] = related
+            return related
+
+        def _destroyed_in_info(target_id: int) -> bool:
+            try:
+                target_id = int(target_id)
+            except Exception:
+                return False
+            if target_id <= 0:
+                return False
+            cached = destroyed_info_cache.get(target_id)
+            if cached is not None:
+                return cached
+            matched: list[dict[str, Any]] = []
+            for related_id in _related_ids(target_id):
+                matched.extend(entries_by_id.get(int(related_id), []))
+            result = bool(matched) and all(
+                _coerce_bool(entry.get("isDestroyed"), False)
+                for entry in matched
+                if isinstance(entry, dict)
+            )
+            destroyed_info_cache[target_id] = result
+            return result
+
+        def _ignored_in_info(target: GroundTarget, raw_id: int, assigned_id: int | None) -> bool:
+            if ignored_ids:
+                candidate_ids = set()
+                if raw_id > 0:
+                    candidate_ids.update(_related_ids(raw_id))
+                if assigned_id is not None and int(assigned_id) > 0:
+                    candidate_ids.update(_related_ids(int(assigned_id)))
+                if candidate_ids & ignored_ids:
+                    return True
+            if ignored_xy:
+                for ix, iy in ignored_xy:
+                    dx = float(target.x - ix)
+                    dy = float(target.y - iy)
+                    if math.hypot(dx, dy) <= _TARGET_INFO_MATCH_RADIUS_M:
+                        return True
+            return False
+
         for tgt in self.targets:
             if not tgt.alive:
-                continue
-            if self._ground_target_is_ignored(tgt):
                 continue
             try:
                 raw_id = int(getattr(tgt, "id", 0))
             except Exception:
                 raw_id = 0
+            assigned_id = self._target_id_map_0402.get(raw_id) if raw_id > 0 else None
+            if _ignored_in_info(tgt, raw_id, assigned_id):
+                continue
             if raw_id > 0 and raw_id in self._destroyed_target_ids:
                 continue
-            if raw_id > 0:
-                assigned_id = self._target_id_map_0402.get(raw_id)
-                if assigned_id is not None and assigned_id in self._destroyed_target_ids:
-                    continue
-            if raw_id > 0 and self._target_is_destroyed_in_info(raw_id):
+            if assigned_id is not None and assigned_id in self._destroyed_target_ids:
+                continue
+            if raw_id > 0 and _destroyed_in_info(raw_id):
                 continue
             if candidate_ids is not None and raw_id not in candidate_ids:
                 continue
@@ -4121,7 +4405,14 @@ class SimulationService:
             owner = self._tracking_target_owner.get(raw_id)
             if owner and owner != simv.label:
                 continue
-            if not self._target_in_view(simv, tgt, fov_deg):
+            if not self._point_in_camera_view_with_polygon(
+                simv,
+                x=float(tgt.x),
+                y=float(tgt.y),
+                z=float(tgt.z),
+                fov_deg=float(fov_deg),
+                polygon=polygon,
+            ):
                 continue
             dx = float(tgt.x - s.x)
             dy = float(tgt.y - s.y)
@@ -4919,24 +5210,15 @@ class SimulationService:
         z: float,
         fov_deg: float,
     ) -> bool:
-        s = simv.vehicle.s
-        dx = float(x - s.x)
-        dy = float(y - s.y)
-        dz = float(z - s.z)
-        dist = math.sqrt(dx * dx + dy * dy + dz * dz)
-        if self.uav_detection_range_m > 0.0 and dist > self.uav_detection_range_m:
-            return False
-        if not self._check_los_flat(s.x, s.y, s.z, x, y, z):
-            return False
-        if fov_deg <= 0.0:
-            return True
-        focus = self._filming_targets.get(simv.label)
-        if focus is None:
-            focus = self._default_downward_target(simv.vehicle)
-        poly = self._footprint_polygon(simv, focus, fov_deg)
-        if not poly:
-            return False
-        return self._point_in_poly(float(x), float(y), poly)
+        polygon = self._camera_view_polygon(simv, float(fov_deg)) if float(fov_deg) > 0.0 else None
+        return self._point_in_camera_view_with_polygon(
+            simv,
+            x=float(x),
+            y=float(y),
+            z=float(z),
+            fov_deg=float(fov_deg),
+            polygon=polygon,
+        )
 
     def _visible_roi_mocks(self, simv: SimVehicle, fov_deg: float) -> list[RoiMock]:
         if not self._roi_mocks:
@@ -4947,15 +5229,19 @@ class SimulationService:
             aircraft_id = 0
         visible: list[tuple[float, int, RoiMock]] = []
         s = simv.vehicle.s
+        polygon = self._camera_view_polygon(simv, float(fov_deg)) if float(fov_deg) > 0.0 else None
+        if float(fov_deg) > 0.0 and not polygon:
+            return []
         for roi in self._roi_mocks:
             if aircraft_id > 0 and aircraft_id in roi.discovered_by:
                 continue
-            if not self._point_in_camera_view(
+            if not self._point_in_camera_view_with_polygon(
                 simv,
                 x=float(roi.x),
                 y=float(roi.y),
                 z=float(roi.z),
                 fov_deg=float(fov_deg),
+                polygon=polygon,
             ):
                 continue
             dx = float(roi.x - s.x)
@@ -5473,6 +5759,9 @@ class SimulationService:
             return False
         if target_id <= 0:
             return False
+        if self._target_is_ignored_in_info(target_id) or self._target_is_destroyed_in_info(target_id):
+            self._tracking_overrides.pop(str(simv.label), None)
+            return False
         target = self._resolve_tracking_target(target_id)
         if target is None or not target.alive:
             return False
@@ -5590,9 +5879,11 @@ class SimulationService:
                 return
         if state is not None:
             if self._target_is_ignored_in_info(int(state.target_id)):
+                self._tracking_overrides.pop(str(label), None)
                 self._stop_tracking(simv, advance=True)
                 return
             if self._target_is_destroyed_in_info(int(state.target_id)):
+                self._tracking_overrides.pop(str(label), None)
                 self._stop_tracking(simv, advance=state.advance_on_complete)
                 return
             if not state.target.alive:
@@ -5967,6 +6258,7 @@ class SimulationService:
                 float(roi_focus.roi.y),
                 float(roi_focus.roi.z),
             )
+            self._clear_footprint_line_right_axis(label)
             return
         tracking = self._tracking_state.get(label)
         if tracking is not None and tracking.target.alive:
@@ -5979,6 +6271,7 @@ class SimulationService:
                 float(tracking.target.y),
                 float(tracking.target.z),
             )
+            self._clear_footprint_line_right_axis(label)
             return
         controller = simv.controller
         tgt = controller.current_target()
@@ -5997,6 +6290,7 @@ class SimulationService:
             self._filming_wp_ids[label] = current_wp_id
             self._filming_max_sep_m[label] = current_max_sep_m
             self._filming_targets[label] = None
+            self._clear_footprint_line_right_axis(label)
             return
 
         handler = self._get_operation_handler(filming_prop.get("operationMode"))
@@ -6006,6 +6300,7 @@ class SimulationService:
             self._filming_wp_ids[label] = current_wp_id
             self._filming_max_sep_m[label] = current_max_sep_m
             self._filming_targets[label] = self._default_downward_target(simv.vehicle)
+            self._clear_footprint_line_right_axis(label)
             return
 
         ctx = OperationContext(
@@ -6029,6 +6324,7 @@ class SimulationService:
             self._filming_wp_ids[label] = current_wp_id
             self._filming_max_sep_m[label] = current_max_sep_m
             self._filming_targets[label] = self._default_downward_target(simv.vehicle)
+            self._clear_footprint_line_right_axis(label)
             return
 
         self._filming_props[label] = filming_prop
@@ -6038,6 +6334,14 @@ class SimulationService:
         self._line_search_state[label] = result.state
         if result.reset_debug or result.debug is not None:
             self._line_search_debug[label] = result.debug
+        if self._filming_operation_mode(filming_prop) == 2:
+            self._update_footprint_line_right_axis(
+                label,
+                self._line_search_debug_target_right_axis(simv, result.debug),
+                float(dt or 0.0),
+            )
+        else:
+            self._clear_footprint_line_right_axis(label)
         try:
             if (
                 getattr(simv.controller, "is_loitering", False)
@@ -6046,7 +6350,18 @@ class SimulationService:
                 and result.target is not None
             ):
                 center = result.target
-                simv.controller.loiter_center = (float(center[0]), float(center[1]), float(center[2]))
+                flight_alt = float("nan")
+                current_center = getattr(simv.controller, "loiter_center", None)
+                if isinstance(current_center, (list, tuple)) and len(current_center) >= 3:
+                    flight_alt = _coerce_float(current_center[2], float("nan"))
+                if not math.isfinite(flight_alt):
+                    current_target = simv.controller.current_target()
+                    target_pos = getattr(current_target, "pos", None) if current_target is not None else None
+                    if isinstance(target_pos, (list, tuple)) and len(target_pos) >= 3:
+                        flight_alt = _coerce_float(target_pos[2], float("nan"))
+                if not math.isfinite(flight_alt):
+                    flight_alt = float(simv.vehicle.s.z)
+                simv.controller.loiter_center = (float(center[0]), float(center[1]), float(flight_alt))
                 if not getattr(simv.controller, "loiter_angle_locked", False):
                     simv.controller.loiter_angle = math.atan2(
                         simv.vehicle.s.y - float(center[1]),
@@ -6092,7 +6407,9 @@ class SimulationService:
         self._filming_pulse = {}
         self._line_search_state = {}
         self._line_search_debug = {}
+        self._footprint_line_right_axis = {}
         self._history.clear()
+        self._last_history_record_sim_time = None
         spawn_by_aircraft = self._spawn_by_aircraft or {}
         for path in paths:
             wp_targets: list[WaypointTarget] = []
@@ -6753,8 +7070,10 @@ class SimulationService:
             dist = math.sqrt(dx * dx + dy * dy + dz * dz)
             if dist <= 0.0:
                 continue
-            if max_range > 0.0 and dist > max_range:
-                continue
+            # Explicit LAH attack waypoints are authoritative. Do not reject
+            # them by configured weapon range; keep the projectile lifetime
+            # long enough to reach the commanded target.
+            effective_max_range = max(float(max_range), float(dist))
 
             last_fire = self._last_vehicle_fire.get(simv.label, -1e9)
             reload_time = max(0.2, float(cfg.get("reload", 0.0) or 0.0))
@@ -6769,7 +7088,7 @@ class SimulationService:
                 target_id=int(attack_target.id),
                 kind=kind,
                 dist=float(dist),
-                max_range=float(max_range),
+                max_range=float(effective_max_range),
             )
             self._spawn_projectile(
                 side="friendly",
@@ -6782,7 +7101,7 @@ class SimulationService:
                 target=(float(attack_target.x), float(attack_target.y), float(attack_target.z)),
                 speed=speed,
                 hit_radius=hit_radius,
-                max_range=max_range,
+                max_range=effective_max_range,
                 p_hit=p_hit,
                 force_hit=force_hit,
             )
@@ -6891,32 +7210,44 @@ class SimulationService:
             if proj.ttl <= 0.0:
                 continue
             snap_hit = False
-            if proj.kind == "missile":
-                tx = ty = tz = None
-                if proj.target_kind == "vehicle":
-                    simv = self.vehicles.get(str(proj.target_id))
-                    if simv is not None and simv.alive:
-                        s = simv.vehicle.s
-                        tx, ty, tz = float(s.x), float(s.y), float(s.z)
-                elif proj.target_kind == "enemy":
+            tx = ty = tz = None
+            if proj.target_kind == "vehicle":
+                simv = self.vehicles.get(str(proj.target_id))
+                if simv is not None and simv.alive:
+                    s = simv.vehicle.s
+                    tx, ty, tz = float(s.x), float(s.y), float(s.z)
+            elif proj.target_kind == "enemy":
+                try:
                     tgt = target_by_id.get(int(proj.target_id))
-                    if tgt is not None and tgt.alive:
-                        tx, ty, tz = float(tgt.x), float(tgt.y), float(tgt.z)
-                if tx is not None:
-                    dx = tx - proj.x
-                    dy = ty - proj.y
-                    dz = tz - proj.z
-                    dist = math.sqrt(dx * dx + dy * dy + dz * dz)
-                    if dist > 1e-6:
-                        speed = max(1.0, float(proj.speed))
-                        step_len = speed * float(dt)
-                        if dist <= step_len:
-                            proj.x, proj.y, proj.z = tx, ty, tz
-                            snap_hit = True
-                        else:
-                            proj.vx = dx / dist * speed
-                            proj.vy = dy / dist * speed
-                            proj.vz = dz / dist * speed
+                except Exception:
+                    tgt = None
+                if tgt is not None and tgt.alive:
+                    tx, ty, tz = float(tgt.x), float(tgt.y), float(tgt.z)
+            if tx is None and all(
+                math.isfinite(float(value))
+                for value in (proj.target_x, proj.target_y, proj.target_z)
+            ):
+                tx, ty, tz = float(proj.target_x), float(proj.target_y), float(proj.target_z)
+            elif tx is not None:
+                proj.target_x = float(tx)
+                proj.target_y = float(ty)
+                proj.target_z = float(tz)
+
+            if tx is not None:
+                dx = float(tx) - proj.x
+                dy = float(ty) - proj.y
+                dz = float(tz) - proj.z
+                dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+                if dist > 1e-6:
+                    speed = max(1.0, float(proj.speed))
+                    step_len = speed * float(dt)
+                    if dist <= step_len:
+                        proj.x, proj.y, proj.z = float(tx), float(ty), float(tz)
+                        snap_hit = True
+                    elif proj.kind == "missile":
+                        proj.vx = dx / dist * speed
+                        proj.vy = dy / dist * speed
+                        proj.vz = dz / dist * speed
             if not snap_hit:
                 proj.x += proj.vx * float(dt)
                 proj.y += proj.vy * float(dt)
@@ -7177,11 +7508,41 @@ class SimulationService:
             if isinstance(max_sep_m, (int, float)) and float(max_sep_m) > 0.0:
                 entry["filmingMaxSep"] = float(max_sep_m)
             filming_prop = self._filming_props.get(simv.label)
+            filming_fov: float | None = None
             if isinstance(filming_prop, dict):
                 entry["filmingMode"] = filming_prop.get("operationMode")
                 fov = filming_prop.get("fieldOfView")
-                if isinstance(fov, (int, float)):
-                    entry["filmingFov"] = float(fov)
+                if fov is None:
+                    fov = filming_prop.get("fov")
+                try:
+                    filming_fov = float(fov) if fov is not None else None
+                except Exception:
+                    filming_fov = None
+                if filming_fov is not None and math.isfinite(filming_fov):
+                    entry["filmingFov"] = float(filming_fov)
+            if target is not None and filming_fov is not None and filming_fov > 0.0:
+                try:
+                    projection = self._resolve_footprint_projection(
+                        simv,
+                        (float(target[0]), float(target[1]), float(target[2])),
+                        float(filming_fov),
+                    )
+                    if projection is not None:
+                        center = projection.center_hit
+                        c_lon, c_lat = geo.xy_to_lonlat(float(center[0]), float(center[1]))
+                        entry["filmingTarget"] = {
+                            "lat": float(c_lat),
+                            "lon": float(c_lon),
+                            "alt": float(center[2]),
+                        }
+                        corners = []
+                        for px, py, pz in projection.corners:
+                            lon_fp, lat_fp = geo.xy_to_lonlat(float(px), float(py))
+                            corners.append([float(lon_fp), float(lat_fp), float(pz)])
+                        if corners:
+                            entry["footprintCorners"] = corners
+                except Exception:
+                    pass
             if simv.label in self._filming_wp_ids:
                 entry["filmingWpId"] = self._filming_wp_ids.get(simv.label)
             frame["vehicles"][simv.label] = entry
@@ -7200,18 +7561,25 @@ class SimulationService:
         for proj in projectiles_list:
             try:
                 lon, lat = geo.xy_to_lonlat(proj.x, proj.y)
+                target_lon, target_lat = geo.xy_to_lonlat(proj.target_x, proj.target_y)
                 frame["projectiles"].append(
                     {
                         "id": int(proj.id),
                         "lat": float(lat),
                         "lon": float(lon),
                         "alt": float(proj.z),
+                        "targetLat": float(target_lat),
+                        "targetLon": float(target_lon),
+                        "targetAlt": float(proj.target_z),
                         "vx": float(proj.vx),
                         "vy": float(proj.vy),
                         "vz": float(proj.vz),
                         "speed": float(proj.speed),
                         "side": proj.side,
                         "kind": proj.kind,
+                        "sourceKind": proj.source_kind,
+                        "targetKind": proj.target_kind,
+                        "source": proj.source_id,
                         "target": proj.target_id,
                     }
                 )
@@ -7256,6 +7624,18 @@ class SimulationService:
         )
         self._history.append(frame)
 
+    def _history_sample_interval_sim(self, speed_factor: float, dt: float) -> float:
+        speed = max(0.1, abs(float(speed_factor or 1.0)))
+        sample_hz = max(1.0, float(self._history_sample_hz))
+        return max(float(dt), speed / sample_hz)
+
+    def _record_history_if_due(self, speed_factor: float, dt: float) -> None:
+        interval = self._history_sample_interval_sim(speed_factor, dt)
+        last_recorded = self._last_history_record_sim_time
+        if last_recorded is None or (float(self.sim_time) - float(last_recorded)) >= interval:
+            self._record_history()
+            self._last_history_record_sim_time = float(self.sim_time)
+
     def _loop(self) -> None:
         last = time.perf_counter()
         accum = 0.0
@@ -7287,7 +7667,8 @@ class SimulationService:
 
             accum += wall_dt * speed
             advanced = 0
-            while accum >= dt:
+            max_steps = max(1, int(self._max_steps_per_loop))
+            while accum >= dt and advanced < max_steps:
                 with self._lock:
                     if not (self.running and not self.paused and self.vehicles):
                         accum = 0.0
@@ -7295,17 +7676,22 @@ class SimulationService:
                     self._step_once(dt)
                     self.sim_time += dt
                     self.step_count += 1
-                    self._record_history()
+                    self._record_history_if_due(speed, dt)
                     self._maybe_push_0401()
                     self._maybe_push_0402()
                 accum -= dt
                 advanced += 1
+
+            if advanced >= max_steps and accum >= dt:
+                accum = min(accum, dt * max_steps)
 
             if advanced == 0:
                 with self._lock:
                     if self.running and not self.paused and self.vehicles:
                         self._maybe_push_0401()
                 self._shutdown.wait(0.005)
+            else:
+                self._shutdown.wait(0.001)
 
     def build_snapshot(self, *, since_step: int | None = None) -> dict:
         with self._lock:
@@ -7331,6 +7717,7 @@ class SimulationService:
             "paused": paused,
             "speedFactor": speed,
             "dt": dt,
+            "historySampleHz": float(self._history_sample_hz),
             "simTime": sim_time,
             "step": step_count,
             "vehicles": {},
@@ -7368,6 +7755,8 @@ class SimulationService:
             return payload
 
         history_frames = [frame for frame in history if frame.get("step", -1) > since_step]
+        if len(history_frames) > self._history_response_max:
+            history_frames = history_frames[-self._history_response_max :]
         events_since = [event for event in events_0402 if event.get("step", -1) > since_step]
         payload["events0402"] = events_since
         return {

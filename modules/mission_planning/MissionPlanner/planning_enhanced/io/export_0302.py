@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..models import SplitPiece, SplitRunResult
+from modules.mission_planning.pipelines.lah_operational_mode import build_lah_special_sequence
 try:
     from ...runtime_settings import (
         apply_runtime_camera_adjusted_fov_deg,
@@ -57,7 +58,11 @@ _FOV_DB_CACHE: Optional[List[Dict[str, float]]] = None
 _FOV_DB_WIDTHS_CACHE: Optional[Tuple[float, ...]] = None
 _FOV_DB_CACHE_SIG: Optional[Tuple[str, int, int]] = None
 _ROWS_BY_WIDTH_CACHE: Dict[float, List[Dict[str, float]]] = {}
+_BALANCED_ROW_CACHE: Dict[Tuple[int, int, float, float, int, float, float, int], Dict[str, float]] = {}
 _FOV_SELECTION_PREFERENCE = 0.65
+_FOV_DB_PREFER_NEXT_SMALLER_AT_SAME_SEP = True
+_FOV_DB_SEP_SAFETY_FACTOR = 1.7
+_FOV_DB_QUALITY_SEP_MARGIN_M = 1.0
 _ALTITUDE_LAYERS_M = (1000.0, 1010.0, 1020.0)
 
 
@@ -119,6 +124,7 @@ def _mission_perf_block(
     speed_kmh: Optional[float],
     fov_deg: Optional[float],
     sep_m: Optional[float],
+    route_offset_sep_m: Optional[float] = None,
 ) -> Dict[str, float]:
     bdeg = float(bearing_deg) if bearing_deg is not None else 0.0
     mbdeg = float(move_bearing_deg) if move_bearing_deg is not None else None
@@ -133,6 +139,8 @@ def _mission_perf_block(
     }
     if mbdeg is not None:
         out["MOVE_BEARING"] = float(mbdeg)
+    if route_offset_sep_m is not None:
+        out["routeOffsetSepM"] = max(0.0, float(route_offset_sep_m))
     return out
 
 
@@ -175,6 +183,7 @@ def _load_fov_db_rows(path: Optional[Path] = None) -> List[Dict[str, float]]:
         _FOV_DB_CACHE_SIG = sig
         _FOV_DB_WIDTHS_CACHE = tuple(float(r["width"]) for r in out)
         _ROWS_BY_WIDTH_CACHE.clear()
+        _BALANCED_ROW_CACHE.clear()
     return out
 
 
@@ -191,9 +200,37 @@ def _runtime_area_sweep_mode() -> str:
     return "parallel"
 
 
+def _runtime_area_route_offset_sep_override() -> Optional[float]:
+    for key in ("recon_route_offset_sep_m", "area_route_offset_sep_m"):
+        raw = _runtime_value(key, None)
+        if raw is None:
+            continue
+        try:
+            return max(0.0, float(raw))
+        except Exception:
+            continue
+    return None
+
+
 def _runtime_db_fov_weight() -> float:
     weight = _to_float(_runtime_value("db_fov_weight", 1.0), 1.0)
     return weight if weight > 0.0 else 1.0
+
+
+def _runtime_fov_db_smaller_fov_steps() -> int:
+    try:
+        steps = int(_to_float(_runtime_value("fov_db_smaller_fov_steps", 3), 3.0))
+    except Exception:
+        steps = 3
+    return max(0, min(20, int(steps)))
+
+
+def _runtime_area_fov_db_smaller_fov_steps() -> int:
+    try:
+        steps = int(_to_float(_runtime_value("area_fov_db_smaller_fov_steps", 1), 1.0))
+    except Exception:
+        steps = 1
+    return max(0, min(20, int(steps)))
 
 
 def _apply_db_fov_weight(fov_deg: float) -> float:
@@ -249,15 +286,72 @@ def _rows_by_width(rows: List[Dict[str, float]], width_ref_m: float) -> List[Dic
     return [r for r in rows if abs(float(r.get("width", 0.0)) - nearest_w) <= 1e-9]
 
 
+def _db_row_quality_sep_m(row: Optional[Dict[str, float]]) -> float:
+    if not isinstance(row, dict):
+        return 0.0
+    sep_m = max(0.0, _to_float(row.get("sep"), 0.0))
+    width_m = max(0.0, _to_float(row.get("width"), 0.0))
+    return math.hypot(sep_m, width_m * 0.5)
+
+
+def _runtime_fov_db_sep_safety_factor() -> float:
+    factor = _to_float(_runtime_value("fov_db_sep_safety_factor", _FOV_DB_SEP_SAFETY_FACTOR), 1.0)
+    if factor <= 0.0:
+        factor = 1.0
+    return float(factor)
+
+
+def _db_sep_requirement_m(sep_m: float) -> float:
+    factor = _runtime_fov_db_sep_safety_factor()
+    return max(0.0, float(sep_m or 0.0)) * float(factor)
+
+
 def _select_balanced_row(
     rows: List[Dict[str, float]],
     *,
     width_ref_m: float,
+    min_quality_sep_m: float = 0.0,
+    smaller_fov_steps: int | None = None,
 ) -> Optional[Dict[str, float]]:
+    cache_key: Tuple[int, int, float, float, int, float, float, int] | None = None
+    if rows:
+        try:
+            steps_key = -1 if smaller_fov_steps is None else int(smaller_fov_steps)
+        except Exception:
+            steps_key = -1
+        cache_key = (
+            id(rows),
+            len(rows),
+            round(float(width_ref_m or 0.0), 6),
+            round(float(min_quality_sep_m or 0.0), 6),
+            int(steps_key),
+            round(float(_runtime_fov_db_sep_safety_factor()), 9),
+            round(float(_FOV_SELECTION_PREFERENCE), 9),
+            int(bool(_FOV_DB_PREFER_NEXT_SMALLER_AT_SAME_SEP)),
+        )
+        cached = _BALANCED_ROW_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+
+    def _remember(row: Dict[str, float]) -> Dict[str, float]:
+        if cache_key is not None:
+            if len(_BALANCED_ROW_CACHE) > 4096:
+                _BALANCED_ROW_CACHE.clear()
+            _BALANCED_ROW_CACHE[cache_key] = row
+        return row
+
+    min_quality_sep = _db_sep_requirement_m(float(min_quality_sep_m or 0.0))
+    if rows and min_quality_sep > 0.0:
+        quality_rows = [
+            r for r in rows
+            if _to_float(r.get("sep"), 0.0) + 1e-9 >= min_quality_sep
+        ]
+        if quality_rows:
+            rows = quality_rows
     if not rows:
         return None
     if len(rows) == 1:
-        return rows[0]
+        return _remember(rows[0])
 
     width_ref = max(0.0, float(width_ref_m))
     min_fov = math.inf
@@ -331,7 +425,72 @@ def _select_balanced_row(
             best_key = score_key
             best_row = row
 
-    return best_row or rows[0]
+    selected = best_row or rows[0]
+    if _FOV_DB_PREFER_NEXT_SMALLER_AT_SAME_SEP:
+        selected = _prefer_next_smaller_fov_same_sep_row(
+            rows,
+            selected,
+            width_ref_m=width_ref_m,
+            smaller_fov_steps=smaller_fov_steps,
+        )
+    return _remember(selected)
+
+
+def _prefer_next_smaller_fov_same_sep_row(
+    rows: List[Dict[str, float]],
+    selected: Dict[str, float],
+    *,
+    width_ref_m: float,
+    smaller_fov_steps: int | None = None,
+) -> Dict[str, float]:
+    """Prefer one lower FOV step when it does not increase SEP or reduce speed."""
+    if not rows or not isinstance(selected, dict):
+        return selected
+    base_fov = _to_float(selected.get("fov"), 0.0)
+    base_sep = _to_float(selected.get("sep"), 0.0)
+    base_vel = _to_float(selected.get("vel"), 0.0)
+    if base_fov <= 0.0 or base_sep <= 0.0:
+        return selected
+    target_steps = (
+        _runtime_fov_db_smaller_fov_steps()
+        if smaller_fov_steps is None
+        else max(0, min(20, int(smaller_fov_steps)))
+    )
+    if target_steps <= 0:
+        return selected
+    lower_fovs = sorted(
+        {
+            _to_float(row.get("fov"), 0.0)
+            for row in rows
+            if _to_float(row.get("fov"), 0.0) + 1e-9 < base_fov
+        },
+        reverse=True,
+    )
+    matched_steps = 0
+    fallback: Dict[str, float] | None = None
+    width_ref = max(0.0, float(width_ref_m))
+    for target_fov in lower_fovs:
+        candidates = [
+            row for row in rows
+            if abs(_to_float(row.get("fov"), 0.0) - target_fov) <= 1e-9
+            and _to_float(row.get("sep"), 0.0) <= base_sep + 1e-9
+            and _to_float(row.get("vel"), 0.0) + 1e-9 >= base_vel
+        ]
+        if candidates:
+            candidate = min(
+                candidates,
+                key=lambda row: (
+                    abs(_to_float(row.get("sep"), 0.0) - base_sep),
+                    max(_to_float(row.get("width"), 0.0) - width_ref, 0.0),
+                    -_to_float(row.get("vel"), 0.0),
+                    -_to_float(row.get("sep"), 0.0),
+                ),
+            )
+            fallback = candidate
+            matched_steps += 1
+            if matched_steps >= target_steps:
+                return candidate
+    return fallback or selected
 
 
 def _piece_selected_speed_kmh(piece: SplitPiece) -> float:
@@ -494,9 +653,32 @@ def _piece_speed_fov_sep(piece: SplitPiece) -> Tuple[float, float, float]:
         return float(speed_kmh), 0.0, 0.0
 
     # Keep the same balanced selection policy, but avoid repeated full-table scans.
-    best = _select_balanced_row(rows, width_ref_m=width_ref_m)
+    smaller_fov_steps = (
+        _runtime_area_fov_db_smaller_fov_steps()
+        if is_area_piece
+        else _runtime_fov_db_smaller_fov_steps()
+    )
+    best = _select_balanced_row(
+        rows,
+        width_ref_m=width_ref_m,
+        smaller_fov_steps=smaller_fov_steps,
+    )
     if best is None:
         return float(speed_kmh), 0.0, 0.0
+    if not is_area_piece:
+        required_quality_sep_m = (
+            math.hypot(_to_float(best.get("sep"), 0.0), max(width_ref_m, 0.0) * 0.5)
+            + float(_FOV_DB_QUALITY_SEP_MARGIN_M)
+        )
+        if _to_float(best.get("sep"), 0.0) + 1e-9 < _db_sep_requirement_m(required_quality_sep_m):
+            refined = _select_balanced_row(
+                rows,
+                width_ref_m=width_ref_m,
+                min_quality_sep_m=required_quality_sep_m,
+                smaller_fov_steps=smaller_fov_steps,
+            )
+            if refined is not None:
+                best = refined
     base_fov_deg = _apply_db_fov_weight(_to_float(best.get("fov"), 0.0))
     fov_deg = apply_runtime_camera_adjusted_fov_deg(
         base_fov_deg,
@@ -930,6 +1112,7 @@ def _mission_info_by_type(
     speed_kmh: Optional[float] = None,
     fov_deg: Optional[float] = None,
     sep_m: Optional[float] = None,
+    route_offset_sep_m: Optional[float] = None,
 ) -> Dict[str, Any]:
     perf = _mission_perf_block(
         bearing_deg=bearing_deg,
@@ -937,6 +1120,7 @@ def _mission_info_by_type(
         speed_kmh=speed_kmh,
         fov_deg=fov_deg,
         sep_m=sep_m,
+        route_offset_sep_m=route_offset_sep_m,
     )
     if im_type == 5:
         coord_list = _normalize_coord_list(data.get("coordinateList"))
@@ -1014,6 +1198,7 @@ def _piece_to_mission_info(piece: SplitPiece) -> Dict[str, Any]:
     if orig_type in (2, 3, 6):
         sweep_bdeg = _piece_area_sweep_bearing_deg(piece, fallback_move_bearing=move_bdeg)
     speed_kmh, fov_deg, sep_m = _piece_speed_fov_sep(piece)
+    area_route_offset_sep_m = _runtime_area_route_offset_sep_override()
 
     if "individualMissionType" in data:
         try:
@@ -1034,6 +1219,7 @@ def _piece_to_mission_info(piece: SplitPiece) -> Dict[str, Any]:
                     speed_kmh=speed_kmh,
                     fov_deg=fov_deg,
                     sep_m=sep_m,
+                    route_offset_sep_m=area_route_offset_sep_m if im_type in (3, 4) else None,
                 )
         except Exception:
             pass
@@ -1092,6 +1278,7 @@ def _piece_to_mission_info(piece: SplitPiece) -> Dict[str, Any]:
             speed_kmh=speed_kmh,
             fov_deg=fov_deg,
             sep_m=sep_m,
+            route_offset_sep_m=area_route_offset_sep_m,
         ),
         "areaList": [{"isHole": False, "coordinateList": coords}],
         "targetID": None,
@@ -1373,6 +1560,40 @@ def _build_lah_0302_packages_from_cmpk(
         next_path_by_aid[aid] = int(_path_base(aid))
 
     next_im_id = int(start_im_id)
+    special_rows = build_lah_special_sequence(missions)
+    if special_rows:
+        for row in special_rows:
+            input_mid = _as_pos_int(row.get("inputMissionID"), 1)
+            info = row.get("individualMissionInfo") if isinstance(row.get("individualMissionInfo"), dict) else None
+            if not info:
+                continue
+            for aid in lah_ids:
+                pkg = packages_by_aid[aid]
+                pid = next_path_by_aid[aid]
+                pkg["individualMissionList"].append(
+                    {
+                        "individualMissionID": int(next_im_id),
+                        "isDone": False,
+                        "relatedMission": {
+                            "relatedMissionType": 1,
+                            "inputMissionID": int(input_mid),
+                            "priorMissionID": 0,
+                        },
+                        "individualMissionInfo": copy.deepcopy(info),
+                        "pathID": int(pid),
+                    }
+                )
+                next_im_id += 1
+                next_path_by_aid[aid] = int(pid + 1)
+
+        out = []
+        for aid in lah_ids:
+            pkg = packages_by_aid[aid]
+            if not pkg["individualMissionList"]:
+                continue
+            out.append(pkg)
+        return out, next_im_id
+
     for idx, im in enumerate(missions, start=1):
         if not isinstance(im, dict):
             continue

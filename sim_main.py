@@ -11,7 +11,6 @@ from modules.common.process_console import ensure_console, install_process_file_
 ensure_console(os.getenv("KU_CONSOLE_TITLE", "KU Simulation Console"))
 # 로그 파일은 대기모드 진입 후 DB 경로가 확정된 뒤에 쌓도록 지연 설치
 
-
 def _collect_local_ipv4_addresses() -> list[str]:
     found: set[str] = {"127.0.0.1"}
     try:

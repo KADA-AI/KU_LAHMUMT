@@ -423,9 +423,9 @@ def _extract_destroyed_tracking_entries_from_info(
     for assignment in active_assignments or []:
         if not isinstance(assignment, dict) or not bool(assignment.get("active")):
             continue
-        attack_plan_id = _coerce_int(assignment.get("attack_plan_id"))
-        if attack_plan_id is None or (
-            current_plan_lineage and int(attack_plan_id) not in current_plan_lineage
+        if not _tracking_assignment_matches_plan_lineage(
+            assignment,
+            current_plan_lineage=current_plan_lineage,
         ):
             continue
         target_id = _coerce_int(assignment.get("target_id"))
@@ -896,10 +896,42 @@ def _tracking_assignment_matches_close_event(
         return False
     if _coerce_int(assignment.get("target_id")) != int(target_id):
         return False
-    attack_plan_id = _coerce_int(assignment.get("attack_plan_id"))
-    if attack_plan_id is None or (current_plan_lineage and int(attack_plan_id) not in current_plan_lineage):
+    return _tracking_assignment_matches_plan_lineage(
+        assignment,
+        current_plan_lineage=current_plan_lineage,
+    )
+
+
+def _tracking_assignment_matches_plan_lineage(
+    assignment: dict[str, Any],
+    *,
+    current_plan_lineage: set[int],
+) -> bool:
+    if not isinstance(assignment, dict):
         return False
-    return True
+    if not current_plan_lineage:
+        return True
+    for key in ("attack_plan_id", "source_plan_id"):
+        plan_id = _coerce_int(assignment.get(key))
+        if plan_id is not None and int(plan_id) in current_plan_lineage:
+            return True
+    return False
+
+
+def _active_attack_tracking_exists_for_plan(current_mission_plan_id: int | None) -> bool:
+    plan_id = _coerce_int(current_mission_plan_id)
+    if plan_id is None or plan_id <= 0:
+        return False
+    current_plan_lineage = resolve_plan_lineage_ids(int(plan_id)) or {int(plan_id)}
+    for assignment in list_active_tracking_assignments():
+        if not isinstance(assignment, dict) or not bool(assignment.get("active")):
+            continue
+        if _tracking_assignment_matches_plan_lineage(
+            assignment,
+            current_plan_lineage=current_plan_lineage,
+        ):
+            return True
+    return False
 
 
 def _resolve_close_event_assignments(
@@ -992,6 +1024,26 @@ class TargetDetectionCoordinator:
     def _log_line(self, text: str) -> None:
         if self._log:
             self._log(text)
+
+    def clear_target_trigger_history(self, target_ids: object) -> list[int]:
+        normalized_ids: set[int] = set()
+        for value in target_ids or []:
+            try:
+                target_id = int(value)
+            except Exception:
+                continue
+            if target_id > 0:
+                normalized_ids.add(target_id)
+        if not normalized_ids:
+            return []
+
+        removed: list[int] = []
+        with self._lock:
+            for target_id in sorted(normalized_ids):
+                if target_id in self._target_trigger_history:
+                    self._target_trigger_history.pop(target_id, None)
+                    removed.append(target_id)
+        return removed
 
     def _build_attack_close_payloads(
         self,
@@ -1433,28 +1485,48 @@ class TargetDetectionCoordinator:
             used_manned = get_used_manned_ids(package_id)
             available_slots = sum(1 for aid in _attack_manned_ids() if aid not in used_manned)
             updated_info = False
+            follow_up_attack_mode = False
             if available_slots <= 0:
-                deferred_ids: list[int] = []
-                try:
-                    deferred_ids = defer_attack_targets(
-                        package_id,
-                        current_mission_plan_id,
-                        candidates,
-                        now_ms=now_ts,
-                        reason="attack_slots_exhausted",
+                follow_up_candidates = [
+                    entry
+                    for entry in candidates
+                    if isinstance(entry, dict)
+                    and (
+                        bool(entry.get("deferredAttackResume"))
+                        or (_coerce_int(entry.get("isUsed")) or 0) == 0
                     )
-                except Exception as exc:
-                    logs.append(f"[0402] deferred attack target save failed: {exc}")
-                if deferred_ids:
+                ]
+                active_follow_up_attack = bool(follow_up_candidates) and _active_attack_tracking_exists_for_plan(
+                    current_mission_plan_id
+                )
+                if active_follow_up_attack:
+                    follow_up_attack_mode = True
                     logs.append(
-                        "[0402] attack slots exhausted -> deferred targets retained "
-                        f"(inputMissionPackageID={package_id}, targets={deferred_ids})"
+                        "[0402] attack slots occupied -> follow-up attack candidate evaluating "
+                        f"(inputMissionPackageID={package_id}, usedManned={sorted(int(aid) for aid in used_manned)})"
                     )
                 else:
-                    logs.append(
-                        f"[0402] replan skipped: attack slots exhausted (inputMissionPackageID={package_id})"
-                    )
-                return close_payloads, logs
+                    deferred_ids: list[int] = []
+                    try:
+                        deferred_ids = defer_attack_targets(
+                            package_id,
+                            current_mission_plan_id,
+                            candidates,
+                            now_ms=now_ts,
+                            reason="attack_slots_exhausted",
+                        )
+                    except Exception as exc:
+                        logs.append(f"[0402] deferred attack target save failed: {exc}")
+                    if deferred_ids:
+                        logs.append(
+                            "[0402] attack slots exhausted -> deferred targets retained "
+                            f"(inputMissionPackageID={package_id}, targets={deferred_ids})"
+                        )
+                    else:
+                        logs.append(
+                            f"[0402] replan skipped: attack slots exhausted (inputMissionPackageID={package_id})"
+                        )
+                    return close_payloads, logs
 
             eligible_candidates: list[dict[str, Any]] = []
             for entry in candidates:
@@ -1506,6 +1578,45 @@ class TargetDetectionCoordinator:
             )
             if not bundle_targets:
                 return close_payloads, logs
+            bundle_target_ids = {
+                int(target_id)
+                for target_id in (
+                    _coerce_int(item.get("targetID"))
+                    for item in bundle_targets
+                    if isinstance(item, dict)
+                )
+                if target_id is not None
+            }
+            if follow_up_attack_mode and int(primary_target_id) not in bundle_target_ids:
+                try:
+                    deferred_ids = defer_attack_targets(
+                        package_id,
+                        current_mission_plan_id,
+                        [primary_entry],
+                        now_ms=now_ts,
+                        reason="max_tracked_targets_reached",
+                    )
+                except Exception as exc:
+                    deferred_ids = []
+                    logs.append(f"[0402] follow-up deferred target retain failed: {exc}")
+                target_text = ",".join(str(target_id) for target_id in sorted(bundle_target_ids)) or "-"
+                if deferred_ids:
+                    logs.append(
+                        "[0402] follow-up attack skipped: deferred target outside max-tracked bundle "
+                        f"(targetID={primary_target_id}, bundleTargets={target_text}, deferred={deferred_ids})"
+                    )
+                else:
+                    logs.append(
+                        "[0402] follow-up attack skipped: deferred target outside max-tracked bundle "
+                        f"(targetID={primary_target_id}, bundleTargets={target_text})"
+                    )
+                return close_payloads, logs
+            if follow_up_attack_mode:
+                target_text = ",".join(str(target_id) for target_id in sorted(bundle_target_ids)) or "-"
+                logs.append(
+                    "[0402] attack slots occupied -> follow-up attack replan allowed "
+                    f"(inputMissionPackageID={package_id}, bundleTargets={target_text})"
+                )
 
             bundle_ids: list[int] = []
             bundle_changed = False
@@ -1616,11 +1727,18 @@ class TargetDetectionCoordinator:
                 "attackTargetIDs": list(bundle_ids),
                 "targetBundle": list(bundle_targets),
                 "targetBundleCount": len(bundle_targets),
-                "targetBundleMode": "bundle" if len(bundle_targets) > 1 else "single",
-                "followUpAttackMode": False,
+                "targetBundleMode": (
+                    "follow_up"
+                    if follow_up_attack_mode
+                    else ("bundle" if len(bundle_targets) > 1 else "single")
+                ),
+                "followUpAttackMode": bool(follow_up_attack_mode),
                 "maxTrackedTargets": 3,
                 "snapshot": primary_entry,
             }
+            if follow_up_attack_mode:
+                detail_payload["followUpReason"] = "attack_slots_occupied"
+                detail_payload["occupiedMannedAircraftIDs"] = sorted(int(aid) for aid in used_manned)
             if deferred_resume_ids:
                 detail_payload["deferredAttackResume"] = True
                 detail_payload["deferredAttackTargetIDs"] = sorted(set(deferred_resume_ids))

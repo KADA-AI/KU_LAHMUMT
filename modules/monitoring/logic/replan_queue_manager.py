@@ -122,6 +122,20 @@ def _coerce_int(value: object) -> int | None:
         return None
 
 
+def _coerce_bool(value: object) -> bool:
+    if isinstance(value, bool):
+        return bool(value)
+    if isinstance(value, (int, float)):
+        return bool(int(value))
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in {"1", "true", "yes", "y", "on"}:
+            return True
+        if text in {"0", "false", "no", "n", "off", ""}:
+            return False
+    return False
+
+
 def _normalize_text(value: object) -> str:
     return " ".join(str(value or "").strip().split())
 
@@ -191,6 +205,50 @@ def _is_attack_close_item(item: Any) -> bool:
 
 def _is_normal_target_detection_item(item: Any) -> bool:
     return str(getattr(item, "source_tag", "") or "").strip() == "target_detection" and not _is_attack_close_item(item)
+
+
+def _has_option_plan_ids(payload: dict[str, Any]) -> bool:
+    option_blocks = payload.get("pendingOptionList") or payload.get("optionList") or []
+    if not isinstance(option_blocks, list):
+        return False
+    for item in option_blocks:
+        if not isinstance(item, dict):
+            continue
+        plan_id = _coerce_int(item.get("missionPlanID"))
+        if plan_id is not None and plan_id > 0:
+            return True
+    return False
+
+
+def _has_multiple_option_plan_ids(payload: dict[str, Any]) -> bool:
+    option_blocks = payload.get("pendingOptionList") or payload.get("optionList") or []
+    if not isinstance(option_blocks, list):
+        return False
+    seen: set[int] = set()
+    for item in option_blocks:
+        if not isinstance(item, dict):
+            continue
+        plan_id = _coerce_int(item.get("missionPlanID"))
+        if plan_id is None or plan_id <= 0:
+            continue
+        seen.add(int(plan_id))
+        if len(seen) > 1:
+            return True
+    return False
+
+
+def _is_force_direct_payload(payload: dict[str, Any]) -> bool:
+    detail = _extract_detail(payload)
+    return (
+        _coerce_bool(detail.get("forceDirectUpdate"))
+        or _coerce_bool(detail.get("force_direct_update"))
+        or _coerce_bool(payload.get("forceDirectUpdate"))
+        or _coerce_bool(payload.get("force_direct_update"))
+        or _coerce_bool(detail.get("suppress0702Fallback"))
+        or _coerce_bool(detail.get("suppress_0702_fallback"))
+        or _coerce_bool(payload.get("suppress0702Fallback"))
+        or _coerce_bool(payload.get("suppress_0702_fallback"))
+    )
 
 
 def _detail_signature_payload(detail: dict[str, Any]) -> dict[str, Any]:
@@ -303,6 +361,16 @@ def _extract_signal_plan_ids(signal_name: str, payload: object | None) -> list[i
     return []
 
 
+def _extract_0702_ignore(payload: object | None) -> int | None:
+    body = parse_payload(payload)
+    if not isinstance(body, dict):
+        return None
+    for key in ("ignore", "Ignore", "decisionIgnore", "decision_ignore"):
+        if key in body:
+            return _coerce_int(body.get(key))
+    return None
+
+
 def _extract_signal_stage(signal_name: str, payload: object | None) -> str | None:
     body = parse_payload(payload)
     if signal_name == "0305":
@@ -352,6 +420,24 @@ def _is_noop_completion_0305(payload: object | None) -> bool:
         or "\uae30\uc874 \uc784\ubb34" in reason
         or "replan_not_needed" in reason_lower
         or "no replan" in reason_lower
+    )
+
+
+def _is_suppress_completion_0305(payload: object | None) -> bool:
+    body = parse_payload(payload)
+    if not isinstance(body, dict):
+        return False
+    if _coerce_int(body.get("missionPlanningStatus")) != 2:
+        return False
+    reason = _normalize_text(body.get("replanReason") or body.get("reason") or "")
+    reason_lower = reason.lower()
+    return (
+        "target_option_suppressed" in reason_lower
+        or "option_suppressed" in reason_lower
+        or "\uc7ac\uacc4\ud68d \uc911\ub2e8" in reason
+        or "\ud45c\uc801" in reason and "\ubcc0\uacbd" in reason and "\uc911\ub2e8" in reason
+        or "target" in reason_lower and "change" in reason_lower
+        or "target" in reason_lower and "\uc911\ub2e8" in reason
     )
 
 
@@ -606,6 +692,20 @@ class ReplanQueueManager:
             if not stage:
                 return self._result_locked(now_ms=now_ms)
 
+            requires_0702 = self._requires_0702_decision_locked(active)
+            if signal_name == "0903" and requires_0702:
+                active.last_signal = signal_name
+                return self._result_locked(
+                    now_ms=now_ms,
+                    events=[
+                        {
+                            "type": "signal",
+                            "signal_name": signal_name,
+                            "item": active.public_dict(now_ms=now_ms),
+                        }
+                    ],
+                )
+
             if signal_name == "0701":
                 active.options_delivered = True
             active.last_signal = signal_name
@@ -624,9 +724,35 @@ class ReplanQueueManager:
                     now_ms=now_ms,
                     completion_signal=signal_name,
                 )
+            if signal_name == "0305" and _is_suppress_completion_0305(payload):
+                return self._complete_active_locked(
+                    status="option_suppressed",
+                    stage="option_suppressed",
+                    now_ms=now_ms,
+                    completion_signal=signal_name,
+                )
+            if (
+                signal_name == "0305"
+                and stage == "planning_finished"
+                and self._active_can_complete_on_0305_locked(active)
+            ):
+                return self._complete_active_locked(
+                    status="completed",
+                    stage=stage,
+                    now_ms=now_ms,
+                    completion_signal=signal_name,
+                )
+            if signal_name == "0701" and requires_0702:
+                active.timeout_at_ms = None
             release_on_option_info = self._release_on_option_info_locked()
-            should_complete = signal_name in {"0903", "0702"} or (
-                signal_name == "0701" and release_on_option_info
+            should_complete = (
+                signal_name == "0702"
+                or (signal_name == "0903" and not requires_0702)
+                or (
+                    signal_name == "0701"
+                    and release_on_option_info
+                    and not requires_0702
+                )
             )
             if should_complete:
                 return self._complete_active_locked(
@@ -729,6 +855,49 @@ class ReplanQueueManager:
         result = self.handle_signal(signal_name="0702", payload=payload, now_ms=int(self._now_fn()))
         return bool(result.get("dispatch")), self._logs_from_result(result)
 
+    def validate_0702_decision(self, *, mission_plan_id: int | None, ignore_value: int | None) -> tuple[bool, list[str]]:
+        try:
+            plan_id = int(mission_plan_id) if mission_plan_id is not None else None
+        except Exception:
+            plan_id = None
+        if ignore_value != 2:
+            return True, []
+        if plan_id is None or plan_id <= 0:
+            return True, []
+
+        with self._lock:
+            active = self._active
+            if active is not None and self._requires_0702_decision_locked(active):
+                if int(plan_id) in {int(value) for value in active.plan_ids}:
+                    return True, []
+                return False, [
+                    "[RQUEUE] stale 0702 ignored: active option decision is waiting for "
+                    f"queueID={active.queue_id}, planIDs={','.join(str(v) for v in active.plan_ids)}; "
+                    f"received missionPlanID={int(plan_id)}"
+                ]
+
+            for item in self._queue:
+                if int(plan_id) in {int(value) for value in item.plan_ids}:
+                    return False, [
+                        "[RQUEUE] out-of-order 0702 ignored: selected plan is still queued "
+                        f"(queueID={item.queue_id}, missionPlanID={int(plan_id)})"
+                    ]
+
+            for item in self._history:
+                if int(plan_id) not in {int(value) for value in item.plan_ids}:
+                    continue
+                status = str(item.status or "")
+                completion_signal = str(item.completion_signal or "")
+                if status in {"option_suppressed", "dispatch_failed", "timed_out"} or completion_signal == "post_attack_preempt":
+                    return False, [
+                        "[RQUEUE] stale 0702 ignored: selected plan belongs to completed/suppressed "
+                        f"queueID={item.queue_id} (status={status}, signal={completion_signal}, "
+                        f"missionPlanID={int(plan_id)})"
+                    ]
+                break
+
+        return True, []
+
     def handle_0001(self, payload: object | None) -> tuple[bool, list[str]]:
         result = self._handle_failure_notice(payload=payload, now_ms=int(self._now_fn()))
         return bool(result.get("dispatch")), self._logs_from_result(result)
@@ -736,6 +905,16 @@ class ReplanQueueManager:
     def poll_due_transitions(self) -> tuple[bool, list[str]]:
         result = self.poll(now_ms=int(self._now_fn()))
         return bool(result.get("dispatch")), self._logs_from_result(result)
+
+    def find_0803_option_decision_blocker(self) -> dict[str, Any] | None:
+        now_ms = int(self._now_fn())
+        with self._lock:
+            if self._requires_0702_decision_locked(self._active):
+                return self._active.public_dict(now_ms=now_ms) if self._active is not None else None
+            for item in self._queue:
+                if self._requires_0702_decision_locked(item):
+                    return item.public_dict(now_ms=now_ms)
+        return None
 
     def drop_queued_target_detection_targets(self, target_ids: list[int] | set[int] | tuple[int, ...]) -> list[str]:
         normalized_ids: set[int] = set()
@@ -849,6 +1028,51 @@ class ReplanQueueManager:
         cfg = self._queue_cfg_locked()
         return bool(cfg.get("release_on_option_info", False))
 
+    def _requires_0702_decision_locked(self, item: _QueueItem | None) -> bool:
+        if item is None:
+            return False
+        if _is_attack_close_item(item):
+            return False
+        if bool(getattr(item, "suppress_options", False)):
+            return False
+        source_tag = str(getattr(item, "source_tag", "") or "").strip()
+        payload = getattr(item, "payload", None)
+        if not isinstance(payload, dict):
+            return False
+        if _is_force_direct_payload(payload):
+            return False
+        if not bool(item.plan_ids) or not _has_option_plan_ids(payload):
+            return False
+        if source_tag in {"target_detection", "collab_reexecute", "reexecute_0201"}:
+            return True
+        return _has_multiple_option_plan_ids(payload)
+
+    def _active_can_complete_on_0305_locked(self, active: _QueueItem) -> bool:
+        detail = _extract_detail(active.payload)
+        force_direct = (
+            _coerce_bool(detail.get("forceDirectUpdate"))
+            or _coerce_bool(detail.get("force_direct_update"))
+            or _coerce_bool(active.payload.get("forceDirectUpdate"))
+            or _coerce_bool(active.payload.get("force_direct_update"))
+        )
+        if not force_direct:
+            return False
+        suppress_fallback = (
+            _coerce_bool(detail.get("suppress0702Fallback"))
+            or _coerce_bool(detail.get("suppress_0702_fallback"))
+            or _coerce_bool(active.payload.get("suppress0702Fallback"))
+            or _coerce_bool(active.payload.get("suppress_0702_fallback"))
+        )
+        trigger_type = str(detail.get("triggerType") or "").strip()
+        if suppress_fallback:
+            return True
+        return trigger_type in {
+            "nextCollaborativeMission",
+            "pathDeviation",
+            "imagingScheduleDeviation",
+            "qualityMonitorSep",
+        }
+
     def _suppress_active_target_options_on_new_detection_locked(self) -> bool:
         cfg = self._queue_cfg_locked()
         return bool(cfg.get("suppress_active_target_options_on_new_detection", False))
@@ -883,6 +1107,17 @@ class ReplanQueueManager:
         active: _QueueItem,
     ) -> bool:
         if signal_name == "0305":
+            # 0305 has no missionPlanID, so it can be delivered twice while a
+            # just-promoted queue item is still waiting for its own 0902 send.
+            # Do not let the previous item's completion consume the next item.
+            if str(active.status or "") == "dispatching" and active.dispatched_ms is None:
+                return False
+            return True
+        if signal_name == "0702" and self._requires_0702_decision_locked(active):
+            ignore_value = _extract_0702_ignore(payload)
+            signal_plan_ids = _extract_signal_plan_ids(signal_name, payload)
+            if ignore_value == 2:
+                return bool(set(signal_plan_ids) & set(active.plan_ids))
             return True
         signal_plan_ids = _extract_signal_plan_ids(signal_name, payload)
         if not signal_plan_ids:
@@ -1094,6 +1329,8 @@ class ReplanQueueManager:
         if not _is_attack_close_item(item):
             return None
         if not _is_normal_target_detection_item(active):
+            return None
+        if self._requires_0702_decision_locked(active):
             return None
         if str(active.stage or "") not in {"planning_finished", "options_requested", "options_sent"}:
             return None
