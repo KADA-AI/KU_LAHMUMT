@@ -536,6 +536,23 @@ def _interp_coord(a: Dict[str, Any], b: Dict[str, Any], t: float) -> Dict[str, A
     return out
 
 
+def _previous_maneuver_line_branch(
+    missions: List[Dict[str, Any]], order: int
+) -> Optional[Dict[str, Any]]:
+    """Newest 협업기동임무 line branch strictly before ``order``."""
+
+    for index in range(int(order) - 2, -1, -1):
+        mission = missions[index]
+        if (_to_int(mission.get("inputMissionType")) or 0) != MANEUVER_MISSION_TYPE:
+            continue
+        for branch in mission_branch_geometries(mission):
+            if branch.get("kind") != "line":
+                continue
+            if _polyline_midpoint(list(branch.get("coordinateList") or [])):
+                return branch
+    return None
+
+
 def _previous_maneuver_midpoint(
     missions: List[Dict[str, Any]], order: int
 ) -> Optional[Dict[str, Any]]:
@@ -546,17 +563,10 @@ def _previous_maneuver_midpoint(
     behind the forward edge instead of inside the region being worked.
     """
 
-    for index in range(int(order) - 2, -1, -1):
-        mission = missions[index]
-        if (_to_int(mission.get("inputMissionType")) or 0) != MANEUVER_MISSION_TYPE:
-            continue
-        for branch in mission_branch_geometries(mission):
-            if branch.get("kind") != "line":
-                continue
-            midpoint = _polyline_midpoint(list(branch.get("coordinateList") or []))
-            if midpoint:
-                return midpoint
-    return None
+    branch = _previous_maneuver_line_branch(missions, order)
+    if branch is None:
+        return None
+    return _polyline_midpoint(list(branch.get("coordinateList") or []))
 
 
 def _lah_point_info(coord: Dict[str, Any]) -> Dict[str, Any]:
@@ -575,6 +585,12 @@ def _lah_point_info(coord: Dict[str, Any]) -> Dict[str, Any]:
 # manned aircraft waits; the DEM cover selector then slides that point onto
 # nearby low ground that puts a ridge between the aircraft and the mission the
 # UAVs are currently working.  Every failure path returns the plain anchor.
+#
+# Containment is mandatory, not optional.  An initial-plan hold belongs inside
+# the mission geometry it was derived from - the declared LINE corridor or the
+# 목표지역 polygon - so the slide is only ever offered geometry to stay within.
+# Without containment rows the anchor is kept as-is: a bare search disk walks
+# the hold outside the corridor, which is not a hold the operator declared.
 # ---------------------------------------------------------------------------
 
 _COVER_HOLD_CACHE: "OrderedDict[tuple, Dict[str, Any]]" = OrderedDict()
@@ -660,6 +676,106 @@ def _mission_threat_coordinates(
     return threats[: max(1, int(maximum))]
 
 
+def _line_corridor_area_rows(
+    branch: Optional[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """The declared LINE corridor as AREA rows: the polyline swept by its width.
+
+    Returns ``[]`` when the branch carries no usable width, which keeps the
+    hold on its geometric anchor rather than letting it leave the corridor.
+    """
+
+    if not isinstance(branch, dict):
+        return []
+    coords = _normalize_coord_list(branch.get("coordinateList"))
+    width_m = _to_float(branch.get("width")) or 0.0
+    if len(coords) < 2 or width_m <= 0.0:
+        return []
+    half_width_m = width_m * 0.5
+    try:
+        from shapely.geometry import LineString
+    except Exception:
+        return []
+
+    origin_lat = float(coords[0]["latitude"])
+    origin_lon = float(coords[0]["longitude"])
+    metres_per_lat = 111_132.92
+    metres_per_lon = max(1.0, metres_per_lat * math.cos(math.radians(origin_lat)))
+    try:
+        xy = [
+            (
+                (float(coord["longitude"]) - origin_lon) * metres_per_lon,
+                (float(coord["latitude"]) - origin_lat) * metres_per_lat,
+            )
+            for coord in coords
+        ]
+        # Flat caps: the corridor is the swept band between the declared
+        # endpoints, not a capsule that overhangs them.
+        polygon = LineString(xy).buffer(half_width_m, cap_style=2, join_style=1)
+        if polygon.is_empty or float(polygon.area) <= 1e-6:
+            return []
+        if polygon.geom_type == "MultiPolygon":
+            polygon = max(polygon.geoms, key=lambda part: float(part.area))
+
+        def _row(ring: Any, *, is_hole: bool) -> Dict[str, Any]:
+            return {
+                "coordinateList": [
+                    {
+                        "latitude": origin_lat + y / metres_per_lat,
+                        "longitude": origin_lon + x / metres_per_lon,
+                    }
+                    for x, y in list(ring.coords)
+                ],
+                "isHole": is_hole,
+            }
+
+        rows = [_row(polygon.exterior, is_hole=False)]
+        rows.extend(_row(ring, is_hole=True) for ring in polygon.interiors)
+        return rows
+    except Exception:
+        return []
+
+
+def _point_in_area_rows(
+    coord: Dict[str, Any], rows: List[Dict[str, Any]]
+) -> bool:
+    """Ray-cast containment: inside an outer ring and outside every hole."""
+
+    def _inside(point: Dict[str, Any], ring: List[Dict[str, Any]]) -> bool:
+        if len(ring) < 3:
+            return False
+        x = float(point["longitude"])
+        y = float(point["latitude"])
+        inside = False
+        count = len(ring)
+        for index in range(count):
+            x1 = float(ring[index]["longitude"])
+            y1 = float(ring[index]["latitude"])
+            x2 = float(ring[(index + 1) % count]["longitude"])
+            y2 = float(ring[(index + 1) % count]["latitude"])
+            if (y1 > y) != (y2 > y):
+                if y2 != y1 and x < x1 + (y - y1) * (x2 - x1) / (y2 - y1):
+                    inside = not inside
+        return inside
+
+    try:
+        outers = [
+            _normalize_coord_list(row.get("coordinateList"))
+            for row in rows
+            if isinstance(row, dict) and not bool(row.get("isHole"))
+        ]
+        holes = [
+            _normalize_coord_list(row.get("coordinateList"))
+            for row in rows
+            if isinstance(row, dict) and bool(row.get("isHole"))
+        ]
+        if not any(_inside(coord, ring) for ring in outers if ring):
+            return False
+        return not any(_inside(coord, ring) for ring in holes if ring)
+    except Exception:
+        return False
+
+
 def _destination_area_rows(missions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Raw 목표지역 AREA rows (holes included) for containment-mode cover."""
 
@@ -721,18 +837,28 @@ def _lah_cover_hold_info(
     threat_mission: Optional[Dict[str, Any]],
     *,
     area_rows: Optional[List[Dict[str, Any]]] = None,
+    cover_contract: bool = False,
 ) -> Dict[str, Any]:
-    """Hold on masking terrain near ``anchor``, backing away from the mission."""
+    """Hold on masking terrain near ``anchor``, backing away from the mission.
+
+    ``area_rows`` is the geometry the hold must stay inside; with none the
+    anchor is returned untouched.  ``cover_contract`` additionally seeds the
+    ``_lahTerminalCover*`` keys so the d0304 UAV-ETA pass may re-refine the
+    point inside that same geometry.
+    """
 
     if not isinstance(anchor, dict):
         return _lah_point_info(anchor or {})
     base = _lah_point_info(anchor)
     if not _cover_hold_enabled():
         return base
+    constraints = [row for row in (area_rows or []) if isinstance(row, dict)]
+    if not constraints:
+        # No declared geometry to stay inside: keep the geometric anchor.
+        return base
     threats = _mission_threat_coordinates(threat_mission)
     if not threats:
         return base
-    constraints = [row for row in (area_rows or []) if isinstance(row, dict)]
     radius_m = _cover_hold_search_radius_m()
     if radius_m <= 0.0:
         return base
@@ -763,6 +889,12 @@ def _lah_cover_hold_info(
     if coord is None:
         return base
 
+    # The selector clips its search disk to the supplied geometry, but the hold
+    # leaving the declared corridor/region is exactly the failure this feature
+    # must never produce - so verify it here rather than trusting the clip.
+    if not _point_in_area_rows(coord, constraints):
+        return base
+
     # A ridge's back slope may sit slightly toward the mission; that is fine.
     # Sliding well past the anchor toward the mission is not - the aircraft
     # would no longer be "one leg behind", cover or not.
@@ -779,9 +911,11 @@ def _lah_cover_hold_info(
         coord = dict(anchor)
 
     info = _lah_point_info(coord)
-    if constraints:
-        # AREA-contained holds keep the terminal-cover contract keys so the
-        # d0304 pass can re-refine the point against UAV ETA LOS later.
+    if cover_contract:
+        # 목표지역 holds keep the terminal-cover contract keys so the d0304 pass
+        # can re-refine the point against UAV ETA LOS inside the same AREA.
+        # LINE-corridor holds deliberately opt out: their containment is a
+        # synthesized band, not operator-declared AREA geometry.
         info["_lahTerminalCoverEnabled"] = True
         info["_lahConstraintAreaList"] = deepcopy(constraints)
         info["_lahTerminalCoverThreatCoordinateList"] = [dict(t) for t in threats]
@@ -904,6 +1038,16 @@ def resolve_ground_maneuver_lah_anchors(
         # UAVs work the 목표지역, before the guard phase begins.
         "corridorStart": corridor_start,
         "corridorMid": corridor_mid,
+        # The 통로 branch itself (coordinateList + declared width): the band a
+        # corridor hold has to stay inside when it slides onto masking terrain.
+        "corridorLine": (
+            {
+                "coordinateList": [dict(coord) for coord in corridor_coords],
+                "width": _to_float(corridor.get("width")) or 0.0,
+            }
+            if corridor and corridor_coords
+            else None
+        ),
         # A point inside the 목표지역 polygon; the guard-phase hold anchor.
         "destinationInside": destination_inside,
         "anchorGuardOrder": guard_orders[0] if guard_orders else None,
@@ -949,10 +1093,19 @@ def ground_maneuver_lah_info_for_index(
         # just flown, rather than moving up into the region being worked.
         if region in DESTINATION_REGIONS:
             if trails_maneuver_legs:
-                previous_mid = _previous_maneuver_midpoint(missions, order)
+                previous_branch = _previous_maneuver_line_branch(missions, order)
+                previous_mid = (
+                    _polyline_midpoint(list(previous_branch.get("coordinateList") or []))
+                    if previous_branch
+                    else None
+                )
                 if previous_mid:
                     return (
-                        _lah_cover_hold_info(previous_mid, mission),
+                        _lah_cover_hold_info(
+                            previous_mid,
+                            mission,
+                            area_rows=_line_corridor_area_rows(previous_branch),
+                        ),
                         "previous_maneuver_mid_hold",
                     )
             target_orders_before_guard = [
@@ -966,14 +1119,19 @@ def ground_maneuver_lah_info_for_index(
             is_first_destination = bool(
                 target_orders_before_guard and order == target_orders_before_guard[0]
             )
+            corridor_rows = _line_corridor_area_rows(anchors.get("corridorLine"))
             if is_first_destination and corridor_start:
                 return (
-                    _lah_cover_hold_info(corridor_start, mission),
+                    _lah_cover_hold_info(
+                        corridor_start, mission, area_rows=corridor_rows
+                    ),
                     "corridor_start_hold",
                 )
             if not is_first_destination and corridor_mid:
                 return (
-                    _lah_cover_hold_info(corridor_mid, mission),
+                    _lah_cover_hold_info(
+                        corridor_mid, mission, area_rows=corridor_rows
+                    ),
                     "corridor_mid_hold",
                 )
         # No corridor geometry (or a non-destination pre-guard mission): keep the
@@ -991,6 +1149,7 @@ def ground_maneuver_lah_info_for_index(
                     destination_inside,
                     mission,
                     area_rows=_destination_area_rows(missions),
+                    cover_contract=True,
                 ),
                 "destination_area_hold",
             )
@@ -1013,6 +1172,7 @@ def ground_maneuver_lah_info_for_index(
                     destination_inside,
                     mission,
                     area_rows=_destination_area_rows(missions),
+                    cover_contract=True,
                 ),
                 "destination_area_hold",
             )
