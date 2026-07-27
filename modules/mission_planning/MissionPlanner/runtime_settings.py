@@ -310,15 +310,20 @@ DEFAULT_ATTACK_MISSION_VALUES: Dict[str, Any] = {
     "tactical_hide_deadline_s": 10.0,
     "tactical_reconnect_deadline_s": 60.0,
     "tactical_timing_guard_s": 1.0,
-    # A discovered enemy beyond this range is dropped from the masking analysis
-    # entirely, and the result then reports enemyVisibleCount=0 for a point with
-    # no cover at all.  Detection saturates with exposure time rather than
-    # distance - a 300 s hold is seen from well past weapon range (longest SIM
-    # weapon is 2.6 km) - so this must cover wherever contacts are actually
-    # discovered.  Live geometry put every aircraft 5.3-6.3 km from its enemy.
+    # Friendly engagement range.  Firing feasibility only - it must never gate
+    # concealment; use tactical_enemy_observation_range_m for that.
+    "tactical_enemy_range_m": 5000.0,
+    # How far a detected enemy still constrains the hide point.  0 = unlimited,
+    # which is the only safe default: an enemy beyond the cap was dropped from
+    # the masking analysis entirely, and the result then reported
+    # enemyVisibleCount=0 for a point with no cover at all.  Detection saturates
+    # with exposure time rather than distance - a 300 s hold is seen from well
+    # past weapon range (longest SIM weapon is 2.6 km) - and live geometry put
+    # every aircraft 5.3-6.3 km from its enemy, i.e. outside the old 5 km cap,
+    # so every hide point in that run was certified against zero enemies.
     # Measured cost of widening it: none; the analysed enemy count drives the
     # work, not the cap.
-    "tactical_enemy_range_m": 5000.0,
+    "tactical_enemy_observation_range_m": 0.0,
     "tactical_communication_range_m": 10000.0,
     "tactical_relay_min_uav_links": 3,
     "tactical_relay_degraded_min_uav_links": 2,

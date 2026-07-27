@@ -2180,6 +2180,12 @@ def _preserve_legacy_lah_target_bound_resumes(
     grouped: Dict[Tuple[int, int], List[int]] = defaultdict(list)
     for index in selected:
         mission = mission_list[index]
+        # A run-to-cover leg is target-bound but is never a return route, and
+        # counting it here would turn a lone hold into a two-member group whose
+        # tail - carrying no attack command - then reads as a legacy return leg
+        # and survives the sweep it should not survive.
+        if bool(mission.get("lahCoverIngress")):
+            continue
         input_id = _extract_related_input_mission_id(mission)
         target_id = _mission_target_id(mission)
         if input_id is None or target_id is None or int(target_id) <= 0:
@@ -2295,8 +2301,10 @@ def _lah_attack_target_mission_indices(
         )
         if exclude_all_target_missions:
             # LAH attack plans use type 2 for the shooter and target-bound
-            # type 9 for the supporting/holding manned aircraft.
-            if mission_type in {2, 9}:
+            # type 9 for the supporting/holding manned aircraft, each preceded
+            # by its own type-7 run-to-cover leg.  The ingress is part of the
+            # branch and has to be swept with it.
+            if mission_type in {2, 9} or bool(mission.get("lahCoverIngress")):
                 indices.append(int(idx))
             continue
         if (

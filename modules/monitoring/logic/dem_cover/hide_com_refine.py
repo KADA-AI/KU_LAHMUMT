@@ -392,11 +392,20 @@ def _observer_requirements_chunked(
     max_distance_m: float,
     chunk_size: int,
     reject_nodata: bool = False,
+    unevaluated_fill_m: float = float("inf"),
 ) -> np.ndarray:
-    """Compute thresholds with a chunk-invariant step count per observer."""
+    """Compute thresholds with a chunk-invariant step count per observer.
+
+    ``unevaluated_fill_m`` is what a (observer, point) pair gets when no ray
+    was traced for it.  The direction matters and differs by observer role:
+    a UAV link we could not prove is ``+inf`` ("no link"), while an ENEMY we
+    could not prove blocked must be ``-inf`` ("assume it sees us").  Both are
+    fail-closed; using ``+inf`` for an enemy makes it the neutral element of
+    the downstream ``np.min`` and silently deletes it from the proof.
+    """
 
     distances_m = np.hypot(xs - float(observer.x), ys - float(observer.y))
-    required_m = np.full(rows.size, np.inf, dtype=np.float64)
+    required_m = np.full(rows.size, float(unevaluated_fill_m), dtype=np.float64)
     indices, steps = _observer_step_count(
         observer,
         rows=rows,
@@ -431,7 +440,7 @@ def _observer_requirements_chunked(
                 target_cols=cols[selected],
                 steps=steps,
             )
-            required_m[selected[~known]] = np.inf
+            required_m[selected[~known]] = float(unevaluated_fill_m)
     return required_m
 
 
@@ -714,7 +723,9 @@ def refine_communication_hide(
     search_m = max(float(precision_dem.cell_m), float(search_radius_m))
     refine_m = max(float(precision_dem.cell_m), float(refinement_radius_m))
     reachable_m = max(0.0, float(own_reachable_radius_m))
-    enemy_range_m = max(1.0, float(precise_config.weapon_range_m))
+    # Concealment is proven against every detected enemy; the friendly weapon
+    # range has no bearing on how far an enemy can see.
+    enemy_range_m = precise_config.enemy_observation_range_effective_m
     communication_m = (
         float("inf")
         if float(communication_range_m) <= 0.0
@@ -745,8 +756,11 @@ def refine_communication_hide(
     terrain_floor_m = grounds_m + floor_agl_m
     altitude_ceiling_m = grounds_m + ceiling_agl_m
 
+    # -inf, not +inf: an enemy whose ray was never traced must read as "sees us
+    # from any altitude".  With +inf it becomes the neutral element of the
+    # np.min below and drops out of the proof entirely.
     enemy_requirements_m = np.full(
-        (len(precise_enemies), count), np.inf, dtype=np.float64
+        (len(precise_enemies), count), -np.inf, dtype=np.float64
     )
     for index, enemy in enumerate(precise_enemies):
         for candidate_indices in (primary_indices, route_only_indices):
@@ -763,6 +777,8 @@ def refine_communication_hide(
                     ys=ys[candidate_indices],
                     max_distance_m=enemy_range_m,
                     chunk_size=chunk_size,
+                    reject_nodata=True,
+                    unevaluated_fill_m=-np.inf,
                 )
             )
 
@@ -788,8 +804,16 @@ def refine_communication_hide(
                 )
             )
 
+    # This is the stage that produces the endpoint we actually fly, so the
+    # configured tactical margin has to be applied here too - it used to reach
+    # only the coarse pass and the degraded fallback, leaving the shipped point
+    # certified on 1.25 m of modelled clearance against a 5 m mandate.  The
+    # extra selection margin stays on top so an endpoint chosen at this ceiling
+    # still clears the route verifier, which recomputes over a different sample
+    # batch (see _ENEMY_CEILING_SELECTION_MARGIN_M).
     enemy_hidden_ceiling_m = (
         np.min(enemy_requirements_m, axis=0)
+        - float(precise_config.hide_safety_margin_m)
         - _ALTITUDE_MARGIN_M
         - _ENEMY_CEILING_SELECTION_MARGIN_M
     )

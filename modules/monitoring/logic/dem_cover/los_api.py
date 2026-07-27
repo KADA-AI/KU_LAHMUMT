@@ -88,6 +88,13 @@ def evaluate_regional_los(
     ``visible=None`` is reserved for unavailable/unknown terrain.  With
     ``reject_nodata=False`` (enemy exposure) nodata never manufactures cover;
     with ``True`` (communication certification) the ray fails unknown.
+
+    ``evaluated`` says whether a ray was actually traced.  Two short-circuits -
+    ``OUT_OF_RANGE`` and ``ENDPOINT_NOT_ABOVE_TERRAIN`` - return
+    ``visible=False`` without sampling any terrain, which is indistinguishable
+    from ``TERRAIN_BLOCKED`` to a caller that only reads the boolean.  Anything
+    certifying *concealment* must require ``visible is False and evaluated is
+    True``; "no ray was traced" is not proof of cover.
     """
 
     coordinates = (
@@ -104,6 +111,7 @@ def evaluate_regional_los(
             "demAvailable": False,
             "demSources": [],
             "reason": "NONFINITE_ENDPOINT",
+            "evaluated": False,
             "policyVersion": TERRAIN_LOS_POLICY_VERSION,
         }
 
@@ -121,6 +129,7 @@ def evaluate_regional_los(
             "demSources": [path.name] if path is not None else [],
             "demPath": str(path) if path is not None else None,
             "reason": error or "DEM_UNAVAILABLE",
+            "evaluated": False,
             "policyVersion": TERRAIN_LOS_POLICY_VERSION,
         }
 
@@ -139,6 +148,7 @@ def evaluate_regional_los(
             "demSources": [path.name],
             "demPath": str(path),
             "reason": "ENDPOINT_OUTSIDE_DEM_RASTER",
+            "evaluated": False,
             "policyVersion": TERRAIN_LOS_POLICY_VERSION,
         }
 
@@ -151,6 +161,7 @@ def evaluate_regional_los(
             "demSources": [path.name],
             "demPath": str(path),
             "reason": "ENDPOINT_NODATA",
+            "evaluated": False,
             "policyVersion": TERRAIN_LOS_POLICY_VERSION,
         }
 
@@ -174,6 +185,7 @@ def evaluate_regional_los(
             "demSources": [path.name],
             "demPath": str(path),
             "reason": "OUT_OF_RANGE",
+            "evaluated": False,
             "horizontalDistanceM": horizontal_distance_m,
             "observerGroundM": observer_ground_m,
             "targetGroundM": target_ground_m,
@@ -190,6 +202,7 @@ def evaluate_regional_los(
             "demSources": [path.name],
             "demPath": str(path),
             "reason": "ENDPOINT_NOT_ABOVE_TERRAIN",
+            "evaluated": False,
             "horizontalDistanceM": horizontal_distance_m,
             "observerGroundM": observer_ground_m,
             "targetGroundM": target_ground_m,
@@ -251,6 +264,7 @@ def evaluate_regional_los(
                     "demSources": [path.name],
                     "demPath": str(path),
                     "reason": "RAY_CROSSES_NODATA",
+            "evaluated": False,
                     "horizontalDistanceM": horizontal_distance_m,
                     "observerGroundM": observer_ground_m,
                     "targetGroundM": target_ground_m,
@@ -265,6 +279,7 @@ def evaluate_regional_los(
         "demSources": [path.name],
         "demPath": str(path),
         "reason": "VISIBLE" if visible else "TERRAIN_BLOCKED",
+        "evaluated": True,
         "horizontalDistanceM": horizontal_distance_m,
         "observerGroundM": observer_ground_m,
         "targetGroundM": target_ground_m,

@@ -1231,6 +1231,11 @@ def test_route_takes_late_cover_but_never_accepts_re_exposure(monkeypatch) -> No
         los_max_steps = 128
         max_analysis_enemies = 3
         weapon_range_m = 5000.0
+        # Concealment is gated on the enemy observation range, never on the
+        # friendly weapon range; unlimited is the production default.
+        enemy_observation_range_m = 0.0
+        enemy_observation_range_effective_m = float("inf")
+        hide_safety_margin_m = 5.0
 
         def with_overrides(self, **_kwargs):
             return self

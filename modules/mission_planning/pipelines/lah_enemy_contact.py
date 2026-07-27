@@ -425,9 +425,11 @@ def _route_concealment_schedule(
             "failureCode": "NO_ENEMY_FOR_ROUTE_VALIDATION",
             "sampleCount": int(xs.size),
         }
+    # -inf so an enemy whose ray could not be traced collapses the ceiling and
+    # marks the sample exposed, instead of dropping out of the np.min below.
     thresholds = np.full(
         (len(bounded_enemies), int(xs.size)),
-        np.inf,
+        -np.inf,
         dtype=np.float64,
     )
     for index, enemy in enumerate(bounded_enemies):
@@ -439,8 +441,10 @@ def _route_concealment_schedule(
             cols=cols,
             xs=xs,
             ys=ys,
-            max_distance_m=max(1.0, float(precise_config.weapon_range_m)),
+            max_distance_m=precise_config.enemy_observation_range_effective_m,
             chunk_size=64,
+            reject_nodata=True,
+            unevaluated_fill_m=-np.inf,
         )
     # The LOS threshold is open on the concealed side, so the same numerical
     # margin the native endpoint refinement applies is retained here.  The
@@ -448,7 +452,11 @@ def _route_concealment_schedule(
     # (see _ENEMY_CEILING_SELECTION_MARGIN_M): the two stages recompute the
     # threshold over different sample batches, so an endpoint chosen exactly at
     # the ceiling is rejected here and no concealment plan is ever issued.
-    hidden_ceiling_m = np.min(thresholds, axis=0) - _ROUTE_CONCEALMENT_VERIFY_MARGIN_M
+    hidden_ceiling_m = (
+        np.min(thresholds, axis=0)
+        - float(precise_config.hide_safety_margin_m)
+        - _ROUTE_CONCEALMENT_VERIFY_MARGIN_M
+    )
     hidden = np.isfinite(altitudes) & (altitudes <= hidden_ceiling_m)
     continuous_hidden_suffix = np.logical_and.accumulate(hidden[::-1])[::-1]
     response_times = route_times + max(0.0, float(planning_elapsed_s))
@@ -572,6 +580,10 @@ def _plan_enemy_contact_response_unbounded(
     deadline_s: float = 10.0,
     reconnect_deadline_s: float = 60.0,
     enemy_range_m: float = 5_000.0,
+    # Concealment gate, deliberately separate from the friendly weapon range
+    # above.  <= 0 means unlimited: every detected enemy constrains the hide
+    # point no matter how far away it is.
+    enemy_observation_range_m: float = 0.0,
     communication_range_m: float = 10_000.0,
     min_uav_links: int = 3,
     hide_agl_m: float = 50.0,
@@ -718,7 +730,12 @@ def _plan_enemy_contact_response_unbounded(
         config = CoverConfig(
             dem_path=str(bundle.path),
             analysis_max_dim=int(analysis_max_dim),
+            # ``enemy_range_m`` is the friendly engagement range and stays where
+            # firing feasibility is judged.  Concealment is proven against every
+            # detected enemy regardless of range: capping it deletes enemies
+            # from the proof and reports cover for a point in plain view.
             weapon_range_m=max(1.0, float(enemy_range_m)),
+            enemy_observation_range_m=max(0.0, float(enemy_observation_range_m or 0.0)),
         )
         enemies = _native_enemy_points(
             coarse_dem,

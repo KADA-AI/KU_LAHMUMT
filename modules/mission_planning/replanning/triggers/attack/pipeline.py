@@ -6471,6 +6471,10 @@ def _drop_stale_lah_tactical_follow_ups(
             and _extract_related_input_mission_id(mission) == int(current_input)
             and (
                 bool(mission.get("postAttackResume"))
+                # The run-to-cover leg belongs to the engagement it was built
+                # for; leaving it behind would strand a movement path pointing
+                # at a hide point the next replan has already superseded.
+                or bool(mission.get("lahCoverIngress"))
                 or (
                     mission_type in {2, 9}
                     and target_id is not None
@@ -6849,8 +6853,11 @@ class AttackIdReservation:
                 path_count = attack_count
                 individual_count = attack_count
             else:
-                path_count += attack_count + 1
-                individual_count += attack_count + 1
+                # attack(s) + resume + the run-to-cover leg, which is emitted as
+                # its own individual mission so the movement and the engagement
+                # at cover stay separately addressable.
+                path_count += attack_count + 2
+                individual_count += attack_count + 2
             # Each attack path now contains a dense-sampled/simplified low-level
             # approach plus the vertical high attack point.  Reserve enough IDs
             # without falling back to the global allocator during a transaction.
@@ -6858,15 +6865,16 @@ class AttackIdReservation:
             # the first attack may carry a native DEM-certified hide prelude.
             waypoint_count += attack_count * 128 + 128 + 256
         elif mode == "LAH_RELAY":
-            path_count += 2
-            individual_count += 2
+            path_count += 3
+            individual_count += 3
             # Native route planner is bounded at 256, while the normal result
             # is typically under ten points.  Keep the reservation local.
             waypoint_count += 256
         elif mode == "LAH_HOLD_RESUME":
-            path_count += 2
-            individual_count += 2
-            waypoint_count += 3
+            # ingress + hold + resume.
+            path_count += 3
+            individual_count += 3
+            waypoint_count += 4
         elif mode == "UAV_TRACK":
             path_count += 3
             individual_count += 2
@@ -9599,13 +9607,18 @@ def _plan_lah_enemy_contact_response(
                 reconnect_deadline_s=get_runtime_attack_float(
                     "tactical_reconnect_deadline_s", 60.0
                 ),
-                # A discovered enemy dropped for being "out of range" is silently
-                # excluded from the masking analysis, and the result then reports
-                # enemyVisibleCount=0 for a point with no cover at all.  Detection
-                # saturates with exposure time rather than distance, so a 300 s
-                # hold is seen well beyond weapon range.  Measured cost of
-                # widening this: none - the analysed enemy count drives the work.
+                # Friendly engagement range - firing feasibility only.
                 enemy_range_m=get_runtime_attack_float("tactical_enemy_range_m", 5000.0),
+                # How far an enemy still constrains concealment.  Unlimited by
+                # default: an enemy dropped for being "out of range" is excluded
+                # from the masking analysis entirely, and the result then reports
+                # enemyVisibleCount=0 for a point with no cover at all.  Detection
+                # saturates with exposure time rather than distance - a 300 s hold
+                # is seen well beyond weapon range, and live geometry has put every
+                # aircraft 5.3-6.3 km from its enemy, i.e. outside the old cap.
+                enemy_observation_range_m=get_runtime_attack_float(
+                    "tactical_enemy_observation_range_m", 0.0
+                ),
                 communication_range_m=get_runtime_attack_float(
                     "tactical_communication_range_m", 10000.0
                 ),
@@ -10475,6 +10488,90 @@ def _build_lah_tactical_route_waypoints(
     if terminal_hover_seconds > 0:
         normalized[-1]["hovering"] = {"time": int(terminal_hover_seconds)}
     return normalized
+
+
+def _split_lah_cover_ingress_waypoints(
+    route_waypoints: List[Dict[str, Any]],
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Cut a certified ingress route into (movement, cover-entry) waypoint lists.
+
+    The run to cover and the purpose action at cover are separate individual
+    missions, but they share exactly one waypoint: the certified hide endpoint.
+    The cut therefore falls *before* that endpoint, which becomes the first
+    waypoint of the purpose path.  Cutting after it instead would leave the
+    purpose path starting where the aircraft already is - the zero-length leg
+    this module documents as a live failure mode, where the aircraft never
+    registers the arrival.
+
+    A route with fewer than two waypoints has no movement leg to separate, so
+    the whole route is returned as the cover entry.
+    """
+
+    route = [deepcopy(item) for item in (route_waypoints or []) if isinstance(item, dict)]
+    if len(route) < 2:
+        return [], route
+    ingress, cover_entry = route[:-1], route[-1:]
+    # The movement path ends here: it may not link into another path's IDs, and
+    # any dwell belongs to the cover entry that follows it.
+    ingress[-1]["nextWaypointID"] = 0
+    ingress[-1]["hovering"] = {"time": 0}
+    _apply_leg_fuel(ingress)
+    _apply_leg_fuel(cover_entry)
+    return ingress, cover_entry
+
+
+def _rebase_lah_path_etas(
+    waypoints: List[Dict[str, Any]],
+    *,
+    base_eta_s: int,
+) -> None:
+    """Shift a standalone path's ETAs so they start from its own departure.
+
+    ETAs accumulate across the whole certified route, so once the movement legs
+    leave for their own individual mission the remaining path still carries
+    their elapsed time.  Subtracting the movement's final ETA preserves every
+    leg duration - the first waypoint keeps the true flight time of the leg into
+    cover - while re-zeroing outright would erase it.
+    """
+
+    offset = max(0, int(base_eta_s or 0))
+    previous_eta_s = 0
+    for index, waypoint in enumerate(waypoints or []):
+        if not isinstance(waypoint, dict):
+            continue
+        eta_s = max(0, (_to_int(waypoint.get("eta")) or 0) - offset)
+        eta_s = min(0xFFFFFFFF, eta_s)
+        if index and eta_s <= previous_eta_s:
+            previous_coord = _extract_lah_waypoint_coordinate(waypoints[index - 1])
+            current_coord = _extract_lah_waypoint_coordinate(waypoint)
+            if not _same_lah_3d_coordinate(previous_coord, current_coord):
+                eta_s = min(0xFFFFFFFF, previous_eta_s + 1)
+        waypoint["eta"] = int(eta_s)
+        previous_eta_s = int(eta_s)
+
+
+def _lah_attack_window_seconds_from_waypoints(
+    popup_waypoints: List[Dict[str, Any]],
+) -> Optional[int]:
+    """Measure the hide -> fire -> regain-hide window of a built attack path.
+
+    A wingman holding in cover must wait out the shooter's whole exposure, so
+    the number is taken from the emitted waypoints rather than re-estimated:
+    the ETA span covers climb, shot and descent, and the terminal dwells cover
+    the settle time at either end.
+    """
+
+    waypoints = [item for item in (popup_waypoints or []) if isinstance(item, dict)]
+    if len(waypoints) < 2:
+        return None
+    first_eta_s = _to_int(waypoints[0].get("eta")) or 0
+    last_eta_s = _to_int(waypoints[-1].get("eta")) or 0
+    span_s = max(0, int(last_eta_s) - int(first_eta_s))
+    dwell_s = 0
+    for waypoint in (waypoints[0], waypoints[-1]):
+        hovering = waypoint.get("hovering") if isinstance(waypoint.get("hovering"), dict) else {}
+        dwell_s += max(0, _to_int(hovering.get("time")) or 0)
+    return int(span_s + dwell_s)
 
 
 def _record_lah_tactical_points(
@@ -13993,9 +14090,13 @@ def _certify_incremental_append_hide_endpoint(
     if not isinstance(enemy_rows, list) or not enemy_rows:
         emit("[ATTACK][APPEND][WARN] no enemy set available for inherited-hide certification.")
         return None
-    enemy_range_m = max(
-        0.0, get_runtime_attack_float("tactical_enemy_range_m", 5000.0)
-    )
+    hide_altitude_m = _to_float(hide.get("altitude"))
+    if hide_altitude_m is None or not math.isfinite(float(hide_altitude_m)):
+        # Substituting 0 m MSL puts the point under terrain, which returns
+        # ENDPOINT_NOT_ABOVE_TERRAIN -> visible=False for every enemy, i.e. an
+        # unknown altitude would certify as concealed from all of them.
+        emit("[ATTACK][APPEND][WARN] inherited hide altitude unavailable; append deferred.")
+        return None
     enemy_checked = 0
     for raw_enemy in enemy_rows:
         if not isinstance(raw_enemy, dict):
@@ -14014,9 +14115,13 @@ def _certify_incremental_append_hide_endpoint(
                 observer_height_m=float(ENEMY_OBSERVER_HEIGHT_M),
                 target_latitude=float(hide["latitude"]),
                 target_longitude=float(hide["longitude"]),
-                target_altitude_m=float(hide.get("altitude") or 0.0),
+                target_altitude_m=float(hide_altitude_m),
                 target_height_m=0.0,
-                max_range_m=float(enemy_range_m) if enemy_range_m > 0.0 else None,
+                # No range gate: an enemy skipped for distance returns
+                # visible=False without tracing a ray, which would read here as
+                # proof of masking.  Concealment is proven against every
+                # contact regardless of how far away it is.
+                max_range_m=None,
                 reject_nodata=False,
             )
         except Exception as exc:
@@ -14025,10 +14130,14 @@ def _certify_incremental_append_hide_endpoint(
                 f"({type(exc).__name__}: {exc}); append deferred."
             )
             return None
-        if not isinstance(assessment, dict) or assessment.get("visible") is not False:
+        if (
+            not isinstance(assessment, dict)
+            or assessment.get("visible") is not False
+            or assessment.get("evaluated") is not True
+        ):
             emit(
-                "[ATTACK][APPEND][WARN] inherited endpoint is visible or LOS is "
-                f"unknown to a current enemy (reason={(assessment or {}).get('reason')}); "
+                "[ATTACK][APPEND][WARN] inherited endpoint is visible, unknown, or "
+                f"was never ray-traced for a current enemy (reason={(assessment or {}).get('reason')}); "
                 "append deferred."
             )
             return None
@@ -14057,18 +14166,22 @@ def _certify_incremental_append_hide_endpoint(
                 observer_height_m=0.0,
                 target_latitude=float(hide["latitude"]),
                 target_longitude=float(hide["longitude"]),
-                target_altitude_m=float(hide.get("altitude") or 0.0),
+                target_altitude_m=float(hide_altitude_m),
                 target_height_m=0.0,
                 max_range_m=(
                     float(communication_range_m)
                     if communication_range_m > 0.0
                     else None
                 ),
-                reject_nodata=False,
+                reject_nodata=True,
             )
         except Exception:
             continue
-        if isinstance(assessment, dict) and assessment.get("visible") is True:
+        if (
+            isinstance(assessment, dict)
+            and assessment.get("visible") is True
+            and assessment.get("evaluated") is True
+        ):
             uav_id = _to_int(raw_uav.get("aircraft_id") or raw_uav.get("aircraftID"))
             visible_uav_ids.append(int(uav_id or 0))
     if len(visible_uav_ids) < int(required_links):

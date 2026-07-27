@@ -10,6 +10,7 @@ weapon range is used directly without any lat/lon conversion.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -45,7 +46,17 @@ class CoverConfig:
     analysis_max_dim: int = 340
 
     # --- Tactical model ---------------------------------------------------
+    # Firing range only.  It must never gate concealment: an enemy is dropped
+    # from a masking proof for being far away, which is backwards - an enemy
+    # who can see us from 6 km is a bigger problem, not a smaller one.  Use
+    # ``enemy_observation_range_effective_m`` for every visibility question.
     weapon_range_m: float = 5000.0     # friendly engagement range (사거리)
+    # How far an enemy is assumed able to *observe* us.  Detection saturates
+    # with exposure time rather than distance, and live geometry has put every
+    # aircraft 5.3-6.3 km from its enemy, so the default is unlimited: every
+    # detected enemy constrains concealment regardless of range.
+    # <= 0 means unlimited.
+    enemy_observation_range_m: float = 0.0
     enemy_height_m: float = ENEMY_OBSERVER_HEIGHT_M
     friendly_height_m: float = 2.0     # exposure height of a position we occupy
 
@@ -104,6 +115,23 @@ class CoverConfig:
     def dem_full_path(self) -> Path:
         raw = Path(self.dem_path)
         return raw if raw.is_absolute() else resolve_repo_root() / raw
+
+    @property
+    def enemy_observation_range_effective_m(self) -> float:
+        """Range at which an enemy still constrains concealment.
+
+        Unlimited unless explicitly capped.  Every concealment gate must use
+        this rather than ``weapon_range_m``; a capped value silently deletes
+        enemies from the proof and reports cover for a point in plain view.
+        """
+
+        try:
+            configured = float(self.enemy_observation_range_m)
+        except (TypeError, ValueError):
+            return float("inf")
+        if not math.isfinite(configured) or configured <= 0.0:
+            return float("inf")
+        return configured
 
     def with_overrides(self, **kwargs: Any) -> "CoverConfig":
         return replace(self, **kwargs)

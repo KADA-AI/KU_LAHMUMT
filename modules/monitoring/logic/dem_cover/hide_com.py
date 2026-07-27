@@ -423,9 +423,15 @@ class CommunicationHideAnalyzer:
 
         enemy_visible = 0
         enemy_in_range = 0
+        enemy_unevaluated = 0
         for enemy in enemies:
             distance_m = float(np.hypot(float(x) - enemy.x, float(y) - enemy.y))
             if distance_m > float(enemy_range_m):
+                # Out of the configured observation range: no ray was traced, so
+                # this enemy is *unevaluated*, not proven blocked.  Callers must
+                # be able to tell those apart - silently skipping it is what let
+                # a point in plain view report enemyVisibleCount=0.
+                enemy_unevaluated += 1
                 continue
             enemy_in_range += 1
             target_rows, target_cols, target_altitudes, target_distances = target_arrays(
@@ -466,7 +472,11 @@ class CommunicationHideAnalyzer:
             )
             if bool(visible[0]):
                 connected.append(index)
-        return enemy_visible, enemy_in_range, connected, len(connected)
+        # An enemy we never traced a ray to is not cover.  Every consumer gates
+        # on ``enemy_visible == 0``, so counting the unevaluated ones here makes
+        # "we could not prove this one is blocked" reject the candidate instead
+        # of passing it silently.
+        return enemy_visible + enemy_unevaluated, enemy_in_range, connected, len(connected)
 
     def analyze(
         self,
@@ -517,7 +527,9 @@ class CommunicationHideAnalyzer:
         floor_agl_m = max(1.0, float(hide_agl_m))
         ceiling_agl_m = max(floor_agl_m, float(max_hide_agl_m))
         search_m = max(float(dem.cell_m), float(search_radius_m))
-        enemy_range_m = max(1.0, float(cfg.weapon_range_m))
+        # Concealment is proven against every detected enemy, not just the ones
+        # inside our own weapon range.
+        enemy_range_m = cfg.enemy_observation_range_effective_m
         raw_communication_m = float(communication_range_m)
         communication_m = (
             float("inf") if raw_communication_m <= 0.0 else raw_communication_m
