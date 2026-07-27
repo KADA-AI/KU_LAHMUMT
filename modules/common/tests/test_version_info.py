@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 
 from modules.common import db_paths
 from modules.common.version_info import (
+    CHANGE_LOG_PATH,
     ReleaseInfo,
     SCENARIO_VERSION_LOG_FILENAME,
     load_release_info,
@@ -13,13 +15,28 @@ from modules.common.version_info import (
 )
 
 
+def _first_change_log_entry() -> tuple[str, str]:
+    """Independently parse the newest ``(date, version)`` from change_log.md.
+
+    The release identity moves with every entry, so tests derive the expected
+    value from the file instead of pinning a literal that dies each release.
+    """
+
+    for line in CHANGE_LOG_PATH.read_text(encoding="utf-8").splitlines():
+        match = re.match(r"^(\d{4}-\d{2}-\d{2})\s+v(\d+(?:\.\d+)+)\s+-", line.strip())
+        if match:
+            return match.group(1), match.group(2)
+    raise AssertionError("change_log.md has no valid release line")
+
+
 def test_current_release_comes_from_change_log() -> None:
+    expected_date, expected_version = _first_change_log_entry()
     release = load_release_info()
 
-    assert release.version == "1.4.1"
-    assert release.display_version == "v1.4.1"
-    assert release.release_date == "2026-07-25"
-    assert release.code_label == "2026-07-25 최종 수정본"
+    assert release.version == expected_version
+    assert release.display_version == f"v{expected_version}"
+    assert release.release_date == expected_date
+    assert release.code_label == f"{expected_date} 최종 수정본"
 
 
 def test_missing_release_metadata_fails_closed_to_current_release(tmp_path: Path) -> None:
@@ -129,7 +146,11 @@ def test_activate_scenario_writes_version_before_publishing_info(
         assert version_path.name == SCENARIO_VERSION_LOG_FILENAME
         assert version_path.is_file()
         assert persisted_info["version_log"] == str(version_path)
-        assert json.loads(version_path.read_text(encoding="utf-8"))["version"] == "1.4.1"
+        _, expected_version = _first_change_log_entry()
+        assert (
+            json.loads(version_path.read_text(encoding="utf-8"))["version"]
+            == expected_version
+        )
     finally:
         db_paths._cache.clear()
         db_paths._cache.update(old_cache)

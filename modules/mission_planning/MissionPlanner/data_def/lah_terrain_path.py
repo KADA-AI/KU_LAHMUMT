@@ -22,44 +22,47 @@ LAH_TERRAIN_MAX_WAYPOINT_SPACING_M = 750.0
 LAH_TERRAIN_MAX_PROFILE_EXCESS_M = 35.0
 LAH_TERRAIN_MAX_OUTPUT_WAYPOINTS = 64
 LAH_VERTICAL_RATE_USE_RATIO = 0.75
-LAH_LOW_TERRAIN_MIN_LEG_M = 600.0
-# Wide enough to reach the low ground beside the leg, and no wider: past this
-# the search starts buying a long way round instead of following the valley the
-# leg already runs along.
-LAH_LOW_TERRAIN_CORRIDOR_M = 1_200.0
-LAH_LOW_TERRAIN_CORRIDOR_RATIO = 0.5
+LAH_LOW_TERRAIN_MIN_LEG_M = 400.0
+# Wide enough to reach the low ground beside the leg: the valley worth
+# following is often a ridge line away, not on the leg's own shoulder.
+LAH_LOW_TERRAIN_CORRIDOR_M = 2_400.0
+LAH_LOW_TERRAIN_CORRIDOR_RATIO = 0.8
 # Station spacing along the leg.  This is the along-track resolution of the
 # search: at 3 km a 4 km leg gets a single mid-point that can only be nudged,
 # which is why the first cut barely moved the route at all.
 LAH_LOW_TERRAIN_STAGE_SPACING_M = 100.0
-LAH_LOW_TERRAIN_MAX_STAGES = 140
+LAH_LOW_TERRAIN_MAX_STAGES = 220
 # Lateral resolution: a ~100 m lane pitch across the corridor.  A coarse pitch
 # can only pick a side of the ridge, and it is the pitch - not the corridor
-# width - that decides whether the route can follow the low ground.  Widening
-# past this buys distance; refining past it buys nothing.
-LAH_LOW_TERRAIN_LANE_COUNT = 25
+# width - that decides whether the route can follow the low ground.  The lane
+# count scales with the corridor (2x corridor -> 2x lanes) so the pitch stays
+# ~100 m and the per-station turn angle is unchanged.
+LAH_LOW_TERRAIN_LANE_COUNT = 49
 # One lane per station keeps the divert flyable: lane pitch is sized to the
 # station spacing, so a full-rate sidestep is a ~40 degree turn.
 LAH_LOW_TERRAIN_MAX_LANE_STEP = 1
-# A detour is only worth flying if it stays close to the direct distance.
-LAH_LOW_TERRAIN_MAX_LENGTH_RATIO = 1.35
+# A detour is only worth flying if the terrain saved pays for the extra track.
+LAH_LOW_TERRAIN_MAX_LENGTH_RATIO = 1.9
 LAH_LOW_TERRAIN_EDGE_SAMPLES = 3
 LAH_LOW_TERRAIN_SIMPLIFY_M = 150.0
+# Re-centre passes: the corridor is rebuilt around the previous winner so the
+# search can walk further sideways than one corridor half-width allows.
+LAH_LOW_TERRAIN_REFINE_PASSES = 2
 # How many metres of lateral detour one metre of terrain elevation is worth.
 # Climbing is slow and puts the aircraft on a skyline; going around is neither,
 # so terrain dominates distance.  The length budget, not these weights, is what
 # stops the search wandering.
-_LOW_TERRAIN_MEAN_WEIGHT = 8.0
+_LOW_TERRAIN_MEAN_WEIGHT = 16.0
 # Peak weights swept alongside the distance term.  A route can average lower
 # while still topping a ridge somewhere, so the search needs the option of
 # paying much more to stay out of the high ground entirely.
-_LOW_TERRAIN_PEAK_WEIGHT_LADDER = (5.0, 15.0, 40.0, 100.0)
+_LOW_TERRAIN_PEAK_WEIGHT_LADDER = (5.0, 15.0, 40.0, 100.0, 250.0, 600.0)
 # DEM sampling noise between two differently-shaped routes.  Anything above
 # this counts as genuinely crossing higher ground and is rejected.
 _LOW_TERRAIN_PEAK_TOLERANCE_M = 5.0
 # Per metre of lateral movement.  Breaks ties towards a straight track through
 # equally low ground without being able to veto a genuinely lower valley.
-_LOW_TERRAIN_LANE_PENALTY_PER_M = 0.35
+_LOW_TERRAIN_LANE_PENALTY_PER_M = 0.12
 # Multipliers applied to the distance term until the route fits the length
 # budget.  Re-running the search over already-sampled terrain is arithmetic
 # only, so the whole ladder costs far less than one extra DEM lookup.
@@ -159,33 +162,105 @@ def _load_terrain_profile(
         return values
 
 
-def _offset_route_node(
-    start: tuple[float, float],
-    end: tuple[float, float],
+def _offset_along_polyline(
+    centerline: Sequence[tuple[float, float]],
     fraction: float,
     lateral_offset_m: float,
 ) -> tuple[float, float]:
-    """Return a point along a leg with an equirectangular lateral offset."""
+    """Point at an arc-length fraction of a polyline, offset perpendicular.
+
+    The station is placed by cumulative distance along the (possibly bent)
+    centerline, and the lateral offset uses the local perpendicular of the
+    segment that contains the station.  A straight two-point centerline
+    reduces to the plain leg-offset case.
+    """
 
     alpha = min(max(float(fraction), 0.0), 1.0)
-    mid_lat = (float(start[0]) + float(end[0])) * 0.5
-    metres_per_lat = 111_132.92
+    mid_lat = (float(centerline[0][0]) + float(centerline[-1][0])) * 0.5
+    metres_per_lat = _METRES_PER_DEGREE_LAT
     metres_per_lon = max(1.0, metres_per_lat * math.cos(math.radians(mid_lat)))
-    dx = (float(end[1]) - float(start[1])) * metres_per_lon
-    dy = (float(end[0]) - float(start[0])) * metres_per_lat
+
+    lengths = [
+        _distance_m(left, right) for left, right in zip(centerline, centerline[1:])
+    ]
+    total_m = sum(lengths)
+    if total_m <= 1e-6:
+        return (float(centerline[0][0]), float(centerline[0][1]))
+
+    target_m = total_m * alpha
+    covered_m = 0.0
+    segment_index = len(lengths) - 1
+    for index, length in enumerate(lengths):
+        if covered_m + length >= target_m or length <= 0.0:
+            if length > 0.0:
+                segment_index = index
+                break
+            continue
+        covered_m += length
+    segment_start = centerline[segment_index]
+    segment_end = centerline[segment_index + 1]
+    segment_m = lengths[segment_index]
+    local_ratio = 0.0 if segment_m <= 1e-9 else (target_m - covered_m) / segment_m
+    local_ratio = min(max(local_ratio, 0.0), 1.0)
+
+    base_lat = (
+        float(segment_start[0])
+        + (float(segment_end[0]) - float(segment_start[0])) * local_ratio
+    )
+    base_lon = (
+        float(segment_start[1])
+        + (float(segment_end[1]) - float(segment_start[1])) * local_ratio
+    )
+    dx = (float(segment_end[1]) - float(segment_start[1])) * metres_per_lon
+    dy = (float(segment_end[0]) - float(segment_start[0])) * metres_per_lat
     norm = math.hypot(dx, dy)
     if norm <= 1e-6:
-        return start
-    center_x = dx * alpha
-    center_y = dy * alpha
+        return (base_lat, base_lon)
     perp_x = -dy / norm
     perp_y = dx / norm
-    x = center_x + perp_x * float(lateral_offset_m)
-    y = center_y + perp_y * float(lateral_offset_m)
     return (
-        float(start[0]) + y / metres_per_lat,
-        float(start[1]) + x / metres_per_lon,
+        base_lat + (perp_y * float(lateral_offset_m)) / metres_per_lat,
+        base_lon + (perp_x * float(lateral_offset_m)) / metres_per_lon,
     )
+
+
+def _low_terrain_strength() -> float:
+    """Operator dial for the low-terrain search, from runtime settings.
+
+    ``lah_low_terrain_strength``: 0 disables the detour search entirely,
+    1.0 (default) is the tuned behaviour, up to 3 searches wider/longer.
+    """
+
+    try:
+        from modules.mission_planning.MissionPlanner.runtime_settings import (
+            get_runtime_float,
+        )
+
+        value = float(get_runtime_float("lah_low_terrain_strength", 1.0))
+    except Exception:
+        return 1.0
+    if not math.isfinite(value):
+        return 1.0
+    return min(max(value, 0.0), 3.0)
+
+
+def _corridor_incoming_edges(
+    layers: Sequence[Sequence[dict[str, Any]]],
+    edges: dict[tuple[int, int, int], dict[str, Any]],
+) -> list[list[list[tuple[int, dict[str, Any]]]]]:
+    """Group lattice edges by their arrival node.
+
+    ``incoming[layer_index][current_index]`` lists ``(previous_index, edge)``
+    pairs, so the search visits only the few lanes that can actually reach a
+    node instead of scanning the whole previous layer.
+    """
+
+    incoming: list[list[list[tuple[int, dict[str, Any]]]]] = [
+        [[] for _ in layer] for layer in layers
+    ]
+    for (layer_index, previous_index, current_index), edge in edges.items():
+        incoming[layer_index][current_index].append((previous_index, edge))
+    return incoming
 
 
 def _low_terrain_route_for_leg(
@@ -209,8 +284,11 @@ def _low_terrain_route_for_leg(
     divided into stations every few hundred metres.  A shortest-path search
     over that lattice picks the lane at each station, so the route can walk
     into a neighbouring valley and follow it rather than merely shaving the
-    shoulder of the ridge in front of it.  The lattice is sampled with a single
-    de-duplicated DEM batch, which keeps it far cheaper than a raster search.
+    shoulder of the ridge in front of it.  The winning route then becomes the
+    centerline for the next pass, so successive corridors can walk further
+    into a valley than one corridor half-width allows.  All passes share one
+    de-duplicated DEM batch, which keeps the search far cheaper than a raster
+    search.
     """
 
     direct_m = _distance_m(start, end)
@@ -225,6 +303,10 @@ def _low_terrain_route_for_leg(
         except Exception:
             return [start, end]
 
+    strength = _low_terrain_strength()
+    if strength <= 0.0:
+        return [start, end]
+
     stage_count = max(
         1,
         min(
@@ -233,115 +315,158 @@ def _low_terrain_route_for_leg(
         ),
     )
     corridor_m = min(
-        max(10.0, float(corridor_width_m)),
+        max(10.0, float(corridor_width_m) * strength),
         max(25.0, direct_m * LAH_LOW_TERRAIN_CORRIDOR_RATIO),
     )
+    length_ratio = 1.0 + (LAH_LOW_TERRAIN_MAX_LENGTH_RATIO - 1.0) * strength
+    lane_penalty_per_m = _LOW_TERRAIN_LANE_PENALTY_PER_M / max(0.25, strength)
+    refine_passes = int(round(max(0, LAH_LOW_TERRAIN_REFINE_PASSES) * strength))
+    length_budget_m = direct_m * length_ratio
+
     lane_count = max(3, int(LAH_LOW_TERRAIN_LANE_COUNT) | 1)
     half_lanes = (lane_count - 1) // 2
     lane_pitch_m = corridor_m / float(half_lanes)
-    layers: list[list[dict[str, Any]]] = [[{"coord": start, "lane": 0}]]
-    for stage in range(1, stage_count + 1):
-        fraction = float(stage) / float(stage_count + 1)
-        layers.append(
-            [
-                {
-                    "coord": _offset_route_node(
-                        start, end, fraction, float(lane) * lane_pitch_m
-                    ),
-                    "lane": lane,
-                }
-                for lane in range(-half_lanes, half_lanes + 1)
-            ]
-        )
-    layers.append([{"coord": end, "lane": 0}])
-
     interior_ratios = [
         float(index) / float(max(1, int(edge_samples)) + 1)
         for index in range(1, max(1, int(edge_samples)) + 1)
     ]
     max_lane_step = max(1, int(LAH_LOW_TERRAIN_MAX_LANE_STEP))
-    edges: dict[tuple[int, int, int], dict[str, Any]] = {}
+
+    # One sampler is shared by every pass: a re-centred corridor overlaps most
+    # of the previous one, and resolve() only fetches keys not yet looked up.
     sampler = _TerrainSampler(terrain_provider, quantum_m=lane_pitch_m / 4.0)
-    for layer_index in range(1, len(layers)):
-        previous_layer = layers[layer_index - 1]
-        current_layer = layers[layer_index]
-        for previous_index, previous in enumerate(previous_layer):
-            for current_index, current in enumerate(current_layer):
-                # A station-to-station sidestep is bounded so the divert stays
-                # flyable; reaching a distant lane costs several stations of
-                # gradual drift rather than one implausible dogleg.
-                if abs(int(previous["lane"]) - int(current["lane"])) > max_lane_step:
-                    continue
-                left = previous["coord"]
-                right = current["coord"]
-                if callable(segment_allowed):
-                    try:
-                        if not bool(segment_allowed(left, right)):
-                            continue
-                    except Exception:
-                        continue
-                points = [
-                    (
-                        float(left[0]) + (float(right[0]) - float(left[0])) * ratio,
-                        float(left[1]) + (float(right[1]) - float(left[1])) * ratio,
-                    )
-                    for ratio in interior_ratios
-                ]
-                points.append((float(right[0]), float(right[1])))
-                edges[(layer_index, previous_index, current_index)] = {
-                    "keys": sampler.request(points),
-                    "length_m": _distance_m(left, right),
-                    "lateral_m": abs(int(previous["lane"]) - int(current["lane"]))
-                    * lane_pitch_m,
-                }
-
-    if not edges:
-        return [start, end]
-    sampler.resolve()
-    for edge in edges.values():
-        values = sampler.values(edge["keys"]) or [0.0]
-        edge["mean_ground"] = max(0.0, sum(values) / float(len(values)))
-        edge["peak_ground"] = max(0.0, max(values))
-        edge["turn_cost"] = _LOW_TERRAIN_LANE_PENALTY_PER_M * float(edge["lateral_m"])
-
-    # Terrain is worth far more than distance here: going a few hundred metres
-    # around costs seconds, climbing the same height costs far longer and puts
-    # the aircraft on a skyline where it is seen.  Both weights are then swept:
-    # the distance term bounds the detour honestly instead of by cramping the
-    # corridor, and the peak term buys routes that stay out of the high ground
-    # rather than merely averaging lower across it.
-    length_budget_m = direct_m * max(1.0, LAH_LOW_TERRAIN_MAX_LENGTH_RATIO)
     direct_mean_m, direct_peak_m = _route_ground_stats([start, end], sampler)
+
+    def _search_around(
+        centerline: Sequence[tuple[float, float]],
+    ) -> tuple[list[tuple[float, float]], float, float] | None:
+        """One lattice search around a centerline; (route, score, peak)."""
+
+        layers: list[list[dict[str, Any]]] = [[{"coord": start, "lane": 0}]]
+        for stage in range(1, stage_count + 1):
+            fraction = float(stage) / float(stage_count + 1)
+            stations: list[dict[str, Any]] = []
+            for lane in range(-half_lanes, half_lanes + 1):
+                coord = _offset_along_polyline(
+                    centerline, fraction, float(lane) * lane_pitch_m
+                )
+                # The corridor is a promise to the caller (mission LINE width),
+                # so a re-centred pass may reshape the station spine but must
+                # never let cumulative drift place a node outside the corridor
+                # of the original leg.  Lane 0 sits on a previously accepted
+                # route, so every stage keeps at least one node.
+                if _cross_track_m(coord, start, end) > corridor_m + 1.0:
+                    continue
+                stations.append({"coord": coord, "lane": lane})
+            if not stations:
+                return None
+            layers.append(stations)
+        layers.append([{"coord": end, "lane": 0}])
+
+        edges: dict[tuple[int, int, int], dict[str, Any]] = {}
+        for layer_index in range(1, len(layers)):
+            previous_layer = layers[layer_index - 1]
+            current_layer = layers[layer_index]
+            for previous_index, previous in enumerate(previous_layer):
+                for current_index, current in enumerate(current_layer):
+                    # A station-to-station sidestep is bounded so the divert
+                    # stays flyable; reaching a distant lane costs several
+                    # stations of gradual drift rather than one implausible
+                    # dogleg.
+                    if abs(int(previous["lane"]) - int(current["lane"])) > max_lane_step:
+                        continue
+                    left = previous["coord"]
+                    right = current["coord"]
+                    if callable(segment_allowed):
+                        try:
+                            if not bool(segment_allowed(left, right)):
+                                continue
+                        except Exception:
+                            continue
+                    points = [
+                        (
+                            float(left[0]) + (float(right[0]) - float(left[0])) * ratio,
+                            float(left[1]) + (float(right[1]) - float(left[1])) * ratio,
+                        )
+                        for ratio in interior_ratios
+                    ]
+                    points.append((float(right[0]), float(right[1])))
+                    edges[(layer_index, previous_index, current_index)] = {
+                        "keys": sampler.request(points),
+                        "length_m": _distance_m(left, right),
+                        "lateral_m": abs(int(previous["lane"]) - int(current["lane"]))
+                        * lane_pitch_m,
+                    }
+
+        if not edges:
+            return None
+        sampler.resolve()
+        for edge in edges.values():
+            values = sampler.values(edge["keys"]) or [0.0]
+            edge["mean_ground"] = max(0.0, sum(values) / float(len(values)))
+            edge["peak_ground"] = max(0.0, max(values))
+            edge["turn_cost"] = lane_penalty_per_m * float(edge["lateral_m"])
+        incoming = _corridor_incoming_edges(layers, edges)
+
+        # Terrain is worth far more than distance here: going a few hundred
+        # metres around costs seconds, climbing the same height costs far
+        # longer and puts the aircraft on a skyline where it is seen.  Both
+        # weights are then swept: the distance term bounds the detour honestly
+        # instead of by cramping the corridor, and the peak term buys routes
+        # that stay out of the high ground rather than merely averaging lower
+        # across it.
+        pass_best: list[tuple[float, float]] | None = None
+        pass_best_score: float | None = None
+        pass_best_peak = 0.0
+        # Neighbouring weightings very often agree on the winning lane
+        # sequence, so scoring is keyed by the route itself, not the weights.
+        scored: set[tuple[int, ...]] = set()
+        for peak_weight in _LOW_TERRAIN_PEAK_WEIGHT_LADDER:
+            for length_weight in _LOW_TERRAIN_LENGTH_WEIGHT_LADDER:
+                lanes = _cheapest_corridor_lanes(
+                    layers, incoming, length_weight, peak_weight
+                )
+                if lanes is None or len(lanes) < 2 or lanes in scored:
+                    continue
+                scored.add(lanes)
+                candidate = [
+                    tuple(layers[layer_index][node_index]["coord"])
+                    for layer_index, node_index in enumerate(lanes)
+                ]
+                if _route_length_m(candidate) > length_budget_m:
+                    continue
+                # The edge costs are a proxy sampled per edge; what actually
+                # matters is the ground the aircraft ends up over.  Score the
+                # whole candidate, and never accept one that flies lower on
+                # average by crossing higher ground somewhere along the way.
+                mean_m, peak_m = _route_ground_stats(candidate, sampler)
+                if mean_m >= direct_mean_m:
+                    continue
+                if peak_m > direct_peak_m + _LOW_TERRAIN_PEAK_TOLERANCE_M:
+                    continue
+                score = mean_m + peak_m
+                if pass_best_score is None or score < pass_best_score:
+                    pass_best_score = score
+                    pass_best = candidate
+                    pass_best_peak = peak_m
+        if pass_best is None or pass_best_score is None:
+            return None
+        return pass_best, pass_best_score, pass_best_peak
+
     best: list[tuple[float, float]] | None = None
     best_score: float | None = None
-    # Neighbouring weightings very often agree on the winning lane sequence, so
-    # scoring is keyed by the route itself rather than by the weights.
-    scored: set[tuple[int, ...]] = set()
-    for peak_weight in _LOW_TERRAIN_PEAK_WEIGHT_LADDER:
-        for length_weight in _LOW_TERRAIN_LENGTH_WEIGHT_LADDER:
-            lanes = _cheapest_corridor_lanes(layers, edges, length_weight, peak_weight)
-            if lanes is None or len(lanes) < 2 or lanes in scored:
-                continue
-            scored.add(lanes)
-            candidate = [
-                tuple(layers[layer_index][node_index]["coord"])
-                for layer_index, node_index in enumerate(lanes)
-            ]
-            if _route_length_m(candidate) > length_budget_m:
-                continue
-            # The edge costs are a proxy sampled per edge; what actually
-            # matters is the ground the aircraft ends up over.  Score the whole
-            # candidate, and never accept one that flies lower on average by
-            # crossing higher ground somewhere along the way.
-            mean_m, peak_m = _route_ground_stats(candidate, sampler)
-            if mean_m >= direct_mean_m:
-                continue
-            if peak_m > direct_peak_m + _LOW_TERRAIN_PEAK_TOLERANCE_M:
-                continue
-            score = mean_m + peak_m
-            if best_score is None or score < best_score:
-                best_score = score
-                best = candidate
+    centerline: list[tuple[float, float]] = [start, end]
+    for _ in range(1 + refine_passes):
+        found = _search_around(centerline)
+        if found is None:
+            break
+        route, score, _peak = found
+        if best_score is not None and score >= best_score:
+            break
+        best = route
+        best_score = score
+        centerline = route
+
     if best is None:
         return [start, end]
     # Every corner survives downstream as an emitted waypoint, so collapse the
@@ -438,11 +563,16 @@ def _route_ground_stats(
 
 def _cheapest_corridor_lanes(
     layers: Sequence[Sequence[dict[str, Any]]],
-    edges: dict[tuple[int, int, int], dict[str, Any]],
+    incoming: Sequence[Sequence[Sequence[tuple[int, dict[str, Any]]]]],
     length_weight: float,
     peak_weight: float,
 ) -> tuple[int, ...] | None:
-    """Cheapest node index per station across the lattice, for one weighting."""
+    """Cheapest node index per station across the lattice, for one weighting.
+
+    ``incoming`` (from :func:`_corridor_incoming_edges`) lists the few lanes
+    that can reach each node, so a wide corridor costs O(lanes x lane-steps)
+    per station instead of O(lanes^2).
+    """
 
     costs: dict[int, float] = {0: 0.0}
     histories: dict[int, list[int]] = {0: [0]}
@@ -452,9 +582,9 @@ def _cheapest_corridor_lanes(
         for current_index in range(len(layers[layer_index])):
             best_cost: float | None = None
             best_history: list[int] | None = None
-            for previous_index, previous_cost in costs.items():
-                edge = edges.get((layer_index, previous_index, current_index))
-                if edge is None:
+            for previous_index, edge in incoming[layer_index][current_index]:
+                previous_cost = costs.get(previous_index)
+                if previous_cost is None:
                     continue
                 candidate_cost = (
                     float(previous_cost)
@@ -899,6 +1029,8 @@ __all__ = [
     "LAH_LOW_TERRAIN_CORRIDOR_M",
     "LAH_LOW_TERRAIN_STAGE_SPACING_M",
     "LAH_LOW_TERRAIN_MAX_STAGES",
+    "LAH_LOW_TERRAIN_MAX_LENGTH_RATIO",
     "LAH_LOW_TERRAIN_EDGE_SAMPLES",
+    "LAH_LOW_TERRAIN_REFINE_PASSES",
     "build_lah_terrain_following_path",
 ]

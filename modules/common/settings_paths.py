@@ -11,6 +11,15 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 COMMON_DIR = Path(__file__).resolve().parent
 SETTINGS_DIR = PROJECT_ROOT / "settings"
 
+# Algorithm-tuning settings ship with the code (version-controlled), unlike the
+# machine-local files that stay in ``settings/``.
+ALGO_SETTINGS_DIR = PROJECT_ROOT / "modules" / "resource"
+ALGO_SETTINGS_FILE_NAMES = (
+    "uav_params.json",
+    "replan_settings.json",
+    "replan_settings_defaults.json",
+)
+
 
 def settings_dir() -> Path:
     return SETTINGS_DIR
@@ -39,6 +48,37 @@ def writable_settings_file(name: str) -> Path:
     return settings_file(name)
 
 
+def algo_settings_dir() -> Path:
+    return ALGO_SETTINGS_DIR
+
+
+def algo_settings_file(name: str) -> Path:
+    """Resolve an algorithm-settings file, migrating a legacy ``settings/`` copy.
+
+    The legacy source is copied (never deleted) so an older checkout can still
+    roll back to it.
+    """
+    target = ALGO_SETTINGS_DIR / name
+    try:
+        if target.exists():
+            return target
+        legacy = SETTINGS_DIR / name
+        ALGO_SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
+        if legacy.exists():
+            shutil.copyfile(legacy, target)
+        return target
+    except Exception:
+        legacy = SETTINGS_DIR / name
+        if legacy.exists():
+            return legacy
+        return target
+
+
+def writable_algo_settings_file(name: str) -> Path:
+    ALGO_SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
+    return ALGO_SETTINGS_DIR / name
+
+
 def scenario_info_path() -> Path:
     return settings_file("current_scenario.json")
 
@@ -48,15 +88,15 @@ def existing_scenario_info_path() -> Path:
 
 
 def replan_settings_path() -> Path:
-    return settings_file("replan_settings.json")
+    return algo_settings_file("replan_settings.json")
 
 
 def replan_defaults_path() -> Path:
-    return settings_file("replan_settings_defaults.json")
+    return algo_settings_file("replan_settings_defaults.json")
 
 
 def uav_params_path() -> Path:
-    return settings_file("uav_params.json")
+    return algo_settings_file("uav_params.json")
 
 
 def nfusion_settings_path() -> Path:

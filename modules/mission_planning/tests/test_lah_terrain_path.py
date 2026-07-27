@@ -4,6 +4,7 @@ import math
 
 from modules.mission_planning.MissionPlanner.data_def.lah_terrain_path import (
     LAH_LOW_LEVEL_CLEARANCE_M,
+    LAH_LOW_TERRAIN_MAX_LENGTH_RATIO,
     LAH_TERRAIN_MAX_WAYPOINT_SPACING_M,
     LAH_TERRAIN_MAX_OUTPUT_WAYPOINTS,
     build_lah_terrain_following_path,
@@ -169,7 +170,11 @@ def test_low_terrain_option_detours_through_nearby_valley() -> None:
     assert math.isclose(float(valley_path[0]["longitude"]), start[1], abs_tol=1e-7)
     assert math.isclose(float(valley_path[-1]["latitude"]), end[0], abs_tol=1e-7)
     assert math.isclose(float(valley_path[-1]["longitude"]), end[1], abs_tol=1e-7)
-    assert float(valley_path[-1]["cum_m"]) < float(direct_path[-1]["cum_m"]) * 1.1
+    # The detour may spend up to the length budget to keep the aircraft on the
+    # valley floor; the budget constant is the contract, not a fixed ratio.
+    assert float(valley_path[-1]["cum_m"]) < (
+        float(direct_path[-1]["cum_m"]) * LAH_LOW_TERRAIN_MAX_LENGTH_RATIO
+    )
 
 
 def test_requested_narrow_corridor_is_not_expanded() -> None:

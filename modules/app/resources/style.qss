@@ -296,8 +296,7 @@ QPushButton#BtnSimulationRun,
 QPushButton#BtnMissionStatusMonitor,
 QPushButton#BtnOverwrite020x,
 QPushButton#BtnModuleShutdown,
-QPushButton#BtnDecisionReset,
-QPushButton#BtnMdsControl {
+QPushButton#BtnDecisionReset {
   min-height: 36px;
   max-height: 36px;
   border-radius: 10px;
@@ -358,17 +357,6 @@ QPushButton#BtnDecisionReset {
 QPushButton#BtnDecisionReset:hover {
   background: #eceff3;
   border-color: #c8cfda;
-}
-
-QPushButton#BtnMdsControl {
-  background: #ecfdf3;
-  color: #027a48;
-  border-color: #abefc6;
-}
-
-QPushButton#BtnMdsControl:hover {
-  background: #dcfae6;
-  border-color: #75e0a7;
 }
 
 QPushButton#BtnScenarioPreset {

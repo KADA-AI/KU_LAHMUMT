@@ -348,6 +348,7 @@ def _legacy_settings_path() -> Path:
 
 def _ensure_root_settings_file(path: Path) -> None:
     legacy_candidates = (
+        _project_root() / "settings" / "uav_params.json",
         _project_root() / "uav_params.json",
         _legacy_settings_path(),
     )

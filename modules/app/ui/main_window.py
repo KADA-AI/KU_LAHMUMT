@@ -88,7 +88,6 @@ class MainWindow(QMainWindow):
         self.btn_simulation_run = None
         self.btn_mission_status_monitor = None
         self.btn_overwrite_020x = None
-        self.btn_mds_control = None
         self._scenario_preset_buttons = []
         self.btn_reference_pdf = None
         self.btn_fov_db_select = None
@@ -571,13 +570,6 @@ class MainWindow(QMainWindow):
         self.btn_overwrite_020x.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.btn_overwrite_020x.clicked.connect(self._handle_overwrite_020x)
         action_buttons.append(self.btn_overwrite_020x)
-
-        self.btn_mds_control = QPushButton("임무 계획 설정 SW", card)
-        self.btn_mds_control.setObjectName("BtnMdsControl")
-        self.btn_mds_control.setFixedHeight(36 if horizontal else 40)
-        self.btn_mds_control.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.btn_mds_control.clicked.connect(self._launch_mds_control)
-        action_buttons.append(self.btn_mds_control)
 
         preset_buttons = []
         for preset in SCENARIO_PRESETS:
@@ -1808,70 +1800,6 @@ class MainWindow(QMainWindow):
         if not opened:
             self._log_simulation(message=f"[RUN WARN] Failed to open browser for Log Analyzer: {url}")
 
-    def _launch_mds_control(self) -> None:
-        button = getattr(self, "btn_mds_control", None)
-        original_text = None
-        if button is not None:
-            try:
-                original_text = button.text()
-                button.setEnabled(False)
-                button.setText("임무 계획 설정 SW 준비 중...")
-                QApplication.processEvents()
-            except Exception:
-                original_text = None
-        try:
-            root = db_paths.PROJECT_ROOT
-            script = MODULE_ROOT / "MDSControl" / "server.py"
-            if not script.exists():
-                message = f"[RUN ERR] MDSControl script not found: {script}"
-                self._log_simulation(message=message)
-                QMessageBox.critical(self, "임무 계획 설정 SW 실행 실패", message)
-                return
-
-            host = str(os.environ.get("MDS_CONTROL_HOST") or "127.0.0.1").strip() or "127.0.0.1"
-            try:
-                port = int(os.environ.get("MDS_CONTROL_PORT") or 8200)
-            except Exception:
-                port = 8200
-            browse_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
-            url = f"http://{browse_host}:{port}/"
-
-            existing = self._role_processes.get("mds_control")
-            if existing is not None and existing.poll() is None:
-                self._log_simulation(message=f"[RUN] MDSControl already running ({url}, pid={existing.pid})")
-                QDesktopServices.openUrl(QUrl(url))
-                return
-
-            self._kill_port_occupant(port, "MDSControl")
-            show_console = should_show_module_consoles()
-            env = os.environ.copy()
-            env["PYTHONUNBUFFERED"] = "1"
-            env["KU_CONSOLE_TITLE"] = "KU Mission Planning Settings Console"
-            env["MDS_CONTROL_HOST"] = host
-            env["MDS_CONTROL_PORT"] = str(port)
-
-            proc = subprocess.Popen(
-                [preferred_console_python(sys.executable), str(script), "--host", host, "--port", str(port)],
-                cwd=str(root),
-                env=env,
-                creationflags=creationflags_for_subprocess(show_console=show_console),
-            )
-            self._role_processes["mds_control"] = proc
-            self._log_simulation(message=f"[RUN] MDSControl launched ({url}, pid={getattr(proc, 'pid', '?')})")
-            QTimer.singleShot(800, lambda u=url: QDesktopServices.openUrl(QUrl(u)))
-        except Exception as exc:
-            message = f"[RUN ERR] MDSControl launch failed: {exc}"
-            self._log_simulation(message=message)
-            QMessageBox.critical(self, "임무 계획 설정 SW 실행 실패", message)
-        finally:
-            if button is not None:
-                try:
-                    button.setEnabled(True)
-                    button.setText(original_text or "임무 계획 설정 SW")
-                    QApplication.processEvents()
-                except Exception:
-                    pass
-
     def _launch_mission_status_monitor(self, *, auto_start: bool = False) -> None:
         button = getattr(self, "btn_mission_status_monitor", None)
         existing = self._role_processes.get("mission_status_monitor")
@@ -2309,13 +2237,6 @@ class MainWindow(QMainWindow):
             self.btn_overwrite_020x.setFixedHeight(40)
             self.btn_overwrite_020x.clicked.connect(self._handle_overwrite_020x)
             body.addWidget(self.btn_overwrite_020x)
-
-
-            self.btn_mds_control = QPushButton("임무 계획 설정 SW", placeholder)
-            self.btn_mds_control.setObjectName("BtnMdsControl")
-            self.btn_mds_control.setFixedHeight(40)
-            self.btn_mds_control.clicked.connect(self._launch_mds_control)
-            body.addWidget(self.btn_mds_control)
 
             body.addStretch(1)
 

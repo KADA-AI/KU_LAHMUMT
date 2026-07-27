@@ -4867,7 +4867,7 @@ class MainWindow(QMainWindow):
             d0304_module.ALTITUDE_LAYERS_M = altitude_layers_m
 
         # Keep one authoritative settings file by backfilling missing keys
-        # into settings/uav_params.json.
+        # into modules/resource/uav_params.json.
         resolved_values = {
             "camera_adjust_enabled": bool(values.get("camera_adjust_enabled", False)),
             "camera_adjust_percent": _get_float("camera_adjust_percent", 10.0),

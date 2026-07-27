@@ -667,7 +667,6 @@ class DashboardOrchestrator(QObject):
             getattr(self.win, "btn_mission_status_monitor", None),
             getattr(self.win, "btn_overwrite_020x", None),
             getattr(self.win, "btn_decision_reset", None),
-            getattr(self.win, "btn_mds_control", None),
         )
         for btn in targets:
             if btn is None:
