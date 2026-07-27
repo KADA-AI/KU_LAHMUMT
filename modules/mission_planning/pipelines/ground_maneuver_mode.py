@@ -34,6 +34,9 @@ lives in the split pipeline, and the sticky map is persisted by
 """
 
 import math
+import threading
+from collections import OrderedDict
+from copy import deepcopy
 from typing import Any, Dict, List, Optional, Tuple
 
 
@@ -566,6 +569,232 @@ def _lah_point_info(coord: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+# ---------------------------------------------------------------------------
+# 지형 차폐 대기점: the geometric ladder anchor (previous-line midpoint,
+# corridor point, area centroid) stays the authority on roughly WHERE the
+# manned aircraft waits; the DEM cover selector then slides that point onto
+# nearby low ground that puts a ridge between the aircraft and the mission the
+# UAVs are currently working.  Every failure path returns the plain anchor.
+# ---------------------------------------------------------------------------
+
+_COVER_HOLD_CACHE: "OrderedDict[tuple, Dict[str, Any]]" = OrderedDict()
+_COVER_HOLD_CACHE_LOCK = threading.Lock()
+_COVER_HOLD_CACHE_MAX = 64
+# The cover search may slide the hold sideways - or slightly forward onto the
+# back slope of a ridge - but the ladder's "one leg behind" meaning has to
+# survive: never advance past this fraction of the anchor's threat distance.
+_COVER_HOLD_MIN_THREAT_RATIO = 0.6
+_COVER_HOLD_MAX_THREATS = 5
+
+
+def _cover_hold_enabled() -> bool:
+    try:
+        from modules.mission_planning.MissionPlanner.runtime_settings import (
+            get_runtime_attack_int,
+        )
+
+        return int(get_runtime_attack_int("lah_ladder_cover_enabled", 1)) != 0
+    except Exception:
+        return True
+
+
+def _cover_hold_search_radius_m() -> float:
+    try:
+        from modules.mission_planning.MissionPlanner.runtime_settings import (
+            get_runtime_attack_float,
+        )
+
+        value = float(get_runtime_attack_float("lah_cover_search_radius_m", 1500.0))
+    except Exception:
+        return 1500.0
+    return value if math.isfinite(value) and value > 0.0 else 0.0
+
+
+def _equirect_distance_m(a: Dict[str, Any], b: Dict[str, Any]) -> float:
+    mid = math.radians((float(a["latitude"]) + float(b["latitude"])) * 0.5)
+    dx = (float(b["longitude"]) - float(a["longitude"])) * 111_132.92 * math.cos(mid)
+    dy = (float(b["latitude"]) - float(a["latitude"])) * 111_132.92
+    return math.hypot(dx, dy)
+
+
+def _mission_threat_coordinates(
+    mission: Optional[Dict[str, Any]],
+    maximum: int = _COVER_HOLD_MAX_THREATS,
+) -> List[Dict[str, Any]]:
+    """Deterministic sample of a mission's geometry as threat points.
+
+    The mission the UAVs are working is what the manned aircraft hides from:
+    its centroid plus an even spread of its vertices, capped so the selector's
+    ray budget stays bounded.
+    """
+
+    if not isinstance(mission, dict):
+        return []
+    coords: List[Dict[str, Any]] = []
+    branches = mission_branch_geometries(mission)
+    for wanted in ("area", "line"):
+        for branch in branches:
+            if branch.get("kind") == wanted:
+                coords = list(branch.get("coordinateList") or [])
+                break
+        if coords:
+            break
+    if not coords:
+        return []
+    threats: List[Dict[str, Any]] = []
+    centroid = _centroid_coordinate(coords)
+    if centroid:
+        threats.append(dict(centroid))
+    picks = min(max(0, int(maximum) - len(threats)), len(coords))
+    if picks:
+        last_index = len(coords) - 1
+        chosen: set[int] = set()
+        for pick in range(picks):
+            index = (
+                int(round(pick * last_index / max(1, picks - 1))) if picks > 1 else 0
+            )
+            if index in chosen:
+                continue
+            chosen.add(index)
+            threats.append(dict(coords[index]))
+    return threats[: max(1, int(maximum))]
+
+
+def _destination_area_rows(missions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Raw 목표지역 AREA rows (holes included) for containment-mode cover."""
+
+    for mission in missions:
+        if (_to_int(mission.get("regionType")) or 0) != REGION_TARGET:
+            continue
+        if _mission_geometry_kind(mission) != "area":
+            continue
+        detail = _mission_detail(mission)
+        rows = detail.get("areaList") if isinstance(detail.get("areaList"), list) else []
+        out: List[Dict[str, Any]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            coords = _normalize_coord_list(row.get("coordinateList"))
+            if len(coords) < 3:
+                continue
+            out.append(
+                {"coordinateList": coords, "isHole": bool(row.get("isHole"))}
+            )
+        if out:
+            return out
+    return []
+
+
+def _cover_hold_cache_key(
+    anchor: Dict[str, Any],
+    threats: List[Dict[str, Any]],
+    constraints: List[Dict[str, Any]],
+    radius_m: float,
+) -> tuple:
+    def _coord_key(coord: object) -> tuple:
+        if not isinstance(coord, dict):
+            return ()
+        try:
+            return (
+                round(float(coord.get("latitude")), 7),
+                round(float(coord.get("longitude")), 7),
+            )
+        except Exception:
+            return ()
+
+    return (
+        _coord_key(anchor),
+        tuple(_coord_key(coord) for coord in threats),
+        tuple(
+            (
+                bool(row.get("isHole")),
+                tuple(_coord_key(coord) for coord in row.get("coordinateList") or []),
+            )
+            for row in constraints
+        ),
+        round(float(radius_m), 1),
+    )
+
+
+def _lah_cover_hold_info(
+    anchor: Optional[Dict[str, Any]],
+    threat_mission: Optional[Dict[str, Any]],
+    *,
+    area_rows: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Hold on masking terrain near ``anchor``, backing away from the mission."""
+
+    if not isinstance(anchor, dict):
+        return _lah_point_info(anchor or {})
+    base = _lah_point_info(anchor)
+    if not _cover_hold_enabled():
+        return base
+    threats = _mission_threat_coordinates(threat_mission)
+    if not threats:
+        return base
+    constraints = [row for row in (area_rows or []) if isinstance(row, dict)]
+    radius_m = _cover_hold_search_radius_m()
+    if radius_m <= 0.0:
+        return base
+
+    cache_key = _cover_hold_cache_key(anchor, threats, constraints, radius_m)
+    with _COVER_HOLD_CACHE_LOCK:
+        cached = _COVER_HOLD_CACHE.get(cache_key)
+        if cached is not None:
+            _COVER_HOLD_CACHE.move_to_end(cache_key)
+            return deepcopy(cached)
+
+    try:
+        from modules.mission_planning.MissionPlanner.data_def.lah_terminal_cover import (
+            select_lah_terminal_cover_point,
+        )
+
+        selected, _diagnostics = select_lah_terminal_cover_point(
+            constraints,
+            dict(anchor),
+            threat_coordinates=[dict(threat) for threat in threats],
+            max_candidates=25,
+            max_ray_samples=48,
+            search_radius_m=radius_m,
+        )
+    except Exception:
+        return base
+    coord = _normalize_coordinate(selected)
+    if coord is None:
+        return base
+
+    # A ridge's back slope may sit slightly toward the mission; that is fine.
+    # Sliding well past the anchor toward the mission is not - the aircraft
+    # would no longer be "one leg behind", cover or not.
+    reference = _centroid_coordinate(threats) or threats[0]
+    try:
+        anchor_distance_m = _equirect_distance_m(anchor, reference)
+        if (
+            anchor_distance_m > 1.0
+            and _equirect_distance_m(coord, reference)
+            < anchor_distance_m * _COVER_HOLD_MIN_THREAT_RATIO
+        ):
+            coord = dict(anchor)
+    except Exception:
+        coord = dict(anchor)
+
+    info = _lah_point_info(coord)
+    if constraints:
+        # AREA-contained holds keep the terminal-cover contract keys so the
+        # d0304 pass can re-refine the point against UAV ETA LOS later.
+        info["_lahTerminalCoverEnabled"] = True
+        info["_lahConstraintAreaList"] = deepcopy(constraints)
+        info["_lahTerminalCoverThreatCoordinateList"] = [dict(t) for t in threats]
+        info["_lahTerminalCoverFallbackCoordinate"] = dict(anchor)
+
+    with _COVER_HOLD_CACHE_LOCK:
+        _COVER_HOLD_CACHE[cache_key] = deepcopy(info)
+        _COVER_HOLD_CACHE.move_to_end(cache_key)
+        while len(_COVER_HOLD_CACHE) > int(_COVER_HOLD_CACHE_MAX):
+            _COVER_HOLD_CACHE.popitem(last=False)
+    return info
+
+
 def _lah_terminal_transit_info(
     coordinates: List[Dict[str, Any]],
     *,
@@ -722,7 +951,10 @@ def ground_maneuver_lah_info_for_index(
             if trails_maneuver_legs:
                 previous_mid = _previous_maneuver_midpoint(missions, order)
                 if previous_mid:
-                    return _lah_point_info(previous_mid), "previous_maneuver_mid_hold"
+                    return (
+                        _lah_cover_hold_info(previous_mid, mission),
+                        "previous_maneuver_mid_hold",
+                    )
             target_orders_before_guard = [
                 o
                 for o, m in enumerate(missions, 1)
@@ -735,9 +967,15 @@ def ground_maneuver_lah_info_for_index(
                 target_orders_before_guard and order == target_orders_before_guard[0]
             )
             if is_first_destination and corridor_start:
-                return _lah_point_info(corridor_start), "corridor_start_hold"
+                return (
+                    _lah_cover_hold_info(corridor_start, mission),
+                    "corridor_start_hold",
+                )
             if not is_first_destination and corridor_mid:
-                return _lah_point_info(corridor_mid), "corridor_mid_hold"
+                return (
+                    _lah_cover_hold_info(corridor_mid, mission),
+                    "corridor_mid_hold",
+                )
         # No corridor geometry (or a non-destination pre-guard mission): keep the
         # previous ACP#1 hold.
         return _lah_point_info(anchors["acp1"]), "acp1_hold"
@@ -748,7 +986,14 @@ def ground_maneuver_lah_info_for_index(
         # region while the guard lines were being flown.
         destination_inside = anchors.get("destinationInside")
         if destination_inside:
-            return _lah_point_info(destination_inside), "destination_area_hold"
+            return (
+                _lah_cover_hold_info(
+                    destination_inside,
+                    mission,
+                    area_rows=_destination_area_rows(missions),
+                ),
+                "destination_area_hold",
+            )
         try:
             k = guard_orders.index(order)
         except ValueError:
@@ -763,7 +1008,14 @@ def ground_maneuver_lah_info_for_index(
     if trails_maneuver_legs and region in (REGION_TARGET, REGION_ACP):
         destination_inside = anchors.get("destinationInside")
         if destination_inside:
-            return _lah_point_info(destination_inside), "destination_area_hold"
+            return (
+                _lah_cover_hold_info(
+                    destination_inside,
+                    mission,
+                    area_rows=_destination_area_rows(missions),
+                ),
+                "destination_area_hold",
+            )
 
     if region in DESTINATION_REGIONS:
         # 목표(type2) / 착륙(type3) hold.

@@ -16,3 +16,17 @@ def _pin_low_terrain_strength(monkeypatch: pytest.MonkeyPatch) -> None:
     """
 
     monkeypatch.setattr(_ltp, "_low_terrain_strength", lambda: 1.0)
+
+
+@pytest.fixture(autouse=True)
+def _pin_ladder_cover_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep type2/3 ladder holds on their geometric anchors during tests.
+
+    The DEM cover slide depends on live runtime settings and on whichever
+    regional rasters exist on the machine; tests that exercise it opt in by
+    monkeypatching ``_cover_hold_enabled`` (and stubbing the selector).
+    """
+
+    from modules.mission_planning.pipelines import ground_maneuver_mode as _gmm
+
+    monkeypatch.setattr(_gmm, "_cover_hold_enabled", lambda: False)

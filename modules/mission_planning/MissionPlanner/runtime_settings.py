@@ -283,6 +283,12 @@ DEFAULT_ATTACK_MISSION_VALUES: Dict[str, Any] = {
     "weapon_for_target_type_6": 1,
     "lah_hold_seconds": 300,
     "lah_hold_near_resume_offset_m": 30.0,
+    # Terrain-cover hold search radius shared by terminal cover and the
+    # type2/3 ladder holds; 0 disables the radius search.
+    "lah_cover_search_radius_m": 1500.0,
+    # Ladder holds (previous-mid / corridor / destination-area) slide onto
+    # masking terrain facing the active mission; 0 keeps geometric anchors.
+    "lah_ladder_cover_enabled": 1,
     "resume_search_speed_scale": 1.3,
     "json_write_workers": 4,
     "fast_num_arc_rays": 180,
