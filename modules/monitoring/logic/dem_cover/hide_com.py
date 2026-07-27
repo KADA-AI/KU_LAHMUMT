@@ -650,7 +650,7 @@ class CommunicationHideAnalyzer:
             strict_feasible = False
             notes.append(
                 "No point satisfies complete enemy masking and the required UAV-link count; "
-                "showing the least-exposed communication fallback."
+                "falling back to the most-concealed point, link count second."
             )
             # Evaluate only meaningful altitude events: terrain floor, current
             # altitude (clamped), and each UAV's LOS threshold. Select the best
@@ -680,9 +680,15 @@ class CommunicationHideAnalyzer:
                     float(self.config.hide_safety_margin_m),
                 )
                 for idx in range(count):
+                    # Concealment outranks the relay link.  The strict pass
+                    # above already tried for both; once that is impossible,
+                    # keeping a link is not worth being seen - a link ordered
+                    # first picks a point 3 enemies can watch over one none of
+                    # them can, which is the opposite of taking cover.  The
+                    # link is still maximised among equally-hidden altitudes.
                     key = (
-                        0 if int(uav_links[idx]) > 0 else 1,
                         int(enemy_visible[idx]),
+                        0 if int(uav_links[idx]) > 0 else 1,
                         -int(uav_links[idx]),
                         abs(float(event_alt_m[idx]) - own_alt_m),
                     )
@@ -691,7 +697,9 @@ class CommunicationHideAnalyzer:
                         best_event_alt_m[idx] = float(event_alt_m[idx])
 
             def fallback_candidate_key(idx: int) -> tuple:
-                quality = best_event_key[idx] or (1, 999, 0, float("inf"))
+                # Same ordering across cells: fewest enemies first, and only
+                # then link availability, so proximity can never buy exposure.
+                quality = best_event_key[idx] or (999, 1, 0, float("inf"))
                 return (
                     quality[0],
                     quality[1],

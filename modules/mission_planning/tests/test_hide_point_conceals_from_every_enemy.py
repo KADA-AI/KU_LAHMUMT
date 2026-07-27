@@ -169,19 +169,292 @@ def test_los_api_reports_whether_a_ray_was_actually_traced() -> None:
     assert '"reason": "VISIBLE" if visible else "TERRAIN_BLOCKED",\n        "evaluated": True,' in source
 
 
-def test_inherited_hide_certification_requires_a_traced_ray() -> None:
-    """Re-certification must not range-gate or accept an untraced enemy."""
+def test_enemy_masking_proof_requires_a_traced_ray() -> None:
+    """The shared masking proof must not range-gate or accept an untraced enemy.
+
+    Both the incremental-append certification and the committed-package
+    re-certification route through this one helper, so the invariant is checked
+    once here instead of drifting between two copies of the loop.
+    """
 
     import inspect
 
     from modules.mission_planning.replanning.triggers.attack import pipeline as ap
 
-    source = inspect.getsource(ap._certify_incremental_append_hide_endpoint)
+    source = inspect.getsource(ap._hide_point_masked_from_every_enemy)
     # No range gate on the enemy loop.
     assert "max_range_m=None," in source
-    # Unknown / never-traced results defer the append.
+    # Unknown / never-traced results are treated as exposed.
     assert 'assessment.get("evaluated") is not True' in source
     # A missing hide altitude is refused rather than defaulted to 0 m MSL,
     # which would sit under terrain and read as concealed from every enemy.
-    assert 'emit("[ATTACK][APPEND][WARN] inherited hide altitude unavailable; append deferred.")' in source
+    assert 'emit(f"{tag} hide altitude unavailable; treated as exposed.")' in source
     assert 'float(hide.get("altitude") or 0.0)' not in source
+
+
+def test_both_hide_certifiers_share_the_one_masking_proof() -> None:
+    """Neither caller may re-implement the enemy loop with weaker rules."""
+
+    import inspect
+
+    from modules.mission_planning.replanning.triggers.attack import pipeline as ap
+
+    for func in (
+        ap._certify_incremental_append_hide_endpoint,
+        ap._preserved_lah_cover_still_masked,
+    ):
+        source = inspect.getsource(func)
+        assert "_hide_point_masked_from_every_enemy(" in source, func.__name__
+        # The enemy LOS call itself lives only in the shared helper.
+        assert "observer_height_m=float(ENEMY_OBSERVER_HEIGHT_M)" not in source, func.__name__
+
+
+# ---------------------------------------------------------------------------
+# 4. A committed LAH package was reused verbatim on every later replan, so its
+#    cover point was never rechecked against enemies discovered afterwards.  A
+#    contact that appears behind the masking ridge sees straight onto it.
+# ---------------------------------------------------------------------------
+
+
+def _committed_cover_scenario(monkeypatch, *, assessments, rows=None, path=None):
+    """Drive _preserved_lah_cover_still_masked with a stubbed DEM/DB."""
+
+    from modules.mission_planning.replanning.triggers.attack import pipeline as ap
+
+    calls: list[dict] = []
+
+    def _fake_los(**kwargs):
+        calls.append(dict(kwargs))
+        return assessments[min(len(calls) - 1, len(assessments) - 1)]
+
+    monkeypatch.setattr(ap, "_attack_los_resource_dir", lambda: "resource")
+    monkeypatch.setattr(ap, "evaluate_regional_los", _fake_los)
+    monkeypatch.setattr(
+        ap.db_paths, "get_db_subpath", lambda *_a, **_k: "FlightPath/1.json"
+    )
+    monkeypatch.setattr(
+        ap,
+        "read_json_cached",
+        lambda *_a, **_k: (
+            path
+            if path is not None
+            else {
+                "aircraftID": 2,
+                "lahWaypointList": [
+                    {"coordinate": {"latitude": 37.95, "longitude": 127.35,
+                                    "altitude": 700}}
+                ],
+            }
+        ),
+    )
+    ctx = {
+        "_preserved_source_attack_rows": (
+            rows
+            if rows is not None
+            else [{"aircraftID": 2, "pathID": 1, "individualMissionID": 5,
+                   "waypointID": 9, "targetID": 3}]
+        )
+    }
+    contact = {
+        "enemy_targets": [
+            {"coordinate": {"latitude": 37.97, "longitude": 127.37, "altitude": 600}},
+            {"coordinate": {"latitude": 37.99, "longitude": 127.39, "altitude": 610}},
+            {"coordinate": {"latitude": 38.01, "longitude": 127.41, "altitude": 620}},
+        ]
+    }
+    verdict = ap._preserved_lah_cover_still_masked(
+        aircraft_id=2, ctx=ctx, enemy_contact=contact, emit=lambda _m: None
+    )
+    return verdict, calls, ctx
+
+
+_MASKED = {"visible": False, "evaluated": True, "reason": "TERRAIN_BLOCKED"}
+_SEEN = {"visible": True, "evaluated": True, "reason": "VISIBLE"}
+_UNTRACED = {"visible": False, "evaluated": False, "reason": "OUT_OF_RANGE"}
+
+
+def test_committed_cover_is_rechecked_against_every_current_enemy(monkeypatch) -> None:
+    verdict, calls, _ctx = _committed_cover_scenario(monkeypatch, assessments=[_MASKED])
+
+    assert verdict is True
+    # All three contacts ray-traced, none of them range-gated away.
+    assert len(calls) == 3
+    assert all(call["max_range_m"] is None for call in calls)
+
+
+def test_committed_cover_visible_to_one_new_enemy_is_discarded(monkeypatch) -> None:
+    """The third contact sees it: reuse must be refused, not averaged away."""
+
+    verdict, _calls, _ctx = _committed_cover_scenario(
+        monkeypatch, assessments=[_MASKED, _MASKED, _SEEN]
+    )
+
+    assert verdict is False
+
+
+def test_committed_cover_with_an_untraced_ray_is_discarded(monkeypatch) -> None:
+    verdict, _calls, _ctx = _committed_cover_scenario(
+        monkeypatch, assessments=[_UNTRACED]
+    )
+
+    assert verdict is False
+
+
+def test_committed_cover_without_an_altitude_is_discarded(monkeypatch) -> None:
+    """0 m MSL would sit under terrain and read as concealed from everything."""
+
+    verdict, calls, _ctx = _committed_cover_scenario(
+        monkeypatch,
+        assessments=[_MASKED],
+        path={
+            "aircraftID": 2,
+            "lahWaypointList": [
+                {"coordinate": {"latitude": 37.95, "longitude": 127.35}}
+            ],
+        },
+    )
+
+    assert verdict is False
+    assert calls == [], "no ray may be traced against an unknown altitude"
+
+
+def test_committed_cover_without_a_committed_identity_fails_closed(monkeypatch) -> None:
+    verdict, _calls, _ctx = _committed_cover_scenario(
+        monkeypatch, assessments=[_MASKED], rows=[]
+    )
+
+    assert verdict is False
+
+
+def test_an_unreadable_committed_path_fails_closed(monkeypatch) -> None:
+    from modules.mission_planning.replanning.triggers.attack import pipeline as ap
+
+    monkeypatch.setattr(ap, "_attack_los_resource_dir", lambda: "resource")
+    monkeypatch.setattr(
+        ap.db_paths, "get_db_subpath", lambda *_a, **_k: "FlightPath/1.json"
+    )
+
+    def _boom(*_a, **_k):
+        raise OSError("path missing")
+
+    monkeypatch.setattr(ap, "read_json_cached", _boom)
+    verdict = ap._preserved_lah_cover_still_masked(
+        aircraft_id=2,
+        ctx={"_preserved_source_attack_rows": [{"aircraftID": 2, "pathID": 1}]},
+        enemy_contact={"enemy_targets": [{"coordinate": {"latitude": 37.9, "longitude": 127.3}}]},
+        emit=lambda _m: None,
+    )
+
+    assert verdict is False
+
+
+def test_a_path_owned_by_another_aircraft_fails_closed(monkeypatch) -> None:
+    verdict, _calls, _ctx = _committed_cover_scenario(
+        monkeypatch,
+        assessments=[_MASKED],
+        path={
+            "aircraftID": 3,  # not the aircraft being re-certified
+            "lahWaypointList": [
+                {"coordinate": {"latitude": 37.95, "longitude": 127.35,
+                                "altitude": 700}}
+            ],
+        },
+    )
+
+    assert verdict is False
+
+
+def test_enemy_set_fingerprint_changes_when_a_contact_is_added_or_moves() -> None:
+    from modules.mission_planning.replanning.triggers.attack import pipeline as ap
+
+    two = [
+        {"coordinate": {"latitude": 37.97, "longitude": 127.37}},
+        {"coordinate": {"latitude": 37.99, "longitude": 127.39}},
+    ]
+    base = ap._enemy_set_fingerprint(two)
+
+    # Order must not matter.
+    assert ap._enemy_set_fingerprint(list(reversed(two))) == base
+    # Sub-metre jitter on a re-reported contact must not read as a new enemy.
+    assert ap._enemy_set_fingerprint(
+        [
+            {"coordinate": {"latitude": 37.9700004, "longitude": 127.37}},
+            {"coordinate": {"latitude": 37.99, "longitude": 127.39}},
+        ]
+    ) == base
+    # A third contact, or one that genuinely moved, must not.
+    assert ap._enemy_set_fingerprint(two + [{"coordinate": {"latitude": 38.01, "longitude": 127.41}}]) != base
+    assert ap._enemy_set_fingerprint(
+        [{"coordinate": {"latitude": 37.975, "longitude": 127.37}}, two[1]]
+    ) != base
+
+
+def test_discarding_preservation_also_withdraws_the_continuity_rows() -> None:
+    """Otherwise the continuity check demands the package we are replacing."""
+
+    import inspect
+
+    from modules.mission_planning.replanning.triggers.attack import pipeline as ap
+
+    source = inspect.getsource(ap._apply_attack_plan_overrides)
+    assert "_preserved_lah_cover_still_masked(" in source
+    assert 'ctx["_preserved_source_attack_rows"] = [' in source
+    assert 'ctx["_preserved_lah_attack_aircraft_ids"] = [' in source
+    assert 'ctx.pop("_incremental_attack_append", None)' in source
+
+
+# ---------------------------------------------------------------------------
+# 5. When full masking plus the required relay links is impossible, the
+#    fallback ranked "has a UAV link" ABOVE "no enemy can see it".  For the
+#    command aircraft - which requires 3 links - that routinely shipped a point
+#    in plain view of every contact because it kept one link.
+# ---------------------------------------------------------------------------
+
+
+def test_concealment_outranks_the_relay_link_in_the_fallback() -> None:
+    """A hidden point with no link must beat a seen point that keeps one."""
+
+    import inspect
+
+    from modules.monitoring.logic.dem_cover import hide_com
+
+    source = inspect.getsource(hide_com.CommunicationHideAnalyzer.analyze)
+    hidden_first = """                    key = (
+                        int(enemy_visible[idx]),
+                        0 if int(uav_links[idx]) > 0 else 1,"""
+    assert hidden_first in source, "enemy count must be the primary fallback key"
+    # The sentinel for a cell with no evaluated event must also be enemy-first,
+    # otherwise an unscored cell outranks a genuinely hidden one.
+    assert "quality = best_event_key[idx] or (999, 1, 0, float(\"inf\"))" in source
+
+
+def test_refined_stage_also_puts_concealment_first() -> None:
+    """The stage that ships the flown endpoint must use the same ordering."""
+
+    import inspect
+
+    from modules.monitoring.logic.dem_cover import hide_com_refine
+
+    source = inspect.getsource(hide_com_refine)
+    assert """            key = (
+                int(enemy_visible[index]),
+                0 if int(uav_links[index]) > 0 else 1,""" in source
+    assert "quality = best_keys[index] or (999, 1, 0, float(\"inf\"))" in source
+
+
+def test_the_fallback_key_ordering_prefers_hidden_over_linked() -> None:
+    """Exercise the tuple ordering itself, not just its source text."""
+
+    # (enemy_visible, no_link, -links, altitude_delta)
+    hidden_no_link = (0, 1, 0, 10.0)
+    seen_by_three_with_link = (3, 0, -1, 0.0)
+    assert hidden_no_link < seen_by_three_with_link
+
+    # Among equally hidden points, more links still wins.
+    hidden_two_links = (0, 0, -2, 5.0)
+    hidden_one_link = (0, 0, -1, 5.0)
+    assert hidden_two_links < hidden_one_link < hidden_no_link
+
+    # An unscored cell must never outrank a hidden one.
+    unscored = (999, 1, 0, float("inf"))
+    assert hidden_no_link < unscored

@@ -539,9 +539,14 @@ def _select_fallback(
             float(hide_safety_margin_m),
         )
         for index in range(count):
+            # Concealment outranks the relay link: this stage produces the
+            # endpoint that is actually flown, so a link ordered first would
+            # ship a point enemies can watch whenever a fully hidden cell
+            # happens to have no UAV in view.  Links are still maximised
+            # among altitudes that are equally hidden.
             key = (
-                0 if int(uav_links[index]) > 0 else 1,
                 int(enemy_visible[index]),
+                0 if int(uav_links[index]) > 0 else 1,
                 -int(uav_links[index]),
                 abs(float(event_altitude_m[index]) - float(own_altitude_m)),
             )
@@ -550,7 +555,7 @@ def _select_fallback(
                 best_altitude_m[index] = float(event_altitude_m[index])
 
     def candidate_key(index: int) -> tuple:
-        quality = best_keys[index] or (1, 999, 0, float("inf"))
+        quality = best_keys[index] or (999, 1, 0, float("inf"))
         return (
             quality[0],
             quality[1],

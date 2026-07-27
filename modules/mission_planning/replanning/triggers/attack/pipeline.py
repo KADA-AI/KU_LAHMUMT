@@ -7724,11 +7724,54 @@ def _apply_attack_plan_overrides(
         if aid is None or aid > 3 or aid in active_manned_ids:
             continue
         if int(aid) in preserved_lah_attack_aircraft_ids:
+            # A committed package may only be reused while its cover point is
+            # still masked from the contact set as it stands NOW.  A newly
+            # discovered enemy can see straight onto a point that was concealed
+            # from the previous ones, so an aircraft whose inherited cover no
+            # longer certifies is re-planned instead: it drops into the hold
+            # pool below and is given a freshly certified hide point against the
+            # current enemies.  Being seen is worse than deferring its attack.
+            if _preserved_lah_cover_still_masked(
+                aircraft_id=int(aid),
+                ctx=ctx,
+                enemy_contact=enemy_contact_context,
+                emit=emit,
+            ):
+                emit(
+                    "[ATTACK][CONTINUITY] Reusing committed LAH package unchanged "
+                    f"(aircraft={int(aid)}); no hold/resume descriptor generated."
+                )
+                continue
             emit(
-                "[ATTACK][CONTINUITY] Reusing committed LAH package unchanged "
-                f"(aircraft={int(aid)}); no hold/resume descriptor generated."
+                "[ATTACK][CONTINUITY][WARN] Committed LAH cover is no longer "
+                f"concealed from the current contacts (aircraft={int(aid)}); "
+                "discarding the inherited hide point and re-planning cover. "
+                "Its committed attack is deferred this cycle."
             )
-            continue
+            preserved_lah_attack_aircraft_ids.discard(int(aid))
+            # The continuity contract requires every preserved row to survive
+            # verbatim in the new plan.  This aircraft is deliberately no longer
+            # preserved, so withdraw its rows too - leaving them would make the
+            # downstream check demand a package we are intentionally replacing.
+            ctx["_preserved_lah_attack_aircraft_ids"] = [
+                value
+                for value in (ctx.get("_preserved_lah_attack_aircraft_ids") or [])
+                if _to_int(value) is not None and int(value) != int(aid)
+            ]
+            ctx["_preserved_source_attack_rows"] = [
+                row
+                for row in (ctx.get("_preserved_source_attack_rows") or [])
+                if not (
+                    isinstance(row, dict)
+                    and _to_int(row.get("aircraftID")) == int(aid)
+                )
+            ]
+            if isinstance(ctx.get("_incremental_attack_append"), dict) and _to_int(
+                ctx["_incremental_attack_append"].get("aircraftID")
+            ) == int(aid):
+                # An append transaction anchors its firing point on exactly the
+                # cover endpoint we just rejected.
+                ctx.pop("_incremental_attack_append", None)
         if aid not in other_lah_ids:
             other_lah_ids.append(int(aid))
     support_target_id: Optional[int] = None
@@ -14060,6 +14103,184 @@ def _build_lah_tactical_abort_hold_package(
     return result
 
 
+def _enemy_set_fingerprint(enemy_rows: Any) -> Tuple[Tuple[int, int, int], ...]:
+    """Identity of a contact set, for detecting that it changed.
+
+    Rounded to ~1 m so a re-reported contact with jittered coordinates does not
+    read as a new enemy, while a genuinely new or moved contact does.
+    """
+
+    out: List[Tuple[int, int, int]] = []
+    for raw in enemy_rows if isinstance(enemy_rows, list) else []:
+        if not isinstance(raw, dict):
+            continue
+        coord = _normalize_coordinate(raw.get("coordinate") or raw)
+        if coord is None:
+            continue
+        out.append(
+            (
+                int(round(float(coord["latitude"]) * 1e5)),
+                int(round(float(coord["longitude"]) * 1e5)),
+                int(round(float(coord.get("altitude") or 0.0))),
+            )
+        )
+    return tuple(sorted(out))
+
+
+def _hide_point_masked_from_every_enemy(
+    hide: Dict[str, Any],
+    enemy_rows: Any,
+    *,
+    resource_dir: Any,
+    emit: Callable[[str], None],
+    tag: str,
+) -> Optional[int]:
+    """Prove a hide point is masked from EVERY supplied enemy. Fails closed.
+
+    Returns the number of enemies actually ray-traced, or ``None`` when any one
+    of them can see the point, cannot be evaluated, or is malformed.  A point
+    that cannot be proven concealed is treated exactly like an exposed one.
+    """
+
+    hide_altitude_m = _to_float(hide.get("altitude"))
+    if hide_altitude_m is None or not math.isfinite(float(hide_altitude_m)):
+        # Substituting 0 m MSL puts the point under terrain, which returns
+        # ENDPOINT_NOT_ABOVE_TERRAIN -> visible=False for every enemy, i.e. an
+        # unknown altitude would certify as concealed from all of them.
+        emit(f"{tag} hide altitude unavailable; treated as exposed.")
+        return None
+    if not isinstance(enemy_rows, list) or not enemy_rows:
+        emit(f"{tag} no enemy set available; treated as exposed.")
+        return None
+
+    enemy_checked = 0
+    for raw_enemy in enemy_rows:
+        if not isinstance(raw_enemy, dict):
+            emit(f"{tag} malformed enemy entry; treated as exposed.")
+            return None
+        enemy = _normalize_coordinate(raw_enemy.get("coordinate") or raw_enemy)
+        if enemy is None:
+            emit(f"{tag} enemy coordinate unavailable; treated as exposed.")
+            return None
+        try:
+            assessment = evaluate_regional_los(
+                resource_dir=resource_dir,
+                observer_latitude=float(enemy["latitude"]),
+                observer_longitude=float(enemy["longitude"]),
+                observer_altitude_m=float(enemy.get("altitude") or 0.0),
+                observer_height_m=float(ENEMY_OBSERVER_HEIGHT_M),
+                target_latitude=float(hide["latitude"]),
+                target_longitude=float(hide["longitude"]),
+                target_altitude_m=float(hide_altitude_m),
+                target_height_m=0.0,
+                # No range gate: an enemy skipped for distance returns
+                # visible=False without tracing a ray, which would read here as
+                # proof of masking.  Concealment is proven against every
+                # contact regardless of how far away it is.
+                max_range_m=None,
+                reject_nodata=False,
+            )
+        except Exception as exc:
+            emit(f"{tag} enemy LOS failed ({type(exc).__name__}: {exc}); treated as exposed.")
+            return None
+        if (
+            not isinstance(assessment, dict)
+            or assessment.get("visible") is not False
+            or assessment.get("evaluated") is not True
+        ):
+            emit(
+                f"{tag} point is visible, unknown, or was never ray-traced for a "
+                f"current enemy (reason={(assessment or {}).get('reason')}); treated as exposed."
+            )
+            return None
+        enemy_checked += 1
+    return int(enemy_checked)
+
+
+def _preserved_lah_cover_still_masked(
+    *,
+    aircraft_id: int,
+    ctx: Dict[str, Any],
+    enemy_contact: Any,
+    emit: Callable[[str], None],
+) -> bool:
+    """Is a committed LAH's inherited cover point still masked from every enemy?
+
+    A committed package is normally reused verbatim.  That is only safe while
+    the contact set it was certified against still holds: a newly discovered
+    enemy can see straight onto a point that was masked from the old ones, and
+    reusing it would leave a manned aircraft parked in the open.  Anything that
+    cannot be proven - missing identity, unreadable path, unevaluated ray -
+    fails closed and forces the aircraft to be re-planned.
+    """
+
+    tag = f"[ATTACK][CONTINUITY][WARN] aircraft={int(aircraft_id)}"
+    contact = enemy_contact if isinstance(enemy_contact, dict) else {}
+    enemy_rows = contact.get("enemy_targets") or contact.get("enemy_coordinates") or []
+    if not isinstance(enemy_rows, list) or not enemy_rows:
+        emit(f"{tag} no current contact set to re-certify the inherited cover against.")
+        return False
+    resource_dir = _attack_los_resource_dir()
+    if resource_dir is None:
+        emit(f"{tag} DEM resource unavailable for inherited-cover re-certification.")
+        return False
+
+    committed_row = next(
+        (
+            row
+            for row in (ctx.get("_preserved_source_attack_rows") or [])
+            if isinstance(row, dict)
+            and _to_int(row.get("aircraftID")) == int(aircraft_id)
+        ),
+        None,
+    )
+    if committed_row is None:
+        emit(f"{tag} committed attack identity is missing.")
+        return False
+    committed_path_id = _to_int(committed_row.get("pathID"))
+    if committed_path_id is None:
+        emit(f"{tag} committed pathID is missing.")
+        return False
+    try:
+        committed_path = read_json_cached(
+            db_paths.get_db_subpath("FlightPath", f"{int(committed_path_id)}.json"),
+            copy_result=False,
+            kind="FlightPath",
+        )
+    except Exception as exc:
+        emit(f"{tag} committed path load failed ({type(exc).__name__}: {exc}).")
+        return False
+    if not isinstance(committed_path, dict) or _to_int(
+        committed_path.get("aircraftID")
+    ) != int(aircraft_id):
+        emit(f"{tag} committed path ownership/identity mismatch.")
+        return False
+    waypoints = committed_path.get("lahWaypointList")
+    if not isinstance(waypoints, list) or not waypoints:
+        emit(f"{tag} committed path has no waypoints.")
+        return False
+    hide = _normalize_coordinate(_extract_lah_waypoint_coordinate(waypoints[-1]))
+    if hide is None:
+        emit(f"{tag} committed path endpoint coordinate is missing.")
+        return False
+
+    enemy_checked = _hide_point_masked_from_every_enemy(
+        hide,
+        enemy_rows,
+        resource_dir=resource_dir,
+        emit=emit,
+        tag=f"{tag} inherited cover:",
+    )
+    if enemy_checked is None:
+        return False
+    emit(
+        "[ATTACK][CONTINUITY] Inherited cover re-certified for "
+        f"aircraft={int(aircraft_id)} against {int(enemy_checked)} current "
+        f"enem{'y' if enemy_checked == 1 else 'ies'}."
+    )
+    return True
+
+
 def _certify_incremental_append_hide_endpoint(
     hide_coord: Optional[Dict[str, Any]],
     descriptor: Dict[str, Any],
@@ -14087,61 +14308,15 @@ def _certify_incremental_append_hide_endpoint(
         return None
 
     enemy_rows = contact.get("enemy_targets") or contact.get("enemy_coordinates") or []
-    if not isinstance(enemy_rows, list) or not enemy_rows:
-        emit("[ATTACK][APPEND][WARN] no enemy set available for inherited-hide certification.")
+    enemy_checked = _hide_point_masked_from_every_enemy(
+        hide,
+        enemy_rows,
+        resource_dir=resource_dir,
+        emit=emit,
+        tag="[ATTACK][APPEND][WARN] inherited endpoint:",
+    )
+    if enemy_checked is None:
         return None
-    hide_altitude_m = _to_float(hide.get("altitude"))
-    if hide_altitude_m is None or not math.isfinite(float(hide_altitude_m)):
-        # Substituting 0 m MSL puts the point under terrain, which returns
-        # ENDPOINT_NOT_ABOVE_TERRAIN -> visible=False for every enemy, i.e. an
-        # unknown altitude would certify as concealed from all of them.
-        emit("[ATTACK][APPEND][WARN] inherited hide altitude unavailable; append deferred.")
-        return None
-    enemy_checked = 0
-    for raw_enemy in enemy_rows:
-        if not isinstance(raw_enemy, dict):
-            emit("[ATTACK][APPEND][WARN] malformed enemy entry; append deferred.")
-            return None
-        enemy = _normalize_coordinate(raw_enemy.get("coordinate") or raw_enemy)
-        if enemy is None:
-            emit("[ATTACK][APPEND][WARN] enemy coordinate unavailable; append deferred.")
-            return None
-        try:
-            assessment = evaluate_regional_los(
-                resource_dir=resource_dir,
-                observer_latitude=float(enemy["latitude"]),
-                observer_longitude=float(enemy["longitude"]),
-                observer_altitude_m=float(enemy.get("altitude") or 0.0),
-                observer_height_m=float(ENEMY_OBSERVER_HEIGHT_M),
-                target_latitude=float(hide["latitude"]),
-                target_longitude=float(hide["longitude"]),
-                target_altitude_m=float(hide_altitude_m),
-                target_height_m=0.0,
-                # No range gate: an enemy skipped for distance returns
-                # visible=False without tracing a ray, which would read here as
-                # proof of masking.  Concealment is proven against every
-                # contact regardless of how far away it is.
-                max_range_m=None,
-                reject_nodata=False,
-            )
-        except Exception as exc:
-            emit(
-                "[ATTACK][APPEND][WARN] enemy LOS certification failed "
-                f"({type(exc).__name__}: {exc}); append deferred."
-            )
-            return None
-        if (
-            not isinstance(assessment, dict)
-            or assessment.get("visible") is not False
-            or assessment.get("evaluated") is not True
-        ):
-            emit(
-                "[ATTACK][APPEND][WARN] inherited endpoint is visible, unknown, or "
-                f"was never ray-traced for a current enemy (reason={(assessment or {}).get('reason')}); "
-                "append deferred."
-            )
-            return None
-        enemy_checked += 1
 
     uav_rows = contact.get("uav_states") or []
     required_links = max(
