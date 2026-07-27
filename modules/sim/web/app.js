@@ -1,0 +1,435 @@
+﻿import { getConfig } from "./js/config.js";
+import { palette } from "./js/palette.js";
+import { buildStyle } from "./js/map_style.js";
+import { createBuildingController } from "./js/buildings.js";
+import { setupTerrainToggle } from "./js/terrain.js";
+import { ZoomResetControl } from "./js/zoom_reset_control.js";
+import { initPlaybackControls } from "./js/controls_playback.js";
+import { initFlightProfileControls } from "./js/controls_flight_profile.js";
+import { initAgentPanel } from "./js/controls_agent.js";
+import { initSidePanel } from "./js/controls_sidepanel.js";
+import { initMissionPanel } from "./js/controls_mission.js";
+import { initScenarioPanel } from "./js/controls_scenario.js";
+import { init0401Panel } from "./js/panel_0401.js";
+import { initRightSidePanel } from "./js/controls_sidepanel_right.js";
+import { initLeftSidePanel } from "./js/controls_sidepanel_left.js";
+import { initIntegrationPanel } from "./js/integration_panel.js";
+import { initDynamicsCalibrationPanel } from "./js/dynamics_calibration_panel.js";
+import { initMissionOptionPopup } from "./js/mission_option_popup.js";
+import { initMissionRecommendPopup } from "./js/mission_recommend_popup.js";
+import { initReplanNoticePopup } from "./js/replan_notice_popup.js";
+import { initMissionPaths } from "./js/mission_paths.js?v=20260725-lah-point-roles-1";
+import { initVehicleMarkers } from "./js/vehicle_markers.js";
+import { initTargetMarkers } from "./js/target_markers.js";
+import { initEnemyLahLos } from "./js/enemy_lah_los.js?v=20260725-lah-role-layout-2";
+import { initLahUavCommunicationLos } from "./js/lah_uav_communication_los.js?v=20260725-lah-role-status-1";
+import { initProjectileMarkers } from "./js/projectile_markers.js";
+import { initImpactEffects } from "./js/impact_effects.js";
+import { initRemainingAreas } from "./js/remaining_areas.js";
+import { initMissionReferenceMarkers } from "./js/mission_reference_markers.js";
+import { getAgentCoordinate, getUiState, updateUiField } from "./js/agent_store.js";
+import { logStatus } from "./js/status_log.js";
+import { initSimClient } from "./js/sim_client.js";
+
+(() => {
+  const buildingToggle = document.getElementById("toggle-buildings");
+  const waypointToggle = document.getElementById("toggle-waypoints");
+  const sweepLineToggle = document.getElementById("toggle-sweep-lines");
+  const remainingAreaToggle = document.getElementById("toggle-remaining-areas");
+  const referencePointToggle = document.getElementById("toggle-mission-reference-points");
+  const enemyLahLosToggle = document.getElementById("toggle-enemy-lah-los");
+  const enemyLahLosLegend = document.getElementById("enemy-lah-los-legend");
+
+  const setStatus = (text) => {
+    logStatus(text, { key: "app-status", ttlMs: 4500 });
+  };
+
+  const config = getConfig(document.body);
+  const renderPixelRatio = Math.min(0.8, Math.max(0.5, Number(window.devicePixelRatio) || 1));
+
+  if (!window.maplibregl) {
+    setStatus("MapLibre missing.");
+    return;
+  }
+
+  const map = new maplibregl.Map({
+    container: "map",
+    style: buildStyle(config, palette),
+    center: config.center,
+    zoom: config.startZoom,
+    minZoom: config.minZoom,
+    maxZoom: config.maxZoom + 4,
+    maxPitch: 85,
+    // A tactical map does not need a HiDPI-sized terrain framebuffer. Capping
+    // it below 1x cuts GPU fill work without changing DEM/LOS resolution.
+    pixelRatio: renderPixelRatio,
+    attributionControl: false,
+    fadeDuration: 0,
+    renderWorldCopies: false,
+  });
+
+  initMissionRecommendPopup();
+
+  let initialView = null;
+
+  const captureInitialView = () => {
+    const center = map.getCenter();
+    initialView = {
+      center: [center.lng, center.lat],
+      zoom: map.getZoom(),
+      bearing: map.getBearing(),
+      pitch: map.getPitch(),
+    };
+  };
+
+  const resetView = () => {
+    const positions =
+      typeof window.getAgentPositions === "function" ? window.getAgentPositions() : null;
+    if (positions && typeof positions === "object") {
+      const entries = Object.entries(positions).filter(([, pos]) => {
+        if (!pos) {
+          return false;
+        }
+        if (!Number.isFinite(pos.lat) || !Number.isFinite(pos.lon)) {
+          return false;
+        }
+        if (pos.alive === false) {
+          return false;
+        }
+        return true;
+      });
+      if (entries.length) {
+        const uavLabels = entries
+          .filter(([label]) => String(label).toUpperCase().startsWith("UAV"))
+          .map(([label]) => label);
+        const labels = uavLabels.length ? uavLabels : entries.map(([label]) => label);
+        if (labels.length === 1 && typeof window.flyToAgent === "function") {
+          window.flyToAgent(labels[0]);
+          return;
+        }
+        let minLon = Infinity;
+        let maxLon = -Infinity;
+        let minLat = Infinity;
+        let maxLat = -Infinity;
+        labels.forEach((label) => {
+          const pos = positions[label];
+          if (!pos) {
+            return;
+          }
+          minLon = Math.min(minLon, pos.lon);
+          maxLon = Math.max(maxLon, pos.lon);
+          minLat = Math.min(minLat, pos.lat);
+          maxLat = Math.max(maxLat, pos.lat);
+        });
+        if (
+          Number.isFinite(minLon) &&
+          Number.isFinite(maxLon) &&
+          Number.isFinite(minLat) &&
+          Number.isFinite(maxLat)
+        ) {
+          let minLonAdj = minLon;
+          let maxLonAdj = maxLon;
+          let minLatAdj = minLat;
+          let maxLatAdj = maxLat;
+          const spanLon = Math.abs(maxLon - minLon);
+          const spanLat = Math.abs(maxLat - minLat);
+          if (spanLon < 1e-5 && spanLat < 1e-5) {
+            const centerLat = (minLat + maxLat) * 0.5;
+            const deltaLat = 0.02;
+            const cosLat = Math.cos((centerLat * Math.PI) / 180) || 1e-6;
+            const deltaLon = deltaLat / cosLat;
+            minLonAdj -= deltaLon;
+            maxLonAdj += deltaLon;
+            minLatAdj -= deltaLat;
+            maxLatAdj += deltaLat;
+          }
+          map.fitBounds(
+            [
+              [minLonAdj, minLatAdj],
+              [maxLonAdj, maxLatAdj],
+            ],
+            { padding: 140, duration: 600, bearing: 0, pitch: 0, maxZoom: 13.2 },
+          );
+          return;
+        }
+      }
+    }
+
+    if (initialView) {
+      map.easeTo({
+        center: initialView.center,
+        zoom: initialView.zoom,
+        bearing: initialView.bearing,
+        pitch: initialView.pitch,
+        duration: 600,
+      });
+      return;
+    }
+    if (config.bounds) {
+      map.fitBounds(config.bounds, { padding: 20, duration: 600, bearing: 0, pitch: 0 });
+    } else {
+      map.easeTo({
+        center: config.center,
+        zoom: config.startZoom,
+        bearing: 0,
+        pitch: 0,
+        duration: 600,
+      });
+    }
+  };
+  map.addControl(new ZoomResetControl(resetView), "bottom-right");
+
+  const buildingController = createBuildingController(map, buildingToggle, setStatus);
+
+  map.once("load", () => {
+    buildingController.ensureLayer();
+    buildingController.applyPending();
+    if (typeof map.setSky === "function") {
+      map.setSky({
+        "sky-color": palette.sky,
+        "sky-horizon-blend": 0.6,
+        "horizon-color": palette.skyHorizon,
+        "horizon-fog-blend": 0.7,
+        "fog-color": "#d7e6f7",
+        "fog-ground-blend": 0.8,
+        "atmosphere-blend": ["interpolate", ["linear"], ["zoom"], 0, 1, 8, 0.6, 12, 0],
+      });
+    }
+  });
+
+  if (config.bounds) {
+    map.fitBounds(config.bounds, { padding: 20, duration: 0, bearing: 0, pitch: 0 });
+  } else {
+    map.jumpTo({ center: config.center, zoom: config.startZoom, bearing: 0, pitch: 0 });
+  }
+
+  setupTerrainToggle(map, config);
+  const missionReferenceMarkers = initMissionReferenceMarkers(map);
+  window.missionReferenceLoader = missionReferenceMarkers.loadFromReference;
+  window.setMissionReferenceVisibility = missionReferenceMarkers.setVisible;
+  if (referencePointToggle) {
+    const setReferencePointToggleState = (visible) => {
+      referencePointToggle.classList.toggle("is-active", visible);
+      referencePointToggle.setAttribute("aria-pressed", visible ? "true" : "false");
+      missionReferenceMarkers.setVisible(visible);
+    };
+    setReferencePointToggleState(true);
+    referencePointToggle.addEventListener("click", () => {
+      const nextVisible = !referencePointToggle.classList.contains("is-active");
+      setReferencePointToggleState(nextVisible);
+      setStatus(nextVisible ? "Mission reference points shown." : "Mission reference points hidden.");
+    });
+  }
+  const simClient = initSimClient();
+  simClient.startPolling();
+  window.simClient = simClient;
+  simClient.subscribe((state) => {
+    const vehicles = state?.vehicles || {};
+    Object.entries(vehicles).forEach(([label, entry]) => {
+      if (!entry || entry.alive !== false) {
+        return;
+      }
+      const ui = getUiState(label);
+      if (ui && Number(ui.health) !== 2) {
+        updateUiField(label, "health", 2);
+      }
+    });
+  });
+  initPlaybackControls();
+  initFlightProfileControls();
+  initAgentPanel();
+  initSidePanel();
+  initMissionPanel(map);
+  initScenarioPanel(map);
+  init0401Panel();
+  initRightSidePanel();
+  initIntegrationPanel();
+  initDynamicsCalibrationPanel();
+  initMissionOptionPopup();
+  initReplanNoticePopup();
+  const missionPaths = initMissionPaths(map);
+  const remainingAreas = initRemainingAreas(map, { intervalMs: 1000 });
+  remainingAreas.start();
+  window.remainingAreaSnapshotLayer = remainingAreas;
+  window.setRemainingAreaMissionPlanID = remainingAreas.setMissionPlanId;
+  window.setRemainingAreaVisibility = remainingAreas.setVisible;
+  if (remainingAreaToggle && typeof remainingAreas.setVisible === "function") {
+    const setRemainingToggleState = (visible) => {
+      remainingAreaToggle.classList.toggle("is-active", visible);
+      remainingAreaToggle.setAttribute("aria-pressed", visible ? "true" : "false");
+      remainingAreas.setVisible(visible);
+    };
+    setRemainingToggleState(true);
+    remainingAreaToggle.addEventListener("click", () => {
+      const nextVisible = !remainingAreaToggle.classList.contains("is-active");
+      setRemainingToggleState(nextVisible);
+      setStatus(nextVisible ? "Remaining areas shown." : "Remaining areas hidden.");
+    });
+  }
+  window.missionPathLoader = (payload) => {
+    missionPaths.loadFromResponse(payload);
+    missionReferenceMarkers.loadFromReference(payload);
+  };
+  window.loadMissionPathsFromServer = async (path) => {
+    const payload = await missionPaths.loadFromServer(path);
+    missionReferenceMarkers.loadFromReference(payload);
+    return payload;
+  };
+  window.setSelectedAgentPath = missionPaths.setSelectedAgent;
+  window.setMissionCurrentWaypoints = missionPaths.setCurrentWaypoints;
+  window.setWaypointVisibility = missionPaths.setWaypointsVisible;
+  window.setSweepLineVisibility = missionPaths.setSweepLinesVisible;
+  if (waypointToggle && typeof missionPaths.setWaypointsVisible === "function") {
+    const setWaypointToggleState = (visible) => {
+      waypointToggle.classList.toggle("is-active", visible);
+      waypointToggle.setAttribute("aria-pressed", visible ? "true" : "false");
+      missionPaths.setWaypointsVisible(visible);
+    };
+    setWaypointToggleState(true);
+    waypointToggle.addEventListener("click", () => {
+      const nextVisible = !waypointToggle.classList.contains("is-active");
+      setWaypointToggleState(nextVisible);
+      setStatus(nextVisible ? "Waypoints shown." : "Waypoints hidden.");
+    });
+  }
+  if (sweepLineToggle && typeof missionPaths.setSweepLinesVisible === "function") {
+    const setSweepToggleState = (visible) => {
+      sweepLineToggle.classList.toggle("is-active", visible);
+      sweepLineToggle.setAttribute("aria-pressed", visible ? "true" : "false");
+      missionPaths.setSweepLinesVisible(visible);
+    };
+    setSweepToggleState(true);
+    sweepLineToggle.addEventListener("click", () => {
+      const nextVisible = !sweepLineToggle.classList.contains("is-active");
+      setSweepToggleState(nextVisible);
+      setStatus(nextVisible ? "Sweep lines shown." : "Sweep lines hidden.");
+    });
+  }
+  const vehicleMarkers = initVehicleMarkers(map);
+  window.missionVehicleLoader = vehicleMarkers.loadFromReference;
+  window.getAgentPosition = vehicleMarkers.getPosition;
+  window.getAgentPositions = vehicleMarkers.getPositions;
+  const targetMarkers = initTargetMarkers(map);
+  window.missionTargetLoader = targetMarkers.loadFromReference;
+  const lahUavCommunicationLos = initLahUavCommunicationLos(map, {
+    toggle: null,
+    legend: null,
+  });
+  const enemyLahLos = initEnemyLahLos(map, {
+    toggle: enemyLahLosToggle,
+    legend: enemyLahLosLegend,
+    onVisibilityChange: lahUavCommunicationLos.setVisible,
+  });
+  window.missionLosLoader = enemyLahLos.loadFromReference;
+  window.setEnemyLahLosVisibility = enemyLahLos.setVisible;
+  window.missionCommunicationLosLoader = (payload) => {
+    lahUavCommunicationLos.loadFromReference(payload);
+    enemyLahLos.loadCommunicationFromReference(payload);
+  };
+  window.setLahUavCommunicationLosVisibility = enemyLahLos.setVisible;
+  initLeftSidePanel({
+    map,
+    getFilmingViews: vehicleMarkers.getFilmingViews,
+    subscribeFilmingViews: vehicleMarkers.subscribeFilmingViews,
+    getTargets: targetMarkers.getTargets,
+    subscribeTargets: targetMarkers.subscribeTargets,
+  });
+  const projectileMarkers = initProjectileMarkers(map);
+  window.missionProjectileLoader = projectileMarkers.loadFromReference;
+  const impactEffects = initImpactEffects(map);
+  window.missionEffectLoader = impactEffects.loadFromReference;
+  window.clearMissionData = () => {
+    if (typeof window.missionPathLoader === "function") {
+      window.missionPathLoader({
+        ok: true,
+        features: [],
+        agents: {},
+        count: 0,
+        flightPaths: [],
+      });
+    }
+    if (typeof window.missionVehicleLoader === "function") {
+      window.missionVehicleLoader({ ok: true, vehicles: {} });
+    }
+    if (typeof window.missionTargetLoader === "function") {
+      window.missionTargetLoader({ ok: true, targets: [] });
+    }
+    if (typeof window.missionLosLoader === "function") {
+      window.missionLosLoader({ ok: true, losLinks: [], step: null });
+    }
+    if (typeof window.missionCommunicationLosLoader === "function") {
+      window.missionCommunicationLosLoader({
+        ok: true,
+        communicationLinks: [],
+        step: null,
+      });
+    }
+    if (typeof window.missionProjectileLoader === "function") {
+      window.missionProjectileLoader({ ok: true, projectiles: [] });
+    }
+    if (typeof window.missionEffectLoader === "function") {
+      window.missionEffectLoader({ ok: true, effects: [] });
+    }
+    if (typeof window.setSelectedAgentPath === "function") {
+      window.setSelectedAgentPath(null);
+    }
+    if (typeof window.setMissionPlanReady === "function") {
+      window.setMissionPlanReady(false);
+    }
+  };
+  window.flyToAgent = (label) => {
+    if (!label || !map) {
+      return;
+    }
+    const pos =
+      (typeof window.getAgentPosition === "function"
+        ? window.getAgentPosition(label)
+        : null) || getAgentCoordinate(label);
+    if (!pos || !Number.isFinite(pos.lat) || !Number.isFinite(pos.lon)) {
+      return;
+    }
+    const altitude =
+      Number.isFinite(pos.alt) ? pos.alt : Number.isFinite(pos.altitude) ? pos.altitude : 0;
+    const zoom = Math.max(14.8, 16.6 - Math.log2(1 + altitude / 400));
+    const pitch = Math.max(45, 62 - Math.log2(1 + altitude / 300) * 6);
+    const offsetY = Math.min(220, 80 + altitude * 0.04);
+    map.easeTo({
+      center: [pos.lon, pos.lat],
+      zoom,
+      pitch,
+      bearing: 0,
+      offset: [0, offsetY],
+      duration: 900,
+      easing: (t) => t * (2 - t),
+    });
+  };
+
+  map.once("idle", () => {
+    captureInitialView();
+  });
+
+  const simTimeEl = document.getElementById("sim-time");
+  if (simTimeEl && typeof simClient.subscribe === "function") {
+    let lastSec = null;
+    const pad = (value) => String(value).padStart(2, "0");
+    const formatTime = (secs) => {
+      const s = Math.max(0, Math.floor(secs));
+      const h = Math.floor(s / 3600);
+      const m = Math.floor((s % 3600) / 60);
+      const ss = s % 60;
+      return `T+${pad(h)}:${pad(m)}:${pad(ss)}`;
+    };
+    simClient.subscribe((state) => {
+      const simTime = Number(state?.simTime);
+      if (!Number.isFinite(simTime)) {
+        return;
+      }
+      const sec = Math.floor(simTime);
+      if (sec === lastSec) {
+        return;
+      }
+      lastSec = sec;
+      simTimeEl.textContent = formatTime(sec);
+    });
+  }
+})();

@@ -1,0 +1,271 @@
+from __future__ import annotations
+
+import copy
+import json
+import threading
+from pathlib import Path
+from types import MethodType, SimpleNamespace
+from unittest.mock import patch
+
+from modules.monitoring.logic.anti_armor_air_strike_review import (
+    EXPECTED_SOURCE_PATTERN,
+    is_anti_armor_air_strike_review_source,
+)
+from modules.monitoring.monitoring_gui import MainWindow
+
+
+def _type1_payload(package_id: int, *, mission_id: int = 70000001) -> dict:
+    return {
+        "timestamp": 1000,
+        "inputMissionPackageID": int(package_id),
+        "inputMissionPackageType": 1,
+        "availableAircraftList": [{"aircraftID": 1}],
+        "inputMissionList": [
+            {
+                "inputMissionID": int(mission_id),
+                "inputMissionType": 1,
+                "missionDetail": {"lineList": []},
+            }
+        ],
+    }
+
+
+def _anti_armor_type1_payload(package_id: int, *, mission_id: int = 70000001) -> dict:
+    payload = _type1_payload(package_id, mission_id=mission_id)
+    payload["inputMissionList"] = [
+        {
+            "inputMissionID": int(mission_id + index),
+            "inputMissionType": int(mission_type),
+            "regionType": int(region_type),
+            "missionDetail": {},
+        }
+        for index, (mission_type, region_type) in enumerate(EXPECTED_SOURCE_PATTERN)
+    ]
+    return payload
+
+
+def _bind(instance: object, name: str) -> None:
+    setattr(instance, name, MethodType(getattr(MainWindow, name), instance))
+
+
+def _review_host(input_dir: Path, source_payload: dict) -> tuple[SimpleNamespace, list[int]]:
+    sent_ids: list[int] = []
+    host = SimpleNamespace(
+        _input_0201_review_lock=threading.RLock(),
+        _reviewed_0201_by_arrival={},
+        _reviewed_0201_generated_ids=set(),
+        _last_rx_0201_arrival_seq=1,
+        _last_0201_review_summary={},
+    )
+    host._latest_0201_payload_for_review = lambda: (
+        int(source_payload["inputMissionPackageID"]),
+        copy.deepcopy(source_payload),
+        input_dir / f"{int(source_payload['inputMissionPackageID'])}.json",
+    )
+    host._input_0201_package_type_from_payload = MainWindow._input_0201_package_type_from_payload
+    host._input_0201_has_core_payload = MainWindow._input_0201_has_core_payload
+    host._numeric_json_ids = MainWindow._numeric_json_ids
+    _bind(host, "_reserve_reviewed_0201_package_id")
+    host._build_reviewed_0201_payload = lambda payload, *, new_package_id: {
+        **copy.deepcopy(payload),
+        "timestamp": 2000 + int(new_package_id),
+        "inputMissionPackageID": int(new_package_id),
+        "reviewSource": "MSM",
+        "reviewedFromInputMissionPackageID": int(payload["inputMissionPackageID"]),
+    }
+    host._push_review_0204_payload = lambda package_id: sent_ids.append(int(package_id)) or True
+    host._append_log_line = lambda _text: None
+    return host, sent_ids
+
+
+def test_external_0201_anchor_counts_real_arrivals_even_for_identical_id() -> None:
+    host = SimpleNamespace(
+        _last_rx_0201_arrival_seq=0,
+        _last_rx_0201_package_id=None,
+        _last_rx_0201_payload=None,
+    )
+    host._unwrap_payload = lambda payload: payload
+    host._input_0201_has_core_payload = MainWindow._input_0201_has_core_payload
+    host._input_0201_package_id_from_payload = MainWindow._input_0201_package_id_from_payload
+    host._is_msm_reviewed_0201_payload = MainWindow._is_msm_reviewed_0201_payload
+    raw = json.dumps(_type1_payload(1)).encode("utf-8")
+
+    MainWindow._record_external_0201_review_anchor(host, raw, is_new_arrival=True)
+    assert host._last_rx_0201_arrival_seq == 1
+    assert host._last_rx_0201_package_id == 1
+
+    # Reexecute polling the unchanged RX row is not a new initial-plan cycle.
+    MainWindow._record_external_0201_review_anchor(host, raw, is_new_arrival=False)
+    assert host._last_rx_0201_arrival_seq == 1
+
+    # A fresh RX-history entry is a new cycle even when its body and ID match.
+    MainWindow._record_external_0201_review_anchor(host, raw, is_new_arrival=True)
+    assert host._last_rx_0201_arrival_seq == 2
+
+
+def test_repeated_type1_arrival_creates_fresh_monotonic_review_and_0204(tmp_path: Path) -> None:
+    input_dir = tmp_path / "InputMissionPlan"
+    input_dir.mkdir()
+    source = _anti_armor_type1_payload(1)
+    (input_dir / "1.json").write_text(json.dumps(source), encoding="utf-8")
+    host, sent_ids = _review_host(input_dir, source)
+
+    with patch(
+        "modules.monitoring.monitoring_gui.db_paths.get_db_subpath",
+        return_value=input_dir,
+    ):
+        first = MainWindow._review_type1_0201_for_initial_replan(host)
+        duplicate_callback = MainWindow._review_type1_0201_for_initial_replan(host)
+
+        host._last_rx_0201_arrival_seq = 2
+        second = MainWindow._review_type1_0201_for_initial_replan(host)
+
+        # A legitimate external source ID may equal a package ID generated by MSM
+        # in the prior cycle.  It must still be treated as a fresh external input.
+        external_two = _anti_armor_type1_payload(2, mission_id=70000002)
+        host._latest_0201_payload_for_review = lambda: (
+            2,
+            copy.deepcopy(external_two),
+            input_dir / "2.json",
+        )
+        host._last_rx_0201_arrival_seq = 3
+        third = MainWindow._review_type1_0201_for_initial_replan(host)
+
+    assert first["inputMissionPackageID"] == 2
+    assert duplicate_callback["inputMissionPackageID"] == 2
+    assert second["inputMissionPackageID"] == 3
+    assert third["inputMissionPackageID"] == 4
+    assert sent_ids == [2, 3, 4]
+    assert sorted(path.stem for path in input_dir.glob("*.json")) == ["1", "2", "3", "4"]
+
+
+def test_special_review_source_requires_exact_six_mission_pattern() -> None:
+    assert is_anti_armor_air_strike_review_source(_anti_armor_type1_payload(1)) is True
+
+    generic_line_area = _type1_payload(1)
+    generic_line_area["inputMissionList"] = [
+        {"inputMissionID": 1, "inputMissionType": 1, "regionType": 6},
+        {"inputMissionID": 2, "inputMissionType": 2, "regionType": 6},
+        {"inputMissionID": 3, "inputMissionType": 1, "regionType": 2},
+    ]
+    assert is_anti_armor_air_strike_review_source(generic_line_area) is False
+
+
+def test_generic_type1_line_area_continues_normal_initial_planning(tmp_path: Path) -> None:
+    input_dir = tmp_path / "InputMissionPlan"
+    input_dir.mkdir()
+    source = _type1_payload(1)
+    host, sent_ids = _review_host(input_dir, source)
+    queued: list[tuple[list[dict], str]] = []
+    log_lines: list[str] = []
+    host._power_on = True
+    host._seed_initial_availability_from_input_plan = lambda *, review_info=None: None
+    host._queue_replan_payloads = lambda payloads, *, source: queued.append((payloads, source))
+    host._append_log_line = log_lines.append
+    _bind(host, "_review_type1_0201_for_initial_replan")
+
+    with (
+        patch(
+            "modules.monitoring.monitoring_gui.collect_input_mission_ids",
+            return_value=[70000001],
+        ),
+        patch(
+            "modules.monitoring.monitoring_gui.allocate_mission_plan_ids",
+            return_value=[700000123],
+        ),
+    ):
+        MainWindow._auto_prepare_replan(host)
+
+    assert sent_ids == []
+    assert len(queued) == 1
+    payload = queued[0][0][0]
+    assert queued[0][1] == "auto_init"
+    assert payload["inputMissionIDList"] == [{"inputMissionID": 70000001}]
+    assert "inputMissionPackageReview0204Sent" not in payload
+    assert any("continue normal initial planning" in line for line in log_lines)
+
+
+def test_review_package_allocator_appends_after_max_instead_of_filling_gap(tmp_path: Path) -> None:
+    input_dir = tmp_path / "InputMissionPlan"
+    input_dir.mkdir()
+    (input_dir / "1.json").write_text("{}", encoding="utf-8")
+    (input_dir / "4.json").write_text("{}", encoding="utf-8")
+    host = SimpleNamespace(_reviewed_0201_generated_ids=set())
+    host._numeric_json_ids = MainWindow._numeric_json_ids
+
+    package_id = MainWindow._reserve_reviewed_0201_package_id(host, input_dir, 1)
+
+    assert package_id == 5
+
+
+def test_review_picker_prefers_current_rx_payload_over_old_same_id_file(tmp_path: Path) -> None:
+    input_dir = tmp_path / "InputMissionPlan"
+    input_dir.mkdir()
+    old_payload = _type1_payload(1, mission_id=70000001)
+    current_payload = _type1_payload(1, mission_id=70000099)
+    (input_dir / "1.json").write_text(json.dumps(old_payload), encoding="utf-8")
+    host = SimpleNamespace(
+        _last_rx_0201_package_id=1,
+        _last_rx_0201_payload=current_payload,
+    )
+    host._append_log_line = lambda _text: None
+    host._input_0201_package_id_from_payload = MainWindow._input_0201_package_id_from_payload
+    host._is_msm_reviewed_0201_payload = MainWindow._is_msm_reviewed_0201_payload
+
+    with patch(
+        "modules.monitoring.monitoring_gui.db_paths.get_db_subpath",
+        return_value=input_dir,
+    ):
+        _source_id, selected, _path = MainWindow._latest_0201_payload_for_review(host)
+
+    assert selected["inputMissionList"][0]["inputMissionID"] == 70000099
+
+
+def test_initial_mode_gate_rearms_after_standby_only() -> None:
+    calls: list[str] = []
+    host = SimpleNamespace(
+        _auto_initplan_triggered=False,
+        _auto_prepare_replan=lambda: calls.append("plan"),
+    )
+
+    MainWindow._handle_initplan_transition(host, 2)
+    MainWindow._handle_initplan_transition(host, 2)
+    MainWindow._handle_initplan_transition(host, 1)
+    MainWindow._handle_initplan_transition(host, 2)
+
+    assert calls == ["plan", "plan"]
+
+
+def test_initial_0902_points_to_the_review_id_already_sent_by_0204(tmp_path: Path) -> None:
+    reviewed_path = tmp_path / "9.json"
+    reviewed_path.write_text(json.dumps(_type1_payload(9)), encoding="utf-8")
+    queued: list[tuple[list[dict], str]] = []
+    host = SimpleNamespace(_power_on=True)
+    host._review_type1_0201_for_initial_replan = lambda: {
+        "applicable": True,
+        "sent": True,
+        "inputMissionPackageID": 9,
+        "sourceInputMissionPackageID": 1,
+        "path": str(reviewed_path),
+    }
+    host._seed_initial_availability_from_input_plan = lambda *, review_info=None: None
+    host._input_mission_ids_from_payload = MainWindow._input_mission_ids_from_payload
+    _bind(host, "_input_mission_ids_from_path")
+    host._append_log_line = lambda _text: None
+    host._queue_replan_payloads = lambda payloads, *, source: queued.append((payloads, source))
+
+    with patch(
+        "modules.monitoring.monitoring_gui.allocate_mission_plan_ids",
+        return_value=[700000123],
+    ):
+        MainWindow._auto_prepare_replan(host)
+
+    assert len(queued) == 1
+    payload = queued[0][0][0]
+    assert queued[0][1] == "auto_init"
+    assert payload["inputMissionPackageID"] == 9
+    assert payload["sourceInputMissionPackageID"] == 1
+    assert payload["inputMissionPackageReview0204Sent"] is True
+    assert payload["replanDetail"]["inputMissionPackageID"] == 9
+    assert payload["replanDetail"]["inputMissionPackageReview0204Sent"] is True
+    assert payload["optionList"][0]["missionPlanID"] == 700000123

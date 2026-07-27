@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>임무상태 모니터링</title>
+    <link rel="stylesheet" href="/vendor/maplibre-gl.css" />
+    <link rel="stylesheet" href="/style.css" />
+    <script src="/vendor/maplibre-gl.js" defer></script>
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="status-strip">
+        <div class="product-lockup">
+          <span class="product-mark" aria-hidden="true"></span>
+          <div>
+            <strong>임무상태 모니터링</strong>
+            <span id="scenario-name" class="scenario-name">시나리오 대기</span>
+          </div>
+        </div>
+
+        <div class="strip-metrics" aria-label="시스템 상태">
+          <div class="strip-metric connection-state" id="connection-state" data-tone="pending">
+            <span class="status-dot" aria-hidden="true"></span>
+            <span id="connection-label">연결 확인 중</span>
+          </div>
+          <div class="strip-metric">
+            <span class="strip-label">PLAN</span>
+            <strong id="top-plan-id">-</strong>
+          </div>
+          <div class="strip-metric">
+            <span class="strip-label">0401</span>
+            <strong id="top-signal">대기</strong>
+          </div>
+          <div class="strip-metric">
+            <span class="strip-label">수신</span>
+            <strong id="top-updated">--:--:--</strong>
+          </div>
+          <div class="strip-metric clock-metric">
+            <span class="strip-label">KST</span>
+            <strong id="clock">--:--:--</strong>
+          </div>
+        </div>
+
+        <button id="shutdown-button" class="shutdown-button" type="button" title="모니터링 종료" aria-label="모니터링 종료">
+          <span class="stop-icon" aria-hidden="true"></span>
+        </button>
+      </header>
+
+      <main class="workspace">
+        <section class="map-workspace" aria-label="임무 지도">
+          <div id="map" role="application" aria-label="임무 현황 지도"></div>
+          <div id="map-coordinate-cursor" class="map-coordinate-cursor" role="status" hidden></div>
+
+          <div class="map-toolbar">
+            <fieldset class="layer-control">
+              <legend>지도 레이어</legend>
+              <div class="layer-options">
+                <label><input type="checkbox" data-layer-toggle="areas" checked /><span class="swatch swatch-area"></span>임무구역</label>
+                <label><input type="checkbox" data-layer-toggle="optionAssignments" checked /><span class="swatch swatch-assignment"></span>옵션할당</label>
+                <label><input type="checkbox" data-layer-toggle="corridors" checked /><span class="swatch swatch-corridor"></span>선형회랑</label>
+                <label><input type="checkbox" data-layer-toggle="paths" checked /><span class="swatch swatch-path"></span>계획경로</label>
+                <label><input type="checkbox" data-layer-toggle="tracks" checked /><span class="swatch swatch-track"></span>비행궤적</label>
+                <label><input type="checkbox" data-layer-toggle="footprints" checked /><span class="swatch swatch-footprint"></span>현재 촬영폭</label>
+                <label><input type="checkbox" data-layer-toggle="footprintTrails" checked /><span class="swatch swatch-trail"></span>촬영폭 이력</label>
+                <label><input type="checkbox" data-layer-toggle="detectionFootprints" checked /><span class="swatch swatch-detection-footprint"></span>발견 위치·촬영폭</label>
+                <label><input type="checkbox" data-layer-toggle="uavCommands" checked /><span class="swatch swatch-uav-command"></span>통제 명령</label>
+                <label><input type="checkbox" data-layer-toggle="targets" checked /><span class="swatch swatch-target"></span>표적</label>
+              </div>
+            </fieldset>
+
+            <fieldset class="coverage-depth-control">
+              <legend>촬영 깊이 · 2회 기준</legend>
+              <div class="coverage-depth-legend">
+                <span class="depth-0"><i></i><strong>0/2</strong> 2회 필요</span>
+                <span class="depth-1"><i></i><strong>1/2</strong> 1회 필요</span>
+                <span class="depth-2"><i></i><strong>2/2</strong> 완료</span>
+              </div>
+              <small>OUT / RETURN은 경로 기여 출처이며 완료 조건이 아닙니다.</small>
+            </fieldset>
+
+            <div class="follow-control" aria-label="기체 추종 설정">
+              <span class="control-title">기체 추종</span>
+              <div id="follow-segments" class="segments" role="group" aria-label="추종 기체">
+                <button type="button" class="segment is-active" data-follow-id="" aria-pressed="true">자유</button>
+              </div>
+            </div>
+
+            <div class="interpolation-control" aria-label="촬영 footprint 보간 설정">
+              <label class="control-title" for="interpolation-hz">촬영 보간</label>
+              <div class="interpolation-input-row">
+                <input id="interpolation-hz" type="number" min="1" max="120" step="1" value="30" inputmode="decimal" />
+                <span>Hz</span>
+                <button id="save-interpolation" type="button">적용</button>
+              </div>
+              <small id="interpolation-status">수신 - Hz → 보간 30 Hz</small>
+            </div>
+          </div>
+
+          <div id="map-message" class="map-message" hidden>
+            <strong>지도 연결 대기</strong>
+            <span>기본 배경에서 임무 데이터를 표시합니다.</span>
+          </div>
+
+          <div class="map-footer">
+            <span id="map-coordinate">위도 -- · 경도 --</span>
+            <span id="history-status">궤적 0 · 촬영폭 0</span>
+          </div>
+        </section>
+
+        <aside class="analytics-panel" aria-label="실시간 임무 분석" tabindex="0">
+          <section class="panel-section overview-section">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">LIVE MISSION</p>
+                <h1>실시간 임무 분석</h1>
+              </div>
+              <span id="data-freshness" class="freshness" data-tone="pending">데이터 대기</span>
+            </div>
+            <div id="kpi-grid" class="kpi-grid" aria-live="polite">
+              <div class="kpi"><span>활성 기체</span><strong>-</strong><small>전체 -</small></div>
+              <div class="kpi"><span>촬영 기체</span><strong>-</strong><small>0401 상태</small></div>
+              <div class="kpi"><span>종합 진척</span><strong>-</strong><small>임무 커버리지</small></div>
+              <div class="kpi"><span>정상 기체</span><strong>-</strong><small>건전성 기준</small></div>
+            </div>
+          </section>
+
+          <section class="panel-section vehicle-section">
+            <div class="section-title-row">
+              <h2>UAV 상태</h2>
+              <span id="vehicle-count" class="section-count">0대</span>
+            </div>
+            <div id="vehicle-list" class="vehicle-list">
+              <div class="empty-state">수신된 기체 상태가 없습니다.</div>
+            </div>
+          </section>
+
+          <section class="panel-section assignment-section">
+            <div class="section-title-row">
+              <h2>옵션별 UAV 할당 영역</h2>
+              <span id="option-assignment-count" class="section-count">옵션 0개</span>
+            </div>
+            <div id="option-assignment-tabs" class="assignment-option-tabs" role="tablist" aria-label="후보 임무 옵션">
+              <span class="empty-state compact">0701 후보 옵션을 기다리는 중입니다.</span>
+            </div>
+            <div id="option-assignment-list" class="option-assignment-list">
+              <div class="empty-state compact">표시할 UAV 할당 영역이 없습니다.</div>
+            </div>
+          </section>
+
+          <section class="panel-section mission-section">
+            <div class="section-title-row">
+              <h2>임무 파트 순서</h2>
+              <span id="mission-part-count" class="section-count">0개</span>
+            </div>
+            <div class="table-wrap">
+              <table class="mission-table">
+                <thead>
+                  <tr>
+                    <th scope="col">순번</th>
+                    <th scope="col">유형</th>
+                    <th scope="col">지역</th>
+                    <th scope="col">형상</th>
+                    <th scope="col">상태</th>
+                    <th scope="col">커버리지</th>
+                    <th scope="col">GSD 충족</th>
+                  </tr>
+                </thead>
+                <tbody id="mission-parts-body">
+                  <tr><td colspan="7" class="table-empty">임무 계획을 기다리는 중입니다.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="panel-section coverage-section">
+            <div class="section-title-row">
+              <h2>선형 / 면적 커버리지</h2>
+              <span id="coverage-total" class="section-count">전체 -</span>
+            </div>
+            <div id="coverage-rows" class="coverage-rows">
+              <div class="coverage-row">
+                <span class="coverage-label">선형</span>
+                <div class="progress-track"><span style="width: 0%"></span></div>
+                <strong>-</strong>
+              </div>
+              <div class="coverage-row area-tone">
+                <span class="coverage-label">면적</span>
+                <div class="progress-track"><span style="width: 0%"></span></div>
+                <strong>-</strong>
+              </div>
+            </div>
+            <div id="coverage-chart" class="coverage-chart" aria-label="커버리지 추세"></div>
+          </section>
+
+          <section class="panel-section quality-section">
+            <div class="section-title-row">
+              <h2>촬영 품질 추세</h2>
+              <span id="quality-status" class="section-count">평가 대기</span>
+            </div>
+            <div id="quality-trends" class="quality-trends">
+              <div class="empty-state compact">품질 표본이 없습니다.</div>
+            </div>
+          </section>
+
+          <section class="panel-section command-section">
+            <div class="section-title-row">
+              <h2>0602 통제 명령 이력</h2>
+              <span id="command-count" class="section-count">0건</span>
+            </div>
+            <ol id="command-feed" class="uav-command-feed">
+              <li class="empty-state">수신된 0602 통제 명령이 없습니다.</li>
+            </ol>
+          </section>
+
+          <section class="panel-section discovery-section">
+            <div class="section-title-row">
+              <h2>0402 발견 이력</h2>
+              <span id="discovery-count" class="section-count">0건</span>
+            </div>
+            <ol id="discovery-feed" class="discovery-feed">
+              <li class="empty-state">수신된 ROI/표적 발견이 없습니다.</li>
+            </ol>
+          </section>
+
+          <section class="panel-section event-section">
+            <div class="section-title-row">
+              <h2>이벤트 피드</h2>
+              <span id="event-count" class="section-count">0건</span>
+            </div>
+            <ol id="event-feed" class="event-feed">
+              <li class="empty-state">새 이벤트가 없습니다.</li>
+            </ol>
+          </section>
+        </aside>
+      </main>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  </body>
+</html>

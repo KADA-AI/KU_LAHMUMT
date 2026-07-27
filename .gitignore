@@ -1,0 +1,24 @@
+# ─────────────────────────────────────────────────────────────
+# 형상관리 범위 (2026-07-27 재시작)
+#   추적: modules/, settings/, run.py
+#   그 외(Logs/, resource/, docs/, test/, output/, tools/ 등)는
+#   참고자료·대용량 데이터이므로 로컬 전용으로 둔다.
+# ─────────────────────────────────────────────────────────────
+/*
+!/.gitignore
+!/.gitattributes
+!/modules/
+!/settings/
+!/run.py
+
+# Python cache files
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# 런타임 캐시 / 락 / 백업
+qtwebengine_cache/
+*.lock
+*.bak
+*.log
+~$*

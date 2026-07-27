@@ -1,0 +1,151 @@
+{
+  "version": 4,
+  "source_log": "Logs/Scenario_2026-07-15T112330/SBC3/0401",
+  "analysis": {
+    "sample_files": 5,
+    "frame_count": 3281,
+    "duration_s": 655.806,
+    "median_sample_interval_s": 0.202,
+    "speed_method": "2-second smoothed coordinate displacement",
+    "reported_speed_rejected": "velocity.speed median 10.5 m/s conflicted with coordinate ground speed 35.8-39.4 m/s",
+    "longitudinal_response_mps2": "0.4-0.6",
+    "roll_response_basis": "ground-course response proxy; attitude was not present",
+    "camera_sample_records": 9840,
+    "camera_command_response_s": "0.2 for FOV/coordinate commands; 1.0-2.2 for line-search activation",
+    "camera_fov_method": "discrete values were retained because no intermediate zoom samples were observed",
+    "camera_los_method": "world-frame angular response calibrated from sensorInfo.centerCoordinate; true gimbal attitude was not present",
+    "footprint_valid_records": 9816,
+    "footprint_flat_altitude_records": 9816,
+    "footprint_flat_altitude_ratio": 1.0,
+    "footprint_polygon_order": "clockwise and convex for every valid record",
+    "footprint_method": "center ray intersects DEM; corner rays intersect the quantized horizontal plane at the center-hit altitude"
+  },
+  "footprint_model": {
+    "flat_center_altitude_plane": false,
+    "center_altitude_quantum_m": 1.0,
+    "couple_image_axis_to_body_attitude": true,
+    "effective_fov_scale": 1.0,
+    "sample_short_period_s": 0.2,
+    "sample_long_period_s": 0.4
+  },
+  "phases": {
+    "default": {
+      "reference_turn_radius_scale": 1.0,
+      "accel": 1.2,
+      "max_roll_rate_dps": 10.0,
+      "turn_roll_gain": 0.9
+    },
+    "type1_region3": {
+      "reference_turn_radius_scale": 1.0,
+      "accel": 1.2,
+      "max_roll_rate_dps": 6.0,
+      "turn_roll_gain": 0.6
+    },
+    "type1_region4": {
+      "reference_turn_radius_scale": 1.0,
+      "accel": 1.2,
+      "max_roll_rate_dps": 12.0,
+      "turn_roll_gain": 1.0
+    },
+    "area_lead": {
+      "reference_turn_radius_scale": 1.0,
+      "accel": 1.2,
+      "max_roll_rate_dps": 12.0,
+      "turn_roll_gain": 1.1
+    },
+    "area_scan": {
+      "reference_turn_radius_scale": 1.0,
+      "accel": 1.2,
+      "max_roll_rate_dps": 6.0,
+      "turn_roll_gain": 0.7
+    },
+    "type1_region5": {
+      "reference_turn_radius_scale": 1.0,
+      "accel": 1.2,
+      "max_roll_rate_dps": 12.0,
+      "turn_roll_gain": 1.0
+    },
+    "individual_search": {
+      "reference_turn_radius_scale": 1.0,
+      "accel": 1.2,
+      "max_roll_rate_dps": 8.0,
+      "turn_roll_gain": 0.8
+    },
+    "individual_line": {
+      "reference_turn_radius_scale": 1.0,
+      "accel": 1.2,
+      "max_roll_rate_dps": 10.0,
+      "turn_roll_gain": 0.9
+    }
+  },
+  "camera_phases": {
+    "default": {
+      "command_delay_s": 0.2,
+      "line_search_delay_s": 1.4,
+      "fixed_to_line_search_delay_s": 1.8,
+      "coordinate_slew_rate_dps": 30.0,
+      "line_search_slew_rate_dps": 150.0,
+      "settle_tolerance_deg": 0.5
+    },
+    "type1_region3": {
+      "command_delay_s": 0.2,
+      "line_search_delay_s": 1.4,
+      "fixed_to_line_search_delay_s": 1.8,
+      "coordinate_slew_rate_dps": 30.0,
+      "line_search_slew_rate_dps": 70.0
+    },
+    "type1_region4": {
+      "command_delay_s": 0.2,
+      "line_search_delay_s": 1.4,
+      "fixed_to_line_search_delay_s": 1.8,
+      "coordinate_slew_rate_dps": 30.0,
+      "line_search_slew_rate_dps": 55.0
+    },
+    "area_lead": {
+      "command_delay_s": 0.2,
+      "line_search_delay_s": 1.4,
+      "fixed_to_line_search_delay_s": 1.8,
+      "coordinate_slew_rate_dps": 30.0,
+      "line_search_slew_rate_dps": 150.0
+    },
+    "area_scan": {
+      "command_delay_s": 0.2,
+      "line_search_delay_s": 1.4,
+      "fixed_to_line_search_delay_s": 1.8,
+      "coordinate_slew_rate_dps": 30.0,
+      "line_search_slew_rate_dps": 150.0
+    },
+    "type1_region5": {
+      "command_delay_s": 0.2,
+      "line_search_delay_s": 1.4,
+      "fixed_to_line_search_delay_s": 1.8,
+      "coordinate_slew_rate_dps": 30.0,
+      "line_search_slew_rate_dps": 70.0
+    },
+    "individual_search": {
+      "command_delay_s": 0.2,
+      "line_search_delay_s": 1.4,
+      "fixed_to_line_search_delay_s": 1.8,
+      "coordinate_slew_rate_dps": 30.0,
+      "line_search_slew_rate_dps": 100.0
+    },
+    "individual_line": {
+      "command_delay_s": 0.2,
+      "line_search_delay_s": 1.4,
+      "fixed_to_line_search_delay_s": 1.8,
+      "coordinate_slew_rate_dps": 30.0,
+      "line_search_slew_rate_dps": 100.0
+    }
+  },
+  "notes": [
+    "This profile is loaded only by the SIM runtime and never overwrites the shared planner dynamics profile.",
+    "The existing 30 m/s=340 m and 40 m/s=450 m reference-radius table already matched the observed maneuver bands, so its scale remains 1.0.",
+    "Target waypoint speed, bank limits, pitch limits, and climb/descent envelopes remain unchanged.",
+    "Roll values are course-response proxies because the validation 0401 data did not contain attitude.",
+    "Camera FOV stays discrete, while mode/command delay and world-frame LOS rate are applied only by the Shinil SIM toggle.",
+    "Aircraft-fixed Mode 4 applies the simulated body roll/pitch/yaw directly without an invented gimbal slew; Mode 3 tracking, ROI, forced control, and loiter retain their established behavior.",
+    "The source 0401 logs recorded flat, equal-altitude corners, but the runtime intentionally does not reproduce that approximation.",
+    "Detection, 0401 serialization, and display use the same four independent regional-DEM ray intersections regardless of the Shinil toggle.",
+    "The current exact projection is cached per aircraft and reused until aircraft pose, camera focus, FOV, or image axis changes."
+  ]
+}
