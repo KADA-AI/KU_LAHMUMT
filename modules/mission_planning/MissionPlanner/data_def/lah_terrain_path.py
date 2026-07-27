@@ -41,6 +41,9 @@ LAH_LOW_TERRAIN_LANE_COUNT = 49
 # One lane per station keeps the divert flyable: lane pitch is sized to the
 # station spacing, so a full-rate sidestep is a ~40 degree turn.
 LAH_LOW_TERRAIN_MAX_LANE_STEP = 1
+# Perf backstop when strength widens the corridor: lanes are added to hold the
+# ~100 m pitch, but never past this many per side.
+_LOW_TERRAIN_MAX_HALF_LANES = 60
 # A detour is only worth flying if the terrain saved pays for the extra track.
 LAH_LOW_TERRAIN_MAX_LENGTH_RATIO = 1.9
 LAH_LOW_TERRAIN_EDGE_SAMPLES = 3
@@ -314,8 +317,15 @@ def _low_terrain_route_for_leg(
             int(round(direct_m / max(50.0, float(stage_spacing_m)))) - 1,
         ),
     )
+    corridor_request_m = max(10.0, float(corridor_width_m))
+    corridor_scaled_m = corridor_request_m * strength
+    if corridor_request_m < float(LAH_LOW_TERRAIN_CORRIDOR_M):
+        # A corridor narrower than the default is mission geometry (declared
+        # LINE width via d0304), not a tuning value: strength may shrink the
+        # search inside it but must never widen past the caller's promise.
+        corridor_scaled_m = min(corridor_scaled_m, corridor_request_m)
     corridor_m = min(
-        max(10.0, float(corridor_width_m) * strength),
+        max(10.0, corridor_scaled_m),
         max(25.0, direct_m * LAH_LOW_TERRAIN_CORRIDOR_RATIO),
     )
     length_ratio = 1.0 + (LAH_LOW_TERRAIN_MAX_LENGTH_RATIO - 1.0) * strength
@@ -324,7 +334,16 @@ def _low_terrain_route_for_leg(
     length_budget_m = direct_m * length_ratio
 
     lane_count = max(3, int(LAH_LOW_TERRAIN_LANE_COUNT) | 1)
-    half_lanes = (lane_count - 1) // 2
+    base_half_lanes = (lane_count - 1) // 2
+    # When strength widens the corridor, add lanes to hold the ~100 m pitch:
+    # the pitch - not the corridor width - is what lets the route follow the
+    # low ground, and it keeps the per-station sidestep angle flyable.  A
+    # narrow requested corridor keeps the base lane count (finer pitch).
+    target_pitch_m = float(LAH_LOW_TERRAIN_CORRIDOR_M) / float(base_half_lanes)
+    half_lanes = max(
+        base_half_lanes,
+        min(_LOW_TERRAIN_MAX_HALF_LANES, int(round(corridor_m / target_pitch_m))),
+    )
     lane_pitch_m = corridor_m / float(half_lanes)
     interior_ratios = [
         float(index) / float(max(1, int(edge_samples)) + 1)

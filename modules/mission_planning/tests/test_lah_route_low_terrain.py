@@ -20,6 +20,9 @@ from modules.mission_planning.MissionPlanner.data_def import lah_terrain_path as
 START = (37.0, 127.0)
 END = (37.0, 127.05)  # ~4.4 km due east
 
+# The real dial function, captured before the conftest autouse fixture pins it.
+_REAL_STRENGTH = ltp._low_terrain_strength
+
 
 def _ridge_provider(pairs: Any) -> list[float]:
     """A ridge along the straight line, with lower ground to the north.
@@ -137,3 +140,51 @@ def test_the_attack_route_builder_asks_for_low_terrain_by_default() -> None:
     source = inspect.getsource(ap._build_lah_low_level_waypoint_route)
     assert "prefer_low_terrain" in source
     assert ap.get_runtime_attack_int("lah_route_prefer_low_terrain", 1) == 1
+
+
+def test_strength_never_widens_an_explicitly_narrow_corridor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A mission-declared narrow corridor is a promise even at high strength."""
+
+    monkeypatch.setattr(ltp, "_low_terrain_strength", lambda: 2.0)
+    narrow_m = 75.0
+    route = _leg(_ridge_provider, corridor_width_m=narrow_m)
+
+    for point in route[1:-1]:
+        lateral_m = abs(point[0] - START[0]) * 111_132.0
+        assert lateral_m <= narrow_m + 1.0
+
+
+def test_higher_strength_buys_a_lower_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ltp, "_low_terrain_strength", lambda: 0.5)
+    mild = _leg(_ridge_provider)
+    monkeypatch.setattr(ltp, "_low_terrain_strength", lambda: 2.0)
+    strong = _leg(_ridge_provider)
+
+    assert ltp._mean_route_ground_m(strong, _ridge_provider) <= ltp._mean_route_ground_m(
+        mild, _ridge_provider
+    )
+
+
+def test_strength_reads_clamps_and_defaults_from_runtime_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import modules.mission_planning.MissionPlanner.runtime_settings as rs
+
+    def fake(key: str, default: float, payload=None):
+        assert key == "lah_low_terrain_strength"
+        return fake.value
+
+    monkeypatch.setattr(rs, "get_runtime_float", fake)
+    for raw, expected in ((1.5, 1.5), (-2.0, 0.0), (99.0, 3.0), (float("nan"), 1.0)):
+        fake.value = raw
+        assert _REAL_STRENGTH() == expected
+
+    def boom(key: str, default: float, payload=None):
+        raise RuntimeError("no settings in this context")
+
+    monkeypatch.setattr(rs, "get_runtime_float", boom)
+    assert _REAL_STRENGTH() == 1.0

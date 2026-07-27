@@ -236,6 +236,8 @@ DEFAULT_RUNTIME_VALUES: Dict[str, Any] = {
     "lah_path_mode": "linear",
     "lah_rl_hex_step": 50,
     "lah_rl_area_km": 10.0,
+    # Low-terrain detour dial: 0 disables, 1.0 tuned baseline, up to 3.
+    "lah_low_terrain_strength": 1.0,
 }
 DEFAULT_PRIOR_MISSION_VALUES: Dict[str, Any] = {
     "tracking_loiter_seconds": 300,
