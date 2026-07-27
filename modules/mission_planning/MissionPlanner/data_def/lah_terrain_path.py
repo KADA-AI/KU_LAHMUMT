@@ -52,9 +52,10 @@ LAH_LOW_TERRAIN_MAX_LENGTH_RATIO = 1.9
 LAH_LOW_TERRAIN_EDGE_SAMPLES = 1
 LAH_LOW_TERRAIN_SIMPLIFY_M = 150.0
 # Re-centre passes: the corridor spine is rebuilt around the previous winner so
-# the lanes can follow a bent valley.  Capped regardless of strength - each
-# pass costs a full lattice - and the loop stops early on a small gain.
-LAH_LOW_TERRAIN_REFINE_PASSES = 2
+# the lanes can follow a bent valley.  One pass is the measured sweet spot on
+# real terrain (a second pass returned equal-or-worse routes for +60% time);
+# the loop also stops early on a small gain.
+LAH_LOW_TERRAIN_REFINE_PASSES = 1
 # Stop re-centring when a pass improves the score by less than this.
 _LOW_TERRAIN_REFINE_MIN_GAIN_M = 3.0
 # Cheap pre-probe: a handful of samples either side of the leg.  If nothing
@@ -241,6 +242,79 @@ def _offset_along_polyline(
     )
 
 
+def _polyline_stations(
+    centerline: Sequence[tuple[float, float]],
+    fractions: Sequence[float],
+) -> list[tuple[float, float, float, float]]:
+    """Station centre and per-metre perpendicular for arc-length fractions.
+
+    One walk over the centerline serves every station: placing each lattice
+    node through :func:`_offset_along_polyline` would recompute the polyline's
+    segment lengths per node, which dominated the whole search.  Returns
+    ``(base_lat, base_lon, dlat_per_m, dlon_per_m)`` per fraction, where the
+    offsets are the local left-perpendicular in degrees per metre.
+    """
+
+    mid_lat = (float(centerline[0][0]) + float(centerline[-1][0])) * 0.5
+    metres_per_lat = _METRES_PER_DEGREE_LAT
+    metres_per_lon = max(1.0, metres_per_lat * math.cos(math.radians(mid_lat)))
+
+    lengths = [
+        _distance_m(left, right) for left, right in zip(centerline, centerline[1:])
+    ]
+    cumulative = [0.0]
+    for length in lengths:
+        cumulative.append(cumulative[-1] + length)
+    total_m = cumulative[-1]
+
+    stations: list[tuple[float, float, float, float]] = []
+    if total_m <= 1e-6:
+        base = (float(centerline[0][0]), float(centerline[0][1]))
+        return [(base[0], base[1], 0.0, 0.0) for _ in fractions]
+
+    segment_index = 0
+    last_segment = len(lengths) - 1
+    for fraction in fractions:  # fractions arrive ascending
+        target_m = total_m * min(max(float(fraction), 0.0), 1.0)
+        while segment_index < last_segment and (
+            cumulative[segment_index + 1] < target_m
+            or lengths[segment_index] <= 0.0
+        ):
+            segment_index += 1
+        segment_start = centerline[segment_index]
+        segment_end = centerline[segment_index + 1]
+        segment_m = lengths[segment_index]
+        local_ratio = (
+            0.0
+            if segment_m <= 1e-9
+            else (target_m - cumulative[segment_index]) / segment_m
+        )
+        local_ratio = min(max(local_ratio, 0.0), 1.0)
+        base_lat = (
+            float(segment_start[0])
+            + (float(segment_end[0]) - float(segment_start[0])) * local_ratio
+        )
+        base_lon = (
+            float(segment_start[1])
+            + (float(segment_end[1]) - float(segment_start[1])) * local_ratio
+        )
+        dx = (float(segment_end[1]) - float(segment_start[1])) * metres_per_lon
+        dy = (float(segment_end[0]) - float(segment_start[0])) * metres_per_lat
+        norm = math.hypot(dx, dy)
+        if norm <= 1e-6:
+            stations.append((base_lat, base_lon, 0.0, 0.0))
+            continue
+        stations.append(
+            (
+                base_lat,
+                base_lon,
+                (dx / norm) / metres_per_lat,
+                (-dy / norm) / metres_per_lon,
+            )
+        )
+    return stations
+
+
 def _low_terrain_strength() -> float:
     """Operator dial for the low-terrain search, from runtime settings.
 
@@ -376,19 +450,21 @@ def _low_terrain_route_for_leg(
 
     # One sampler is shared by every pass: a re-centred corridor overlaps most
     # of the previous one, and resolve() only fetches keys not yet looked up.
+    # The probe points are requested before the direct-line stats so that one
+    # provider batch serves both - the production provider pays a tile-index
+    # overhead per call, not per point.
     sampler = _TerrainSampler(terrain_provider, quantum_m=lane_pitch_m / 4.0)
-    direct_mean_m, direct_peak_m = _route_ground_stats([start, end], sampler)
-
-    # A handful of probe points either side of the leg decide whether the
-    # lattice is worth building at all.  Plains and along-valley legs exit
-    # here for a couple dozen DEM cells instead of a full corridor search.
     probe_points = [
         _offset_along_polyline([start, end], fraction, offset * corridor_m)
         for fraction in (0.25, 0.5, 0.75)
         for offset in (-1.0, -0.5, 0.5, 1.0)
     ]
     probe_keys = sampler.request(probe_points)
-    sampler.resolve()
+    direct_mean_m, direct_peak_m = _route_ground_stats([start, end], sampler)
+
+    # A handful of probe points either side of the leg decide whether the
+    # lattice is worth building at all.  Plains and along-valley legs exit
+    # here for a couple dozen DEM cells instead of a full corridor search.
     probe_values = sampler.values(probe_keys)
     probe_min_m = min(probe_values) if probe_values else 0.0
     if direct_mean_m - probe_min_m < _LOW_TERRAIN_PROBE_MIN_GAIN_M:
@@ -400,12 +476,20 @@ def _low_terrain_route_for_leg(
         """One lattice search around a centerline; (route, score, peak)."""
 
         layers: list[list[dict[str, Any]]] = [[{"coord": start, "lane": 0}]]
-        for stage in range(1, stage_count + 1):
-            fraction = float(stage) / float(stage_count + 1)
+        station_bases = _polyline_stations(
+            centerline,
+            [
+                float(stage) / float(stage_count + 1)
+                for stage in range(1, stage_count + 1)
+            ],
+        )
+        for base_lat, base_lon, dlat_per_m, dlon_per_m in station_bases:
             stations: list[dict[str, Any]] = []
             for lane in range(-half_lanes, half_lanes + 1):
-                coord = _offset_along_polyline(
-                    centerline, fraction, float(lane) * lane_pitch_m
+                offset_m = float(lane) * lane_pitch_m
+                coord = (
+                    base_lat + dlat_per_m * offset_m,
+                    base_lon + dlon_per_m * offset_m,
                 )
                 # The corridor is a promise to the caller (mission LINE width),
                 # so a re-centred pass may reshape the station spine but must
@@ -646,37 +730,47 @@ def _cheapest_corridor_lanes(
     per station instead of O(lanes^2).
     """
 
+    # Parent pointers instead of per-node history lists: copying a growing
+    # history on every relaxation is quadratic in route length.
     costs: dict[int, float] = {0: 0.0}
-    histories: dict[int, list[int]] = {0: [0]}
+    parents: list[dict[int, int]] = [{0: -1}]
+    length_weight = float(length_weight)
+    peak_weight = float(peak_weight)
     for layer_index in range(1, len(layers)):
         next_costs: dict[int, float] = {}
-        next_histories: dict[int, list[int]] = {}
+        layer_parents: dict[int, int] = {}
         for current_index in range(len(layers[layer_index])):
             best_cost: float | None = None
-            best_history: list[int] | None = None
+            best_parent = -1
             for previous_index, edge in incoming[layer_index][current_index]:
                 previous_cost = costs.get(previous_index)
                 if previous_cost is None:
                     continue
                 candidate_cost = (
-                    float(previous_cost)
-                    + float(length_weight) * float(edge["length_m"])
-                    + _LOW_TERRAIN_MEAN_WEIGHT * float(edge["mean_ground"])
-                    + float(peak_weight) * float(edge["peak_ground"])
-                    + float(edge["turn_cost"])
+                    previous_cost
+                    + length_weight * edge["length_m"]
+                    + _LOW_TERRAIN_MEAN_WEIGHT * edge["mean_ground"]
+                    + peak_weight * edge["peak_ground"]
+                    + edge["turn_cost"]
                 )
                 if best_cost is None or candidate_cost < best_cost:
                     best_cost = candidate_cost
-                    best_history = histories[previous_index] + [current_index]
-            if best_cost is not None and best_history is not None:
+                    best_parent = previous_index
+            if best_cost is not None:
                 next_costs[current_index] = best_cost
-                next_histories[current_index] = best_history
+                layer_parents[current_index] = best_parent
         if not next_costs:
             return None
         costs = next_costs
-        histories = next_histories
+        parents.append(layer_parents)
 
-    return tuple(histories[min(costs, key=costs.get)])
+    node = min(costs, key=costs.get)
+    lanes: list[int] = []
+    for layer_parents in reversed(parents):
+        lanes.append(node)
+        node = layer_parents[node]
+    lanes.reverse()
+    return tuple(lanes)
 
 
 def _route_length_m(route: Sequence[tuple[float, float]]) -> float:
