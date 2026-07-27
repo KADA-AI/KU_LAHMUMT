@@ -188,3 +188,32 @@ def test_strength_reads_clamps_and_defaults_from_runtime_settings(
 
     monkeypatch.setattr(rs, "get_runtime_float", boom)
     assert _REAL_STRENGTH() == 1.0
+
+
+def test_stronger_search_may_cross_a_low_saddle_into_a_deeper_valley(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """At baseline the peak gate forbids topping the wall; strength buys it."""
+
+    def walled_valley(pairs: Any) -> list[float]:
+        out: list[float] = []
+        for latitude, _longitude in pairs:
+            north_m = (float(latitude) - START[0]) * 111_132.0
+            if north_m < 0.0:
+                out.append(800.0)  # high ground south: nothing to gain there
+            elif north_m < 200.0:
+                out.append(500.0)  # same height as the direct line
+            elif north_m < 400.0:
+                out.append(520.0)  # thin wall, slightly above the direct peak
+            else:
+                out.append(200.0)  # deep valley beyond the wall
+        return out
+
+    monkeypatch.setattr(ltp, "_low_terrain_strength", lambda: 1.0)
+    baseline = _leg(walled_valley)
+    assert baseline == [START, END]
+
+    monkeypatch.setattr(ltp, "_low_terrain_strength", lambda: 2.0)
+    strong = _leg(walled_valley)
+    assert len(strong) > 2
+    assert ltp._mean_route_ground_m(strong, walled_valley) < 500.0

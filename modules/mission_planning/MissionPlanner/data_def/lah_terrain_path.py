@@ -46,11 +46,25 @@ LAH_LOW_TERRAIN_MAX_LANE_STEP = 1
 _LOW_TERRAIN_MAX_HALF_LANES = 60
 # A detour is only worth flying if the terrain saved pays for the extra track.
 LAH_LOW_TERRAIN_MAX_LENGTH_RATIO = 1.9
-LAH_LOW_TERRAIN_EDGE_SAMPLES = 3
+# One interior sample plus the arrival node per edge.  Edges are ~100-140 m and
+# the sampler dedups to the quantum grid, so denser edge sampling buys almost
+# nothing while doubling the DEM batch.
+LAH_LOW_TERRAIN_EDGE_SAMPLES = 1
 LAH_LOW_TERRAIN_SIMPLIFY_M = 150.0
-# Re-centre passes: the corridor is rebuilt around the previous winner so the
-# search can walk further sideways than one corridor half-width allows.
+# Re-centre passes: the corridor spine is rebuilt around the previous winner so
+# the lanes can follow a bent valley.  Capped regardless of strength - each
+# pass costs a full lattice - and the loop stops early on a small gain.
 LAH_LOW_TERRAIN_REFINE_PASSES = 2
+# Stop re-centring when a pass improves the score by less than this.
+_LOW_TERRAIN_REFINE_MIN_GAIN_M = 3.0
+# Cheap pre-probe: a handful of samples either side of the leg.  If nothing
+# out there is meaningfully lower than the direct line, skip the whole lattice.
+_LOW_TERRAIN_PROBE_MIN_GAIN_M = 15.0
+# Extra peak allowance per strength step above 1.0.  At the tuned baseline the
+# route must stay under the direct line's peak, which forbids crossing a low
+# saddle into a much deeper valley beyond it; a stronger search may pay a
+# bounded, deliberate saddle crossing for a large mean reduction.
+_LOW_TERRAIN_PEAK_RELAX_PER_STRENGTH_M = 30.0
 # How many metres of lateral detour one metre of terrain elevation is worth.
 # Climbing is slow and puts the aircraft on a skyline; going around is neither,
 # so terrain dominates distance.  The length budget, not these weights, is what
@@ -280,6 +294,7 @@ def _low_terrain_route_for_leg(
         [tuple[float, float], tuple[float, float]], bool
     ]
     | None,
+    strength: float | None = None,
 ) -> list[tuple[float, float]]:
     """Route one leg through the low ground on either side of it.
 
@@ -288,10 +303,9 @@ def _low_terrain_route_for_leg(
     over that lattice picks the lane at each station, so the route can walk
     into a neighbouring valley and follow it rather than merely shaving the
     shoulder of the ridge in front of it.  The winning route then becomes the
-    centerline for the next pass, so successive corridors can walk further
-    into a valley than one corridor half-width allows.  All passes share one
-    de-duplicated DEM batch, which keeps the search far cheaper than a raster
-    search.
+    centerline for the next pass, so the lanes can follow a bent valley.  All
+    passes share one de-duplicated DEM batch, which keeps the search far
+    cheaper than a raster search.
     """
 
     direct_m = _distance_m(start, end)
@@ -306,7 +320,9 @@ def _low_terrain_route_for_leg(
         except Exception:
             return [start, end]
 
-    strength = _low_terrain_strength()
+    if strength is None:
+        strength = _low_terrain_strength()
+    strength = min(max(float(strength), 0.0), 3.0)
     if strength <= 0.0:
         return [start, end]
 
@@ -330,8 +346,15 @@ def _low_terrain_route_for_leg(
     )
     length_ratio = 1.0 + (LAH_LOW_TERRAIN_MAX_LENGTH_RATIO - 1.0) * strength
     lane_penalty_per_m = _LOW_TERRAIN_LANE_PENALTY_PER_M / max(0.25, strength)
-    refine_passes = int(round(max(0, LAH_LOW_TERRAIN_REFINE_PASSES) * strength))
+    refine_passes = min(
+        int(round(max(0, LAH_LOW_TERRAIN_REFINE_PASSES) * strength)),
+        int(LAH_LOW_TERRAIN_REFINE_PASSES),
+    )
     length_budget_m = direct_m * length_ratio
+    peak_allow_m = (
+        _LOW_TERRAIN_PEAK_TOLERANCE_M
+        + max(0.0, strength - 1.0) * _LOW_TERRAIN_PEAK_RELAX_PER_STRENGTH_M
+    )
 
     lane_count = max(3, int(LAH_LOW_TERRAIN_LANE_COUNT) | 1)
     base_half_lanes = (lane_count - 1) // 2
@@ -355,6 +378,21 @@ def _low_terrain_route_for_leg(
     # of the previous one, and resolve() only fetches keys not yet looked up.
     sampler = _TerrainSampler(terrain_provider, quantum_m=lane_pitch_m / 4.0)
     direct_mean_m, direct_peak_m = _route_ground_stats([start, end], sampler)
+
+    # A handful of probe points either side of the leg decide whether the
+    # lattice is worth building at all.  Plains and along-valley legs exit
+    # here for a couple dozen DEM cells instead of a full corridor search.
+    probe_points = [
+        _offset_along_polyline([start, end], fraction, offset * corridor_m)
+        for fraction in (0.25, 0.5, 0.75)
+        for offset in (-1.0, -0.5, 0.5, 1.0)
+    ]
+    probe_keys = sampler.request(probe_points)
+    sampler.resolve()
+    probe_values = sampler.values(probe_keys)
+    probe_min_m = min(probe_values) if probe_values else 0.0
+    if direct_mean_m - probe_min_m < _LOW_TERRAIN_PROBE_MIN_GAIN_M:
+        return [start, end]
 
     def _search_around(
         centerline: Sequence[tuple[float, float]],
@@ -386,14 +424,21 @@ def _low_terrain_route_for_leg(
         for layer_index in range(1, len(layers)):
             previous_layer = layers[layer_index - 1]
             current_layer = layers[layer_index]
+            # A station-to-station sidestep is bounded so the divert stays
+            # flyable; index the arrival layer by lane so each node considers
+            # only its few reachable neighbours instead of the whole layer.
+            current_by_lane = {
+                int(node["lane"]): index for index, node in enumerate(current_layer)
+            }
             for previous_index, previous in enumerate(previous_layer):
-                for current_index, current in enumerate(current_layer):
-                    # A station-to-station sidestep is bounded so the divert
-                    # stays flyable; reaching a distant lane costs several
-                    # stations of gradual drift rather than one implausible
-                    # dogleg.
-                    if abs(int(previous["lane"]) - int(current["lane"])) > max_lane_step:
+                previous_lane = int(previous["lane"])
+                for lane in range(
+                    previous_lane - max_lane_step, previous_lane + max_lane_step + 1
+                ):
+                    current_index = current_by_lane.get(lane)
+                    if current_index is None:
                         continue
+                    current = current_layer[current_index]
                     left = previous["coord"]
                     right = current["coord"]
                     if callable(segment_allowed):
@@ -413,8 +458,7 @@ def _low_terrain_route_for_leg(
                     edges[(layer_index, previous_index, current_index)] = {
                         "keys": sampler.request(points),
                         "length_m": _distance_m(left, right),
-                        "lateral_m": abs(int(previous["lane"]) - int(current["lane"]))
-                        * lane_pitch_m,
+                        "lateral_m": abs(previous_lane - lane) * lane_pitch_m,
                     }
 
         if not edges:
@@ -441,33 +485,38 @@ def _low_terrain_route_for_leg(
         # sequence, so scoring is keyed by the route itself, not the weights.
         scored: set[tuple[int, ...]] = set()
         for peak_weight in _LOW_TERRAIN_PEAK_WEIGHT_LADDER:
+            # The distance multipliers exist to squeeze the route under the
+            # length budget: walk them upward and stop at the first fit.  The
+            # first fitting route is the most terrain-greedy one this peak
+            # weighting can afford, so the higher multipliers - which only
+            # produce straighter, higher routes - are never worth running.
             for length_weight in _LOW_TERRAIN_LENGTH_WEIGHT_LADDER:
                 lanes = _cheapest_corridor_lanes(
                     layers, incoming, length_weight, peak_weight
                 )
-                if lanes is None or len(lanes) < 2 or lanes in scored:
+                if lanes is None or len(lanes) < 2:
                     continue
-                scored.add(lanes)
                 candidate = [
                     tuple(layers[layer_index][node_index]["coord"])
                     for layer_index, node_index in enumerate(lanes)
                 ]
                 if _route_length_m(candidate) > length_budget_m:
                     continue
-                # The edge costs are a proxy sampled per edge; what actually
-                # matters is the ground the aircraft ends up over.  Score the
-                # whole candidate, and never accept one that flies lower on
-                # average by crossing higher ground somewhere along the way.
-                mean_m, peak_m = _route_ground_stats(candidate, sampler)
-                if mean_m >= direct_mean_m:
-                    continue
-                if peak_m > direct_peak_m + _LOW_TERRAIN_PEAK_TOLERANCE_M:
-                    continue
-                score = mean_m + peak_m
-                if pass_best_score is None or score < pass_best_score:
-                    pass_best_score = score
-                    pass_best = candidate
-                    pass_best_peak = peak_m
+                if lanes not in scored:
+                    scored.add(lanes)
+                    # The edge costs are a proxy sampled per edge; what
+                    # actually matters is the ground the aircraft ends up
+                    # over.  Score the whole candidate, and never accept one
+                    # that flies lower on average by crossing much higher
+                    # ground somewhere along the way.
+                    mean_m, peak_m = _route_ground_stats(candidate, sampler)
+                    if mean_m < direct_mean_m and peak_m <= direct_peak_m + peak_allow_m:
+                        score = mean_m + peak_m
+                        if pass_best_score is None or score < pass_best_score:
+                            pass_best_score = score
+                            pass_best = candidate
+                            pass_best_peak = peak_m
+                break
         if pass_best is None or pass_best_score is None:
             return None
         return pass_best, pass_best_score, pass_best_peak
@@ -480,7 +529,11 @@ def _low_terrain_route_for_leg(
         if found is None:
             break
         route, score, _peak = found
-        if best_score is not None and score >= best_score:
+        if best_score is not None and score >= best_score - _LOW_TERRAIN_REFINE_MIN_GAIN_M:
+            # Converged: another full lattice is not worth a marginal gain.
+            if score < best_score:
+                best = route
+                best_score = score
             break
         best = route
         best_score = score
@@ -728,6 +781,9 @@ def _prefer_low_terrain_horizontal_route(
         return list(route)
     selected: list[tuple[float, float]] = [route[0]]
     first_constrained_leg = max(0, int(constrained_leg_start_index))
+    # Resolved once per route: reading the dial goes through the runtime
+    # settings payload, which is too expensive to repeat per leg.
+    strength = _low_terrain_strength()
     for leg_index, (start, end) in enumerate(zip(route, route[1:])):
         if leg_index < first_constrained_leg:
             # Live-position/previous-mission ingress has no applicable mission
@@ -744,6 +800,7 @@ def _prefer_low_terrain_horizontal_route(
                 max_stages=max_stages,
                 edge_samples=edge_samples,
                 segment_allowed=segment_allowed,
+                strength=strength,
             )
         for point in leg[1:]:
             if _distance_m(selected[-1], point) > 0.01:
