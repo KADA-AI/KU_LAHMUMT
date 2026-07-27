@@ -370,27 +370,50 @@ def test_relay_builder_keeps_type9_contract_and_uses_certified_route(
     )
 
     assert result is not None and result["relayMode"] is True
-    assert result["hold"]["waypointCount"] == 2
-    mission_info = imp_data["individualMissionList"][0]["individualMissionInfo"]
+    # The run to cover is its own individual mission, so the hold path is the
+    # certified endpoint alone: [run to cover] + [hold] + [resume].
+    assert result["hold"]["waypointCount"] == 1
+
+    missions = imp_data["individualMissionList"]
+    ingress_mission, hold_mission = missions[0], missions[1]
+
+    assert ingress_mission["lahCoverIngress"] is True
+    ingress_info = ingress_mission["individualMissionInfo"]
+    assert ingress_info["individualMissionType"] == 7
+    assert ingress_info["patternType"] == 10
+    assert ingress_info["targetID"] == 88
+    assert int(ingress_mission["pathID"]) == 299
+
+    mission_info = hold_mission["individualMissionInfo"]
     assert mission_info["individualMissionType"] == 9
     assert mission_info["patternType"] == 12
     assert mission_info["targetID"] == 88
-    hold_payload = next(
-        payload
+
+    payload_by_path = {
+        int(payload.get("pathID")): payload
         for path, payload in result["_deferredWriteEntries"]
-        if path.parent.name == "FlightPath" and int(payload.get("pathID")) == 201
-    )
-    hold_waypoints = hold_payload["lahWaypointList"]
+        if path.parent.name == "FlightPath"
+    }
+
+    # The movement carries no dwell and does not chain onward: the wait belongs
+    # to the hold mission that follows it.
+    ingress_waypoints = payload_by_path[299]["lahWaypointList"]
+    assert payload_by_path[299]["lahCoverIngress"] is True
+    assert ingress_waypoints[0]["coordinate"]["latitude"] == 37.0
+    assert [item["hovering"]["time"] for item in ingress_waypoints] == [0]
+    assert ingress_waypoints[-1]["nextWaypointID"] == 0
+
+    hold_waypoints = payload_by_path[201]["lahWaypointList"]
     assert hold_waypoints[-1]["coordinate"]["altitude"] == 550
-    # Only the terminal waypoint holds, and it holds for the fallback window:
-    # this fixture has no strike geometry to size the wait from. The relay used
-    # to sit here for a flat five minutes long after the strike was over.
+    # The hold is the certified concealment point, and it holds for the fallback
+    # window: this fixture has no strike geometry to size the wait from.  The
+    # relay used to sit here for a flat five minutes after the strike was over.
     assert [item["hovering"]["time"] for item in hold_waypoints] == [
-        0,
         pipeline._LAH_COVER_HOLD_DEFAULT_SECONDS,
     ]
     assert pipeline._LAH_COVER_HOLD_DEFAULT_SECONDS < 300
     assert all(item["attack"]["targetID"] == 0 for item in hold_waypoints)
+    assert all(item["attack"]["targetID"] == 0 for item in ingress_waypoints)
 
 
 @pytest.mark.parametrize(
@@ -722,7 +745,7 @@ def test_attacker_sequence_no_route_never_drops_the_attack(
     ] == 2
 
 
-def test_attacker_builder_prepends_hide_before_existing_attack(
+def test_attacker_builder_splits_run_to_cover_from_the_attack(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -851,15 +874,52 @@ def test_attacker_builder_prepends_hide_before_existing_attack(
     assert result is not None and "hidePrelude" in result
     assert captured["start"]["latitude"] == 37.001
     assert captured["start"]["longitude"] == 127.001
-    mission_info = imp_data["individualMissionList"][0]["individualMissionInfo"]
-    assert mission_info["individualMissionType"] == 2
-    assert mission_info["patternType"] == 2
-    attack_payload = next(
-        payload
+
+    # The run to cover and the action at cover are separate individual
+    # missions, in flight order: movement first, then hide -> fire.
+    missions = imp_data["individualMissionList"]
+    assert len(missions) >= 2
+    ingress_mission, attack_mission = missions[0], missions[1]
+
+    assert ingress_mission["lahCoverIngress"] is True
+    ingress_info = ingress_mission["individualMissionInfo"]
+    assert ingress_info["individualMissionType"] == 7
+    assert ingress_info["patternType"] == 10
+    assert ingress_info["targetID"] is None
+    assert int(ingress_mission["pathID"]) == 299
+
+    attack_info = attack_mission["individualMissionInfo"]
+    assert attack_info["individualMissionType"] == 2
+    assert attack_info["patternType"] == 2
+    assert int(attack_mission["pathID"]) == 201
+
+    payload_by_path = {
+        int(payload.get("pathID")): payload
         for path, payload in result["_deferredWriteEntries"]
-        if path.parent.name == "FlightPath" and int(payload.get("pathID")) == 201
+        if path.parent.name == "FlightPath"
+    }
+
+    # The movement path runs from the current position and stops short of the
+    # hide endpoint; it must not chain into the attack path's waypoint IDs.
+    ingress_waypoints = payload_by_path[299]["lahWaypointList"]
+    assert payload_by_path[299]["lahCoverIngress"] is True
+    assert ingress_waypoints[0]["coordinate"]["latitude"] == 37.0
+    assert ingress_waypoints[-1]["nextWaypointID"] == 0
+    assert ingress_waypoints[-1]["hovering"] == {"time": 0}
+    assert all(
+        (item.get("attack") or {}).get("targetID", 0) == 0 for item in ingress_waypoints
     )
-    waypoints = attack_payload["lahWaypointList"]
+
+    # The attack path owns the shared hide endpoint as its first waypoint, so
+    # it never starts with a zero-length leg.  Its ETAs are rebased onto its own
+    # departure - the movement's elapsed time is dropped - while the leg *into*
+    # cover belongs to this path and keeps its true flight time.
+    waypoints = payload_by_path[201]["lahWaypointList"]
+    assert waypoints[0]["coordinate"]["latitude"] == 37.001
+    assert waypoints[0]["coordinate"]["longitude"] == 127.001
+    ingress_end_eta_s = int(ingress_waypoints[-1]["eta"])
+    assert int(waypoints[0]["eta"]) == 9 - ingress_end_eta_s
+    assert int(waypoints[0]["eta"]) > 0, "the run into cover must keep its duration"
     assert [item["attack"]["targetID"] for item in waypoints[:-1]] == [0] * (len(waypoints) - 1)
     assert waypoints[-1]["attack"] == {"targetID": 88, "weaponType": 2}
     assert all(right["eta"] >= left["eta"] for left, right in zip(waypoints, waypoints[1:]))

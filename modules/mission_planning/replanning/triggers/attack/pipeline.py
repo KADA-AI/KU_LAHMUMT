@@ -15708,6 +15708,14 @@ def _build_lah_attack_package(
         speed_mps=attack_speed_mps,
         route_coordinates=attack_route_coordinates,
     )
+    # The run to cover and the action at cover are separate purposes, so they
+    # are separate individual missions: [run to cover] then [hide -> fire ->
+    # regain hide].  They share exactly one waypoint - the certified hide
+    # endpoint - which belongs to the attack path so that path does not begin
+    # with a zero-length leg the aircraft never registers arriving on.
+    ingress_waypoints: List[Dict[str, Any]] = []
+    ingress_individual_id: Optional[int] = None
+    ingress_path_id: Optional[int] = None
     if tactical_endpoint is not None:
         tactical_waypoints = _build_lah_tactical_route_waypoints(
             template_wp=template_wp,
@@ -15715,10 +15723,68 @@ def _build_lah_attack_package(
             waypoint_id_provider=id_reservation.next_waypoint,
         )
         if tactical_waypoints:
+            ingress_waypoints, cover_entry = _split_lah_cover_ingress_waypoints(
+                tactical_waypoints
+            )
             attack_waypoints = _prepend_lah_tactical_waypoints(
-                tactical_waypoints,
+                cover_entry,
                 attack_waypoints,
             )
+            if ingress_waypoints:
+                # The attack path is now standalone: drop the elapsed time the
+                # movement mission owns, keeping every leg duration intact.
+                _rebase_lah_path_etas(
+                    attack_waypoints,
+                    base_eta_s=_to_int(ingress_waypoints[-1].get("eta")) or 0,
+                )
+                ingress_individual_id = int(id_reservation.next_individual())
+                ingress_path_id = int(id_reservation.next_path(int(aircraft_id)))
+            else:
+                # Nothing to run: the aircraft is already at cover, so keep the
+                # single combined path rather than emitting an empty movement.
+                attack_waypoints = _prepend_lah_tactical_waypoints(
+                    tactical_waypoints,
+                    attack_waypoints,
+                )
+
+    mission_ingress: Optional[Dict[str, Any]] = None
+    ingress_fp_data: Optional[Dict[str, Any]] = None
+    if (
+        ingress_waypoints
+        and ingress_individual_id is not None
+        and ingress_path_id is not None
+    ):
+        mission_ingress = {
+            "individualMissionID": int(ingress_individual_id),
+            "isDone": False,
+            "relatedMission": dict(related_template),
+            # Downstream sweeps must treat this as part of the attack branch,
+            # not as a legacy return route.
+            "lahCoverIngress": True,
+            "individualMissionInfo": {
+                "individualMissionType": 7,
+                "patternType": 10,
+                "autoZoomIn": False,
+                "targetID": None,
+                "coordinateList": _lah_waypoints_to_coordinate_list(ingress_waypoints),
+            },
+            "pathID": int(ingress_path_id),
+        }
+        ingress_fp_data = {
+            "timestamp": now_ms,
+            "Source": _extract_path_source(fp_data),
+            "pathID": int(ingress_path_id),
+            "aircraftID": aircraft_id,
+            "individualMissionID": int(ingress_individual_id),
+            "lahCoverIngress": True,
+            "lahWaypointList": ingress_waypoints,
+        }
+        emit(
+            "[ATTACK][TACTICAL] Run-to-cover split into its own individual mission "
+            f"(aircraft={int(aircraft_id)}, im={int(ingress_individual_id)}, "
+            f"path={int(ingress_path_id)}, points={len(ingress_waypoints)})."
+        )
+
     attack_fp_data = {
         "timestamp": now_ms,
         "Source": _extract_path_source(fp_data),
@@ -15770,9 +15836,13 @@ def _build_lah_attack_package(
     if not isinstance(mission_list, list):
         mission_list = []
         imp_data["individualMissionList"] = mission_list
+    # The movement mission is flown first, so it precedes the attack it serves.
+    attack_branch_missions = (
+        [mission_ingress, mission_attack] if mission_ingress is not None else [mission_attack]
+    )
     if 0 <= target_index < len(mission_list):
         prefix = [deepcopy(mission) for mission in mission_list[:target_index] if isinstance(mission, dict)]
-        rebuilt = prefix + [mission_attack]
+        rebuilt = prefix + list(attack_branch_missions)
         if has_resume:
             rebuilt.append(mission_resume)
         rebuilt.extend(follow_up_missions)
@@ -15782,7 +15852,8 @@ def _build_lah_attack_package(
             f"{len(follow_up_missions)} follow-up mission(s)."
         )
     else:
-        mission_list.insert(0, mission_attack)
+        for offset, mission in enumerate(attack_branch_missions):
+            mission_list.insert(offset, mission)
         if has_resume:
             mission_list.append(mission_resume)
         mission_list.extend(follow_up_missions)
@@ -15797,6 +15868,13 @@ def _build_lah_attack_package(
         (imp_dest, imp_data),
         (attack_fp_dest, attack_fp_data),
     ]
+    if ingress_fp_data is not None and ingress_path_id is not None:
+        write_entries.append(
+            (
+                db_paths.get_db_subpath("FlightPath", f"{int(ingress_path_id)}.json"),
+                ingress_fp_data,
+            )
+        )
     if resume_fp_dest is not None:
         write_entries.append((resume_fp_dest, resume_fp_data))
     write_entries.extend((dest, payload) for dest, payload in follow_up_paths)
@@ -16192,6 +16270,67 @@ def _build_lah_hold_resume_package(
             plan=relay_plan,
             role="relay" if is_command_relay else "hold",
         )
+    # Same split as the attacker: the run to cover is its own individual
+    # mission, and the dwell at cover is another.  A wingman waiting out someone
+    # else's strike therefore has [run to cover] + [hold] + [resume] rather than
+    # one path that mixes movement with the wait.  The certified hide endpoint
+    # stays with the hold, so the hold does not open on a zero-length leg.
+    cover_ingress_waypoints: List[Dict[str, Any]] = []
+    cover_ingress_individual_id: Optional[int] = None
+    cover_ingress_path_id: Optional[int] = None
+    if len(hold_waypoints) > 1:
+        cover_ingress_waypoints, cover_hold_waypoints = (
+            _split_lah_cover_ingress_waypoints(hold_waypoints)
+        )
+        if cover_ingress_waypoints:
+            _rebase_lah_path_etas(
+                cover_hold_waypoints,
+                base_eta_s=_to_int(cover_ingress_waypoints[-1].get("eta")) or 0,
+            )
+            hold_waypoints = cover_hold_waypoints
+            cover_ingress_individual_id = int(id_reservation.next_individual())
+            cover_ingress_path_id = int(id_reservation.next_path(int(aircraft_id)))
+
+    mission_cover_ingress: Optional[Dict[str, Any]] = None
+    cover_ingress_fp_data: Optional[Dict[str, Any]] = None
+    if (
+        cover_ingress_waypoints
+        and cover_ingress_individual_id is not None
+        and cover_ingress_path_id is not None
+    ):
+        mission_cover_ingress = {
+            "individualMissionID": int(cover_ingress_individual_id),
+            "isDone": False,
+            "relatedMission": dict(related_template),
+            "lahCoverIngress": True,
+            "individualMissionInfo": {
+                "individualMissionType": 7,
+                "patternType": 10,
+                "autoZoomIn": False,
+                "targetID": int(support_target_id),
+                "coordinateList": _lah_waypoints_to_coordinate_list(
+                    cover_ingress_waypoints
+                ),
+            },
+            "pathID": int(cover_ingress_path_id),
+        }
+        cover_ingress_fp_data = {
+            "timestamp": now_ms,
+            "Source": _extract_path_source(fp_data),
+            "pathID": int(cover_ingress_path_id),
+            "aircraftID": aircraft_id,
+            "individualMissionID": int(cover_ingress_individual_id),
+            "lahCoverIngress": True,
+            "lahWaypointList": cover_ingress_waypoints,
+        }
+        emit(
+            "[ATTACK][TACTICAL] Run-to-cover split into its own individual mission "
+            f"(aircraft={int(aircraft_id)}, role="
+            f"{'relay' if is_command_relay else 'wingman'}, "
+            f"im={int(cover_ingress_individual_id)}, path={int(cover_ingress_path_id)}, "
+            f"points={len(cover_ingress_waypoints)})."
+        )
+
     hold_wp = hold_waypoints[-1]
     hold_fp_data = {
         "timestamp": now_ms,
@@ -16224,9 +16363,15 @@ def _build_lah_hold_resume_package(
     if not isinstance(mission_list, list):
         mission_list = []
         imp_data["individualMissionList"] = mission_list
+    # Flight order: run to cover, wait there, then resume.
+    hold_branch_missions = (
+        [mission_cover_ingress, mission_hold]
+        if mission_cover_ingress is not None
+        else [mission_hold]
+    )
     if 0 <= target_index < len(mission_list):
         prefix = [deepcopy(mission) for mission in mission_list[:target_index] if isinstance(mission, dict)]
-        rebuilt = prefix + [mission_hold]
+        rebuilt = prefix + list(hold_branch_missions)
         if has_resume:
             rebuilt.append(mission_resume)
         rebuilt.extend(follow_up_missions)
@@ -16236,7 +16381,8 @@ def _build_lah_hold_resume_package(
             f"{len(follow_up_missions)} follow-up mission(s)."
         )
     else:
-        mission_list.insert(0, mission_hold)
+        for offset, mission in enumerate(hold_branch_missions):
+            mission_list.insert(offset, mission)
         if has_resume:
             mission_list.append(mission_resume)
         mission_list.extend(follow_up_missions)
@@ -16253,6 +16399,15 @@ def _build_lah_hold_resume_package(
         (imp_dest, imp_data),
         (hold_fp_dest, hold_fp_data),
     ]
+    if cover_ingress_fp_data is not None and cover_ingress_path_id is not None:
+        write_entries.append(
+            (
+                db_paths.get_db_subpath(
+                    "FlightPath", f"{int(cover_ingress_path_id)}.json"
+                ),
+                cover_ingress_fp_data,
+            )
+        )
     if resume_fp_dest is not None:
         write_entries.append((resume_fp_dest, resume_fp_data))
     write_entries.extend((dest, payload) for dest, payload in follow_up_paths)
