@@ -15,7 +15,7 @@ from modules.common.version_info import (
 )
 
 
-def _first_change_log_entry() -> tuple[str, str]:
+def _first_change_log_entry() -> tuple[str, str, str]:
     """Independently parse the newest ``(date, version)`` from change_log.md.
 
     The release identity moves with every entry, so tests derive the expected
@@ -23,20 +23,28 @@ def _first_change_log_entry() -> tuple[str, str]:
     """
 
     for line in CHANGE_LOG_PATH.read_text(encoding="utf-8").splitlines():
-        match = re.match(r"^(\d{4}-\d{2}-\d{2})\s+v(\d+(?:\.\d+)+)\s+-", line.strip())
+        match = re.match(
+            r"^(\d{4}-\d{2}-\d{2})(?:\s+(\d{2}:\d{2}(?::\d{2})?))?"
+            r"\s+v(\d+(?:\.\d+)+)\s+-",
+            line.strip(),
+        )
         if match:
-            return match.group(1), match.group(2)
+            return match.group(1), match.group(3), str(match.group(2) or "")
     raise AssertionError("change_log.md has no valid release line")
 
 
 def test_current_release_comes_from_change_log() -> None:
-    expected_date, expected_version = _first_change_log_entry()
+    expected_date, expected_version, expected_time = _first_change_log_entry()
     release = load_release_info()
 
     assert release.version == expected_version
     assert release.display_version == f"v{expected_version}"
     assert release.release_date == expected_date
-    assert release.code_label == f"{expected_date} 최종 수정본"
+    assert release.release_time == expected_time
+    expected_modified_at = " ".join(
+        part for part in (expected_date, expected_time) if part
+    )
+    assert release.code_label == f"{expected_modified_at} 최종 수정본"
 
 
 def test_missing_release_metadata_fails_closed_to_current_release(tmp_path: Path) -> None:
@@ -44,6 +52,22 @@ def test_missing_release_metadata_fails_closed_to_current_release(tmp_path: Path
 
     assert release.version == "1.4.0"
     assert release.release_date == "2026-07-24"
+    assert release.release_time == ""
+
+
+def test_release_time_is_optional_and_parsed_when_present(tmp_path: Path) -> None:
+    change_log = tmp_path / "change_log.md"
+    change_log.write_text(
+        "2026-07-29 15:45:30 v1.5.28 - header metadata\n",
+        encoding="utf-8",
+    )
+
+    release = load_release_info(change_log)
+
+    assert release.display_version == "v1.5.28"
+    assert release.release_date == "2026-07-29"
+    assert release.release_time == "15:45:30"
+    assert release.modified_at == "2026-07-29 15:45:30"
 
 
 def test_scenario_version_log_is_utf8_json_with_run_identity(tmp_path: Path) -> None:
@@ -146,7 +170,7 @@ def test_activate_scenario_writes_version_before_publishing_info(
         assert version_path.name == SCENARIO_VERSION_LOG_FILENAME
         assert version_path.is_file()
         assert persisted_info["version_log"] == str(version_path)
-        _, expected_version = _first_change_log_entry()
+        _, expected_version, _ = _first_change_log_entry()
         assert (
             json.loads(version_path.read_text(encoding="utf-8"))["version"]
             == expected_version

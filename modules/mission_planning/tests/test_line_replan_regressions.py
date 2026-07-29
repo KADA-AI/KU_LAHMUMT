@@ -68,6 +68,7 @@ from modules.mission_planning.replanning.triggers.post_attack.pipeline import (
     _remaining_snapshot_explicitly_completed,
     _recover_tracking_assignments_from_current_plan,
     _should_preserve_active_current_mission,
+    _trim_waypoints_for_exact_sweep_progress,
 )
 from modules.mission_planning.replanning.triggers.prior.pipeline import (
     _build_remaining_input_mission_for_collaborative_replan,
@@ -191,6 +192,116 @@ class LineReplanRegressionTests(unittest.TestCase):
             65,
         )
         self.assertFalse(resume[0]["isDone"])
+
+    def test_type2_attack_diversion_keeps_unconfirmed_buffer_prefix(self) -> None:
+        sweep = [
+            {
+                "latitude": 38.0 + (index * 0.00001),
+                "longitude": 127.0,
+                "altitude": 0,
+            }
+            for index in range(96)
+        ]
+        carrier = {
+            "waypointID": 40953,
+            "coordinate": {
+                "latitude": 38.0,
+                "longitude": 127.01,
+                "altitude": 1400,
+            },
+            "isDone": False,
+            "filmingProperty": {
+                "operationMode": 2,
+                "lineSearch": {
+                    "coordinateList": sweep,
+                    "interpolationPoints": 2,
+                    "searchSpeed": 20.0,
+                },
+            },
+        }
+
+        _done, resume, _removed = _split_done_resume_path(
+            {
+                "aircraftID": 5,
+                "pathID": 500000236,
+                "waypointList": [carrier],
+            },
+            artifacts=SimpleNamespace(
+                path_id=500000236,
+                current_waypoint_id=40953,
+                previous_waypoint_id=None,
+            ),
+            sweep_progress={
+                500000236: {
+                    "progress_points": 0,
+                    "buffer_points": 8,
+                    "sweep_point_count": 96,
+                    "seconds_per_point": 0.625,
+                }
+            },
+            emit=lambda _message: None,
+            force_nonempty_resume=True,
+            preserve_line_carrier_coordinates=True,
+            synchronize_line_search_to_geometry=True,
+            exact_sweep_point_progress=True,
+        )
+
+        remaining = resume[0]["filmingProperty"]["lineSearch"]["coordinateList"]
+        self.assertEqual(len(remaining), 96)
+        self.assertEqual(remaining[0], sweep[0])
+        self.assertFalse(resume[0]["isDone"])
+
+    def test_type2_post_attack_resume_keeps_unconfirmed_buffer_prefix(self) -> None:
+        sweep = [
+            {
+                "latitude": 38.0 + (index * 0.00001),
+                "longitude": 127.0,
+                "altitude": 0,
+            }
+            for index in range(184)
+        ]
+        waypoints = [
+            {
+                "waypointID": 42052,
+                "coordinate": {
+                    "latitude": 38.0,
+                    "longitude": 127.01,
+                    "altitude": 1400,
+                },
+                "isDone": False,
+                "filmingProperty": {
+                    "operationMode": 2,
+                    "lineSearch": {
+                        "coordinateList": sweep,
+                        "interpolationPoints": 2,
+                        "searchSpeed": 20.0,
+                    },
+                },
+            }
+        ]
+
+        trimmed, removed = _trim_waypoints_for_exact_sweep_progress(
+            waypoints,
+            {
+                "progress_points": 18,
+                "buffer_points": 23,
+                "sweep_point_count": 184,
+                "seconds_per_point": 0.875,
+            },
+            reference_coord={
+                "latitude": 38.00006,
+                "longitude": 127.01,
+                "altitude": 1400,
+            },
+            allow_line_scan_sweep_point_trim=True,
+            preserve_carrier_coordinates=True,
+        )
+
+        remaining = trimmed[0]["filmingProperty"]["lineSearch"]["coordinateList"]
+        self.assertEqual(removed, 18)
+        self.assertEqual(len(remaining), 166)
+        self.assertEqual(remaining[0], sweep[18])
+        self.assertFalse(trimmed[0]["isDone"])
 
     def test_completed_type2_line_releases_only_next_followup_input_group(
         self,

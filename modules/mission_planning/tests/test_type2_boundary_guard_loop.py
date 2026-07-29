@@ -229,6 +229,97 @@ def test_resume_finalizer_uses_imp_order_for_split_current_and_cloned_children()
     validate_boundary_guard_flight_path_sets(paths)
 
 
+@pytest.mark.parametrize("contract_side", ["mission", "path"])
+def test_resume_finalizer_repairs_one_sided_legacy_guard_contract(
+    contract_side: str,
+) -> None:
+    """Historical IMP/path pairs may carry the duplicated contract on one side."""
+
+    paths = _guard_paths()
+    missions = []
+    for index, path in enumerate(paths, start=1):
+        mission = {
+            "aircraftID": 4,
+            "individualMissionID": 900_001_050 + index,
+            "pathID": path["pathID"],
+            "individualMissionInfo": {},
+        }
+        if contract_side == "mission":
+            apply_boundary_guard_contract(
+                mission,
+                path,
+                include_individual_mission_info=True,
+            )
+            for key in BOUNDARY_GUARD_CONTRACT_KEYS:
+                path.pop(key, None)
+        missions.append(mission)
+
+    summary = finalize_boundary_guard_flight_path_sets_in_mission_order(
+        missions,
+        paths,
+    )
+
+    set_id = "type2-boundary:200000201:202:aircraft-4"
+    assert summary[set_id]["sequenceCount"] == 2
+    assert [mission["boundaryGuardSequence"] for mission in missions] == [1, 2]
+    assert [path["boundaryGuardSequence"] for path in paths] == [1, 2]
+    assert paths[0]["waypointList"][-1]["nextWaypointID"] == 201
+    assert paths[1]["waypointList"][-1]["nextWaypointID"] == 101
+    validate_boundary_guard_flight_path_sets(paths)
+
+
+def test_reexecute_finalizer_repairs_stale_cross_path_links_after_independent_remap() -> None:
+    """Current-mission refresh remaps carried paths one path at a time.
+
+    Internal next IDs can be remapped locally, but a guard tail points into the
+    next path and therefore remains at its old source ID until the store-time
+    guard finalizer rebuilds the complete cycle.
+    """
+
+    paths = _guard_paths()
+    link_boundary_guard_flight_path_sets(paths)
+    missions = []
+    for index, path in enumerate(paths, start=1):
+        mission = {
+            "individualMissionID": 900_001_100 + index,
+            "pathID": path["pathID"],
+            "individualMissionInfo": {},
+        }
+        apply_boundary_guard_contract(
+            mission,
+            path,
+            include_individual_mission_info=True,
+        )
+        missions.append(mission)
+
+    first_rows = paths[0]["waypointList"]
+    second_rows = paths[1]["waypointList"]
+    first_rows[0]["waypointID"] = 10_182
+    first_rows[0]["nextWaypointID"] = 10_183
+    first_rows[1]["waypointID"] = 10_183
+    # Old cross-path source ID survives the per-path remap.
+    assert first_rows[1]["nextWaypointID"] == 201
+    second_rows[0]["waypointID"] = 10_186
+    second_rows[0]["nextWaypointID"] = 10_187
+    second_rows[1]["waypointID"] = 10_187
+    assert second_rows[1]["nextWaypointID"] == 101
+
+    with pytest.raises(ValueError, match="expected 10186"):
+        validate_boundary_guard_flight_path_sets(paths)
+
+    summary = finalize_boundary_guard_flight_path_sets_in_mission_order(
+        missions,
+        paths,
+    )
+
+    assert first_rows[-1]["nextWaypointID"] == 10_186
+    assert second_rows[-1]["nextWaypointID"] == 10_182
+    assert {path["boundaryGuardCycleFirstWaypointID"] for path in paths} == {10_182}
+    assert {mission["boundaryGuardCycleFirstWaypointID"] for mission in missions} == {10_182}
+    assert summary[paths[0]["boundaryGuardSetID"]]["cycleFirstWaypointID"] == 10_182
+    validate_boundary_guard_flight_path_sets(paths)
+
+
 def test_attack_return_resequences_remaining_children_and_restores_the_cycle() -> None:
     paths = _guard_paths()
     third = {
@@ -633,3 +724,124 @@ def test_next_collab_finalizer_rebuilds_the_strict_guard_owner_set(
     assert paths[400_000_001]["waypointList"][-1]["eta"] == 1_000
     assert paths[400_000_002]["waypointList"][-1]["eta"] == 42
     assert finalized.review_report["boundaryGuardLoop"]["enabled"] is True
+
+
+def test_next_collab_finalizer_repairs_guard_count_after_reexecute_clones(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Repeated current-mission clones must not preserve a stale child count."""
+
+    from modules.mission_planning.pipelines.ground_maneuver_mode import (
+        resolve_type2_self_reliance_phase,
+    )
+    from modules.mission_planning.replanning.triggers.next_collab import (
+        pipeline as next_collab_pipeline,
+    )
+    from modules.mission_planning.tests.test_type2_branch_ownership import (
+        BRANCH_MISSION_IDS,
+        PACKAGE_ID,
+        _type2_branch_package,
+    )
+
+    input_package = _type2_branch_package()
+    outbound = input_package["inputMissionList"][0]
+    guard_area = input_package["inputMissionList"][1]
+    reexecute_one = deepcopy(outbound)
+    reexecute_one["inputMissionID"] = 209
+    reexecute_one["isDone"] = True
+    reexecute_two = deepcopy(outbound)
+    reexecute_two["inputMissionID"] = 210
+    reexecute_two["isDone"] = True
+    input_package["inputMissionList"][1:1] = [reexecute_one, reexecute_two]
+
+    # This is the recorded failure shape: synthetic LINE clones make the
+    # package-level three-phase resolver intentionally return None even though
+    # the prepared target paths still carry the authoritative guard marker.
+    assert (
+        resolve_type2_self_reliance_phase(
+            input_package,
+            BRANCH_MISSION_IDS[1],
+        )
+        is None
+    )
+    assert guard_area is input_package["inputMissionList"][3]
+
+    stale_set_id = (
+        f"type2-boundary:{PACKAGE_ID}:{BRANCH_MISSION_IDS[1]}:aircraft-5"
+    )
+    missions: list[dict] = []
+    paths: dict[int, dict] = {}
+    for index in range(4):
+        path_id = 500_000_101 + index
+        mission = {
+            "aircraftID": 5,
+            "individualMissionID": 900_000_101 + index,
+            "isDone": False,
+            "relatedMission": {
+                "relatedMissionType": 1,
+                "inputMissionID": int(BRANCH_MISSION_IDS[1]),
+                "priorMissionID": 0,
+            },
+            "individualMissionInfo": {
+                "individualMissionType": 3,
+                "patternType": 0,
+                "areaList": [],
+            },
+            "pathID": path_id,
+        }
+        path = {
+            "pathID": path_id,
+            "aircraftID": 5,
+            "individualMissionID": mission["individualMissionID"],
+            "waypointList": [_waypoint(301 + index, 0, 1_000 + index)],
+        }
+        stale_contract = boundary_guard_contract(
+            set_id=stale_set_id,
+            sequence=index + 1,
+            sequence_count=5,
+            duration_s=600,
+        )
+        apply_boundary_guard_contract(
+            mission,
+            stale_contract,
+            include_individual_mission_info=True,
+        )
+        apply_boundary_guard_contract(path, stale_contract)
+        missions.append(mission)
+        paths[path_id] = path
+
+    prepared = next_collab_pipeline._PreparedReplacements(
+        replacement_by_aircraft={5: missions},
+        generated_fp_by_path=paths,
+        generated_path_ids=set(paths),
+        planner_workflow="reexecute-regression",
+        planner_result_text="",
+        planned_result_count=4,
+        review_report={},
+        mission_mode="area",
+    )
+    monkeypatch.setattr(
+        next_collab_pipeline,
+        "get_runtime_float",
+        lambda key, default: 600.0
+        if key == "type2_boundary_guard_duration_s"
+        else default,
+    )
+
+    finalized = next_collab_pipeline._apply_type2_boundary_guard_loop_to_prepared(
+        prepared,
+        input_data=input_package,
+        input_package_id=PACKAGE_ID,
+        target_input_id=int(BRANCH_MISSION_IDS[1]),
+    )
+
+    assert [path["boundaryGuardSequence"] for path in paths.values()] == [1, 2, 3, 4]
+    assert {path["boundaryGuardSequenceCount"] for path in paths.values()} == {4}
+    assert {mission["boundaryGuardSequenceCount"] for mission in missions} == {4}
+    assert paths[500_000_101]["waypointList"][-1]["nextWaypointID"] == 302
+    assert paths[500_000_104]["waypointList"][-1]["nextWaypointID"] == 301
+    assert (
+        finalized.review_report["boundaryGuardLoop"]["detectionSource"]
+        == "inherited_guard_contract"
+    )
+    validate_boundary_guard_flight_path_sets(paths.values())

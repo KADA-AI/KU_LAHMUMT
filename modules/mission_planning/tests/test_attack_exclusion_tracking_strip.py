@@ -22,8 +22,10 @@ def _write(tmp_path, sub: str, name: int, payload: dict[str, Any]):
     (d / f"{name}.json").write_text(json.dumps(payload), encoding="utf-8")
 
 
-def _path(pid: int, *, tracking: bool) -> dict[str, Any]:
+def _path(pid: int, *, tracking: bool, target_id: int | None = None) -> dict[str, Any]:
     filming = {"operationMode": 3 if tracking else 2, "fieldOfView": 4.7}
+    if tracking and target_id is not None:
+        filming["autoTracking"] = {"targetID": int(target_id)}
     if not tracking:
         filming["lineSearch"] = {"coordinateList": [{"latitude": 37.0, "longitude": 128.0}]}
     return {
@@ -44,14 +46,33 @@ def db(tmp_path, monkeypatch):
     return tmp_path
 
 
-def _plan_with(db, *, sweep_ids, tracking_ids, aircraft_id=5, imp_id=800):
+def _plan_with(
+    db,
+    *,
+    sweep_ids,
+    tracking_ids,
+    tracking_targets=None,
+    aircraft_id=5,
+    imp_id=800,
+):
+    tracking_targets = dict(tracking_targets or {})
     missions = []
     for pid in sweep_ids:
         _write(db, "FlightPath", pid, _path(pid, tracking=False))
         missions.append({"individualMissionID": 900 + pid, "pathID": pid})
     for pid in tracking_ids:
-        _write(db, "FlightPath", pid, _path(pid, tracking=True))
-        missions.append({"individualMissionID": 900 + pid, "pathID": pid})
+        target_id = tracking_targets.get(pid)
+        _write(
+            db,
+            "FlightPath",
+            pid,
+            _path(pid, tracking=True, target_id=target_id),
+        )
+        mission = {"individualMissionID": 900 + pid, "pathID": pid}
+        if target_id is not None:
+            mission["relatedMission"] = {"targetID": int(target_id)}
+            mission["individualMissionInfo"] = {"targetID": int(target_id)}
+        missions.append(mission)
     _write(db, "IndividualMissionPlan", imp_id, {"individualMissionList": missions})
     return {
         "aircraftList": [
@@ -80,6 +101,24 @@ def test_the_remaining_area_sweeps_are_untouched(db) -> None:
     ap._strip_tracking_from_exclusion_plan(plan, emit=lambda _m: None)
 
     assert _surviving(db) == [21, 22, 23]
+
+
+def test_target_specific_exclusion_removes_only_that_targets_tracking(db) -> None:
+    plan = _plan_with(
+        db,
+        sweep_ids=[25],
+        tracking_ids=[26, 27],
+        tracking_targets={26: 7, 27: 8},
+    )
+
+    removed = ap._strip_tracking_from_exclusion_plan(
+        plan,
+        emit=lambda _m: None,
+        excluded_target_ids={8},
+    )
+
+    assert [row["pathID"] for row in removed] == [27]
+    assert _surviving(db) == [25, 26]
 
 
 def test_a_plan_that_is_already_clean_is_not_rewritten(db) -> None:

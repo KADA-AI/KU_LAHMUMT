@@ -7045,7 +7045,26 @@ class MainWindow(QMainWindow):
                 turn_tab = getattr(self, "_turn_radius_tab", None)
                 context_payload = None
                 if viz is not None and hasattr(viz, "build_execute_next_replan_context"):
-                    context_payload = viz.build_execute_next_replan_context()
+                    reexecute_source_input_id = None
+                    reexecute_clone_input_id = None
+                    try:
+                        clone_mapping = (
+                            reexecute_coord.current_clone_mapping()
+                            if reexecute_coord is not None
+                            and hasattr(reexecute_coord, "current_clone_mapping")
+                            else None
+                        )
+                        if clone_mapping is not None:
+                            reexecute_source_input_id = int(clone_mapping[0])
+                            reexecute_clone_input_id = int(clone_mapping[1])
+                    except Exception as exc:
+                        self._append_log_line(
+                            f"[0803] reexecute clone mapping lookup failed: {exc}"
+                        )
+                    context_payload = viz.build_execute_next_replan_context(
+                        reexecute_source_input_id=reexecute_source_input_id,
+                        reexecute_clone_input_id=reexecute_clone_input_id,
+                    )
                 turn_views = None
                 if turn_tab is not None and hasattr(turn_tab, "build_views"):
                     turn_views = turn_tab.build_views()

@@ -49,6 +49,102 @@ _EXECUTE_NEXT_RECOMMENDATION_HOLDOFF_MS = 10000
 _COVERAGE_PROGRESS_PERSIST_INTERVAL_MS = 400
 
 
+def _recommendation_state_after_plan_switch(
+    *,
+    same_input_package: bool,
+    input_ids: set[int],
+    done_input_ids: set[int],
+    observed_completion_inputs: set[int],
+    observed_execute_ready_inputs: set[int],
+    pending_completion_inputs: list[int],
+    pending_execute_inputs: list[int],
+    sent_completion_inputs: set[int],
+    sent_execute_inputs: set[int],
+) -> dict[str, object]:
+    """Carry unsent monitoring recommendations across an in-package replan.
+
+    A post-attack MissionPlan keeps the same InputMissionPackage.  If the
+    boundary-guard completion gate opens between the destroyed-target close
+    and that plan's 0903 application, the completion is already observed but
+    its 0503 may still be deferred.  Treating every DB-done input as already
+    sent during the view reload loses that recommendation.  Preserve only
+    monitor-proven, unsent queue entries; a different input package still
+    starts from a clean historical baseline.
+    """
+
+    valid_ids = {int(value) for value in input_ids}
+    done_ids = {int(value) for value in done_input_ids if int(value) in valid_ids}
+    if not same_input_package:
+        return {
+            "pending_completion_inputs": [],
+            "pending_execute_inputs": [],
+            "sent_completion_inputs": set(done_ids),
+            "sent_execute_inputs": set(),
+        }
+
+    observed_completion = {
+        int(value)
+        for value in observed_completion_inputs
+        if int(value) in valid_ids
+    }
+    observed_execute = {
+        int(value)
+        for value in observed_execute_ready_inputs
+        if int(value) in valid_ids and int(value) not in done_ids
+    }
+    sent_completion = {
+        int(value) for value in sent_completion_inputs if int(value) in valid_ids
+    }
+    sent_execute = {
+        int(value) for value in sent_execute_inputs if int(value) in valid_ids
+    }
+
+    def _ordered_unsent(
+        values: list[int],
+        *,
+        observed: set[int],
+        sent: set[int],
+    ) -> list[int]:
+        ordered: list[int] = []
+        seen: set[int] = set()
+        for value in values:
+            try:
+                normalized = int(value)
+            except Exception:
+                continue
+            if (
+                normalized in seen
+                or normalized not in valid_ids
+                or normalized not in observed
+                or normalized in sent
+            ):
+                continue
+            seen.add(normalized)
+            ordered.append(normalized)
+        return ordered
+
+    restored_completion = _ordered_unsent(
+        pending_completion_inputs,
+        observed=observed_completion,
+        sent=sent_completion,
+    )
+    restored_execute = _ordered_unsent(
+        pending_execute_inputs,
+        observed=observed_execute,
+        sent=sent_execute,
+    )
+    # Completed inputs with no monitor-proven unsent queue are historical (or
+    # already acknowledged) and must not generate a recommendation merely
+    # because an unrelated plan was loaded.
+    sent_completion.update(done_ids - set(restored_completion))
+    return {
+        "pending_completion_inputs": restored_completion,
+        "pending_execute_inputs": restored_execute,
+        "sent_completion_inputs": sent_completion,
+        "sent_execute_inputs": sent_execute,
+    }
+
+
 class DLRiskTrendWidget(QWidget):
     """2x3 streaming risk trend panels for 6 aircraft."""
 
@@ -1722,7 +1818,12 @@ class MonitoringVisualizationTab(QWidget):
         snapshot = self._progress_tracker.update(None, None)
         self._apply_progress_snapshot(snapshot)
 
-    def build_execute_next_replan_context(self) -> dict[str, object] | None:
+    def build_execute_next_replan_context(
+        self,
+        *,
+        reexecute_source_input_id: int | None = None,
+        reexecute_clone_input_id: int | None = None,
+    ) -> dict[str, object] | None:
         view = self._mission_view
         if not isinstance(view, dict):
             return None
@@ -1733,6 +1834,49 @@ class MonitoringVisualizationTab(QWidget):
             input_missions,
             prefer_execute_next_source=True,
         )
+        input_order = self._input_order_index(input_missions)
+        try:
+            reexecute_source_id = (
+                int(reexecute_source_input_id)
+                if reexecute_source_input_id is not None
+                else None
+            )
+            reexecute_clone_id = (
+                int(reexecute_clone_input_id)
+                if reexecute_clone_input_id is not None
+                else None
+            )
+        except Exception:
+            reexecute_source_id = None
+            reexecute_clone_id = None
+        reexecute_rows_are_replacement_pair = False
+        if reexecute_source_id is not None and reexecute_clone_id is not None:
+            if int(reexecute_source_id) not in input_order:
+                reexecute_rows_are_replacement_pair = int(reexecute_clone_id) in input_order
+            elif int(reexecute_clone_id) in input_order:
+                reexecute_rows_are_replacement_pair = bool(
+                    int(input_order[int(reexecute_clone_id)])
+                    == int(input_order[int(reexecute_source_id)]) + 1
+                    and self._is_input_done(input_missions, int(reexecute_source_id))
+                    and not self._is_input_done(input_missions, int(reexecute_clone_id))
+                )
+        reexecute_alias_applied = bool(
+            current_input_id is not None
+            and reexecute_source_id is not None
+            and reexecute_clone_id is not None
+            and int(current_input_id) == int(reexecute_source_id)
+            and reexecute_rows_are_replacement_pair
+        )
+        if reexecute_alias_applied:
+            current_input_id = int(reexecute_clone_id)
+            try:
+                self._emit_log(
+                    "[0803] reexecute input alias applied: "
+                    f"sourceInput={int(reexecute_source_id)} -> "
+                    f"currentCloneInput={int(reexecute_clone_id)}"
+                )
+            except Exception:
+                pass
         target_input_id = self._pick_next_input_id(
             input_missions,
             current_input_id,
@@ -1826,7 +1970,7 @@ class MonitoringVisualizationTab(QWidget):
         except Exception:
             pass
 
-        return {
+        context: dict[str, object] = {
             "input_mission_package_id": view.get("input_mission_package_id"),
             "current_input_mission_id": int(current_input_id),
             "target_input_mission_id": int(target_input_id),
@@ -1839,6 +1983,10 @@ class MonitoringVisualizationTab(QWidget):
             "target_entry_aircraft_list": target_entry_aircraft_list,
             "representative_target_entry_coordinate": self._centroid_coordinate(representative_target_coords),
         }
+        if reexecute_alias_applied:
+            context["reexecute_source_input_mission_id"] = int(reexecute_source_id)
+            context["reexecute_clone_input_mission_id"] = int(reexecute_clone_id)
+        return context
 
     def build_current_remaining_replan_context(
         self,
@@ -2761,6 +2909,18 @@ class MonitoringVisualizationTab(QWidget):
         prev_observed_execute_ready_inputs = set(
             getattr(self, "_observed_execute_ready_inputs", set()) or ()
         )
+        prev_pending_completion_inputs = list(
+            getattr(self, "_pending_completion_inputs", []) or ()
+        )
+        prev_pending_execute_inputs = list(
+            getattr(self, "_pending_execute_inputs", []) or ()
+        )
+        prev_sent_0503_inputs = set(
+            getattr(self, "_sent_0503_inputs", set()) or ()
+        )
+        prev_sent_0503_pending_inputs = set(
+            getattr(self, "_sent_0503_pending_inputs", set()) or ()
+        )
         prev_execute_next_source_inputs = set(
             getattr(self, "_execute_next_recommendation_source_inputs", set()) or ()
         )
@@ -2796,7 +2956,6 @@ class MonitoringVisualizationTab(QWidget):
             self._current_input_guard_notice_key = None
             self._clear_execute_next_source_input()
 
-        self._sent_0503_inputs = set(done_input_ids)
         restored_forced_inputs: set[int] = set()
         if same_input_package:
             restored_forced_inputs = {
@@ -2832,6 +2991,32 @@ class MonitoringVisualizationTab(QWidget):
             self._execute_next_recommendation_source_inputs = set()
             self._sent_final_completion = False
 
+        recommendation_state = _recommendation_state_after_plan_switch(
+            same_input_package=bool(same_input_package),
+            input_ids={int(value) for value in input_ids},
+            done_input_ids={int(value) for value in done_input_ids},
+            observed_completion_inputs=set(self._observed_completion_inputs),
+            observed_execute_ready_inputs=set(
+                self._observed_execute_ready_inputs
+            ),
+            pending_completion_inputs=prev_pending_completion_inputs,
+            pending_execute_inputs=prev_pending_execute_inputs,
+            sent_completion_inputs=prev_sent_0503_inputs,
+            sent_execute_inputs=prev_sent_0503_pending_inputs,
+        )
+        self._sent_0503_inputs = set(
+            recommendation_state["sent_completion_inputs"]
+        )
+        restored_pending_completion_inputs = list(
+            recommendation_state["pending_completion_inputs"]
+        )
+        restored_pending_execute_inputs = list(
+            recommendation_state["pending_execute_inputs"]
+        )
+        restored_sent_execute_inputs = set(
+            recommendation_state["sent_execute_inputs"]
+        )
+
         forced_input_id, target_input_id = self._load_execute_next_transition_inputs(mission_plan_id)
         if forced_input_id is not None and forced_input_id in input_ids:
             restored_forced_inputs.add(int(forced_input_id))
@@ -2844,9 +3029,26 @@ class MonitoringVisualizationTab(QWidget):
             self._set_effective_current_input_id(int(target_input_id))
             self._clear_execute_next_source_input()
 
-        self._pending_completion_inputs = []
-        self._pending_execute_inputs = []
-        self._sent_0503_pending_inputs = set()
+        transition_input_ids = {
+            int(value)
+            for value in (forced_input_id, target_input_id)
+            if value is not None
+        }
+        self._pending_completion_inputs = [
+            int(value)
+            for value in restored_pending_completion_inputs
+            if int(value) not in transition_input_ids
+        ]
+        self._pending_execute_inputs = [
+            int(value)
+            for value in restored_pending_execute_inputs
+            if int(value) not in transition_input_ids
+        ]
+        self._sent_0503_pending_inputs = {
+            int(value)
+            for value in restored_sent_execute_inputs
+            if int(value) not in transition_input_ids
+        }
         self._forced_completion_inputs = set()
         for restored_input_id in sorted(restored_forced_inputs):
             self._force_complete_input_mission(view, int(restored_input_id), queue_0501=False)

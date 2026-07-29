@@ -243,6 +243,7 @@ from modules.mission_planning.replanning.dispatcher import (
     should_use_prior_post_rejoin_pipeline,
 )
 from modules.mission_planning.pipelines.type2_boundary_guard_loop import (
+    finalize_boundary_guard_flight_path_sets_in_mission_order,
     link_boundary_guard_flight_path_sets,
     sync_boundary_guard_contract_from_flight_paths,
 )
@@ -289,6 +290,9 @@ try:
         validate_mission_flightpath_links,
         validate_replan_payloads,
         validate_unique_flightpath_ids,
+    )
+    from .runtime.validation.attack_option_publication import (
+        resolve_post_attack_option_indices,
     )
     from .runtime.cache.source_artifacts import (
         SourceArtifactCache,
@@ -372,6 +376,9 @@ except Exception:
         validate_mission_flightpath_links,
         validate_replan_payloads,
         validate_unique_flightpath_ids,
+    )
+    from modules.mission_planning.runtime.validation.attack_option_publication import (
+        resolve_post_attack_option_indices,
     )
     from modules.mission_planning.runtime.cache.source_artifacts import (
         SourceArtifactCache,
@@ -8128,6 +8135,40 @@ class MainWindow(QMainWindow):
                     self.log_sig.emit(f"[ERR] {message}")
                     raise RuntimeError(message)
 
+            def _finalize_boundary_guard_replan_links(
+                *,
+                variant_no: int,
+                missions: list[dict],
+                flight_plans_0303: list[dict],
+                flight_plans_0304: list[dict],
+            ) -> Dict[str, Dict[str, int]]:
+                """Restore guard-loop links after replan ID remapping/merging.
+
+                Input-refresh and current-remaining hybrid paths can renumber
+                waypoint IDs after the boundary guard set was first linked.
+                The IMP mission order is authoritative at store time, so the
+                cycle must be finalized here, before 0302 is built and before
+                the read-only payload validator runs.
+                """
+
+                try:
+                    summary = finalize_boundary_guard_flight_path_sets_in_mission_order(
+                        missions,
+                        list(flight_plans_0303 or []) + list(flight_plans_0304 or []),
+                        strict=True,
+                    )
+                except ValueError as exc:
+                    raise RuntimeError(
+                        f"boundary guard loop finalization failed "
+                        f"(variant={variant_no}): {exc}"
+                    ) from exc
+                if summary:
+                    self.log_sig.emit(
+                        f"[INFO] boundary guard loop links finalized after replan merge "
+                        f"(variant={variant_no}, sets={len(summary)})"
+                    )
+                return summary
+
             def _initial_plan_template_allowed(
                 *,
                 reason_text: str,
@@ -8630,13 +8671,44 @@ class MainWindow(QMainWindow):
 
             # 공격 옵션은 공격 파이프라인 결과만 사용 (일반 파이프라인에서 제외)
             if attack_option_indices:
-                excluded_indices = set(int(idx) for idx in attack_option_indices)
-                if suppress_attack_exclusion_fallback:
-                    excluded_indices.update(int(idx) for idx in attack_exclusion_ctx_indices)
-                keep_indices = [
-                    idx for idx in range(max(len(ctx.get("plan_ids") or []), len(ctx.get("option_names") or [])))
-                    if idx not in excluded_indices
-                ]
+                option_count = max(
+                    len(ctx.get("plan_ids") or []),
+                    len(ctx.get("option_names") or []),
+                )
+                keep_indices, contract_suppressed_exclusion_indices = (
+                    resolve_post_attack_option_indices(
+                        option_count=option_count,
+                        attack_option_indices=attack_option_indices,
+                        attack_exclusion_option_indices=attack_exclusion_ctx_indices,
+                        attack_plan_materialized=bool(attack_summary_info),
+                    )
+                )
+                if contract_suppressed_exclusion_indices:
+                    if not suppress_attack_exclusion_fallback:
+                        cancelled = False
+                        if attack_exclusion_future is not None:
+                            try:
+                                cancelled = bool(attack_exclusion_future.cancel())
+                            except Exception:
+                                cancelled = False
+                        self._record_replan_timing_event(
+                            "attack_exclusion_parallel_discarded",
+                            extra={
+                                "reason": "paired_attack_plan_not_materialized",
+                                "cancelled": bool(cancelled),
+                                "suppressed_option_indices": [
+                                    int(index) + 1
+                                    for index in sorted(contract_suppressed_exclusion_indices)
+                                ],
+                            },
+                        )
+                        self.log_sig.emit(
+                            "[ATTACK][GUARD] 공격 특화안이 완성되지 않아 짝으로 생성된 "
+                            "공격 배제안도 게시하지 않습니다 "
+                            f"(options={','.join(str(index + 1) for index in sorted(contract_suppressed_exclusion_indices))}, "
+                            f"cancelled={int(bool(cancelled))})."
+                        )
+                    suppress_attack_exclusion_fallback = True
                 if not keep_indices:
                     if attack_preserved_noop_status:
                         completion_detail = (
@@ -15342,6 +15414,12 @@ class MainWindow(QMainWindow):
                     reserved_imp_ids=result.get("reserved_imp_ids") or [],
                 )
 
+                _finalize_boundary_guard_replan_links(
+                    variant_no=variant_no,
+                    missions=missions,
+                    flight_plans_0303=flight_plans_0303,
+                    flight_plans_0304=flight_plans_0304,
+                )
                 step_t0 = time.perf_counter()
                 imp_pkgs = d0302.build_mission_packages(
                     missions,
@@ -18009,6 +18087,12 @@ class MainWindow(QMainWindow):
                             }
                         )
 
+                    _finalize_boundary_guard_replan_links(
+                        variant_no=variant_no,
+                        missions=missions,
+                        flight_plans_0303=flight_plans_0303,
+                        flight_plans_0304=flight_plans_0304,
+                    )
                     step_t0 = time.perf_counter()
                     imp_pkgs = d0302.build_mission_packages(missions, cmpk_id=cmpk_id, plan_pkg_map=imp_id_map)
                     step_ms = (time.perf_counter() - step_t0) * 1000.0

@@ -390,20 +390,53 @@ def finalize_boundary_guard_flight_path_sets_in_mission_order(
     ordered_by_set: Dict[str, List[MutableMapping[str, Any]]] = defaultdict(list)
     seen_path_ids: set[int] = set()
     for mission in mission_rows:
-        contract = extract_boundary_guard_contract(
+        mission_contract = extract_boundary_guard_contract(
             mission,
             mission.get("individualMissionInfo"),
         )
-        if not is_boundary_guard_loop(contract):
-            continue
-        set_id = str(contract.get("boundaryGuardSetID") or "").strip()
         path_id = _positive_int(mission.get("pathID"))
         path = path_by_id.get(path_id)
+        path_contract = extract_boundary_guard_contract(path)
+        mission_is_guard = is_boundary_guard_loop(mission_contract)
+        path_is_guard = is_boundary_guard_loop(path_contract)
+
+        # Older plans exist with the contract written on only one side of the
+        # IMP/FlightPath pair.  A resume finalizer has both authoritative
+        # payloads in hand, so repair that schema asymmetry before grouping.
+        # This prevents a valid remaining child from being silently omitted
+        # merely because one historical writer missed the duplicate metadata.
+        if not mission_is_guard and path_is_guard:
+            apply_boundary_guard_contract(
+                mission,
+                path_contract,
+                include_individual_mission_info=True,
+            )
+            mission_contract = extract_boundary_guard_contract(
+                mission,
+                mission.get("individualMissionInfo"),
+            )
+            mission_is_guard = True
+        elif mission_is_guard and path is not None and not path_is_guard:
+            apply_boundary_guard_contract(path, mission_contract)
+            path_contract = extract_boundary_guard_contract(path)
+            path_is_guard = True
+
+        if not mission_is_guard:
+            continue
+        set_id = str(mission_contract.get("boundaryGuardSetID") or "").strip()
         if path is None:
             if strict:
                 raise ValueError(
                     f"boundary guard set {set_id}: mission path {path_id} "
                     "is not present in the supplied remaining flight paths"
+                )
+            continue
+        path_set_id = str(path_contract.get("boundaryGuardSetID") or "").strip()
+        if path_is_guard and path_set_id != set_id:
+            if strict:
+                raise ValueError(
+                    f"boundary guard mission/path set mismatch for path {path_id}: "
+                    f"mission={set_id}, path={path_set_id}"
                 )
             continue
         if path_id in seen_path_ids:

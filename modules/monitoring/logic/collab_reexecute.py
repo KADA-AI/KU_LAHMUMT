@@ -230,6 +230,23 @@ class CollabReexecuteCoordinator:
         # suppress the "0201 refresh during execution" logic.
         return bool(self._state.pending)
 
+    def current_clone_mapping(self) -> tuple[int, int] | None:
+        """Return the source-to-clone mapping for the currently loaded 0201."""
+        source_id = self._state.last_reexecute_source_input_id
+        clone_id = self._state.last_reexecute_clone_input_id
+        if source_id is None or clone_id is None:
+            return None
+        if int(source_id) <= 0 or int(clone_id) <= 0 or int(source_id) == int(clone_id):
+            return None
+        # Do not leak a mapping from a previous scenario/input package.
+        if (
+            self._state.last_reexecute_clone_key is None
+            or self._state.last_input_key is None
+            or self._state.last_reexecute_clone_key != self._state.last_input_key
+        ):
+            return None
+        return int(source_id), int(clone_id)
+
     def has_dispatched_input_plan(self, payload: object | None) -> bool:
         """Return True when payload is the 0201 already consumed by reexecute."""
         plan = parse_payload(payload)

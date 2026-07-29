@@ -13,12 +13,19 @@ from modules.mission_planning.replanning.triggers.post_attack.pipeline import (
     _apply_post_attack_collab_entry_policy,
     _build_post_attack_tracking_return_only_update,
     _can_resume_line_directly_after_attack,
+    _finalize_post_attack_tracking_boundary_guard_graph,
     _line_scan_progress_entry_is_current,
     _mark_post_attack_followups_execution_blocked,
     _post_attack_authoritative_source_plan_id,
     _post_attack_follow_up_source_missions,
     _restore_type2_line_carriers_from_original,
     _resolve_imaging_entry_flight_coordinate,
+)
+from modules.mission_planning.pipelines.type2_boundary_guard_loop import (
+    BOUNDARY_GUARD_CONTRACT_KEYS,
+    apply_boundary_guard_contract,
+    boundary_guard_contract,
+    validate_boundary_guard_flight_path_sets,
 )
 from modules.sim.runtime.sim_service import (
     _mission_execution_blocked_until_next_collab,
@@ -340,6 +347,103 @@ class PostAttackFollowupRetentionTests(unittest.TestCase):
         self.assertTrue(future_two["executionBlockedUntilNextCollab"])
         self.assertFalse(_mission_execution_blocked_until_next_collab(current_resume))
         self.assertTrue(_mission_execution_blocked_until_next_collab(future_one))
+
+    def test_tracking_return_excludes_transit_clone_from_boundary_guard_count(
+        self,
+    ) -> None:
+        """Reproduce the latest 5-declared/6-present post-attack failure."""
+
+        set_id = "type2-boundary:3:5:aircraft-5"
+        guard_missions: list[dict[str, object]] = []
+        guard_paths: list[dict[str, object]] = []
+        for sequence in range(1, 6):
+            mission_id = 900000100 + sequence
+            path_id = 500000100 + sequence
+            first_waypoint_id = 1000 + sequence * 10
+            contract = boundary_guard_contract(
+                set_id=set_id,
+                sequence=sequence,
+                sequence_count=5,
+                duration_s=600,
+            )
+            mission = _mission(mission_id, 5)
+            mission["aircraftID"] = 5
+            mission["pathID"] = path_id
+            mission["individualMissionInfo"] = {
+                "individualMissionType": 5,
+                "coordinateList": [],
+            }
+            apply_boundary_guard_contract(
+                mission,
+                contract,
+                include_individual_mission_info=True,
+            )
+            flight_path = {
+                "pathID": path_id,
+                "aircraftID": 5,
+                "individualMissionID": mission_id,
+                "waypointList": [
+                    {
+                        "waypointID": first_waypoint_id,
+                        "nextWaypointID": first_waypoint_id + 1,
+                        "eta": 0,
+                    },
+                    {
+                        "waypointID": first_waypoint_id + 1,
+                        "nextWaypointID": 0,
+                        "eta": 0,
+                    },
+                ],
+            }
+            apply_boundary_guard_contract(flight_path, contract)
+            guard_missions.append(mission)
+            guard_paths.append(flight_path)
+
+        # The transit-only return is cloned from the current AREA template,
+        # so it starts with the same boundary metadata and caused validation
+        # to see a sixth child in the five-child owner set.
+        return_mission = deepcopy(guard_missions[0])
+        return_mission["individualMissionID"] = 900000199
+        return_mission["pathID"] = 500000199
+        return_mission["individualMissionInfo"]["individualMissionType"] = 7
+        return_path = deepcopy(guard_paths[0])
+        return_path["pathID"] = 500000199
+        return_path["individualMissionID"] = 900000199
+        return_path["waypointList"] = [
+            {"waypointID": 1999, "nextWaypointID": 0, "eta": 0}
+        ]
+
+        summary = _finalize_post_attack_tracking_boundary_guard_graph(
+            missions=[return_mission, *guard_missions],
+            flight_paths=[return_path, *guard_paths],
+            synthetic_return_path_id=500000199,
+            emit=lambda _message: None,
+            log_prefix="[TEST]",
+        )
+
+        for key in BOUNDARY_GUARD_CONTRACT_KEYS:
+            self.assertNotIn(key, return_mission)
+            self.assertNotIn(key, return_mission["individualMissionInfo"])
+            self.assertNotIn(key, return_path)
+        self.assertEqual(summary[set_id]["sequenceCount"], 5)
+        self.assertEqual(
+            [mission["boundaryGuardSequence"] for mission in guard_missions],
+            [1, 2, 3, 4, 5],
+        )
+        self.assertEqual(
+            {mission["boundaryGuardSequenceCount"] for mission in guard_missions},
+            {5},
+        )
+        for index, flight_path in enumerate(guard_paths):
+            expected_next = guard_paths[(index + 1) % len(guard_paths)][
+                "waypointList"
+            ][0]["waypointID"]
+            self.assertEqual(
+                flight_path["waypointList"][-1]["nextWaypointID"],
+                expected_next,
+            )
+        self.assertEqual(guard_paths[-1]["waypointList"][-1]["eta"], 600)
+        validate_boundary_guard_flight_path_sets(guard_paths)
 
     def test_post_attack_remaining_geometry_uses_current_applied_plan(self) -> None:
         self.assertEqual(

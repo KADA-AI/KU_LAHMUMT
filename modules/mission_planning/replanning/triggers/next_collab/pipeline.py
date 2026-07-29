@@ -70,6 +70,7 @@ from modules.mission_planning.pipelines.type2_boundary_guard_loop import (
     annotate_boundary_guard_set,
     apply_boundary_guard_contract,
     extract_boundary_guard_contract,
+    is_boundary_guard_loop,
     link_boundary_guard_flight_path_sets,
     sync_boundary_guard_contract_from_flight_paths,
 )
@@ -835,9 +836,29 @@ def _apply_type2_boundary_guard_loop_to_prepared(
 ) -> _PreparedReplacements:
     """Finalize the strict Type-2 guard AREA contract after waypoint IDs exist."""
 
+    resolved_phase = resolve_type2_self_reliance_phase(
+        input_data,
+        int(target_input_id),
+    )
+    inherited_guard_contract = any(
+        is_boundary_guard_loop(
+            extract_boundary_guard_contract(
+                mission,
+                mission.get("individualMissionInfo"),
+            )
+        )
+        for missions in prepared.replacement_by_aircraft.values()
+        for mission in missions
+        if isinstance(mission, dict)
+        and _mission_input_id(mission) == int(target_input_id)
+    ) or any(
+        is_boundary_guard_loop(extract_boundary_guard_contract(flight_path))
+        for flight_path in prepared.generated_fp_by_path.values()
+        if isinstance(flight_path, dict)
+    )
     if (
-        resolve_type2_self_reliance_phase(input_data, int(target_input_id))
-        != TYPE2_SELF_RELIANCE_GUARD_AREA
+        resolved_phase != TYPE2_SELF_RELIANCE_GUARD_AREA
+        and not inherited_guard_contract
     ):
         return prepared
 
@@ -893,6 +914,11 @@ def _apply_type2_boundary_guard_loop_to_prepared(
         "enabled": bool(annotated_missions),
         "durationS": float(duration_s),
         "ownerMissionCount": len(annotated_missions),
+        "detectionSource": (
+            "input_phase"
+            if resolved_phase == TYPE2_SELF_RELIANCE_GUARD_AREA
+            else "inherited_guard_contract"
+        ),
     }
     return prepared
 
@@ -3956,6 +3982,63 @@ def _area_ownership_limit_polygon(detail: Dict[str, Any]) -> Optional[Polygon]:
     return None
 
 
+def _normalize_reexecute_next_input_ids(
+    input_plan: Dict[str, Any],
+    detail: Dict[str, Any],
+    current_input_id: int,
+    target_input_id: int,
+) -> tuple[int, int | None, bool]:
+    """Treat a reexecute clone as the current row, never as the next row.
+
+    After a reexecute replan the completed source row can be removed from the
+    InputMissionPlan while progress telemetry still names that source ID.  The
+    monitor includes the explicit source/clone provenance, which lets this
+    pipeline repair an older or queued ``source -> clone`` execute-next request
+    without guessing from mission geometry or region type.
+    """
+
+    source_id = _to_int(detail.get("reexecuteSourceInputMissionID"))
+    clone_id = _to_int(detail.get("reexecuteCloneInputMissionID"))
+    if source_id is None or clone_id is None:
+        return int(current_input_id), int(target_input_id), False
+    ordered_ids: List[int] = []
+    for mission in input_plan.get("inputMissionList") or []:
+        if not isinstance(mission, dict):
+            continue
+        mission_id = _to_int(mission.get("inputMissionID"))
+        if mission_id is None or mission_id <= 0 or int(mission_id) in ordered_ids:
+            continue
+        ordered_ids.append(int(mission_id))
+    replacement_pair = bool(
+        int(source_id) not in ordered_ids and int(clone_id) in ordered_ids
+    )
+    if int(source_id) in ordered_ids and int(clone_id) in ordered_ids:
+        source_mission = _find_input_mission(input_plan, int(source_id)) or {}
+        clone_mission = _find_input_mission(input_plan, int(clone_id)) or {}
+        source_done = bool(source_mission.get("isDone"))
+        clone_done = bool(clone_mission.get("isDone"))
+        replacement_pair = bool(
+            ordered_ids.index(int(clone_id)) == ordered_ids.index(int(source_id)) + 1
+            and source_done
+            and not clone_done
+        )
+    if not (
+        int(current_input_id) == int(source_id)
+        and replacement_pair
+    ):
+        return int(current_input_id), int(target_input_id), False
+
+    normalized_target: int | None = int(target_input_id)
+    if int(target_input_id) == int(clone_id):
+        clone_index = ordered_ids.index(int(clone_id))
+        normalized_target = (
+            int(ordered_ids[clone_index + 1])
+            if clone_index + 1 < len(ordered_ids)
+            else None
+        )
+    return int(clone_id), normalized_target, True
+
+
 def _single_area_ownership_component(detail: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Build one connected, hole-free polygon for ownership division only.
 
@@ -5505,10 +5588,26 @@ def _prepare_line_replacements(
     id_reservation_summaries: Optional[List[Dict[str, Any]]] = None,
     planning_mode: Dict[str, Any] | None = None,
     handover_coord_map: Dict[int, Dict[str, Any]] | None = None,
+    branch_ownership_override: Dict[int, List[int]] | None = None,
+    branch_ownership_source_input_id: int | None = None,
 ) -> Optional[_PreparedReplacements]:
     planning_mode_ctx = mission_mode_context(mode=planning_mode)
-    locked_type2_ownership = (
-        _branch_area_ownership_for_target(planning_mode_ctx, int(target_input_id))
+    normalized_ownership_override = (
+        {
+            int(branch_index): [int(aircraft_id) for aircraft_id in owners]
+            for branch_index, owners in branch_ownership_override.items()
+        }
+        if isinstance(branch_ownership_override, dict) and branch_ownership_override
+        else None
+    )
+    ownership_source_input_id = (
+        _to_int(branch_ownership_source_input_id) or int(target_input_id)
+    )
+    locked_type2_ownership = normalized_ownership_override or (
+        _branch_area_ownership_for_target(
+            planning_mode_ctx,
+            int(ownership_source_input_id),
+        )
         if _to_int(planning_mode_ctx.get("package_type")) == 2
         else None
     )
@@ -5544,6 +5643,21 @@ def _prepare_line_replacements(
         return None
 
     planner_target_mission = target_input_mission
+    if (
+        locked_type2_ownership
+        and int(ownership_source_input_id) != int(target_input_id)
+    ):
+        # Current-mission reexecution gives the remaining mission a synthetic
+        # inputMissionID.  The split runner identifies a locked Type-2 branch by
+        # the original LINE-AREA-LINE mission IDs, so use that ID only while
+        # splitting.  Generated missions below still keep target_input_id.
+        planner_target_mission = deepcopy(target_input_mission)
+        planner_target_mission["inputMissionID"] = int(ownership_source_input_id)
+        emit(
+            "[NEXTCOLLAB][TYPE2] LINE branch ownership rebound "
+            f"sourceInputMissionID={int(ownership_source_input_id)} -> "
+            f"targetInputMissionID={int(target_input_id)}."
+        )
     # 각자도생 branches are independent lines with their own headings, and the
     # resolver returns a single direction for the whole mission.  Imposing it
     # would reverse any branch sitting more than 90 degrees off it, which is how
@@ -6213,6 +6327,7 @@ def _prepare_area_replacements(
     planning_mode: Dict[str, Any] | None = None,
     split_single_aircraft_into_two: bool = False,
     handover_coord_map: Dict[int, Dict[str, Any]] | None = None,
+    branch_ownership_override: Dict[int, List[int]] | None = None,
 ) -> Optional[_PreparedReplacements]:
     planning_mode_ctx = mission_mode_context(mode=planning_mode)
     missing_entry_aircraft_ids = _missing_target_entry_aircraft_ids(target_aircraft_ids, entry_coord_map)
@@ -6281,9 +6396,16 @@ def _prepare_area_replacements(
             "passes; replacement planning skipped."
         )
         return None
-    branch_ownership_map = _branch_area_ownership_for_target(
-        planning_mode_ctx,
-        int(target_input_id),
+    branch_ownership_map = (
+        {
+            int(branch_index): [int(aircraft_id) for aircraft_id in owners]
+            for branch_index, owners in branch_ownership_override.items()
+        }
+        if isinstance(branch_ownership_override, dict) and branch_ownership_override
+        else _branch_area_ownership_for_target(
+            planning_mode_ctx,
+            int(target_input_id),
+        )
     )
     if depth_assignment_mode:
         depth_source = dict(target_input_mission)
@@ -7348,12 +7470,19 @@ def prepare_next_collab_input_replacements(
     is_type2_branch_mission, locked_type2_ownership = (
         _resolve_locked_type2_ownership_with_artifact_recovery(
             input_data=input_data,
-            target_input_id=int(target_input_id),
+            target_input_id=int(template_input_id),
             packages_by_aircraft=packages_by_aircraft,
             target_aircraft_ids=target_aircraft_ids,
             emit=emit,
         )
     )
+    if locked_type2_ownership and int(template_input_id) != int(target_input_id):
+        emit(
+            "[NEXTCOLLAB][TYPE2] reexecute branch ownership inherited "
+            f"sourceInputMissionID={int(template_input_id)} -> "
+            f"targetInputMissionID={int(target_input_id)} "
+            f"ownership={locked_type2_ownership}."
+        )
     if is_type2_branch_mission and not locked_type2_ownership:
         emit(
             "[NEXTCOLLAB][TYPE2] immutable branch state unavailable; "
@@ -7488,6 +7617,8 @@ def prepare_next_collab_input_replacements(
             prepare_timer=prepare_timer,
             id_reservation_summaries=id_reservation_summaries,
             planning_mode=planning_mode_ctx,
+            branch_ownership_override=locked_type2_ownership,
+            branch_ownership_source_input_id=int(template_input_id),
         ))
 
     return _with_prepare_metadata(_prepare_area_replacements(
@@ -7507,6 +7638,7 @@ def prepare_next_collab_input_replacements(
         id_reservation_summaries=id_reservation_summaries,
         planning_mode=planning_mode_ctx,
         split_single_aircraft_into_two=bool(split_single_aircraft_area_into_two),
+        branch_ownership_override=locked_type2_ownership,
     ))
 
 
@@ -7600,6 +7732,34 @@ def run_next_collab_replan_pipeline(
         input_data = read_json_cached(input_src, kind="InputMissionPlan")
     except Exception as exc:
         emit(f"[NEXTCOLLAB] failed to load InputMissionPlan {source_input_pkg_id}: {exc}")
+        return None
+    normalized_current_id, normalized_target_id, reexecute_alias_applied = (
+        _normalize_reexecute_next_input_ids(
+            input_data,
+            detail,
+            int(current_input_id),
+            int(target_input_id),
+        )
+    )
+    if reexecute_alias_applied:
+        emit(
+            "[NEXTCOLLAB] reexecute input alias normalized: "
+            f"currentInputMissionID={int(current_input_id)} -> {int(normalized_current_id)}, "
+            f"targetInputMissionID={int(target_input_id)} -> "
+            f"{normalized_target_id if normalized_target_id is not None else 'none'}"
+        )
+        current_input_id = int(normalized_current_id)
+        target_input_id = (
+            int(normalized_target_id) if normalized_target_id is not None else None
+        )
+        detail = dict(detail)
+        detail["currentInputMissionID"] = int(current_input_id)
+        if target_input_id is None:
+            detail.pop("targetInputMissionID", None)
+        else:
+            detail["targetInputMissionID"] = int(target_input_id)
+    if target_input_id is None or target_input_id <= 0:
+        emit("[NEXTCOLLAB] no input mission remains after the reexecute clone.")
         return None
     planning_mode_ctx = mission_mode_context(mode=resolve_mission_planning_mode(input_data))
     # Carry the real package ID so the split pipeline can read the sticky Type 2
@@ -7904,6 +8064,8 @@ def run_next_collab_replan_pipeline(
             id_reservation_summaries=id_reservation_summaries,
             planning_mode=planning_mode_ctx,
             handover_coord_map=target_handover_coord_map,
+            branch_ownership_override=locked_type2_ownership,
+            branch_ownership_source_input_id=int(target_input_id),
         )
         if prepared is None:
             return None
@@ -7938,6 +8100,7 @@ def run_next_collab_replan_pipeline(
             id_reservation_summaries=id_reservation_summaries,
             planning_mode=planning_mode_ctx,
             handover_coord_map=target_handover_coord_map,
+            branch_ownership_override=locked_type2_ownership,
         )
         if prepared is None:
             return None

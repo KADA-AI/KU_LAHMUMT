@@ -12,7 +12,7 @@ import time
 from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 import sys
 from types import ModuleType
 
@@ -85,10 +85,14 @@ from modules.mission_planning.runtime.validation.attack_continuity import (
 )
 from modules.mission_planning.pipelines.attack_los_altitude import profile_with_batch_dem
 from modules.mission_planning.pipelines.type2_boundary_guard_loop import (
+    BOUNDARY_GUARD_CONTRACT_KEYS,
+    BOUNDARY_GUARD_DEFAULT_DURATION_S,
+    apply_boundary_guard_contract,
     clear_boundary_guard_contract,
     extract_boundary_guard_contract,
     finalize_boundary_guard_flight_path_sets_in_mission_order,
     is_boundary_guard_loop,
+    validate_boundary_guard_flight_path_sets,
 )
 from modules.mission_planning.runtime.state.attack_assignment import (
     get_last_assigned_manned_id,
@@ -204,6 +208,7 @@ from modules.mission_planning.pipelines.mission_path_trim import (
     recompute_line_search_speed_from_geometry,
     scale_line_search_speed,
     sweep_cut_points,
+    sweep_progress_points,
     trim_waypoints_by_sweep_points,
 )
 from modules.mission_planning.pipelines.line_scan_remaining_adapter import (
@@ -2077,6 +2082,9 @@ def run_attack_exclusion_pipeline(
         waypoint_memory=agent_snapshot.get("last_nonzero_waypoint_by_aircraft"),
     )
     sweep_progress = load_sweep_progress()
+    # A target-specific exclusion means "ignore this newly detected target",
+    # not "cancel every engagement currently present in the plan".
+    excluded_target_ids = _attack_exclusion_requested_target_ids(ctx)
     phase_timer.mark("agent_sweep_state_load")
 
     plan_id_started = time.perf_counter()
@@ -2172,6 +2180,7 @@ def run_attack_exclusion_pipeline(
                 source_plan_id=int(source_plan_id),
                 current_coord=parallel_current_coord,
                 emit=_emit,
+                excluded_target_ids=excluded_target_ids,
             )
             recovery_by_aircraft[parallel_aircraft_id] = parallel_recovery
             if parallel_recovery is not None:
@@ -2311,7 +2320,6 @@ def run_attack_exclusion_pipeline(
     # engagement already under way against a different target: that aircraft
     # would drop its attack, the other target would stay tracked but never shot,
     # and the operator sees the attack simply vanish.
-    excluded_target_ids = _attack_exclusion_requested_target_ids(ctx)
     retained_engagement_target_ids = sorted(
         target_id
         for target_id in _actively_tracked_target_ids()
@@ -2331,6 +2339,7 @@ def run_attack_exclusion_pipeline(
             lah_exclusion_context = _resolve_global_attack_exclusion_lah_context(
                 source_plan_id=int(source_plan_id),
                 aircraft_id=int(aircraft_id),
+                excluded_target_ids=excluded_target_ids,
             )
             if lah_exclusion_context is None:
                 unchanged_aircraft.append(aircraft_id)
@@ -2351,6 +2360,7 @@ def run_attack_exclusion_pipeline(
                     log_prefix="[ATTACK-EXCLUDE][LAH-RETURN]",
                     exclude_all_target_missions=True,
                     retained_target_ids=retained_engagement_target_ids,
+                    excluded_target_ids=excluded_target_ids,
                 )
             except Exception as exc:
                 _emit(
@@ -2389,6 +2399,7 @@ def run_attack_exclusion_pipeline(
                 source_plan_id=int(source_plan_id),
                 current_coord=current_coord,
                 emit=_emit,
+                excluded_target_ids=excluded_target_ids,
             )
         if recovery is not None:
             update = _take_parallel_update(int(aircraft_id))
@@ -2499,6 +2510,7 @@ def run_attack_exclusion_pipeline(
             source_plan_id=int(source_plan_id),
             emit=_emit,
             mutate_state=False,
+            excluded_target_ids=excluded_target_ids,
         ):
             deferred_tracking_clear_aircraft_ids.add(int(aircraft_id))
         _emit(
@@ -2583,11 +2595,11 @@ def run_attack_exclusion_pipeline(
         f"elapsedMs={_elapsed_ms_detail(fresh_id_started):.3f})."
     )
 
-    # An exclusion plan is defined by having no tracking in it.  The per-aircraft
-    # detach above only fires when the tracking assignment's attack_plan_id
-    # matches the plan being excluded from, so tracking inherited from an earlier
-    # replan could survive.  Sweep the finished plan and drop whatever is left.
-    stripped_tracking = _strip_tracking_from_exclusion_plan(new_plan_data, emit=_emit)
+    # Remove tracking for the target being excluded. Tracking of a different
+    # target is a separate live engagement and must survive this option.
+    stripped_tracking = _strip_tracking_from_exclusion_plan(new_plan_data, emit=_emit,
+        excluded_target_ids=excluded_target_ids,
+    )
     if stripped_tracking:
         result_payload["result"]["strippedTrackingMissions"] = stripped_tracking
 
@@ -5640,12 +5652,28 @@ def _resolve_global_attack_exclusion_lah_context(
     *,
     source_plan_id: int,
     aircraft_id: int,
+    excluded_target_ids: Optional[Set[int]] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Return all target-bound LAH attack/support missions on the source plan."""
+    """Return LAH attack/support missions that this exclusion actually removes.
+
+    A target-specific exclusion can be generated from a source plan that still
+    contains another, already committed engagement.  That other engagement is
+    not a LAH return candidate.  Treating every target-bound LAH mission as a
+    candidate makes the later retention filter remove nothing and incorrectly
+    reports ``manned_return_generation_failed`` for otherwise unchanged LAHs.
+
+    An empty/omitted target set retains the legacy whole-package exclusion
+    behaviour and selects every target-bound LAH branch.
+    """
 
     context = _load_attack_exclusion_plan_context(int(source_plan_id), int(aircraft_id))
     if not isinstance(context, dict):
         return None
+    requested_target_ids = {
+        int(target_id)
+        for target_id in (excluded_target_ids or set())
+        if _to_int(target_id) is not None and int(_to_int(target_id)) > 0
+    }
     target_ids: List[int] = []
     current_input_id: Optional[int] = None
     for mission in context.get("individualMissionList") or []:
@@ -5659,6 +5687,8 @@ def _resolve_global_attack_exclusion_lah_context(
         mission_type = _to_int(info.get("individualMissionType"))
         target_id = _to_int(info.get("targetID") or info.get("targetId"))
         if mission_type not in {2, 9} or target_id is None or target_id <= 0:
+            continue
+        if requested_target_ids and int(target_id) not in requested_target_ids:
             continue
         if int(target_id) not in target_ids:
             target_ids.append(int(target_id))
@@ -6058,17 +6088,24 @@ def _strip_tracking_from_exclusion_plan(
     plan_data: Dict[str, Any],
     *,
     emit: LogCallback,
+    excluded_target_ids: Optional[Set[int]] = None,
 ) -> List[Dict[str, Any]]:
-    """Remove any surviving target-tracking mission from an exclusion plan.
+    """Remove surviving tracking only for the target(s) being excluded.
 
     ``_resolve_attack_tracking_recovery`` only detaches tracking whose
     assignment names the plan being excluded from; tracking carried over from an
-    earlier replan slips through and lands in a plan whose entire purpose is to
-    have none.  This is the backstop: it reads the finished plan and drops every
-    individual mission whose waypoints film in tracking mode.  IDs and ordering
-    of the surviving missions are untouched.
+    earlier replan can slip through. This is the backstop for the requested
+    target, while tracking of any other target remains a separate live
+    engagement. IDs and ordering of the surviving missions are untouched.
+
+    An empty/omitted target set preserves the legacy whole-package exclusion.
     """
 
+    requested_target_ids = {
+        int(target_id)
+        for target_id in (excluded_target_ids or set())
+        if _to_int(target_id) is not None and int(_to_int(target_id)) > 0
+    }
     removed: List[Dict[str, Any]] = []
     for entry in plan_data.get("aircraftList") or []:
         if not isinstance(entry, dict):
@@ -6091,11 +6128,18 @@ def _strip_tracking_from_exclusion_plan(
             if not isinstance(mission, dict) or not _mission_films_in_tracking_mode(mission):
                 kept.append(mission)
                 continue
+            mission_target_ids = _mission_tracking_target_ids(mission)
+            if requested_target_ids and not (
+                mission_target_ids & requested_target_ids
+            ):
+                kept.append(mission)
+                continue
             dropped_here.append(
                 {
                     "aircraftID": int(aircraft_id),
                     "individualMissionID": _to_int(mission.get("individualMissionID")),
                     "pathID": _to_int(mission.get("pathID")),
+                    "targetIDs": sorted(mission_target_ids),
                 }
             )
         if not dropped_here:
@@ -6120,6 +6164,57 @@ def _strip_tracking_from_exclusion_plan(
             f"(aircraft={aircraft_id}, missions={[row['individualMissionID'] for row in dropped_here]})."
         )
     return removed
+
+
+def _mission_tracking_target_ids(mission: Dict[str, Any]) -> Set[int]:
+    """Collect target IDs declared by a tracking mission and its waypoints."""
+
+    target_ids: Set[int] = set()
+    for container in (
+        mission.get("relatedMission"),
+        mission.get("individualMissionInfo"),
+    ):
+        if not isinstance(container, dict):
+            continue
+        target_id = _to_int(
+            container.get("targetID")
+            or container.get("targetId")
+            or container.get("target_id")
+        )
+        if target_id is not None and target_id > 0:
+            target_ids.add(int(target_id))
+
+    path_id = _to_int(mission.get("pathID"))
+    if path_id is None or path_id <= 0:
+        return target_ids
+    try:
+        path_data = read_json_cached(
+            db_paths.get_db_subpath("FlightPath", f"{int(path_id)}.json"),
+            kind="FlightPath",
+        )
+    except Exception:
+        return target_ids
+    for key in ("waypointList", "uavWaypointList", "lahWaypointList"):
+        rows = path_data.get(key)
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            filming = row.get("filmingProperty") or row.get("filming")
+            if not isinstance(filming, dict):
+                continue
+            auto_tracking = filming.get("autoTracking")
+            if not isinstance(auto_tracking, dict):
+                continue
+            target_id = _to_int(
+                auto_tracking.get("targetID")
+                or auto_tracking.get("targetId")
+                or auto_tracking.get("target_id")
+            )
+            if target_id is not None and target_id > 0:
+                target_ids.add(int(target_id))
+    return target_ids
 
 
 def _mission_films_in_tracking_mode(mission: Dict[str, Any]) -> bool:
@@ -6156,9 +6251,23 @@ def _resolve_attack_tracking_recovery(
     source_plan_id: Optional[int],
     current_coord: Optional[Dict[str, Any]],
     emit: LogCallback,
+    excluded_target_ids: Optional[Set[int]] = None,
 ) -> Optional[Dict[str, Any]]:
     assignment = get_tracking_assignment(aircraft_id)
     if not isinstance(assignment, dict) or not bool(assignment.get("active")):
+        return None
+
+    requested_target_ids = {
+        int(target_id)
+        for target_id in (excluded_target_ids or set())
+        if _to_int(target_id) is not None and int(_to_int(target_id)) > 0
+    }
+    tracked_target_id = _to_int(
+        assignment.get("target_id")
+        or assignment.get("targetID")
+        or assignment.get("targetId")
+    )
+    if requested_target_ids and tracked_target_id not in requested_target_ids:
         return None
 
     attack_plan_id = _to_int(assignment.get("attack_plan_id"))
@@ -6200,9 +6309,23 @@ def _clear_attack_tracking_assignment_if_attached_to_plan(
     source_plan_id: Optional[int],
     emit: LogCallback,
     mutate_state: bool = True,
+    excluded_target_ids: Optional[Set[int]] = None,
 ) -> bool:
     assignment = get_tracking_assignment(aircraft_id)
     if not isinstance(assignment, dict) or not bool(assignment.get("active")):
+        return False
+
+    requested_target_ids = {
+        int(target_id)
+        for target_id in (excluded_target_ids or set())
+        if _to_int(target_id) is not None and int(_to_int(target_id)) > 0
+    }
+    tracked_target_id = _to_int(
+        assignment.get("target_id")
+        or assignment.get("targetID")
+        or assignment.get("targetId")
+    )
+    if requested_target_ids and tracked_target_id not in requested_target_ids:
         return False
 
     attack_plan_id = _to_int(assignment.get("attack_plan_id"))
@@ -6386,6 +6509,423 @@ def _load_attack_cached_fp_data(
 
     fp_payloads[int(path_id)] = fp_data
     return fp_data
+
+
+def _boundary_guard_contract_value_matches(
+    key: str,
+    actual: Any,
+    expected: Any,
+) -> bool:
+    if key == "boundaryGuardDurationS":
+        actual_number = _to_float(actual)
+        expected_number = _to_float(expected)
+        return bool(
+            actual_number is not None
+            and expected_number is not None
+            and math.isclose(
+                float(actual_number),
+                float(expected_number),
+                rel_tol=0.0,
+                abs_tol=1e-9,
+            )
+        )
+    return actual == expected
+
+
+def _reused_boundary_guard_set_error(
+    rows: List[Dict[str, Any]],
+    *,
+    set_id: str,
+    duration_s: float,
+) -> Optional[str]:
+    """Return why a reused guard set is incompatible, without mutating it."""
+
+    if not rows:
+        return None
+    expected_sequences = list(range(1, len(rows) + 1))
+    actual_sequences: List[int] = []
+    paths: List[Dict[str, Any]] = []
+    for row in rows:
+        mission = row.get("mission")
+        path = row.get("path")
+        if not isinstance(mission, dict) or not isinstance(path, dict):
+            return "mission/path payload is missing"
+        mission_contract = extract_boundary_guard_contract(
+            mission,
+            mission.get("individualMissionInfo"),
+        )
+        path_contract = extract_boundary_guard_contract(path)
+        if not is_boundary_guard_loop(path_contract):
+            return f"path {row.get('pathID')} has no boundary contract"
+        if str(path_contract.get("boundaryGuardSetID") or "").strip() != str(set_id):
+            return f"path {row.get('pathID')} belongs to another boundary set"
+        if not _boundary_guard_contract_value_matches(
+            "boundaryGuardDurationS",
+            path_contract.get("boundaryGuardDurationS"),
+            duration_s,
+        ):
+            return (
+                f"path {row.get('pathID')} duration "
+                f"{path_contract.get('boundaryGuardDurationS')!r} != {duration_s:g}"
+            )
+        for key in BOUNDARY_GUARD_CONTRACT_KEYS:
+            if key not in mission_contract or key not in path_contract:
+                return f"mission/path {row.get('pathID')} is missing {key}"
+            if not _boundary_guard_contract_value_matches(
+                key,
+                mission_contract.get(key),
+                path_contract.get(key),
+            ):
+                return f"mission/path {row.get('pathID')} disagrees on {key}"
+        mission_info = mission.get("individualMissionInfo")
+        if isinstance(mission_info, dict):
+            for key in BOUNDARY_GUARD_CONTRACT_KEYS:
+                if key not in mission_info or not _boundary_guard_contract_value_matches(
+                    key,
+                    mission_info.get(key),
+                    path_contract.get(key),
+                ):
+                    return f"mission info/path {row.get('pathID')} disagrees on {key}"
+        sequence = _to_int(path_contract.get("boundaryGuardSequence"))
+        actual_sequences.append(int(sequence or 0))
+        paths.append(path)
+
+    if actual_sequences != expected_sequences:
+        return f"mission order sequences {actual_sequences} != {expected_sequences}"
+    try:
+        validate_boundary_guard_flight_path_sets(paths)
+    except ValueError as exc:
+        return str(exc)
+    return None
+
+
+def _repair_reused_boundary_guard_artifacts(
+    *,
+    source_plan_data: Dict[str, Any],
+    candidate_plan_data: Dict[str, Any],
+    reused_aircraft_ids: Iterable[int],
+    source_artifact_cache: Dict[str, Any],
+    now_ms: int,
+    emit: Callable[[str], None],
+    id_reservation: Optional[ReplanIdReservation] = None,
+) -> Dict[str, Any]:
+    """Repair incompatible guard loops without changing their source files.
+
+    A currently executing UAV identifies its progress by mission and waypoint
+    IDs. Those IDs and every isDone flag are intentionally retained. The
+    package ID and affected guard path IDs alone become fresh so the candidate
+    can carry the current contract without rewriting historical artifacts.
+    """
+
+    source_entries: Dict[int, Dict[str, Any]] = {}
+    for entry in source_plan_data.get("aircraftList") or []:
+        if not isinstance(entry, dict):
+            continue
+        aircraft_id = _to_int(entry.get("aircraftID"))
+        if aircraft_id is not None:
+            source_entries[int(aircraft_id)] = entry
+    candidate_entries: Dict[int, Dict[str, Any]] = {}
+    for entry in candidate_plan_data.get("aircraftList") or []:
+        if not isinstance(entry, dict):
+            continue
+        aircraft_id = _to_int(entry.get("aircraftID"))
+        if aircraft_id is not None:
+            candidate_entries[int(aircraft_id)] = entry
+
+    duration_s = _to_float(
+        get_runtime_float(
+            "type2_boundary_guard_duration_s",
+            BOUNDARY_GUARD_DEFAULT_DURATION_S,
+        )
+    )
+    if duration_s is None or float(duration_s) <= 0.0:
+        duration_s = float(BOUNDARY_GUARD_DEFAULT_DURATION_S)
+    duration_s = float(duration_s)
+
+    reused_uav_ids: set[int] = set()
+    for value in reused_aircraft_ids:
+        aircraft_id = _to_int(value)
+        if aircraft_id is not None and int(aircraft_id) > 3:
+            reused_uav_ids.add(int(aircraft_id))
+
+    repair_packages: List[Dict[str, Any]] = []
+    compatible_set_count = 0
+    inspected_set_count = 0
+    for aircraft_id in sorted(reused_uav_ids):
+        source_entry = source_entries.get(int(aircraft_id))
+        candidate_entry = candidate_entries.get(int(aircraft_id))
+        if not isinstance(source_entry, dict) or not isinstance(candidate_entry, dict):
+            continue
+        source_imp_id = _to_int(source_entry.get("individualMissionPackageID"))
+        candidate_imp_id = _to_int(candidate_entry.get("individualMissionPackageID"))
+        # A later collaborative merge may replace a UAV initially classified
+        # as reusable. Only exact source-package reuse needs this migration.
+        if (
+            source_imp_id is None
+            or candidate_imp_id is None
+            or int(source_imp_id) != int(candidate_imp_id)
+        ):
+            continue
+
+        imp_data = _load_attack_cached_imp_data(
+            source_artifact_cache,
+            int(source_imp_id),
+            emit=emit,
+        )
+        if not isinstance(imp_data, dict):
+            raise RuntimeError(
+                f"reused UAV {aircraft_id} IMP {source_imp_id} could not be loaded"
+            )
+        missions = imp_data.get("individualMissionList")
+        if not isinstance(missions, list):
+            raise RuntimeError(
+                f"reused UAV {aircraft_id} IMP {source_imp_id} mission list is invalid"
+            )
+
+        rows_by_set: Dict[str, List[Dict[str, Any]]] = {}
+        for mission_index, mission in enumerate(missions):
+            if not isinstance(mission, dict):
+                continue
+            mission_info = mission.get("individualMissionInfo")
+            mission_contract = extract_boundary_guard_contract(
+                mission,
+                mission_info,
+            )
+            mission_has_guard_metadata = any(
+                key in mission
+                or (isinstance(mission_info, dict) and key in mission_info)
+                for key in BOUNDARY_GUARD_CONTRACT_KEYS
+            )
+            path_id = _to_int(mission.get("pathID"))
+            if path_id is None or int(path_id) <= 0:
+                if mission_has_guard_metadata:
+                    raise RuntimeError(
+                        f"reused UAV {aircraft_id} IMP {source_imp_id} has a "
+                        "boundary mission with an invalid pathID"
+                    )
+                # Some historical IMPs contain pathless bookkeeping rows.
+                # They are unrelated to the boundary-loop compatibility pass.
+                continue
+            path_data = _load_attack_cached_fp_data(
+                source_artifact_cache,
+                int(path_id),
+                emit=emit,
+            )
+            if not isinstance(path_data, dict):
+                raise RuntimeError(
+                    f"reused UAV {aircraft_id} FlightPath {path_id} could not be loaded"
+                )
+            path_contract = extract_boundary_guard_contract(path_data)
+            combined_contract = extract_boundary_guard_contract(
+                mission,
+                mission.get("individualMissionInfo"),
+                path_data,
+            )
+            if not is_boundary_guard_loop(combined_contract):
+                if (
+                    mission_contract.get("boundaryGuardLoop") is True
+                    or path_contract.get("boundaryGuardLoop") is True
+                ):
+                    raise RuntimeError(
+                        f"reused UAV {aircraft_id} FlightPath {path_id} has "
+                        "boundary-loop metadata without a set ID"
+                    )
+                continue
+            set_id = str(
+                combined_contract.get("boundaryGuardSetID") or ""
+            ).strip()
+            rows_by_set.setdefault(set_id, []).append(
+                {
+                    "missionIndex": int(mission_index),
+                    "mission": mission,
+                    "pathID": int(path_id),
+                    "path": path_data,
+                }
+            )
+
+        invalid_sets: Dict[str, Dict[str, Any]] = {}
+        for set_id, rows in rows_by_set.items():
+            inspected_set_count += 1
+            error = _reused_boundary_guard_set_error(
+                rows,
+                set_id=set_id,
+                duration_s=duration_s,
+            )
+            if error is None:
+                compatible_set_count += 1
+                continue
+            invalid_sets[set_id] = {"rows": rows, "reason": error}
+
+        if invalid_sets:
+            repair_packages.append(
+                {
+                    "aircraftID": int(aircraft_id),
+                    "sourceImpID": int(source_imp_id),
+                    "candidateEntry": candidate_entry,
+                    "sourceImp": imp_data,
+                    "invalidSets": invalid_sets,
+                }
+            )
+
+    if not repair_packages:
+        if inspected_set_count:
+            emit(
+                "[ATTACK][REUSE][BOUNDARY] Reused guard sets satisfy the current "
+                f"contract; source artifacts retained (sets={inspected_set_count})."
+            )
+        return {
+            "write_entries": [],
+            "inspectedSetCount": int(inspected_set_count),
+            "compatibleSetCount": int(compatible_set_count),
+            "repairedSetCount": 0,
+            "repairedAircraftIDs": [],
+            "repairs": [],
+        }
+
+    repair_path_counts = {
+        int(package["aircraftID"]): sum(
+            len(set_row.get("rows") or [])
+            for set_row in package["invalidSets"].values()
+        )
+        for package in repair_packages
+    }
+    reservation = id_reservation or ReplanIdReservation.reserve(
+        imp_count=len(repair_packages),
+        individual_count=0,
+        path_count_by_aircraft=repair_path_counts,
+        waypoint_count=0,
+    )
+
+    pending_plan_updates: List[Tuple[Dict[str, Any], int]] = []
+    write_entries: List[Tuple[Path, Dict[str, Any]]] = []
+    repair_summaries: List[Dict[str, Any]] = []
+    for package in repair_packages:
+        aircraft_id = int(package["aircraftID"])
+        source_imp_id = int(package["sourceImpID"])
+        invalid_sets = dict(package["invalidSets"])
+        new_imp_id = int(reservation.next_imp())
+        imp_copy = deepcopy(package["sourceImp"])
+        imp_copy["individualMissionPackageID"] = int(new_imp_id)
+        imp_copy["aircraftID"] = int(aircraft_id)
+        imp_copy["timestamp"] = int(now_ms)
+        mission_copies = imp_copy.get("individualMissionList")
+        if not isinstance(mission_copies, list):
+            raise RuntimeError(
+                f"reused UAV {aircraft_id} cloned IMP mission list is invalid"
+            )
+
+        affected_missions: List[Dict[str, Any]] = []
+        affected_paths: List[Dict[str, Any]] = []
+        affected_path_entries: List[Tuple[Path, Dict[str, Any]]] = []
+        path_id_rows: List[Dict[str, int]] = []
+        source_rows_by_index = {
+            int(row["missionIndex"]): (set_id, row)
+            for set_id, set_row in invalid_sets.items()
+            for row in (set_row.get("rows") or [])
+        }
+        for mission_index, mission_copy in enumerate(mission_copies):
+            indexed = source_rows_by_index.get(int(mission_index))
+            if indexed is None:
+                continue
+            set_id, source_row = indexed
+            if not isinstance(mission_copy, dict):
+                raise RuntimeError(
+                    f"reused boundary set {set_id} has a non-object mission"
+                )
+            source_path_id = int(source_row["pathID"])
+            new_path_id = int(reservation.next_path(int(aircraft_id)))
+            preserved_mission_id = _to_int(mission_copy.get("individualMissionID"))
+            if preserved_mission_id is None or int(preserved_mission_id) <= 0:
+                raise RuntimeError(
+                    f"reused boundary set {set_id} has an invalid mission ID"
+                )
+            mission_copy["pathID"] = int(new_path_id)
+            seed_contract = {
+                "boundaryGuardLoop": True,
+                "boundaryGuardLoopVersion": 1,
+                "boundaryGuardSetID": str(set_id),
+                "boundaryGuardDurationS": float(duration_s),
+            }
+            apply_boundary_guard_contract(
+                mission_copy,
+                seed_contract,
+                include_individual_mission_info=True,
+            )
+
+            path_copy = deepcopy(source_row["path"])
+            path_copy["pathID"] = int(new_path_id)
+            path_copy["aircraftID"] = int(aircraft_id)
+            path_copy["individualMissionID"] = int(preserved_mission_id)
+            path_copy["timestamp"] = int(now_ms)
+            apply_boundary_guard_contract(path_copy, seed_contract)
+            affected_missions.append(mission_copy)
+            affected_paths.append(path_copy)
+            path_dest = db_paths.get_db_subpath(
+                "FlightPath",
+                f"{int(new_path_id)}.json",
+            )
+            affected_path_entries.append((path_dest, path_copy))
+            path_id_rows.append(
+                {
+                    "sourcePathID": int(source_path_id),
+                    "pathID": int(new_path_id),
+                }
+            )
+
+        finalize_boundary_guard_flight_path_sets_in_mission_order(
+            affected_missions,
+            affected_paths,
+            strict=True,
+        )
+        validate_boundary_guard_flight_path_sets(affected_paths)
+        imp_dest = db_paths.get_db_subpath(
+            "IndividualMissionPlan",
+            f"{int(new_imp_id)}.json",
+        )
+        write_entries.append((imp_dest, imp_copy))
+        write_entries.extend(affected_path_entries)
+        pending_plan_updates.append((package["candidateEntry"], int(new_imp_id)))
+        invalid_set_ids = sorted(invalid_sets)
+        repair_summaries.append(
+            {
+                "aircraftID": int(aircraft_id),
+                "sourceIndividualMissionPackageID": int(source_imp_id),
+                "individualMissionPackageID": int(new_imp_id),
+                "setIDs": invalid_set_ids,
+                "reasons": {
+                    set_id: str(invalid_sets[set_id].get("reason") or "")
+                    for set_id in invalid_set_ids
+                },
+                "pathIDs": path_id_rows,
+            }
+        )
+
+    # Mutate the candidate only after every clone and finalizer succeeded.
+    for candidate_entry, new_imp_id in pending_plan_updates:
+        candidate_entry["individualMissionPackageID"] = int(new_imp_id)
+    for summary in repair_summaries:
+        emit(
+            "[ATTACK][REUSE][BOUNDARY] Legacy guard contract repaired with "
+            "fresh artifacts; source left unchanged "
+            f"(aircraft={summary['aircraftID']}, "
+            f"sourceIMP={summary['sourceIndividualMissionPackageID']}, "
+            f"newIMP={summary['individualMissionPackageID']}, "
+            f"sets={summary['setIDs']}, reasons={summary['reasons']})."
+        )
+    return {
+        "write_entries": write_entries,
+        "inspectedSetCount": int(inspected_set_count),
+        "compatibleSetCount": int(compatible_set_count),
+        "repairedSetCount": sum(
+            len(package["invalidSets"])
+            for package in repair_packages
+        ),
+        "repairedAircraftIDs": [
+            int(package["aircraftID"])
+            for package in repair_packages
+        ],
+        "repairs": repair_summaries,
+    }
 
 
 def _load_attack_cached_waypoint_ids(
@@ -6926,15 +7466,59 @@ def _attack_completion_boundary_follow_up_sources(
     missions: List[Dict[str, Any]],
     *,
     current_input_id: int,
+    preserve_boundary_guard_set_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Drop only stale current-input artifacts; never delete future inputs."""
 
-    return [
-        mission
-        for mission in missions
-        if isinstance(mission, dict)
-        and _extract_related_input_mission_id(mission) != int(current_input_id)
-    ]
+    preserved_set_id = str(preserve_boundary_guard_set_id or "").strip()
+    kept: List[Dict[str, Any]] = []
+    for mission in missions:
+        if not isinstance(mission, dict):
+            continue
+        mission_set_id = str(
+            extract_boundary_guard_contract(
+                mission,
+                mission.get("individualMissionInfo"),
+            ).get("boundaryGuardSetID")
+            or ""
+        ).strip()
+        if preserved_set_id and mission_set_id == preserved_set_id:
+            kept.append(mission)
+            continue
+        if _extract_related_input_mission_id(mission) != int(current_input_id):
+            kept.append(mission)
+    return kept
+
+
+def _pending_boundary_guard_follow_up_sources(
+    missions: Any,
+    *,
+    target_index: Optional[int],
+    boundary_guard_set_id: Optional[str],
+) -> List[Dict[str, Any]]:
+    """Return unflown later children from the active boundary owner set."""
+
+    set_id = str(boundary_guard_set_id or "").strip()
+    if not set_id or not isinstance(missions, list) or target_index is None:
+        return []
+    resolved_target_index = int(target_index)
+    if resolved_target_index < 0:
+        return []
+    start_index = resolved_target_index + 1
+    pending: List[Dict[str, Any]] = []
+    for mission in missions[start_index:]:
+        if not isinstance(mission, dict) or bool(mission.get("isDone")):
+            continue
+        mission_set_id = str(
+            extract_boundary_guard_contract(
+                mission,
+                mission.get("individualMissionInfo"),
+            ).get("boundaryGuardSetID")
+            or ""
+        ).strip()
+        if mission_set_id == set_id:
+            pending.append(mission)
+    return pending
 
 
 def _count_attack_follow_up_clone_missions(
@@ -9310,6 +9894,50 @@ def _apply_attack_plan_overrides(
             final_collab_plan_update_started,
             collabInputCount=len(collaborative_resume_by_input),
         )
+
+    reused_guard_started = time.perf_counter()
+    try:
+        reused_guard_repair = _repair_reused_boundary_guard_artifacts(
+            source_plan_data=plan_data,
+            candidate_plan_data=new_plan_data,
+            reused_aircraft_ids=reused_unchanged_uav_ids,
+            source_artifact_cache=source_artifact_cache,
+            now_ms=int(now_ms),
+            emit=emit,
+        )
+        reused_guard_entries = [
+            (Path(path), payload)
+            for path, payload in (reused_guard_repair.get("write_entries") or [])
+            if isinstance(payload, dict)
+        ]
+        deferred_descriptor_write_entries.extend(reused_guard_entries)
+    except Exception as exc:
+        _record_phase(
+            "reused_boundary_guard_compatibility",
+            reused_guard_started,
+            status="failed",
+            error=str(exc),
+        )
+        _set_override_failure(
+            "attack_validation_failed",
+            attack_failure_notice("attack_validation_failed"),
+        )
+        emit(
+            "[ATTACK][REUSE][BOUNDARY][ERR] Compatibility repair failed "
+            f"before attack-plan validation: {exc}"
+        )
+        return None
+    _record_phase(
+        "reused_boundary_guard_compatibility",
+        reused_guard_started,
+        inspectedSetCount=int(reused_guard_repair.get("inspectedSetCount") or 0),
+        compatibleSetCount=int(reused_guard_repair.get("compatibleSetCount") or 0),
+        repairedSetCount=int(reused_guard_repair.get("repairedSetCount") or 0),
+        repairedAircraftIDs=list(
+            reused_guard_repair.get("repairedAircraftIDs") or []
+        ),
+        generatedArtifactCount=len(reused_guard_entries),
+    )
 
     continuity_imp_payloads = [
         payload
@@ -13041,6 +13669,7 @@ def _split_done_resume_path(
     synchronize_line_search_to_geometry: bool = False,
     preserve_line_carrier_coordinates: bool = False,
     apply_line_activation_anchor: bool = False,
+    exact_sweep_point_progress: bool = False,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Optional[int]]:
     split_started_total = time.perf_counter()
     waypoints = list(source_fp_data.get("waypointList") or [])
@@ -13309,16 +13938,23 @@ def _split_done_resume_path(
         _normalize_coordinate(replan_coordinate)
         or _normalize_coordinate(resume_trim_anchor_coord)
     )
-    raw_cut_points = sweep_cut_points(
-        progress_entry,
-        default_buffer_seconds=DEFAULT_SWEEP_SPLIT_LOOKAHEAD_SECONDS,
-    )
+    if exact_sweep_point_progress and isinstance(progress_entry, dict):
+        # Type-2 branches own explicit filming geometry.  Once the UAV diverts
+        # to a target, a time/lookahead buffer is not guaranteed to have been
+        # photographed, so trimming it would create a permanent coverage gap.
+        raw_cut_points = sweep_progress_points(progress_entry)
+    else:
+        raw_cut_points = sweep_cut_points(
+            progress_entry,
+            default_buffer_seconds=DEFAULT_SWEEP_SPLIT_LOOKAHEAD_SECONDS,
+        )
     cut_points = max(0, int(raw_cut_points) - int(done_sweep_points))
     _record_split_stage(
         "resolve_sweep_cut_points",
         cut_started,
         pathID=artifacts.path_id,
         hasProgressEntry=isinstance(progress_entry, dict),
+        exactSweepPointProgress=bool(exact_sweep_point_progress),
         rawCutPoints=raw_cut_points,
         doneSweepPoints=done_sweep_points,
         cutPoints=cut_points,
@@ -13855,6 +14491,9 @@ def _build_uav_attack_tracking_package(
             # carrier coordinate and choose the activation point at post-attack
             # release time instead of freezing an attack-time prediction.
             apply_line_activation_anchor=False,
+            exact_sweep_point_progress=bool(
+                source_boundary_guard_set_id or reuse_directed_line_carrier
+            ),
         )
         if type2_line_completion_confirmed:
             emit(
@@ -13898,6 +14537,16 @@ def _build_uav_attack_tracking_package(
             "[ATTACK][UAV] Done-reference mission skipped for tracking branch "
             f"(aircraft={descriptor['aircraft_id']}, removedWaypointID={removed_wp_id})."
         )
+    if source_boundary_guard_set_id:
+        # A completed prefix is retained only as history.  It must not be
+        # counted or linked as an executable child in the rebuilt remainder.
+        if done_fp_data is not None:
+            clear_boundary_guard_contract(done_fp_data)
+        if mission_done is not None:
+            clear_boundary_guard_contract(
+                mission_done,
+                include_individual_mission_info=True,
+            )
 
     resume_fp_data = deepcopy(fp_data)
     resume_fp_data["waypointList"] = resume_waypoints
@@ -13916,8 +14565,13 @@ def _build_uav_attack_tracking_package(
             TYPE2_SELF_RELIANCE_RETURN_LINE,
         }
     )
+    pending_boundary_guard_follow_ups = _pending_boundary_guard_follow_up_sources(
+        imp_data.get("individualMissionList"),
+        target_index=target_index,
+        boundary_guard_set_id=source_boundary_guard_set_id,
+    )
     completion_boundary_hold = False
-    if not resume_waypoints:
+    if not resume_waypoints and not pending_boundary_guard_follow_ups:
         hold_waypoint = _build_uav_attack_completion_hold_waypoint(
             fp_data,
             waypoint_id=id_reservation.next_waypoint(),
@@ -13954,14 +14608,25 @@ def _build_uav_attack_tracking_package(
                 "but execution-blocked until the next collaborative handoff "
                 f"(aircraft={descriptor['aircraft_id']}, inputMissionID={input_mission_id})."
             )
+    elif not resume_waypoints:
+        emit(
+            "[ATTACK][UAV] Current boundary child is complete, but later owner "
+            "children remain; synthetic hold skipped "
+            f"(aircraft={descriptor['aircraft_id']}, set={source_boundary_guard_set_id}, "
+            f"remainingChildren={len(pending_boundary_guard_follow_ups)})."
+        )
     has_resume = bool(resume_waypoints)
     follow_up_missions: List[Dict[str, Any]] = []
     follow_up_paths: List[Tuple[Path, Dict[str, Any]]] = []
-    effective_done_input_ids = (
+    effective_done_input_ids = set(
         done_input_ids
         if done_input_ids is not None
         else _load_done_input_ids_for_plan(int(artifacts.source_plan_id))
     )
+    if pending_boundary_guard_follow_ups:
+        # An input-level completion marker must not erase later children from
+        # the still-active boundary owner set.
+        effective_done_input_ids.discard(int(input_mission_id))
     source_mission_list = imp_data.get("individualMissionList")
     if (
         isinstance(source_mission_list, list)
@@ -13978,6 +14643,7 @@ def _build_uav_attack_tracking_package(
             follow_up_sources = _attack_completion_boundary_follow_up_sources(
                 follow_up_sources,
                 current_input_id=int(input_mission_id),
+                preserve_boundary_guard_set_id=source_boundary_guard_set_id,
             )
         follow_up_artifacts = _collect_attack_follow_up_replan_artifacts(
             missions=follow_up_sources,
@@ -14312,6 +14978,16 @@ def _build_uav_attack_resume_package(
     [resume_individual_id] = id_reservation.next_individuals(1)
 
     original_entry = deepcopy(target_mission_template)
+    source_boundary_guard_contract = extract_boundary_guard_contract(
+        original_entry,
+        original_entry.get("individualMissionInfo"),
+        fp_data,
+    )
+    source_boundary_guard_set_id = (
+        str(source_boundary_guard_contract.get("boundaryGuardSetID") or "").strip()
+        if is_boundary_guard_loop(source_boundary_guard_contract)
+        else ""
+    )
     base_rel_block = dict(original_entry.get("relatedMission") or {})
     input_mission_id = (
         _to_int(base_rel_block.get("inputMissionID"))
@@ -14383,6 +15059,9 @@ def _build_uav_attack_resume_package(
         # by an order of magnitude.  Keep every directed carrier fixed; the
         # ordinary entry/replan waypoint handles continuity from the live UAV.
         apply_line_activation_anchor=False,
+        exact_sweep_point_progress=bool(
+            source_boundary_guard_set_id or reuse_directed_line_carrier
+        ),
     )
     split_timing_summary = {
         "elapsedMs": _elapsed_ms_detail(split_started),
@@ -14409,6 +15088,17 @@ def _build_uav_attack_resume_package(
             )
             mission_done["individualMissionID"] = preserved_individual_id
     done_fp_data["waypointList"] = done_waypoints
+    if source_boundary_guard_set_id:
+        # The done reference is diagnostic history, not an executable child of
+        # the remaining boundary cycle.  Leaving the source contract attached
+        # makes the freshly split 4->2/5->3 subset look like N+1 children and
+        # can also route the cycle back through already-flown geometry.
+        clear_boundary_guard_contract(done_fp_data)
+        if mission_done is not None:
+            clear_boundary_guard_contract(
+                mission_done,
+                include_individual_mission_info=True,
+            )
 
     resume_fp_data = deepcopy(fp_data)
     resume_fp_data["waypointList"] = resume_waypoints
@@ -14419,8 +15109,13 @@ def _build_uav_attack_resume_package(
     resume_fp_data["aircraftID"] = descriptor["aircraft_id"]
     resume_fp_data["individualMissionID"] = resume_individual_id
 
+    pending_boundary_guard_follow_ups = _pending_boundary_guard_follow_up_sources(
+        imp_data.get("individualMissionList"),
+        target_index=target_index,
+        boundary_guard_set_id=source_boundary_guard_set_id,
+    )
     completion_boundary_hold = False
-    if not resume_waypoints:
+    if not resume_waypoints and not pending_boundary_guard_follow_ups:
         hold_waypoint = _build_uav_attack_completion_hold_waypoint(
             fp_data,
             waypoint_id=id_reservation.next_waypoint(),
@@ -14443,20 +15138,37 @@ def _build_uav_attack_resume_package(
             mission_info["SPEED"] = float(_UAV_ATTACK_COMPLETION_HOLD_SPEED_MPS)
             mission_resume["individualMissionInfo"] = mission_info
             completion_boundary_hold = True
+            if source_boundary_guard_set_id:
+                # A synthetic loiter is not an AREA child.  It must never keep
+                # stale source sequence/count/cycle metadata.
+                clear_boundary_guard_contract(
+                    mission_resume,
+                    include_individual_mission_info=True,
+                )
+                clear_boundary_guard_contract(resume_fp_data)
             emit(
                 "[ATTACK][UAV] Current collaborative sweep has no remaining geometry; "
                 "inserted final capture-point loiter; future input missions will be retained "
                 "but execution-blocked until the next collaborative handoff "
                 f"(aircraft={descriptor['aircraft_id']}, inputMissionID={input_mission_id})."
             )
+    elif not resume_waypoints:
+        emit(
+            "[ATTACK][UAV] Current boundary child is complete, but later owner "
+            "children remain; synthetic hold skipped "
+            f"(aircraft={descriptor['aircraft_id']}, set={source_boundary_guard_set_id}, "
+            f"remainingChildren={len(pending_boundary_guard_follow_ups)})."
+        )
     has_resume = bool(resume_waypoints)
     follow_up_missions: List[Dict[str, Any]] = []
     follow_up_paths: List[Tuple[Path, Dict[str, Any]]] = []
-    effective_done_input_ids = (
+    effective_done_input_ids = set(
         done_input_ids
         if done_input_ids is not None
         else _load_done_input_ids_for_plan(int(artifacts.source_plan_id))
     )
+    if pending_boundary_guard_follow_ups:
+        effective_done_input_ids.discard(int(input_mission_id))
     source_mission_list = imp_data.get("individualMissionList")
     if (
         isinstance(source_mission_list, list)
@@ -14471,6 +15183,7 @@ def _build_uav_attack_resume_package(
             follow_up_sources = _attack_completion_boundary_follow_up_sources(
                 follow_up_sources,
                 current_input_id=int(input_mission_id),
+                preserve_boundary_guard_set_id=source_boundary_guard_set_id,
             )
         follow_up_artifacts = _collect_attack_follow_up_replan_artifacts(
             missions=follow_up_sources,
@@ -14526,6 +15239,23 @@ def _build_uav_attack_resume_package(
         imp_data["individualMissionList"] = mission_list
     if 0 <= target_index < len(mission_list):
         prefix = [deepcopy(mission) for mission in mission_list[:target_index] if isinstance(mission, dict)]
+        if source_boundary_guard_set_id:
+            # Earlier children in this owner set have already been flown.  A
+            # fresh IMP contains only the current remainder and later children;
+            # keeping the old prefix mixes the original 1..N contract into the
+            # new remaining subset.
+            prefix = [
+                mission
+                for mission in prefix
+                if str(
+                    extract_boundary_guard_contract(
+                        mission,
+                        mission.get("individualMissionInfo"),
+                    ).get("boundaryGuardSetID")
+                    or ""
+                ).strip()
+                != source_boundary_guard_set_id
+            ]
         rebuilt = list(prefix)
         if mission_done is not None:
             rebuilt.append(mission_done)
@@ -14572,6 +15302,40 @@ def _build_uav_attack_resume_package(
     if done_fp_dest is not None:
         write_entries.append((done_fp_dest, done_fp_data))
     write_entries.extend((dest, payload) for dest, payload in follow_up_paths)
+    if source_boundary_guard_set_id and not completion_boundary_hold:
+        guard_missions = [
+            mission
+            for mission in mission_list
+            if isinstance(mission, dict)
+            and str(
+                extract_boundary_guard_contract(
+                    mission,
+                    mission.get("individualMissionInfo"),
+                ).get("boundaryGuardSetID")
+                or ""
+            ).strip()
+            == source_boundary_guard_set_id
+        ]
+        guard_paths = [
+            payload
+            for _dest, payload in write_entries
+            if isinstance(payload, dict)
+            and str(
+                extract_boundary_guard_contract(payload).get("boundaryGuardSetID")
+                or ""
+            ).strip()
+            == source_boundary_guard_set_id
+        ]
+        guard_summary = finalize_boundary_guard_flight_path_sets_in_mission_order(
+            guard_missions,
+            guard_paths,
+            strict=True,
+        )
+        emit(
+            "[ATTACK][UAV] Type-2 boundary guard remaining cycle rebuilt "
+            f"(set={source_boundary_guard_set_id}, children={len(guard_paths)}, "
+            f"summary={guard_summary.get(source_boundary_guard_set_id) or {}})."
+        )
     _validate_generated_artifact_write_entries(
         scope=f"attack_uav_resume:{new_imp_id}",
         individual_mission_plans=[imp_data],

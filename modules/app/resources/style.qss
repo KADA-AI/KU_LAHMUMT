@@ -156,6 +156,42 @@ QFrame#ActionPanel {
   color: #667085;
 }
 
+#HeaderReleasePanel {
+  background: #f4f8ff;
+  border: 1px solid #cdddf8;
+  border-radius: 12px;
+}
+
+#HeaderMetaCaption {
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.7px;
+}
+
+#HeaderVersionValue {
+  color: #1d4ed8;
+  font-size: 20px;
+  font-weight: 900;
+}
+
+#HeaderModifiedDate {
+  color: #172033;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+#HeaderModifiedTime {
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+#HeaderMetaDivider {
+  background: #cdddf8;
+  border: 0;
+}
+
 #HeaderBadge {
   background: #f3f4f6;
   border: 1px solid #e5e7eb;
@@ -171,6 +207,26 @@ QFrame#ActionPanel {
   font-size: 12px;
   font-weight: 700;
   padding-top: 2px;
+}
+
+QPushButton#HeaderDeveloperBtn {
+  background: #1d4ed8;
+  border: 1px solid #1d4ed8;
+  border-radius: 10px;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 0 18px;
+}
+
+QPushButton#HeaderDeveloperBtn:hover {
+  background: #1e40af;
+  border-color: #1e40af;
+}
+
+QPushButton#HeaderDeveloperBtn:pressed {
+  background: #1e3a8a;
+  border-color: #1e3a8a;
 }
 
 #CardTitle,

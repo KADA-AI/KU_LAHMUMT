@@ -303,6 +303,31 @@ def test_three_uavs_two_branches_keep_one_fixed_group_for_line_area_and_return(
         assert _assigned_owners_by_branch(result, parent_order) == expected_sets
 
 
+@pytest.mark.parametrize("package_type", [2, 3])
+def test_acp_coded_return_keeps_the_same_branch_owners_end_to_end(
+    isolated_branch_state: Path,
+    package_type: int,
+) -> None:
+    package = _type2_branch_package(package_type=package_type)
+    package["inputMissionList"][2]["regionType"] = 3
+
+    result = run_split_pipeline(
+        deepcopy(package),
+        deepcopy(_mission_reference(swapped=False)),
+        list(UAV_IDS),
+        apply_assignment=True,
+        apply_scheduling=False,
+    )
+
+    assert result.branch_orders == [1, 2, 3]
+    expected_sets = {
+        int(branch_index): {int(aircraft_id) for aircraft_id in owners}
+        for branch_index, owners in result.branch_ownership.items()
+    }
+    for parent_order in (1, 2, 3):
+        assert _assigned_owners_by_branch(result, parent_order) == expected_sets
+
+
 def test_type2_guard_area_gives_every_sticky_owner_two_sequential_halves(
     isolated_branch_state: Path,
 ) -> None:
@@ -530,6 +555,7 @@ def test_type2_shared_boundary_replan_keeps_two_halves_per_co_owner(
     )
 
     target_mission = deepcopy(_type2_branch_package()["inputMissionList"][1])
+    target_mission["inputMissionID"] = 999  # synthetic current-reexecute mission ID
     ownership = {0: [4, 5], 1: [6]}
     planner_entry_counts: list[int] = []
     reserved_rows: list[dict[int, list[dict[str, Any]]]] = []
@@ -566,7 +592,7 @@ def test_type2_shared_boundary_replan_keeps_two_halves_per_co_owner(
     monkeypatch.setattr(
         next_collab_pipeline,
         "_branch_area_ownership_for_target",
-        lambda *_args, **_kwargs: deepcopy(ownership),
+        lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr(
         next_collab_pipeline,
@@ -601,6 +627,7 @@ def test_type2_shared_boundary_replan_keeps_two_halves_per_co_owner(
         turn_radius_scale=1.0,
         emit=lambda _message: None,
         planning_mode={"package_type": 2},
+        branch_ownership_override=deepcopy(ownership),
     )
 
     assert result is None
@@ -617,6 +644,108 @@ def test_type2_shared_boundary_replan_keeps_two_halves_per_co_owner(
         aircraft_id: {int(row["areaComponentIndex"]) for row in rows}
         for aircraft_id, rows in reserved_rows[0].items()
     } == {4: {1}, 5: {1}, 6: {2}}
+
+
+def test_reexecute_wrapper_inherits_original_area_branch_ownership(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from modules.mission_planning.replanning.triggers.next_collab import (
+        pipeline as next_collab_pipeline,
+    )
+
+    source_input = _type2_branch_package()
+    source_area_id = int(BRANCH_MISSION_IDS[1])
+    synthetic_area = deepcopy(source_input["inputMissionList"][1])
+    synthetic_area["inputMissionID"] = 999
+    source_plan = {
+        "inputMissionPackageID": int(PACKAGE_ID),
+        "aircraftList": [
+            {
+                "aircraftID": int(aircraft_id),
+                "individualMissionPackageID": 800 + int(aircraft_id),
+            }
+            for aircraft_id in UAV_IDS
+        ],
+    }
+    ownership = {0: [4, 5], 1: [6]}
+    resolved_ids: list[int] = []
+    area_calls: list[dict[str, Any]] = []
+
+    def _fake_read(_path: Path, *, kind: str) -> dict[str, Any]:
+        if kind == "MissionPlan":
+            return deepcopy(source_plan)
+        if kind == "InputMissionPlan":
+            return deepcopy(source_input)
+        if kind == "IndividualMissionPlan":
+            return {"individualMissionList": []}
+        raise AssertionError(kind)
+
+    def _fake_resolve(**kwargs: Any) -> tuple[bool, dict[int, list[int]]]:
+        resolved_ids.append(int(kwargs["target_input_id"]))
+        return True, deepcopy(ownership)
+
+    def _fake_prepare_area(**kwargs: Any) -> None:
+        area_calls.append(kwargs)
+        return None
+
+    monkeypatch.setattr(
+        next_collab_pipeline.db_paths,
+        "get_db_subpath",
+        lambda *_parts: Path("stub.json"),
+    )
+    monkeypatch.setattr(next_collab_pipeline, "read_json_cached", _fake_read)
+    monkeypatch.setattr(
+        next_collab_pipeline,
+        "_extract_templates_for_input",
+        lambda _packages, input_id: {
+            int(aircraft_id): [{"sourceInputMissionID": int(input_id)}]
+            for aircraft_id in UAV_IDS
+        },
+    )
+    monkeypatch.setattr(
+        next_collab_pipeline,
+        "_extract_template_records_for_input",
+        lambda *_args, **_kwargs: {int(aircraft_id): [] for aircraft_id in UAV_IDS},
+    )
+    monkeypatch.setattr(
+        next_collab_pipeline,
+        "_ensure_target_template_records_for_aircraft",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        next_collab_pipeline,
+        "_resolve_next_collab_target_aircraft_ids",
+        lambda *_args, **_kwargs: list(UAV_IDS),
+    )
+    monkeypatch.setattr(
+        next_collab_pipeline,
+        "_resolve_locked_type2_ownership_with_artifact_recovery",
+        _fake_resolve,
+    )
+    monkeypatch.setattr(
+        next_collab_pipeline,
+        "_prepare_area_replacements",
+        _fake_prepare_area,
+    )
+
+    result = next_collab_pipeline.prepare_next_collab_input_replacements(
+        source_plan_id=700000005,
+        target_input_mission=synthetic_area,
+        source_template_input_id=source_area_id,
+        entry_coord_map={
+            4: _coord(38.000, 127.198),
+            5: _coord(38.000, 127.098),
+            6: _coord(38.000, 126.998),
+        },
+        representative_entry=_coord(38.000, 127.098),
+        planning_mode={"package_type": 2},
+    )
+
+    assert result is None  # The fake AREA builder deliberately stops here.
+    assert resolved_ids == [source_area_id]
+    assert len(area_calls) == 1
+    assert area_calls[0]["target_input_id"] == 999
+    assert area_calls[0]["branch_ownership_override"] == ownership
 
 
 def test_read_only_replan_with_swapped_positions_keeps_initial_ownership(
@@ -1119,6 +1248,72 @@ def test_single_branch_profile_stops_before_acp_and_control_handover_lines() -> 
     assert profile["branchInputMissionIDs"] == list(SINGLE_BRANCH_MISSION_IDS)
     assert 304 not in profile["branchInputMissionIDs"]
     assert 305 not in profile["branchInputMissionIDs"]
+
+
+def test_single_branch_profile_accepts_acp_coded_return_but_not_real_acp() -> None:
+    from modules.mission_planning.pipelines.ground_maneuver_mode import (
+        TYPE2_SELF_RELIANCE_RETURN_LINE,
+        detect_ground_maneuver_profile,
+        resolve_type2_self_reliance_phase,
+    )
+
+    package = _type2_single_branch_package()
+    package["inputMissionList"][2]["regionType"] = 3
+
+    profile = detect_ground_maneuver_profile(package)
+
+    assert profile is not None
+    assert profile["branchOrders"] == [1, 2, 3]
+    assert profile["branchInputMissionIDs"] == list(SINGLE_BRANCH_MISSION_IDS)
+    assert profile["branchReturnOrder"] == 3
+    assert profile["branchReturnInputMissionID"] == SINGLE_BRANCH_MISSION_IDS[2]
+    assert 304 not in profile["branchInputMissionIDs"]
+    assert resolve_type2_self_reliance_phase(
+        package,
+        SINGLE_BRANCH_MISSION_IDS[2],
+    ) == TYPE2_SELF_RELIANCE_RETURN_LINE
+    assert resolve_type2_self_reliance_phase(package, 304) is None
+
+
+def test_type3_accepts_one_branch_and_acp_coded_return_as_one_set() -> None:
+    from modules.mission_planning.pipelines.ground_maneuver_mode import (
+        detect_ground_maneuver_profile,
+    )
+
+    package = _type2_single_branch_package()
+    package["inputMissionPackageType"] = 3
+    package["inputMissionList"][2]["regionType"] = 3
+
+    profile = detect_ground_maneuver_profile(package)
+
+    assert profile is not None
+    assert profile["packageType"] == 3
+    assert profile["branchCount"] == 1
+    assert profile["branchOrders"] == [1, 2, 3]
+    assert profile["branchInputMissionIDs"] == list(SINGLE_BRANCH_MISSION_IDS)
+    assert 304 not in profile["branchInputMissionIDs"]
+
+
+def test_type3_one_branch_assigns_all_uavs_to_the_same_complete_set(
+    isolated_branch_state: Path,
+) -> None:
+    package = _type2_single_branch_package()
+    package["inputMissionPackageType"] = 3
+    package["inputMissionList"][2]["regionType"] = 3
+
+    result = run_split_pipeline(
+        deepcopy(package),
+        deepcopy(_mission_reference(swapped=False)),
+        list(UAV_IDS),
+        apply_assignment=True,
+        apply_scheduling=False,
+    )
+
+    assert result.branch_orders == [1, 2, 3]
+    assert set(result.branch_ownership) == {0}
+    assert set(result.branch_ownership[0]) == set(UAV_IDS)
+    for parent_order in (1, 2, 3):
+        assert _assigned_owners_by_branch(result, parent_order) == {0: set(UAV_IDS)}
 
 
 def test_type2_self_reliance_phase_resolver_only_matches_exact_branch_span() -> None:

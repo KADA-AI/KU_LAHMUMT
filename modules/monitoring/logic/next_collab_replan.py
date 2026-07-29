@@ -198,6 +198,8 @@ class ExecuteNextContext:
     entry_strategy: str
     target_entry_by_aircraft: dict[int, dict[str, float]]
     representative_target_entry_coordinate: dict[str, float] | None
+    reexecute_source_input_mission_id: int | None = None
+    reexecute_clone_input_mission_id: int | None = None
 
 
 class NextCollabMissionReplanCoordinator:
@@ -483,6 +485,14 @@ class NextCollabMissionReplanCoordinator:
             detail_payload["representativeTargetEntryCoordinate"] = dict(
                 context.representative_target_entry_coordinate
             )
+        if context.reexecute_source_input_mission_id is not None:
+            detail_payload["reexecuteSourceInputMissionID"] = int(
+                context.reexecute_source_input_mission_id
+            )
+        if context.reexecute_clone_input_mission_id is not None:
+            detail_payload["reexecuteCloneInputMissionID"] = int(
+                context.reexecute_clone_input_mission_id
+            )
 
         payload = {
             "timestamp": int(timestamp_ms),
@@ -559,6 +569,12 @@ class NextCollabMissionReplanCoordinator:
         representative_target_entry_coordinate = _normalize_coordinate(
             payload.get("representative_target_entry_coordinate")
         )
+        reexecute_source_input_id = _coerce_int(
+            payload.get("reexecute_source_input_mission_id")
+        )
+        reexecute_clone_input_id = _coerce_int(
+            payload.get("reexecute_clone_input_mission_id")
+        )
         if (
             input_package_id is None
             or input_package_id <= 0
@@ -585,6 +601,16 @@ class NextCollabMissionReplanCoordinator:
             representative_target_entry_coordinate=(
                 dict(representative_target_entry_coordinate)
                 if isinstance(representative_target_entry_coordinate, dict)
+                else None
+            ),
+            reexecute_source_input_mission_id=(
+                int(reexecute_source_input_id)
+                if reexecute_source_input_id is not None and reexecute_source_input_id > 0
+                else None
+            ),
+            reexecute_clone_input_mission_id=(
+                int(reexecute_clone_input_id)
+                if reexecute_clone_input_id is not None and reexecute_clone_input_id > 0
                 else None
             ),
         )

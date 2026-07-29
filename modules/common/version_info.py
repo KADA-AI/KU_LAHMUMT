@@ -18,7 +18,8 @@ CHANGE_LOG_PATH = PROJECT_ROOT / "modules" / "change_log.md"
 SCENARIO_VERSION_LOG_FILENAME = "DSS_KU_VERSION.json"
 
 _RELEASE_LINE_RE = re.compile(
-    r"^(\d{4}-\d{2}-\d{2})\s+(v?\d+(?:\.\d+)+)\s+-\s*(.*)$"
+    r"^(\d{4}-\d{2}-\d{2})(?:\s+(\d{2}:\d{2}(?::\d{2})?))?"
+    r"\s+(v?\d+(?:\.\d+)+)\s+-\s*(.*)$"
 )
 _FALLBACK_RELEASE_DATE = "2026-07-24"
 _FALLBACK_VERSION = "1.4.0"
@@ -31,6 +32,7 @@ class ReleaseInfo:
     version: str
     release_date: str
     change_summary: str
+    release_time: str = ""
 
     @property
     def display_version(self) -> str:
@@ -38,7 +40,17 @@ class ReleaseInfo:
 
     @property
     def code_label(self) -> str:
-        return f"{self.release_date} 최종 수정본"
+        return f"{self.modified_at} 최종 수정본"
+
+    @property
+    def modified_at(self) -> str:
+        """Human-readable local release timestamp, with legacy date fallback."""
+
+        parts = [str(self.release_date or "").strip()]
+        release_time = str(self.release_time or "").strip()
+        if release_time:
+            parts.append(release_time)
+        return " ".join(part for part in parts if part)
 
 
 @lru_cache(maxsize=8)
@@ -51,11 +63,12 @@ def load_release_info(change_log_path: str | Path | None = None) -> ReleaseInfo:
             match = _RELEASE_LINE_RE.match(line.strip())
             if not match:
                 continue
-            version = match.group(2).lstrip("vV")
+            version = match.group(3).lstrip("vV")
             return ReleaseInfo(
                 version=version,
                 release_date=match.group(1),
-                change_summary=match.group(3).strip(),
+                change_summary=match.group(4).strip(),
+                release_time=str(match.group(2) or "").strip(),
             )
     except OSError:
         pass
@@ -90,6 +103,8 @@ def build_scenario_version_payload(
             f"버전: {active_release.version}"
         ),
         "releaseDate": active_release.release_date,
+        "releaseTime": active_release.release_time or None,
+        "modifiedAt": active_release.modified_at,
         "recordedAt": recorded,
         "scenario": {
             "timestampMs": None if timestamp_ms is None else int(timestamp_ms),

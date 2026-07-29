@@ -246,6 +246,28 @@ def estimate_sweep_buffer_points(
     sweep_points = _to_int(entry.get("sweep_point_count") or entry.get("sweepPointCount")) or 0
     planned_seconds = _to_float(entry.get("planned_seconds") or entry.get("plannedSeconds"))
     elapsed_seconds = _to_float(entry.get("elapsed_seconds") or entry.get("elapsedSeconds"))
+    has_explicit_progress_points = any(
+        key in entry and _to_int(entry.get(key)) is not None
+        for key in ("progress_points", "progressPoints")
+    )
+    if has_explicit_progress_points:
+        # The monitoring progress clock may keep the elapsed time of the
+        # pre-replan mission lineage while ``sweep_point_count`` describes the
+        # newly shortened LINE suffix.  In that case elapsed/planned can be
+        # close to 100% even though the explicit sweep-point progress is still
+        # near the beginning.  Point progress is the authoritative geometry
+        # signal, so calculate lookahead from seconds-per-point instead of
+        # allowing the inherited clock to erase the remaining suffix.
+        sec_per_point = _to_float(entry.get("seconds_per_point") or entry.get("secondsPerPoint"))
+        if (sec_per_point is None or sec_per_point <= 0.0) and sweep_points > 0:
+            if planned_seconds is not None and planned_seconds > 0.0:
+                sec_per_point = float(planned_seconds) / float(sweep_points)
+        if sec_per_point is None or sec_per_point <= 0.0:
+            return min(sweep_points, progress_points) if sweep_points > 0 else progress_points
+        extra_points = max(0, int(extra_seconds / sec_per_point))
+        estimated = max(0, progress_points + extra_points)
+        return min(sweep_points, estimated) if sweep_points > 0 else estimated
+
     if sweep_points > 0 and planned_seconds is not None and planned_seconds > 0.0:
         elapsed = max(0.0, float(elapsed_seconds or 0.0))
         buffer_ratio = max(0.0, min(1.0, (elapsed + extra_seconds) / planned_seconds))

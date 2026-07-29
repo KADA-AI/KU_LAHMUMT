@@ -17,7 +17,7 @@ branch behaviour:
   * Up to the 경계지역 phase the missions are ordinary collaborative base
     missions (all UAVs share one line / one area, width-split as usual).
   * At the first 경계지역(regionType=7) mission whose lineList/areaList holds
-    N elements (Type 2: N>=1, Type 3: N>=2), the mission stops being pooled.
+    N elements (Type 2/3: N>=1), the mission stops being pooled.
     Each list element becomes a *branch* owned end-to-end by a fixed UAV group.
     A group has one UAV normally and multiple UAVs only when UAVs outnumber
     branches. Type-2 ownership is fixed from the first plan; Type 3 retains its
@@ -233,7 +233,7 @@ def detect_ground_maneuver_profile(
     *,
     package_type: Any = None,
 ) -> Optional[Dict[str, Any]]:
-    """Detect the Type-2 각자도생 branch span, or return None if not applicable.
+    """Detect the Type-2/3 각자도생 branch span, or return None if not applicable.
 
     Returns a profile describing which missions form the branch span, the branch
     count N, and each branch mission's geometry. ``None`` when the package is not
@@ -250,9 +250,10 @@ def detect_ground_maneuver_profile(
 
     any_region_type = any((_to_int(m.get("regionType")) or 0) > 0 for m in missions)
 
-    # Type 2 may have fewer branch areas than UAVs, including one area shared
-    # by every UAV. It still needs a durable owner set across every replan.
-    minimum_branch_count = 1 if resolved_package_type == PACKAGE_TYPE_GROUND_MANEUVER else 2
+    # Both Type 2 and Type 3 accept 1..3 declared branches.  N=1 still needs a
+    # durable owner group across LINE -> AREA -> return LINE; otherwise a replan
+    # pools the three UAVs again and breaks the set.
+    minimum_branch_count = 1
 
     def _is_anchor(mission: Dict[str, Any]) -> bool:
         if mission_branch_count(mission) < minimum_branch_count:
@@ -280,6 +281,7 @@ def detect_ground_maneuver_profile(
     # is essential for N=1, because the following ACP/control-transfer lines also
     # contain one geometry but are not part of the self-reliance assignment.
     branch_orders: List[int] = []
+    branch_return_order: Optional[int] = None
     if any_region_type:
         destination_region = (
             REGION_TARGET
@@ -295,11 +297,12 @@ def detect_ground_maneuver_profile(
                 branch_orders.append(order)
                 continue
             if (
-                region == destination_region
+                region in (destination_region, REGION_ACP)
                 and _mission_geometry_kind(mission) == "line"
                 and branch_orders
             ):
                 branch_orders.append(order)
+                branch_return_order = int(order)
             break
     else:
         # Legacy feeds without regionType retain count-based detection.
@@ -332,6 +335,12 @@ def detect_ground_maneuver_profile(
         "branchInputMissionIDs": [
             int(missions_by_order[o]["inputMissionID"]) for o in branch_orders
         ],
+        "branchReturnOrder": branch_return_order,
+        "branchReturnInputMissionID": (
+            int(missions_by_order[branch_return_order]["inputMissionID"])
+            if branch_return_order is not None
+            else None
+        ),
         "regionAware": bool(any_region_type),
         "missionsByOrder": missions_by_order,
     }
@@ -348,7 +357,7 @@ def resolve_type2_self_reliance_phase(
     callers that alter a UAV's individual suffix must instead prove that the
     *current* Type-2 input package still has the complete region-aware sequence::
 
-        guard LINE -> guard AREA -> target return LINE
+        guard LINE -> guard AREA -> target/ACP-coded return LINE
 
     The three missions must be consecutive and carry the same non-zero branch
     count.  Any stale, partial, legacy, or malformed package returns ``None`` so
@@ -390,17 +399,17 @@ def resolve_type2_self_reliance_phase(
         entries.append(entry)
 
     expected_signature = (
-        (REGION_GUARD, "line", TYPE2_SELF_RELIANCE_OUTBOUND_LINE),
-        (REGION_GUARD, "area", TYPE2_SELF_RELIANCE_GUARD_AREA),
-        (REGION_TARGET, "line", TYPE2_SELF_RELIANCE_RETURN_LINE),
+        ((REGION_GUARD,), "line", TYPE2_SELF_RELIANCE_OUTBOUND_LINE),
+        ((REGION_GUARD,), "area", TYPE2_SELF_RELIANCE_GUARD_AREA),
+        ((REGION_TARGET, REGION_ACP), "line", TYPE2_SELF_RELIANCE_RETURN_LINE),
     )
     expected_branch_count = _to_int(profile.get("branchCount")) or 0
     if expected_branch_count <= 0:
         return None
 
     matched_phase: Optional[str] = None
-    for entry, (expected_region, expected_kind, phase) in zip(entries, expected_signature):
-        if (_to_int(entry.get("regionType")) or 0) != expected_region:
+    for entry, (expected_regions, expected_kind, phase) in zip(entries, expected_signature):
+        if (_to_int(entry.get("regionType")) or 0) not in expected_regions:
             return None
         if str(entry.get("kind") or "").strip().lower() != expected_kind:
             return None
@@ -1099,6 +1108,8 @@ def _lah_terminal_transit_info(
 
 def resolve_ground_maneuver_lah_anchors(
     input_plan_or_missions: object | None,
+    *,
+    package_type: Any = None,
 ) -> Optional[Dict[str, Any]]:
     """Resolve the shared LAH hold/move anchors from mission regionTypes.
 
@@ -1109,12 +1120,36 @@ def resolve_ground_maneuver_lah_anchors(
     missions = _mission_list(input_plan_or_missions)
     if not missions:
         return None
+    resolved_package_type = _package_type(input_plan_or_missions, package_type)
+    if resolved_package_type not in BRANCH_PACKAGE_TYPES:
+        resolved_package_type = (
+            PACKAGE_TYPE_AIR_ASSAULT
+            if any(
+                (_to_int(mission.get("regionType")) or 0)
+                in (REGION_LOADING, REGION_LANDING)
+                for mission in missions
+            )
+            else PACKAGE_TYPE_GROUND_MANEUVER
+        )
+    branch_profile = detect_ground_maneuver_profile(
+        missions,
+        package_type=int(resolved_package_type),
+    )
+    branch_return_order = (
+        _to_int(branch_profile.get("branchReturnOrder"))
+        if isinstance(branch_profile, dict)
+        else None
+    )
 
     def _orders(*regions: int) -> List[int]:
         wanted = set(regions)
         return [o for o, m in enumerate(missions, 1) if (_to_int(m.get("regionType")) or 0) in wanted]
 
-    acp_orders = _orders(REGION_ACP)
+    acp_orders = [
+        order
+        for order in _orders(REGION_ACP)
+        if branch_return_order is None or int(order) != int(branch_return_order)
+    ]
     target_orders = _orders(*DESTINATION_REGIONS)  # 목표(type2) / 착륙(type3)
     guard_orders = _orders(REGION_GUARD)
     control_orders = _orders(REGION_CONTROL_HANDOVER)
@@ -1173,6 +1208,7 @@ def resolve_ground_maneuver_lah_anchors(
         "anchorGuardOrder": guard_orders[0] if guard_orders else None,
         "guardOrders": guard_orders,
         "acp1Order": acp1_order,
+        "branchReturnOrder": branch_return_order,
     }
 
 
@@ -1245,6 +1281,7 @@ def ground_maneuver_lah_info_for_index(
     # Type 3 flies to a 착륙지대 rather than holding a 목표지역, so it keeps the
     # ACP#2 / 착륙 convergence egress below.
     trails_maneuver_legs = int(package_type) == PACKAGE_TYPE_GROUND_MANEUVER
+    branch_return_order = _to_int(anchors.get("branchReturnOrder"))
 
     # Type 3 탑재지대 front: manned aircraft move to the loading zone.
     if region == REGION_LOADING:
@@ -1339,6 +1376,22 @@ def ground_maneuver_lah_info_for_index(
         point = _interp_coord(anchors["acp1"], anchors["target"], frac)
         return _lah_point_info(point), "escort_move_to_destination"
 
+    # The branch-set return LINE may now be encoded as ACP(regionType=3).
+    # It is still the old destination-return slot, not the following real ACP
+    # stage, so Type 3 must keep holding at the landing destination here.
+    if branch_return_order is not None and order == int(branch_return_order):
+        destination_inside = anchors.get("destinationInside")
+        if trails_maneuver_legs and destination_inside:
+            return (
+                _shared_destination_area_hold_info(
+                    missions,
+                    anchors,
+                    package_type=int(package_type),
+                ),
+                "destination_area_hold",
+            )
+        return _lah_point_info(anchors["target"]), "destination_hold"
+
     # Post-경계.  Type 2 keeps the manned aircraft inside the 목표지역 for the
     # rest of the region work, including the ACP mission where only the UAVs
     # move on; it only leaves once the 통제권변경 leg begins.
@@ -1414,7 +1467,10 @@ def ground_maneuver_lah_info_for_input(
     missions = _mission_list(input_plan_or_missions)
     if not missions:
         return None
-    anchors = resolve_ground_maneuver_lah_anchors(missions)
+    anchors = resolve_ground_maneuver_lah_anchors(
+        missions,
+        package_type=int(pkg),
+    )
     if anchors is None:
         return None
     for index, mission in enumerate(missions):
@@ -1445,7 +1501,10 @@ def build_ground_maneuver_lah_sequence(
     missions = _mission_list(input_plan_or_missions)
     if not missions:
         return None
-    anchors = resolve_ground_maneuver_lah_anchors(missions)
+    anchors = resolve_ground_maneuver_lah_anchors(
+        missions,
+        package_type=int(pkg),
+    )
     if anchors is None:
         return None
 
@@ -1487,6 +1546,41 @@ def build_ground_maneuver_lah_sequence(
 # ---------------------------------------------------------------------------
 
 
+def _staged_attack_wait_return_order(
+    missions: List[Dict[str, Any]],
+) -> Optional[int]:
+    """Return the Type-4/5 operation-area -> attack-wait return LINE order.
+
+    The return slot may use its legacy region (attack-wait=4) or ACP=3.  It is
+    identified by sequence, not by region alone: the immediate maneuver LINE
+    after the Type-4 guard AREA or Type-5 urban AREA.  A later region-3 LINE is
+    the real ACP stage and must remain distinct.
+    """
+
+    for index, mission in enumerate(missions):
+        mission_type = _to_int(mission.get("inputMissionType")) or 0
+        region = _to_int(mission.get("regionType")) or 0
+        is_operation_area = (
+            mission_type == 3 and region == REGION_GUARD
+        ) or (
+            mission_type == 6 and region == REGION_URBAN
+        )
+        if not is_operation_area or _mission_geometry_kind(mission) != "area":
+            continue
+        next_index = int(index) + 1
+        if next_index >= len(missions):
+            continue
+        candidate = missions[next_index]
+        candidate_region = _to_int(candidate.get("regionType")) or 0
+        if (
+            (_to_int(candidate.get("inputMissionType")) or 0) == MANEUVER_MISSION_TYPE
+            and _mission_geometry_kind(candidate) == "line"
+            and candidate_region in (REGION_ATTACK_WAIT, REGION_ACP)
+        ):
+            return int(next_index + 1)
+    return None
+
+
 def resolve_urban_operation_lah_anchors(
     input_plan_or_missions: object | None,
 ) -> Optional[Dict[str, Any]]:
@@ -1506,7 +1600,12 @@ def resolve_urban_operation_lah_anchors(
     # 경계(7) for type 4 (중요시설 방호 donut boundary).
     urban_orders = sorted(_orders(REGION_URBAN) + _orders(REGION_GUARD))
     attack_wait_orders = _orders(REGION_ATTACK_WAIT)
-    acp_orders = _orders(REGION_ACP)
+    return_order = _staged_attack_wait_return_order(missions)
+    acp_orders = [
+        order
+        for order in _orders(REGION_ACP)
+        if return_order is None or int(order) != int(return_order)
+    ]
     control_orders = _orders(REGION_CONTROL_HANDOVER)
     if not urban_orders or not attack_wait_orders:
         return None
@@ -1533,6 +1632,7 @@ def resolve_urban_operation_lah_anchors(
         "acp2": acp2 or attack_wait,
         "controlEnd": control_end or (acp2 or attack_wait),
         "firstUrbanOrder": int(urban_orders[0]),
+        "returnOrder": return_order,
     }
 
 
@@ -1547,9 +1647,12 @@ def urban_operation_lah_info_for_index(
     order = mission_index + 1
     region = _to_int(missions[mission_index].get("regionType")) or 0
     first_urban = int(anchors.get("firstUrbanOrder") or 0)
+    return_order = _to_int(anchors.get("returnOrder"))
 
     if first_urban > 0 and order < first_urban:
         return _lah_point_info(anchors["start"]), "control_start_hold"
+    if return_order is not None and order == int(return_order):
+        return _lah_point_info(anchors["attackWait"]), "attack_wait_hold"
     if region == REGION_ACP:
         return _lah_point_info(anchors["acp2"]), "attack_wait_to_acp2_follow"
     if region == REGION_CONTROL_HANDOVER:
@@ -1631,25 +1734,38 @@ def detect_ground_maneuver_attack_profile(
     per-position default attack applies. Returns ``None`` for non-Type-2/3 packages
     or when the destination hold mission can't be resolved.
     """
-    if _package_type(input_plan_or_missions, package_type) not in BRANCH_PACKAGE_TYPES:
+    resolved_package_type = _package_type(input_plan_or_missions, package_type)
+    if resolved_package_type not in BRANCH_PACKAGE_TYPES:
         return None
     missions = _mission_list(input_plan_or_missions)
     if not missions:
         return None
-    anchors = resolve_ground_maneuver_lah_anchors(missions)
+    anchors = resolve_ground_maneuver_lah_anchors(
+        missions,
+        package_type=int(resolved_package_type),
+    )
     if anchors is None:
         return None
 
     guard_orders = list(anchors.get("guardOrders") or [])
     last_guard_order = guard_orders[-1] if guard_orders else 0
-    # Destination hold mission = first 목표/착륙(regionType 6/9) after the 경계 phase.
-    target_hold_order: Optional[int] = None
-    for order, mission in enumerate(missions, 1):
-        if order <= last_guard_order:
-            continue
-        if (_to_int(mission.get("regionType")) or 0) in DESTINATION_REGIONS:
-            target_hold_order = order
-            break
+    # Destination hold mission = branch return LINE (destination 6/9 or ACP alias 3).
+    branch_profile = detect_ground_maneuver_profile(
+        missions,
+        package_type=int(resolved_package_type),
+    )
+    target_hold_order: Optional[int] = (
+        _to_int(branch_profile.get("branchReturnOrder"))
+        if isinstance(branch_profile, dict)
+        else None
+    )
+    if target_hold_order is None:
+        for order, mission in enumerate(missions, 1):
+            if order <= last_guard_order:
+                continue
+            if (_to_int(mission.get("regionType")) or 0) in DESTINATION_REGIONS:
+                target_hold_order = order
+                break
     if target_hold_order is None:
         return None
 

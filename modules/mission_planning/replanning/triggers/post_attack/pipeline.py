@@ -64,6 +64,10 @@ from modules.mission_planning.pipelines.ground_maneuver_mode import (
     TYPE2_SELF_RELIANCE_RETURN_LINE,
     resolve_type2_self_reliance_phase,
 )
+from modules.mission_planning.pipelines.type2_boundary_guard_loop import (
+    clear_boundary_guard_contract,
+    finalize_boundary_guard_flight_path_sets_in_mission_order,
+)
 from modules.mission_planning.replanning.line_entry_context import (
     build_line_entry_context_map,
 )
@@ -2780,14 +2784,15 @@ def _lah_attack_target_mission_indices(
     target_id: int,
     exclude_all_target_missions: bool = False,
     retained_target_ids: Any = None,
+    excluded_target_ids: Any = None,
 ) -> List[int]:
     """Locate LAH attack/attack-support branches to remove before resuming.
 
-    ``exclude_all_target_missions`` sweeps every target-bound branch, which is
-    what a whole-package attack exclusion wants.  ``retained_target_ids`` carves
-    out the engagements that must survive it: finishing one target must never
-    cancel another aircraft's attack on a different target, which otherwise
-    leaves that target tracked forever and never shot.
+    ``exclude_all_target_missions`` sweeps every target-bound branch for a
+    legacy whole-package exclusion. When ``excluded_target_ids`` is supplied,
+    even that sweep is restricted to the explicitly requested target(s).
+    ``retained_target_ids`` additionally carves out engagements that must
+    survive.
 
     ``current_input_id`` is retained for API compatibility and diagnostics, but
     it is not an ownership key for an attack target.  In particular, an
@@ -2802,6 +2807,11 @@ def _lah_attack_target_mission_indices(
         retained_id = _to_int(value)
         if retained_id is not None and int(retained_id) > 0:
             retained.add(int(retained_id))
+    requested: set[int] = set()
+    for value in excluded_target_ids or []:
+        requested_id = _to_int(value)
+        if requested_id is not None and int(requested_id) > 0:
+            requested.add(int(requested_id))
 
     indices: List[int] = []
     for idx, mission in enumerate(mission_list or []):
@@ -2813,6 +2823,8 @@ def _lah_attack_target_mission_indices(
         if mission_target_id is None or mission_target_id <= 0:
             continue
         if int(mission_target_id) in retained:
+            continue
+        if requested and int(mission_target_id) not in requested:
             continue
         mission_info = mission.get("individualMissionInfo")
         mission_type = _to_int(
@@ -3994,6 +4006,7 @@ def _build_post_attack_lah_resume_update(
     run_cache: Optional[_PostAttackRunCache] = None,
     exclude_all_target_missions: bool = False,
     retained_target_ids: Any = None,
+    excluded_target_ids: Any = None,
 ) -> Optional[Dict[str, Any]]:
     from modules.mission_planning.replanning.triggers.attack.pipeline import (
         _lah_waypoints_to_coordinate_list,
@@ -4021,6 +4034,7 @@ def _build_post_attack_lah_resume_update(
         target_id=int(target_id),
         exclude_all_target_missions=bool(exclude_all_target_missions),
         retained_target_ids=retained_target_ids,
+        excluded_target_ids=excluded_target_ids,
     )
     if not exclude_all_target_missions:
         destroyed_target_ids = _known_destroyed_target_ids(int(target_id))
@@ -6769,10 +6783,10 @@ def _trim_waypoints_for_exact_sweep_progress(
     original = [deepcopy(item) for item in waypoint_list if isinstance(item, dict)]
     if not original:
         return [], 0
-    if (
-        allow_line_scan_sweep_point_trim
-        and is_line_scan_progress_entry(progress_entry)
-    ):
+    if allow_line_scan_sweep_point_trim:
+        # A Type-2 branch may stop filming as soon as it diverts or returns
+        # from an attack.  Keep its unconfirmed buffer prefix and trim only
+        # physical points reported as photographed.
         cut_points = max(0, int(sweep_progress_points(progress_entry)))
     else:
         cut_points = max(
@@ -9321,6 +9335,55 @@ def _final_filming_orientation_coordinate(
     return None
 
 
+def _finalize_post_attack_tracking_boundary_guard_graph(
+    *,
+    missions: List[Dict[str, Any]],
+    flight_paths: List[Dict[str, Any]],
+    synthetic_return_path_id: Optional[int],
+    emit: LogCallback,
+    log_prefix: str,
+) -> Dict[str, Dict[str, int]]:
+    """Exclude the transit-only return and rebuild the real guard remainder.
+
+    The return-only mission/path is cloned from the current imaging template.
+    A boundary AREA template therefore carries guard metadata even after its
+    mission type is changed to transit.  Leaving that metadata in place makes
+    validation count the connector as one more guard child (for example
+    5 declared children but 6 payloads).  Strip the synthetic connector and
+    then use the final IMP order as the authority for every actual remainder.
+    """
+
+    return_path_id = _to_int(synthetic_return_path_id)
+    if return_path_id is not None and int(return_path_id) > 0:
+        for mission in missions:
+            if not isinstance(mission, dict):
+                continue
+            if _to_int(mission.get("pathID")) != int(return_path_id):
+                continue
+            clear_boundary_guard_contract(
+                mission,
+                include_individual_mission_info=True,
+            )
+        for flight_path in flight_paths:
+            if not isinstance(flight_path, dict):
+                continue
+            if _to_int(flight_path.get("pathID")) != int(return_path_id):
+                continue
+            clear_boundary_guard_contract(flight_path)
+
+    summary = finalize_boundary_guard_flight_path_sets_in_mission_order(
+        missions,
+        flight_paths,
+        strict=True,
+    )
+    if summary:
+        emit(
+            f"{log_prefix} boundary guard remainder rebuilt after tracking return "
+            f"(sets={summary})."
+        )
+    return summary
+
+
 def _build_post_attack_tracking_return_only_update(
     *,
     attack_plan_id: int,
@@ -10057,6 +10120,13 @@ def _build_post_attack_tracking_return_only_update(
     ) + [
         payload for _dest, payload in follow_up_paths if isinstance(payload, dict)
     ]
+    _finalize_post_attack_tracking_boundary_guard_graph(
+        missions=new_imp_data["individualMissionList"],
+        flight_paths=generated_flight_paths,
+        synthetic_return_path_id=new_path_id,
+        emit=emit,
+        log_prefix=log_prefix,
+    )
     _validate_generated_post_attack_artifact_payloads(
         individual_mission_plans=[new_imp_data],
         flight_paths=generated_flight_paths,

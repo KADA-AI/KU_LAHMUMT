@@ -35,15 +35,18 @@ from modules.mission_planning.MissionPlanner.runtime_settings import (
 
 MODULE_ROOT = Path(__file__).resolve().parents[2]
 CHANGE_LOG_PATH = MODULE_ROOT / "change_log.md"
-_CHANGE_LOG_LINE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\s+(v[0-9.]+)\s+-\s*(.*)$")
+_CHANGE_LOG_LINE_RE = re.compile(
+    r"^(\d{4}-\d{2}-\d{2})(?:\s+(\d{2}:\d{2}(?::\d{2})?))?"
+    r"\s+(v[0-9.]+)\s+-\s*(.*)$"
+)
 
 
-def _load_app_release_metadata() -> Tuple[str, str]:
+def _load_app_release_metadata() -> Tuple[str, str, str]:
     release = load_release_info()
-    return release.display_version, release.release_date
+    return release.display_version, release.release_date, release.release_time
 
 
-APP_VERSION, APP_UPDATE_DATE = _load_app_release_metadata()
+APP_VERSION, APP_UPDATE_DATE, APP_UPDATE_TIME = _load_app_release_metadata()
 APP_TITLE = f"KU Mission Decision Support Dashboard ({APP_VERSION})"
 REFERENCE_PDF_PATH = db_paths.PROJECT_ROOT / "ref" / "04. 모듈 간 인터페이스 설계-v7-20260116_175548.pdf"
 if not REFERENCE_PDF_PATH.exists():
@@ -298,7 +301,10 @@ class MainWindow(QMainWindow):
                 continue
             match = _CHANGE_LOG_LINE_RE.match(line)
             if match:
-                rows.append((match.group(1), match.group(2), match.group(3).strip()))
+                modified_at = " ".join(
+                    part for part in (match.group(1), match.group(2)) if part
+                )
+                rows.append((modified_at, match.group(3), match.group(4).strip()))
                 continue
             if rows:
                 date, version, content = rows[-1]
@@ -313,99 +319,84 @@ class MainWindow(QMainWindow):
         body = getattr(card, "body_layout", None)
         if body is None:
             return card
-        body.setContentsMargins(20, 18, 20, 18)
-        body.setSpacing(12)
+        body.setContentsMargins(22, 13, 22, 13)
+        body.setSpacing(0)
 
         top = QHBoxLayout()
         top.setContentsMargins(0, 0, 0, 0)
-        top.setSpacing(18)
-
-        title_col = QVBoxLayout()
-        title_col.setContentsMargins(0, 0, 0, 0)
-        title_col.setSpacing(6)
+        top.setSpacing(28)
 
         title = QLabel("KU Mission Decision Support", card)
         title.setObjectName("HeroTitle")
-        title_col.addWidget(title, 0, Qt.AlignLeft)
+        top.addWidget(title, 0, Qt.AlignLeft | Qt.AlignVCenter)
 
-        meta_row = QHBoxLayout()
-        meta_row.setContentsMargins(0, 4, 0, 0)
-        meta_row.setSpacing(8)
+        release_panel = QWidget(card)
+        release_panel.setObjectName("HeaderReleasePanel")
+        release_panel.setAttribute(Qt.WA_StyledBackground, True)
+        release_panel.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        release_row = QHBoxLayout(release_panel)
+        release_row.setContentsMargins(14, 9, 16, 9)
+        release_row.setSpacing(14)
 
-        version_badge = QLabel(APP_VERSION, card)
-        version_badge.setObjectName("HeaderBadge")
-        meta_row.addWidget(version_badge, 0, Qt.AlignLeft)
+        version_col = QVBoxLayout()
+        version_col.setContentsMargins(0, 0, 0, 0)
+        version_col.setSpacing(1)
+        version_caption = QLabel("VERSION", release_panel)
+        version_caption.setObjectName("HeaderMetaCaption")
+        version_value = QLabel(APP_VERSION, release_panel)
+        version_value.setObjectName("HeaderVersionValue")
+        version_col.addWidget(version_caption, 0, Qt.AlignLeft)
+        version_col.addWidget(version_value, 0, Qt.AlignLeft)
+        release_row.addLayout(version_col)
 
-        updated_at = APP_UPDATE_DATE
-        updated_badge = QLabel(f"Updated {updated_at}", card)
-        updated_badge.setObjectName("HeaderBadge")
-        meta_row.addWidget(updated_badge, 0, Qt.AlignLeft)
-        meta_row.addStretch(1)
-        title_col.addLayout(meta_row)
+        divider = QWidget(release_panel)
+        divider.setObjectName("HeaderMetaDivider")
+        divider.setFixedWidth(1)
+        divider.setMinimumHeight(46)
+        release_row.addWidget(divider, 0, Qt.AlignVCenter)
 
-        top.addLayout(title_col, 1)
+        modified_col = QVBoxLayout()
+        modified_col.setContentsMargins(0, 0, 0, 0)
+        modified_col.setSpacing(1)
+        modified_caption = QLabel("최종 수정", release_panel)
+        modified_caption.setObjectName("HeaderMetaCaption")
+        modified_date = QLabel(APP_UPDATE_DATE, release_panel)
+        modified_date.setObjectName("HeaderModifiedDate")
+        modified_time_text = (
+            f"{APP_UPDATE_TIME} KST" if APP_UPDATE_TIME else "시간 기록 없음"
+        )
+        modified_time = QLabel(modified_time_text, release_panel)
+        modified_time.setObjectName("HeaderModifiedTime")
+        modified_col.addWidget(modified_caption, 0, Qt.AlignLeft)
+        modified_col.addWidget(modified_date, 0, Qt.AlignLeft)
+        modified_col.addWidget(modified_time, 0, Qt.AlignLeft)
+        release_row.addLayout(modified_col)
+        top.addWidget(release_panel, 0, Qt.AlignLeft | Qt.AlignVCenter)
+        top.addStretch(1)
 
         right_wrap = QWidget(card)
         right_wrap.setObjectName("HeaderRightWrap")
         right_wrap.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         right_col = QVBoxLayout(right_wrap)
         right_col.setContentsMargins(0, 0, 0, 0)
-        right_col.setSpacing(6)
-
-        updated_label = QLabel(f"Last Updated : {updated_at}", card)
-        updated_label.setObjectName("HeaderUpdatedDate")
-        updated_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        updated_label.setStyleSheet(
-            "font-size: 15px; font-weight: 700; color: #2563eb;"
-        )
-        right_col.addWidget(updated_label, 0, Qt.AlignRight | Qt.AlignVCenter)
+        right_col.setSpacing(0)
+        right_col.addStretch(1)
 
         button_row = QHBoxLayout()
         button_row.setContentsMargins(0, 0, 0, 0)
-        button_row.setSpacing(8)
         button_row.setAlignment(Qt.AlignRight)
 
-        self.btn_reference_pdf = QPushButton("참고 문서", card)
-        self.btn_reference_pdf.setObjectName("PlainBtn")
-        self.btn_reference_pdf.setFixedHeight(34)
-        self.btn_reference_pdf.clicked.connect(self._open_reference_pdf)
-        self.btn_reference_pdf.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        button_row.addWidget(self.btn_reference_pdf, 0)
-
-        self.btn_fov_db_select = QPushButton("FOV DB 선택", card)
-        self.btn_fov_db_select.setObjectName("PlainBtn")
-        self.btn_fov_db_select.setFixedHeight(34)
-        self.btn_fov_db_select.clicked.connect(self._browse_fov_db)
-        self.btn_fov_db_select.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        button_row.addWidget(self.btn_fov_db_select, 0)
-
         self.btn_developer_admin = QPushButton("개발관리", card)
-        self.btn_developer_admin.setObjectName("PlainBtn")
-        self.btn_developer_admin.setFixedHeight(34)
+        self.btn_developer_admin.setObjectName("HeaderDeveloperBtn")
+        self.btn_developer_admin.setFixedHeight(40)
+        self.btn_developer_admin.setMinimumWidth(112)
         self.btn_developer_admin.clicked.connect(self._open_developer_management)
         self.btn_developer_admin.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         button_row.addWidget(self.btn_developer_admin, 0)
         right_col.addLayout(button_row)
+        right_col.addStretch(1)
 
-        self._fov_db_header_label = QLabel("FOV DB : -", card)
-        self._fov_db_header_label.setObjectName("HeaderFovDbLabel")
-        self._fov_db_header_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self._fov_db_header_label.setWordWrap(True)
-        right_col.addWidget(self._fov_db_header_label, 0, Qt.AlignRight | Qt.AlignVCenter)
-
-        button_width = (
-            self.btn_reference_pdf.sizeHint().width()
-            + self.btn_fov_db_select.sizeHint().width()
-            + self.btn_developer_admin.sizeHint().width()
-            + (button_row.spacing() * 2)
-        )
-        right_width = max(updated_label.sizeHint().width(), button_width)
-        updated_label.setMinimumWidth(right_width)
-        self._fov_db_header_label.setMinimumWidth(right_width)
-        self._fov_db_header_label.setMaximumWidth(max(360, right_width))
-        right_wrap.setMinimumWidth(right_width)
-
-        top.addWidget(right_wrap, 0, Qt.AlignRight | Qt.AlignTop)
+        top.addWidget(right_wrap, 0, Qt.AlignRight | Qt.AlignVCenter)
         body.addLayout(top)
         return card
 
@@ -2852,7 +2843,7 @@ class MainWindow(QMainWindow):
         table = QTableWidget(dialog)
         table.setObjectName("ChangeLogTable")
         table.setColumnCount(3)
-        table.setHorizontalHeaderLabels(["날짜", "버전", "내용"])
+        table.setHorizontalHeaderLabels(["수정 일시", "버전", "내용"])
         table.setRowCount(len(rows))
         table.setAlternatingRowColors(True)
         table.setWordWrap(True)
@@ -2946,4 +2937,3 @@ class MainWindow(QMainWindow):
         mod, direc = self._demo_seq[self._demo_idx]
         self._pulse(mod, direc)
         self._demo_idx = (self._demo_idx + 1) % len(self._demo_seq)
-

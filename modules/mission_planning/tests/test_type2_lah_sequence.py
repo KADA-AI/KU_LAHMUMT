@@ -200,6 +200,26 @@ def test_air_assault_packages_keep_their_own_egress() -> None:
     assert behaviors[8] == "previous_mid_to_acp2_to_control_end_follow"
 
 
+def test_air_assault_acp_coded_return_is_not_the_following_real_acp() -> None:
+    from modules.mission_planning.pipelines.ground_maneuver_mode import (
+        detect_ground_maneuver_attack_profile,
+    )
+
+    missions = _missions()
+    missions[5]["regionType"] = 3  # branch return LINE uses the ACP alias
+    plan = {"inputMissionPackageType": 3, "inputMissionList": missions}
+
+    rows = build_ground_maneuver_lah_sequence(plan, package_type=3)
+    assert rows
+    behaviors = {int(row["inputMissionID"]): row["behavior"] for row in rows}
+    assert behaviors[6] == "destination_hold"
+    assert behaviors[7] == "destination_to_acp2_follow"
+
+    profile = detect_ground_maneuver_attack_profile(plan, package_type=3)
+    assert profile is not None
+    assert profile["targetHoldInputMissionID"] == 6
+
+
 def test_a_replan_reuses_the_ladder_instead_of_the_uav_area_centroid() -> None:
     """다음 협업기저임무 must not park the manned aircraft in the 목표지역.
 

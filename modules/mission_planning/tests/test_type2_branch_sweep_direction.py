@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import inspect
 import math
+from types import SimpleNamespace
 
 from modules.mission_planning.replanning.triggers.next_collab import pipeline
 from modules.mission_planning.MissionPlanner.planning_enhanced.models import SplitPiece
@@ -63,6 +64,79 @@ def test_non_branch_line_missions_still_pin_their_direction() -> None:
 
     assert "lineDeploymentDirectionLocked" in source
     assert "first execution deployment direction restored from prior plan." in source
+
+
+def test_reexecute_line_uses_original_branch_id_only_for_split(monkeypatch) -> None:
+    source_input_id = 201
+    target_input_id = 999
+    ownership = {0: [4, 5], 1: [6]}
+    planner_input_ids: list[int] = []
+    messages: list[str] = []
+
+    def _fake_line_plan(**kwargs):
+        planner_input_ids.append(int(kwargs["target_mission"]["inputMissionID"]))
+        return SimpleNamespace(
+            expected_paths=[],
+            split_result=SimpleNamespace(
+                branch_ownership=ownership,
+                pieces=[
+                    SimpleNamespace(data={"branchIndex": 0}, assigned_uav=4),
+                    SimpleNamespace(data={"branchIndex": 0}, assigned_uav=5),
+                    SimpleNamespace(data={"branchIndex": 1}, assigned_uav=6),
+                ],
+            ),
+        )
+
+    monkeypatch.setattr(pipeline, "run_next_collab_line_plan", _fake_line_plan)
+    target_mission = {
+        "inputMissionID": target_input_id,
+        "missionDetail": {
+            "lineList": [
+                {
+                    "width": 900.0,
+                    "coordinateList": [
+                        {"latitude": 38.0, "longitude": 127.0, "altitude": 700.0},
+                        {"latitude": 38.1, "longitude": 127.0, "altitude": 700.0},
+                    ],
+                },
+                {
+                    "width": 900.0,
+                    "coordinateList": [
+                        {"latitude": 38.0, "longitude": 127.1, "altitude": 700.0},
+                        {"latitude": 38.1, "longitude": 127.1, "altitude": 700.0},
+                    ],
+                },
+            ]
+        },
+    }
+
+    result = pipeline._prepare_line_replacements(
+        target_input_mission=target_mission,
+        target_input_id=target_input_id,
+        target_aircraft_ids=[4, 5, 6],
+        entry_coord_map={
+            4: {"latitude": 38.0, "longitude": 127.0, "altitude": 700.0},
+            5: {"latitude": 38.0, "longitude": 127.05, "altitude": 700.0},
+            6: {"latitude": 38.0, "longitude": 127.1, "altitude": 700.0},
+        },
+        heading_map={4: 0.0, 5: 0.0, 6: 0.0},
+        entry_aircraft_context_map=None,
+        representative_entry=None,
+        next_entry=None,
+        template_map={},
+        template_record_map={},
+        now_ms=1,
+        turn_radius_scale=1.0,
+        emit=messages.append,
+        planning_mode={"package_type": 2},
+        branch_ownership_override=ownership,
+        branch_ownership_source_input_id=source_input_id,
+    )
+
+    assert result is None  # The fake planner returns no path rows.
+    assert planner_input_ids == [source_input_id]
+    assert target_mission["inputMissionID"] == target_input_id
+    assert any("LINE branch ownership rebound" in message for message in messages)
 
 
 def test_type2_branch_uses_its_own_declared_coordinate_order() -> None:

@@ -56,6 +56,18 @@ def test_a_retained_target_survives_the_sweep() -> None:
     assert indices == [2]
 
 
+def test_target_specific_sweep_never_removes_an_unrequested_target() -> None:
+    indices = _lah_attack_target_mission_indices(
+        _missions(),
+        current_input_id=2,
+        target_id=8,
+        exclude_all_target_missions=True,
+        excluded_target_ids={8},
+    )
+
+    assert indices == [2]
+
+
 def test_retention_also_applies_to_the_per_target_path() -> None:
     indices = _lah_attack_target_mission_indices(
         _missions(), current_input_id=2, target_id=7, retained_target_ids=[7]
@@ -107,3 +119,84 @@ def test_the_exclusion_target_is_not_retained(monkeypatch) -> None:
     )
 
     assert retained == [7]
+
+
+def test_tracking_recovery_ignores_another_targets_assignment(monkeypatch) -> None:
+    monkeypatch.setattr(
+        attack,
+        "get_tracking_assignment",
+        lambda _aircraft_id: {
+            "active": True,
+            "target_id": 7,
+            "attack_plan_id": 700000003,
+            "source_plan_id": 700000001,
+            "original_current_waypoint_id": 123,
+        },
+    )
+
+    recovery = attack._resolve_attack_tracking_recovery(
+        aircraft_id=5,
+        source_plan_id=700000003,
+        current_coord=None,
+        emit=lambda _message: None,
+        excluded_target_ids={8},
+    )
+
+    assert recovery is None
+
+
+def test_tracking_recovery_detaches_the_requested_target(monkeypatch) -> None:
+    monkeypatch.setattr(
+        attack,
+        "get_tracking_assignment",
+        lambda _aircraft_id: {
+            "active": True,
+            "target_id": 8,
+            "attack_plan_id": 700000003,
+            "source_plan_id": 700000001,
+            "original_current_waypoint_id": 123,
+        },
+    )
+
+    recovery = attack._resolve_attack_tracking_recovery(
+        aircraft_id=5,
+        source_plan_id=700000003,
+        current_coord=None,
+        emit=lambda _message: None,
+        excluded_target_ids={8},
+    )
+
+    assert recovery is not None
+    assert recovery["split_waypoint_id"] == 123
+
+
+def test_tracking_clear_is_limited_to_the_requested_target(monkeypatch) -> None:
+    assignment = {
+        "active": True,
+        "target_id": 7,
+        "attack_plan_id": 700000003,
+    }
+    monkeypatch.setattr(
+        attack, "get_tracking_assignment", lambda _aircraft_id: dict(assignment)
+    )
+    cleared: list[int] = []
+    monkeypatch.setattr(
+        attack, "clear_tracking_assignment", lambda aircraft_id: cleared.append(aircraft_id)
+    )
+
+    assert attack._clear_attack_tracking_assignment_if_attached_to_plan(
+        aircraft_id=5,
+        source_plan_id=700000003,
+        emit=lambda _message: None,
+        excluded_target_ids={8},
+    ) is False
+    assert cleared == []
+
+    assignment["target_id"] = 8
+    assert attack._clear_attack_tracking_assignment_if_attached_to_plan(
+        aircraft_id=5,
+        source_plan_id=700000003,
+        emit=lambda _message: None,
+        excluded_target_ids={8},
+    ) is True
+    assert cleared == [5]

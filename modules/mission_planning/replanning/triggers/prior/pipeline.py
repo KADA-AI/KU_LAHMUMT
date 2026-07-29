@@ -60,7 +60,6 @@ from modules.mission_planning.runtime.state.prior_tracking import (
 from modules.mission_planning.pipelines.mission_path_trim import (
     DEFAULT_SWEEP_SPLIT_LOOKAHEAD_SECONDS,
     count_sweep_points_in_waypoints,
-    is_line_scan_progress_entry,
     load_sweep_progress,
     merge_small_adjacent_line_search_waypoints,
     physical_sweep_cut_points,
@@ -82,6 +81,7 @@ from modules.mission_planning.pipelines.line_search_speed_guard import (
     effective_line_search_transit_m,
 )
 from modules.mission_planning.pipelines.type2_boundary_guard_loop import (
+    apply_boundary_guard_contract,
     clear_boundary_guard_contract,
     extract_boundary_guard_contract,
     finalize_boundary_guard_flight_path_sets_in_mission_order,
@@ -2635,6 +2635,10 @@ def run_prior_mission_pipeline(
                 continue
             other_updates.append(update)
             other_generated_imp_ids.add(int(update["individualMissionPackageID"]))
+            for generated_path_id in update.get("generatedPathIDs") or []:
+                normalized_generated_path_id = _to_int(generated_path_id)
+                if normalized_generated_path_id is not None:
+                    other_generated_path_ids.add(int(normalized_generated_path_id))
             resume_meta = update.get("resume") or {}
             if "pathID" in resume_meta:
                 try:
@@ -3589,15 +3593,13 @@ def _apply_resume_path_trimming(
     if sweep_progress and artifacts.path_id is not None:
         progress_entry = sweep_progress.get(int(artifacts.path_id))
     resume_offset_reference_coord = current_coord if isinstance(current_coord, dict) else None
-    if (
-        allow_line_scan_sweep_point_trim
-        and is_line_scan_progress_entry(progress_entry)
-    ):
+    if allow_line_scan_sweep_point_trim and isinstance(progress_entry, dict):
         # A Type2 branch owns one ordered executable sweep.  Its LINE monitor
-        # measures progress on the branch centerline, but ``progressPoints`` is
-        # already scaled to the nested lineSearch point count.  Use that point
-        # count to cut the executable sweep; rebuilding from the two-point
-        # centerline would otherwise erase the branch's filming footprint.
+        # exposes explicit physical ``progressPoints`` for both LINE and guard
+        # AREA children.  Use only those confirmed points here: a predictive
+        # buffer can otherwise delete an unphotographed prefix when the UAV
+        # immediately diverts to a detected target.  Rebuilding from the
+        # two-point centerline would likewise erase the branch's footprint.
         raw_cut_points = sweep_progress_points(progress_entry)
     else:
         raw_cut_points = physical_sweep_cut_points(
@@ -7118,6 +7120,81 @@ def _build_other_uav_resume_package(
         if is_boundary_guard_loop(target_boundary_guard_contract)
         else ""
     )
+    if target_boundary_guard_set_id:
+        # Older/replayed artifacts can carry the guard contract on only the
+        # IMP mission or only the FlightPath.  Work on the loaded copies and
+        # normalize both sides before any split/clone; source files remain
+        # immutable and the finalizer can use pathID as the sole association.
+        apply_boundary_guard_contract(
+            target_mission,
+            target_boundary_guard_contract,
+            include_individual_mission_info=True,
+        )
+        apply_boundary_guard_contract(fp_data, target_boundary_guard_contract)
+
+        # Normalize path-only contracts on the copied IMP as well.  This is
+        # needed both to identify already-flown same-set prefix children and
+        # to keep a later same-set child when an aggregate input-done marker
+        # races ahead of the per-child execution state.
+        for source_mission in mission_list:
+            if not isinstance(source_mission, dict):
+                continue
+            source_contract = extract_boundary_guard_contract(
+                source_mission,
+                source_mission.get("individualMissionInfo"),
+            )
+            if not is_boundary_guard_loop(source_contract):
+                source_path_id = _to_int(source_mission.get("pathID"))
+                if source_path_id is not None:
+                    try:
+                        source_path = db_paths.get_db_subpath(
+                            "FlightPath", f"{int(source_path_id)}.json"
+                        )
+                        source_path_payload = read_json_cached(
+                            source_path,
+                            kind="FlightPath",
+                        )
+                    except Exception:
+                        source_path_payload = None
+                    source_contract = extract_boundary_guard_contract(
+                        source_mission,
+                        source_mission.get("individualMissionInfo"),
+                        source_path_payload,
+                    )
+            if is_boundary_guard_loop(source_contract):
+                apply_boundary_guard_contract(
+                    source_mission,
+                    source_contract,
+                    include_individual_mission_info=True,
+                )
+
+    pending_boundary_guard_follow_ups = [
+        mission
+        for mission in (
+            mission_list[int(target_index) + 1 :]
+            if target_boundary_guard_set_id and target_index is not None
+            else []
+        )
+        if isinstance(mission, dict)
+        and not bool(mission.get("isDone"))
+        and str(
+            extract_boundary_guard_contract(
+                mission,
+                mission.get("individualMissionInfo"),
+            ).get("boundaryGuardSetID")
+            or ""
+        ).strip()
+        == target_boundary_guard_set_id
+    ]
+    effective_clone_follow_up_artifacts = bool(
+        clone_follow_up_artifacts or target_boundary_guard_set_id
+    )
+    if target_boundary_guard_set_id and not clone_follow_up_artifacts:
+        emit(
+            f"{log_prefix} Type-2 boundary guard forces fresh follow-up cloning "
+            f"(set={target_boundary_guard_set_id}, "
+            f"pendingChildren={len(pending_boundary_guard_follow_ups)})."
+        )
     preserve_type2_line_carrier = bool(
         target_input_mission_id is not None
         and int(target_input_mission_id) > 0
@@ -7133,15 +7210,22 @@ def _build_other_uav_resume_package(
     follow_up_missions: List[Dict[str, Any]] = []
     follow_up_paths: List[Tuple[Path, Dict[str, Any]]] = []
     done_input_started = time.perf_counter()
-    follow_up_policy_enabled = bool(clone_follow_up_artifacts or preserve_follow_up_artifacts)
+    follow_up_policy_enabled = bool(
+        effective_clone_follow_up_artifacts or preserve_follow_up_artifacts
+    )
     done_input_ids = _load_done_input_ids_for_plan(source_plan_id) if follow_up_policy_enabled else set()
+    if pending_boundary_guard_follow_ups and target_input_mission_id is not None:
+        # Per-child mission/path state is authoritative for a repeated guard
+        # AREA.  An input-level done bit must not delete the later children of
+        # that same owner set.
+        done_input_ids.discard(int(target_input_mission_id))
     _record_package_stage(
         "load_done_input_ids",
         done_input_started,
         enabled=bool(follow_up_policy_enabled),
         doneInputCount=len(done_input_ids),
     )
-    if clone_follow_up_artifacts and target_index is not None:
+    if effective_clone_follow_up_artifacts and target_index is not None:
         follow_up_rows = mission_list[target_index + 1 :]
         follow_up_preserved = False
         if preserve_follow_up_artifacts and target_boundary_guard_set_id:
@@ -7290,7 +7374,19 @@ def _build_other_uav_resume_package(
         removedWaypointID=removed_wp_id,
         detail=trim_timing,
     )
-    if not resume_waypoints:
+    current_guard_child_omitted = False
+    if not resume_waypoints and pending_boundary_guard_follow_ups:
+        # The active guard child is complete, but its owner set is not.  Do
+        # not replace the remaining AREA children with a hold and do not leave
+        # the stale source IMP in place: publish a suffix-only fresh graph.
+        current_guard_child_omitted = True
+        emit(
+            f"{log_prefix} Current boundary guard child has no remaining geometry; "
+            "continuing with later owner children only "
+            f"(aircraft={aircraft_id}, set={target_boundary_guard_set_id}, "
+            f"remainingChildren={len(pending_boundary_guard_follow_ups)})."
+        )
+    elif not resume_waypoints:
         emit(f"{log_prefix} Resume path became empty for aircraft {aircraft_id}; skipping update.")
         package_timing["totalMs"] = round((time.perf_counter() - package_started_total) * 1000.0, 3)
         emit(
@@ -7303,6 +7399,7 @@ def _build_other_uav_resume_package(
     if (
         has_line_remaining_geometry(line_remaining_detail)
         and not preserve_type2_line_carrier
+        and not current_guard_child_omitted
     ):
         line_remaining_started = time.perf_counter()
         resume_waypoints, line_remaining_applied = _apply_line_remaining_detail_to_resume_waypoints(
@@ -7320,7 +7417,15 @@ def _build_other_uav_resume_package(
             applied=bool(line_remaining_applied),
             resumeWaypointCount=len(resume_waypoints),
         )
-        if not resume_waypoints:
+        if not resume_waypoints and pending_boundary_guard_follow_ups:
+            current_guard_child_omitted = True
+            emit(
+                f"{log_prefix} Current boundary guard child became empty after "
+                "remaining-geometry rebuild; continuing with later owner children "
+                f"(aircraft={aircraft_id}, set={target_boundary_guard_set_id}, "
+                f"remainingChildren={len(pending_boundary_guard_follow_ups)})."
+            )
+        elif not resume_waypoints:
             emit(f"{log_prefix} Resume path became empty after LINE remaining rebuild for aircraft {aircraft_id}.")
             package_timing["totalMs"] = round((time.perf_counter() - package_started_total) * 1000.0, 3)
             emit(
@@ -7342,6 +7447,7 @@ def _build_other_uav_resume_package(
                 "secondary remaining-geometry rebuild skipped."
             )
 
+    has_current_resume = bool(resume_waypoints)
     has_done_segment = bool(done_waypoints)
     if not has_done_segment:
         done_path_id = None
@@ -7390,12 +7496,13 @@ def _build_other_uav_resume_package(
     imp_data["individualMissionPackageID"] = new_imp_id
     imp_data["timestamp"] = now_ms
     if 0 <= target_index < len(mission_list):
-        if clone_follow_up_artifacts:
+        if effective_clone_follow_up_artifacts:
             if drop_prefix_missions:
                 rebuilt = []
                 if preserved_done_mission is not None:
                     rebuilt.append(preserved_done_mission)
-                rebuilt.append(resume_mission)
+                if has_current_resume:
+                    rebuilt.append(resume_mission)
             else:
                 prefix = deepcopy(mission_list[:target_index])
                 if target_boundary_guard_set_id:
@@ -7414,7 +7521,8 @@ def _build_other_uav_resume_package(
                 rebuilt = list(prefix)
                 if preserved_done_mission is not None:
                     rebuilt.append(preserved_done_mission)
-                rebuilt.append(resume_mission)
+                if has_current_resume:
+                    rebuilt.append(resume_mission)
             rebuilt.extend(follow_up_missions)
             mission_list[:] = rebuilt
         else:
@@ -7430,7 +7538,7 @@ def _build_other_uav_resume_package(
                     mission_list.insert(target_index + 1, resume_mission)
                 else:
                     mission_list[target_index] = resume_mission
-    else:
+    elif has_current_resume:
         mission_list.insert(0, resume_mission)
         emit(
             f"{log_prefix} Target mission index invalid; appended resume at head (aircraft {aircraft_id})."
@@ -7442,17 +7550,22 @@ def _build_other_uav_resume_package(
         if done_path_id is not None and done_fp_data is not None
         else None
     )
-    resume_fp_dest = db_paths.get_db_subpath("FlightPath", f"{resume_path_id}.json")
+    resume_fp_dest = (
+        db_paths.get_db_subpath("FlightPath", f"{resume_path_id}.json")
+        if has_current_resume
+        else None
+    )
     for path in (
         imp_dest,
         *( [done_fp_dest] if done_fp_dest is not None else [] ),
-        resume_fp_dest,
+        *( [resume_fp_dest] if resume_fp_dest is not None else [] ),
         *(dest for dest, _ in follow_up_paths),
     ):
         path.parent.mkdir(parents=True, exist_ok=True)
     resume_mission["isDone"] = False
     normalize_started = time.perf_counter()
-    _set_flight_path_waypoints_done(resume_fp_data, False)
+    if has_current_resume:
+        _set_flight_path_waypoints_done(resume_fp_data, False)
     generated_flight_paths: List[Dict[str, Any]] = []
     if done_fp_dest is not None and done_fp_data is not None:
         if target_boundary_guard_set_id:
@@ -7468,48 +7581,67 @@ def _build_other_uav_resume_package(
         _apply_runtime_flyover_to_flight_path_payload(done_fp_data)
         sanitize_flight_path_payload_filming_altitudes(done_fp_data)
         generated_flight_paths.append(done_fp_data)
-    _apply_runtime_flyover_to_flight_path_payload(resume_fp_data)
-    _set_flight_path_waypoints_done(resume_fp_data, False)
-    sanitize_flight_path_payload_filming_altitudes(resume_fp_data)
-    if _sync_resume_mission_info_with_waypoints(
-        resume_mission,
-        resume_fp_data.get("waypointList") if isinstance(resume_fp_data.get("waypointList"), list) else [],
-    ):
-        emit(
-            f"{log_prefix} Resume missionInfo synced with trimmed lineSearch "
-            f"(aircraft={aircraft_id}, pathID={resume_path_id})."
-        )
-    generated_flight_paths.append(resume_fp_data)
+    if has_current_resume:
+        _apply_runtime_flyover_to_flight_path_payload(resume_fp_data)
+        _set_flight_path_waypoints_done(resume_fp_data, False)
+        sanitize_flight_path_payload_filming_altitudes(resume_fp_data)
+        if _sync_resume_mission_info_with_waypoints(
+            resume_mission,
+            resume_fp_data.get("waypointList") if isinstance(resume_fp_data.get("waypointList"), list) else [],
+        ):
+            emit(
+                f"{log_prefix} Resume missionInfo synced with trimmed lineSearch "
+                f"(aircraft={aircraft_id}, pathID={resume_path_id})."
+            )
+        generated_flight_paths.append(resume_fp_data)
     for dest, payload in follow_up_paths:
         _apply_runtime_flyover_to_flight_path_payload(payload)
         _set_flight_path_waypoints_done(payload, False)
         sanitize_flight_path_payload_filming_altitudes(payload)
         if isinstance(payload, dict):
             generated_flight_paths.append(payload)
-    if clone_follow_up_artifacts and target_boundary_guard_set_id:
-        guard_missions = [
-            mission
-            for mission in mission_list
-            if isinstance(mission, dict)
-            and str(
-                extract_boundary_guard_contract(
-                    mission,
-                    mission.get("individualMissionInfo"),
-                ).get("boundaryGuardSetID")
-                or ""
-            ).strip()
-            == target_boundary_guard_set_id
-        ]
-        guard_paths = [
-            payload
+    if effective_clone_follow_up_artifacts and target_boundary_guard_set_id:
+        generated_path_by_id = {
+            int(path_id): payload
             for payload in generated_flight_paths
             if isinstance(payload, dict)
-            and str(
-                extract_boundary_guard_contract(payload).get("boundaryGuardSetID")
-                or ""
-            ).strip()
-            == target_boundary_guard_set_id
-        ]
+            and (path_id := _to_int(payload.get("pathID"))) is not None
+        }
+        guard_missions: List[Dict[str, Any]] = []
+        guard_paths: List[Dict[str, Any]] = []
+        seen_guard_path_ids: Set[int] = set()
+        for mission in mission_list:
+            if not isinstance(mission, dict):
+                continue
+            mission_path_id = _to_int(mission.get("pathID"))
+            path_payload = (
+                generated_path_by_id.get(int(mission_path_id))
+                if mission_path_id is not None
+                else None
+            )
+            contract = extract_boundary_guard_contract(
+                mission,
+                mission.get("individualMissionInfo"),
+                path_payload,
+            )
+            if (
+                not is_boundary_guard_loop(contract)
+                or str(contract.get("boundaryGuardSetID") or "").strip()
+                != target_boundary_guard_set_id
+            ):
+                continue
+            # PathID is the durable association.  Repair legacy mission-only
+            # and path-only contracts on the fresh copies before finalization.
+            apply_boundary_guard_contract(
+                mission,
+                contract,
+                include_individual_mission_info=True,
+            )
+            guard_missions.append(mission)
+            if path_payload is not None and int(mission_path_id) not in seen_guard_path_ids:
+                apply_boundary_guard_contract(path_payload, contract)
+                guard_paths.append(path_payload)
+                seen_guard_path_ids.add(int(mission_path_id))
         guard_summary = finalize_boundary_guard_flight_path_sets_in_mission_order(
             guard_missions,
             guard_paths,
@@ -7543,7 +7675,8 @@ def _build_other_uav_resume_package(
     write_entries: List[Tuple[Path, Dict[str, Any]]] = [(imp_dest, imp_data)]
     if done_fp_dest is not None and done_fp_data is not None:
         write_entries.append((done_fp_dest, done_fp_data))
-    write_entries.append((resume_fp_dest, resume_fp_data))
+    if resume_fp_dest is not None:
+        write_entries.append((resume_fp_dest, resume_fp_data))
     write_entries.extend((dest, payload) for dest, payload in follow_up_paths)
     write_results = write_json_batch(
         write_entries,
@@ -7560,13 +7693,17 @@ def _build_other_uav_resume_package(
         skippedCount=sum(1 for row in write_results if row.get("skipped")),
     )
 
-    path_summary = (
-        f"{done_fp_dest.name}/{resume_fp_dest.name}"
-        if done_fp_dest is not None
-        else f"{resume_fp_dest.name}"
-    )
+    generated_path_names = [
+        path.name
+        for path in (
+            *( [done_fp_dest] if done_fp_dest is not None else [] ),
+            *( [resume_fp_dest] if resume_fp_dest is not None else [] ),
+            *(dest for dest, _payload in follow_up_paths),
+        )
+    ]
+    path_summary = "/".join(generated_path_names) or "none"
     emit(
-        f"{log_prefix} Generated done/resume mission -> "
+        f"{log_prefix} Generated remaining mission graph -> "
         f"aircraft={aircraft_id} IMP:{imp_dest.name} PATHS:{path_summary}"
     )
 
@@ -7576,18 +7713,21 @@ def _build_other_uav_resume_package(
         f"{log_prefix} Resume package timing aircraft={aircraft_id} "
         f"timingMs={json.dumps(package_timing, ensure_ascii=False, default=str)}"
     )
-    return {
+    result = {
         "aircraft_id": aircraft_id,
         "individualMissionPackageID": new_imp_id,
-        "resume": {
-            "individualMissionID": resume_individual_id,
-            "pathID": resume_path_id,
-        },
         "removedWaypointID": removed_wp_id,
         "donePathID": done_path_id,
         "donePath": str(done_fp_dest) if done_fp_dest is not None else None,
-        "resumePath": str(resume_fp_dest),
+        "resumePath": str(resume_fp_dest) if resume_fp_dest is not None else None,
+        "generatedPathIDs": [
+            int(path_id)
+            for payload in generated_flight_paths
+            if isinstance(payload, dict)
+            and (path_id := _to_int(payload.get("pathID"))) is not None
+        ],
         "followUpMissionCount": len(follow_up_missions),
+        "boundaryGuardCurrentChildOmitted": bool(current_guard_child_omitted),
         "clearedFollowUpExecutionBlockCount": int(
             cleared_follow_up_execution_blocks
         ),
@@ -7595,6 +7735,12 @@ def _build_other_uav_resume_package(
         "reservedIds": reservation_summary,
         "timingMs": package_timing,
     }
+    if has_current_resume:
+        result["resume"] = {
+            "individualMissionID": resume_individual_id,
+            "pathID": resume_path_id,
+        }
+    return result
 
 
 def _build_detail_summary(detail: Dict[str, Any]) -> Dict[str, Any]:

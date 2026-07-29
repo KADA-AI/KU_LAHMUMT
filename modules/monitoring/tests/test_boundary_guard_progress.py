@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 import threading
+from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -11,6 +12,9 @@ from modules.monitoring.logic.boundary_guard_progress import (
 from modules.monitoring.logic.mission_progress import MissionProgressTracker
 from modules.monitoring.logic.mission_update import extract_0401_agent_states
 from modules.monitoring.logic import mission_update
+from modules.monitoring.gui.tabs.monitoring_visualization_tab import (
+    _recommendation_state_after_plan_switch,
+)
 
 
 INPUT_ID = 700000005
@@ -293,6 +297,104 @@ class BoundaryGuardMissionProgressTests(unittest.TestCase):
         self.assertFalse(snapshot["input_progress"][INPUT_ID]["done"])
         self.assertEqual(snapshot["new_completed_input"], [])
         self.assertEqual(snapshot["new_completed_individual"], [])
+
+    def test_destroyed_target_replan_then_elapsed_guard_completes_immediately(self) -> None:
+        tracker = MissionProgressTracker()
+        source_view = _guard_view(aircraft_ids=(4,))
+        tracker.reset(source_view)
+        active_assignments = []
+
+        with patch(
+            "modules.monitoring.logic.mission_progress.list_active_tracking_assignments",
+            side_effect=lambda: list(active_assignments),
+        ):
+            tracker.update(1_000, [_state(4, cycle_count=0)])
+            tracker.update(9_000, [_state(4, cycle_count=1)])
+
+            active_assignments[:] = [
+                {
+                    "aircraft_id": 4,
+                    "current_input_mission_id": INPUT_ID,
+                    "active": True,
+                }
+            ]
+            blocked = tracker.update(
+                12_000,
+                [_state(4, cycle_count=1, flight_mode=9, waypoint_offset=1)],
+            )
+            self.assertEqual(blocked["new_completed_input"], [])
+            self.assertEqual(
+                blocked["input_progress"][INPUT_ID]["boundary_guard"]["phase"],
+                "waiting_tracking",
+            )
+
+            # attackClosedDestroyed writes/applies a new MissionPlan but keeps
+            # the same portable guard-set identity and InputMissionPackage.
+            post_attack_view = deepcopy(source_view)
+            post_attack_view["mission_plan_id"] = 7002
+            tracker.reset(post_attack_view)
+            active_assignments.clear()
+            completed = tracker.update(
+                12_100,
+                [_state(4, cycle_count=0)],
+            )
+
+        self.assertEqual(completed["new_completed_input"], [INPUT_ID])
+        self.assertTrue(completed["input_progress"][INPUT_ID]["done"])
+        self.assertEqual(
+            completed["input_progress"][INPUT_ID]["progress_percent"],
+            100,
+        )
+
+
+class BoundaryGuardRecommendationCarryTests(unittest.TestCase):
+    def test_unsent_completion_survives_same_package_post_attack_plan_switch(self) -> None:
+        state = _recommendation_state_after_plan_switch(
+            same_input_package=True,
+            input_ids={INPUT_ID, INPUT_ID + 1},
+            done_input_ids={INPUT_ID},
+            observed_completion_inputs={INPUT_ID},
+            observed_execute_ready_inputs=set(),
+            pending_completion_inputs=[INPUT_ID],
+            pending_execute_inputs=[],
+            sent_completion_inputs=set(),
+            sent_execute_inputs=set(),
+        )
+
+        self.assertEqual(state["pending_completion_inputs"], [INPUT_ID])
+        self.assertNotIn(INPUT_ID, state["sent_completion_inputs"])
+
+    def test_already_sent_completion_is_not_requeued_after_plan_switch(self) -> None:
+        state = _recommendation_state_after_plan_switch(
+            same_input_package=True,
+            input_ids={INPUT_ID, INPUT_ID + 1},
+            done_input_ids={INPUT_ID},
+            observed_completion_inputs={INPUT_ID},
+            observed_execute_ready_inputs=set(),
+            pending_completion_inputs=[],
+            pending_execute_inputs=[],
+            sent_completion_inputs={INPUT_ID},
+            sent_execute_inputs=set(),
+        )
+
+        self.assertEqual(state["pending_completion_inputs"], [])
+        self.assertIn(INPUT_ID, state["sent_completion_inputs"])
+
+    def test_different_input_package_drops_old_pending_recommendation(self) -> None:
+        state = _recommendation_state_after_plan_switch(
+            same_input_package=False,
+            input_ids={INPUT_ID},
+            done_input_ids={INPUT_ID},
+            observed_completion_inputs={INPUT_ID},
+            observed_execute_ready_inputs=set(),
+            pending_completion_inputs=[INPUT_ID],
+            pending_execute_inputs=[],
+            sent_completion_inputs=set(),
+            sent_execute_inputs=set(),
+        )
+
+        self.assertEqual(state["pending_completion_inputs"], [])
+        self.assertEqual(state["sent_completion_inputs"], {INPUT_ID})
 
 
 class BoundaryGuardAreaWorkerQueueTests(unittest.TestCase):
