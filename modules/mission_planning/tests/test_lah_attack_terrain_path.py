@@ -263,10 +263,7 @@ def test_lah_eta_recompute_accounts_for_same_coordinate_climb_time() -> None:
         (37.909489, 128.154783, 932, 1005),
     ]
     speed_mps = 40.0
-    climb_rate_mps = (
-        float(d0304.DEFAULT_ENVELOPE.climb_rate_mps)
-        * float(d0304.LAH_VERTICAL_RATE_USE_RATIO)
-    )
+    climb_rate_mps = d0304._lah_vertical_rate_mps(1.0)
 
     for latitude, longitude, start_altitude, end_altitude in transitions:
         start = {
@@ -437,7 +434,7 @@ def test_legacy_attack_customization_keeps_seconds_and_vertical_eta(monkeypatch)
     monkeypatch.setattr(
         legacy_attack_helpers,
         "build_lah_terrain_following_path",
-        lambda _coords: [
+        lambda _coords, **_kwargs: [
             {"latitude": 37.0, "longitude": 127.0, "altitude": 150, "cum_m": 0.0},
             {"latitude": 37.01, "longitude": 127.01, "altitude": 180, "cum_m": 1500.0},
         ],

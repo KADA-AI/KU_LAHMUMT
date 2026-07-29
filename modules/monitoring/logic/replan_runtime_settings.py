@@ -112,6 +112,33 @@ _FALLBACK_SETTINGS: Dict[str, Any] = {
         "attitude_rate_adaptive_warmup_samples": 4,
         "attitude_rate_adaptive_min_scale": 0.65,
         "attitude_rate_adaptive_max_scale": 1.35,
+        # --- Speed provenance: use track-derived speed when telemetry lies ---
+        "track_speed_window_s": 2.0,
+        "track_speed_min_dt_s": 0.6,
+        "track_speed_max_valid_mps": 120.0,
+        "track_speed_min_flight_mps": 5.0,
+        "track_speed_min_samples": 8,
+        "track_speed_mismatch_low_ratio": 0.7,
+        "track_speed_mismatch_high_ratio": 1.4,
+        # --- Attitude-first line entry projection ---
+        "line_projection_attitude_enabled": True,
+        "line_projection_attitude_confidence_min": 0.45,
+        "line_projection_roll_evidence_bank_deg": 6.0,
+        "line_projection_roll_evidence_rate_dps": 1.5,
+        "line_projection_bank_settled_deg": 2.5,
+        # Bank at which a roll opposite the heading trend is taken as a
+        # genuine reversal rather than noise.
+        "line_projection_reversal_bank_deg": 10.0,
+        "next_collab_entry_pipeline_latency_s": 2.5,
+        # --- Per-aircraft roll-response learning (our/external/verification sim) ---
+        "roll_dynamics_learn_ema_alpha": 0.05,
+        "roll_dynamics_learn_warmup_samples": 6,
+        "roll_slew_default_dps": 6.0,
+        "roll_slew_learn_min_dps": 0.8,
+        # Above our own sim's 40 deg/s so a fast airframe is learned, not clipped.
+        "roll_slew_learn_max_dps": 60.0,
+        "steady_bank_default_deg": 24.0,
+        "steady_bank_learn_min_rate_dps": 2.5,
         "adaptive_enabled": True,
         "adaptive_sample_min_interval_s": 0.75,
         "adaptive_min_turn_rate_dps": 2.5,

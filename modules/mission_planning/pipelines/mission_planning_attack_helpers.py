@@ -1005,7 +1005,10 @@ def apply_attack_customizations(
 
     # This helper has no LINE/AREA geometry.  Keep the original horizontal
     # approach instead of allowing an unconstrained low-terrain side detour.
-    low_profile = build_lah_terrain_following_path([approach_coord, attack_waypoint])
+    low_profile = build_lah_terrain_following_path(
+        [approach_coord, attack_waypoint],
+        cruise_speed_mps=float(attack_speed_mps),
+    )
     if low_profile:
         try:
             reported_start_altitude_m = float(approach_coord.get("altitude"))

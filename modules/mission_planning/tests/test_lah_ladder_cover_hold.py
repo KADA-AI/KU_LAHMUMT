@@ -69,6 +69,49 @@ def _missions(*, maneuver_width: float | None = _LINE_WIDTH_M) -> list[dict[str,
     return missions
 
 
+def _three_branch_missions() -> list[dict[str, Any]]:
+    """The target phase shape used by the live Type-2 package."""
+
+    missions = _missions()
+    missions[3]["missionDetail"] = {
+        "lineList": [
+            _line((37.98, 127.39), (38.00, 127.40))["lineList"][0],
+            _line((37.97, 127.40), (37.99, 127.41))["lineList"][0],
+            _line((37.96, 127.41), (37.98, 127.42))["lineList"][0],
+        ]
+    }
+    missions[4]["missionDetail"] = {
+        "areaList": [
+            _area(
+                (37.99, 127.39),
+                (38.01, 127.39),
+                (38.01, 127.41),
+                (37.99, 127.41),
+            )["areaList"][0],
+            _area(
+                (37.98, 127.40),
+                (38.00, 127.40),
+                (38.00, 127.42),
+                (37.98, 127.42),
+            )["areaList"][0],
+            _area(
+                (37.97, 127.41),
+                (37.99, 127.41),
+                (37.99, 127.43),
+                (37.97, 127.43),
+            )["areaList"][0],
+        ]
+    }
+    missions[5]["missionDetail"] = {
+        "lineList": [
+            _line((38.00, 127.40), (37.98, 127.39))["lineList"][0],
+            _line((37.99, 127.41), (37.97, 127.40))["lineList"][0],
+            _line((37.98, 127.42), (37.96, 127.41))["lineList"][0],
+        ]
+    }
+    return missions
+
+
 def _info_for(
     mission_index: int, *, maneuver_width: float | None = _LINE_WIDTH_M
 ) -> tuple[dict[str, Any] | None, str]:
@@ -89,6 +132,11 @@ def _fresh_cover_state(monkeypatch: pytest.MonkeyPatch):
         gmm._COVER_HOLD_CACHE.clear()
     monkeypatch.setattr(gmm, "_cover_hold_enabled", lambda: True)
     monkeypatch.setattr(gmm, "_cover_hold_search_radius_m", lambda: 1500.0)
+    monkeypatch.setattr(
+        gmm,
+        "_destination_cover_min_masking_depth_m",
+        lambda: 30.0,
+    )
     yield
     with gmm._COVER_HOLD_CACHE_LOCK:
         gmm._COVER_HOLD_CACHE.clear()
@@ -291,11 +339,57 @@ def test_destination_area_hold_is_containment_mode_with_cover_contract(
     # The 목표지역 AREA rows ride along, so the disk is clipped to the area.
     assert call["area_list"], "destination hold must pass containment rows"
     assert all("coordinateList" in row for row in call["area_list"])
+    assert call["max_candidates"] == 121
+    assert call["search_radius_m"] == 0.0
+    assert call["minimum_threat_masking_depth_m"] == 30.0
     # The d0304 UAV-ETA refine contract keys are seeded.
     assert info["_lahTerminalCoverEnabled"] is True
+    assert info["_lahSharedTerminalCoverPoint"] is True
     assert info["_lahConstraintAreaList"]
     assert info["_lahTerminalCoverThreatCoordinateList"]
     assert info["_lahTerminalCoverFallbackCoordinate"]
+
+
+def test_destination_phase_reuses_one_branch_aware_site_and_ignores_acp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Guard, target return and ACP slots must all reference one hide site."""
+
+    stub = _SelectorStub(37.966, 127.368)
+    monkeypatch.setattr(lah_terminal_cover, "select_lah_terminal_cover_point", stub)
+    missions = _three_branch_missions()
+    anchors = gmm.resolve_ground_maneuver_lah_anchors(missions)
+    assert anchors is not None
+
+    results = [
+        gmm.ground_maneuver_lah_info_for_index(
+            missions,
+            anchors,
+            mission_index,
+            package_type=2,
+        )
+        for mission_index in (3, 4, 5, 6)
+    ]
+
+    assert [behavior for _info, behavior in results] == [
+        "destination_area_hold"
+    ] * 4
+    assert {_point(info) for info, _behavior in results if info} == {
+        (37.966, 127.368)
+    }
+    # Selection runs once and is memoized through the whole target-area phase.
+    assert len(stub.calls) == 1
+    threats = stub.calls[0]["threat_coordinates"]
+    assert len(threats) == 3, "one representative per self-reliance branch"
+    acp_threat = gmm._mission_threat_coordinates(missions[6], maximum=1)[0]
+    assert all(
+        gmm._equirect_distance_m(threat, acp_threat) > 1_000.0
+        for threat in threats
+    ), "the later ACP convergence line must not create another hold"
+    for info, _behavior in results:
+        assert info is not None
+        assert info["_lahSharedTerminalCoverPoint"] is True
+        assert info["_lahTerminalCoverThreatCoordinateList"] == threats
 
 
 def test_toggle_off_keeps_every_anchor(monkeypatch: pytest.MonkeyPatch) -> None:

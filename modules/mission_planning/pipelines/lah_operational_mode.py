@@ -706,6 +706,10 @@ def _terminal_cover_point_mission_info(
         diagnostics.setdefault(key, None)
     info = _point_mission_info(selected)
     info["_lahTerminalCoverEnabled"] = True
+    # This is one tactical hide site for the whole manned package.  d0304 must
+    # not turn it into three independent sites with formation offsets or
+    # paired-UAV terminal relocation.
+    info["_lahSharedTerminalCoverPoint"] = True
     info["_lahConstraintAreaList"] = constraints
     info["_lahTerminalCoverThreatCoordinateList"] = deepcopy(threats)
     info["_lahTerminalCoverFallbackCoordinate"] = dict(fallback)

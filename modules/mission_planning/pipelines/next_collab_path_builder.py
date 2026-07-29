@@ -71,6 +71,7 @@ except Exception:
         load_fov_db_rows,
         load_runtime_flyover,
     )
+from modules.mission_planning.MissionPlanner import capture_physics
 from modules.mission_planning.planners.next_collab_division._geo_utils import (
     coord_to_xy,
     local_xy_to_llh,
@@ -259,6 +260,15 @@ def _fov_db_min_sep_for_fov(fov_deg: Any) -> float:
 
 def _route_offset_sep_for_fov(fov_deg: Any, default_sep_m: Any) -> float:
     default_sep = _to_float(default_sep_m) or 0.0
+    # 물리 우선: 측정/기존 이격을 그대로 쓰되 선택 FOV의 GSD 한계로만 자른다.
+    try:
+        physics_sep = capture_physics.physics_route_offset_cap_m(
+            _to_float(fov_deg) or 0.0, default_sep
+        )
+    except Exception:
+        physics_sep = 0.0
+    if physics_sep > 0.0:
+        return float(physics_sep)
     min_sep = _fov_db_min_sep_for_fov(fov_deg)
     if min_sep > 0.0:
         return float(min_sep)
@@ -976,7 +986,7 @@ def _is_speed_locked_waypoint(waypoint: Dict[str, Any]) -> bool:
         return True
     if waypoint.get("_locked_area_reciprocal_turn"):
         return True
-    if _line_search_coordinate_list(waypoint):
+    if _has_line_search_coordinates(waypoint):
         return True
     return _is_point_hold_waypoint(waypoint)
 
@@ -1119,7 +1129,7 @@ def _stabilize_entry_transition_altitude_inplace(
     first_wp = waypoints[0] if isinstance(waypoints[0], dict) else None
     if not isinstance(first_wp, dict):
         return
-    if not _is_point_hold_waypoint(first_wp) and not _line_search_coordinate_list(first_wp):
+    if not _is_point_hold_waypoint(first_wp) and not _has_line_search_coordinates(first_wp):
         return
     first_coord = first_wp.get("coordinate") if isinstance(first_wp.get("coordinate"), dict) else None
     if not isinstance(first_coord, dict):
@@ -1437,7 +1447,7 @@ def _preserve_first_waypoint_altitude_from_entry(
     first_waypoint = waypoints[0] if isinstance(waypoints[0], dict) else None
     if not isinstance(first_waypoint, dict):
         return
-    is_line_search_waypoint = bool(_line_search_coordinate_list(first_waypoint))
+    is_line_search_waypoint = _has_line_search_coordinates(first_waypoint)
     if not _is_point_hold_waypoint(first_waypoint) and not is_line_search_waypoint:
         return
     coordinate = first_waypoint.get("coordinate") if isinstance(first_waypoint.get("coordinate"), dict) else None
@@ -1996,6 +2006,38 @@ def _line_ingress_guard_xy(
     return guard_xy
 
 
+def _has_line_search_coordinates(waypoint: Dict[str, Any]) -> bool:
+    """Whether the waypoint carries at least one usable scan coordinate.
+
+    Equivalent to ``bool(_line_search_coordinate_list(waypoint))`` but stops at
+    the first valid coordinate instead of validating and rebuilding the whole
+    list.  A scan waypoint can carry hundreds of coordinates and this predicate
+    is evaluated per waypoint on every altitude/speed pass, so building a list
+    only to test it for emptiness was the dominant cost of those passes.
+    """
+
+    if not isinstance(waypoint, dict):
+        return False
+    filming = waypoint.get("filmingProperty")
+    if not isinstance(filming, dict):
+        return False
+    line_search = filming.get("lineSearch")
+    if not isinstance(line_search, dict):
+        return False
+    coords = line_search.get("coordinateList")
+    if not isinstance(coords, list):
+        return False
+    for coord in coords:
+        if not isinstance(coord, dict):
+            continue
+        if _to_float(coord.get("latitude")) is None:
+            continue
+        if _to_float(coord.get("longitude")) is None:
+            continue
+        return True
+    return False
+
+
 def _line_search_coordinate_list(waypoint: Dict[str, Any]) -> List[Dict[str, Any]]:
     filming = waypoint.get("filmingProperty") if isinstance(waypoint.get("filmingProperty"), dict) else {}
     line_search = filming.get("lineSearch") if isinstance(filming.get("lineSearch"), dict) else {}
@@ -2114,7 +2156,7 @@ def _waypoint_coordinate_xy(waypoint: Dict[str, Any]) -> Tuple[float, float] | N
 
 def _is_point_hold_waypoint(waypoint: Dict[str, Any]) -> bool:
     filming = waypoint.get("filmingProperty") if isinstance(waypoint.get("filmingProperty"), dict) else {}
-    return _to_int(filming.get("operationMode")) == OPMODE_POINT and not _line_search_coordinate_list(waypoint)
+    return _to_int(filming.get("operationMode")) == OPMODE_POINT and not _has_line_search_coordinates(waypoint)
 
 
 def _squash_leading_short_line_search_waypoints(waypoints: List[Dict[str, Any]]) -> None:
@@ -2171,7 +2213,7 @@ def _squash_leading_short_line_search_waypoints(waypoints: List[Dict[str, Any]])
 
         entry_filming = entry_wp.get("filmingProperty") if isinstance(entry_wp.get("filmingProperty"), dict) else {}
         entry_op_mode = _to_int(entry_filming.get("operationMode"))
-        if entry_op_mode != 1 or _line_search_coordinate_list(entry_wp):
+        if entry_op_mode != 1 or _has_line_search_coordinates(entry_wp):
             break
 
         short_coords = _line_search_coordinate_list(short_wp)
@@ -2242,7 +2284,7 @@ def _squash_trailing_short_line_search_waypoints(
             (
                 idx
                 for idx, waypoint in enumerate(waypoints)
-                if isinstance(waypoint, dict) and _line_search_coordinate_list(waypoint)
+                if isinstance(waypoint, dict) and _has_line_search_coordinates(waypoint)
             ),
             None,
         )
@@ -2280,6 +2322,39 @@ def _line_length_xy(points_xy: List[Tuple[float, float]]) -> float:
     for idx in range(1, len(points_xy)):
         total += _distance_xy(points_xy[idx - 1], points_xy[idx])
     return float(total)
+
+
+def _line_search_coordinate_length_3d_m(
+    coordinates: Sequence[Dict[str, Any]],
+) -> float:
+    """Measure a camera sweep the same way the SIM advances lineSearch.
+
+    The executor converts latitude/longitude/altitude to local XYZ and uses
+    ``math.dist``. Planning previously used only XY, which made rugged LINE
+    sweeps finish after their carrier waypoint had already been reached.
+    """
+
+    total_m = 0.0
+    previous_xy: Tuple[float, float] | None = None
+    previous_altitude_m: float | None = None
+    for coordinate in coordinates or []:
+        if not isinstance(coordinate, dict):
+            continue
+        point_xy = coord_to_xy(coordinate)
+        altitude_m = _to_float(coordinate.get("altitude"))
+        if point_xy is None:
+            continue
+        if altitude_m is None:
+            altitude_m = 0.0
+        if previous_xy is not None and previous_altitude_m is not None:
+            horizontal_m = _distance_xy(previous_xy, point_xy)
+            total_m += math.hypot(
+                float(horizontal_m),
+                float(altitude_m) - float(previous_altitude_m),
+            )
+        previous_xy = point_xy
+        previous_altitude_m = float(altitude_m)
+    return float(total_m)
 
 
 def _midpoint_xy(points_xy: List[Tuple[float, float]]) -> Tuple[float, float] | None:
@@ -2412,6 +2487,7 @@ def _clear_runtime_flyover_markers(waypoints: List[Dict[str, Any]]) -> None:
         waypoint.pop("_flyover_dubins_prefix", None)
         waypoint.pop("_locked_line_turn_prefix", None)
         waypoint.pop("_locked_area_reciprocal_turn", None)
+        waypoint.pop("_locked_sequential_area_entry_turn", None)
         waypoint.pop("_locked_area_reciprocal_turn_altitude_m", None)
         waypoint.pop("_locked_area_reciprocal_turn_speed_mps", None)
 
@@ -2453,7 +2529,11 @@ def _apply_runtime_flyover_to_waypoints(waypoints: List[Dict[str, Any]]) -> None
         for waypoint in waypoints:
             if not isinstance(waypoint, dict):
                 continue
-            if waypoint.get("_locked_area_reciprocal_turn") or waypoint.get("areaTurnRole") == "reciprocal_turn":
+            if (
+                waypoint.get("_locked_area_reciprocal_turn")
+                or waypoint.get("_locked_sequential_area_entry_turn")
+                or waypoint.get("areaTurnRole") == "reciprocal_turn"
+            ):
                 waypoint["waypointPassType"] = PASS_FLYBY
                 continue
             if int(_to_float(waypoint.get("waypointPassType")) or 0) == PASS_LOITER:
@@ -2468,7 +2548,11 @@ def _apply_runtime_flyover_to_waypoints(waypoints: List[Dict[str, Any]]) -> None
         for waypoint in waypoints:
             if not isinstance(waypoint, dict):
                 continue
-            if waypoint.get("_locked_area_reciprocal_turn") or waypoint.get("areaTurnRole") == "reciprocal_turn":
+            if (
+                waypoint.get("_locked_area_reciprocal_turn")
+                or waypoint.get("_locked_sequential_area_entry_turn")
+                or waypoint.get("areaTurnRole") == "reciprocal_turn"
+            ):
                 continue
             if int(_to_float(waypoint.get("waypointPassType")) or 0) == PASS_LOITER:
                 continue
@@ -2477,6 +2561,8 @@ def _apply_runtime_flyover_to_waypoints(waypoints: List[Dict[str, Any]]) -> None
     if flyover.get("dubins_prefix"):
         for waypoint in waypoints:
             if not isinstance(waypoint, dict):
+                continue
+            if waypoint.get("_locked_sequential_area_entry_turn"):
                 continue
             if not waypoint.get("_flyover_dubins_prefix"):
                 continue
@@ -2487,7 +2573,11 @@ def _apply_runtime_flyover_to_waypoints(waypoints: List[Dict[str, Any]]) -> None
         for waypoint in reversed(waypoints):
             if not isinstance(waypoint, dict):
                 continue
-            if waypoint.get("_locked_area_reciprocal_turn") or waypoint.get("areaTurnRole") == "reciprocal_turn":
+            if (
+                waypoint.get("_locked_area_reciprocal_turn")
+                or waypoint.get("_locked_sequential_area_entry_turn")
+                or waypoint.get("areaTurnRole") == "reciprocal_turn"
+            ):
                 continue
             if int(_to_float(waypoint.get("waypointPassType")) or 0) == PASS_LOITER:
                 continue
@@ -2496,7 +2586,11 @@ def _apply_runtime_flyover_to_waypoints(waypoints: List[Dict[str, Any]]) -> None
     for waypoint in waypoints:
         if not isinstance(waypoint, dict):
             continue
-        if waypoint.get("_locked_area_reciprocal_turn") or waypoint.get("areaTurnRole") == "reciprocal_turn":
+        if (
+            waypoint.get("_locked_area_reciprocal_turn")
+            or waypoint.get("_locked_sequential_area_entry_turn")
+            or waypoint.get("areaTurnRole") == "reciprocal_turn"
+        ):
             waypoint["waypointPassType"] = PASS_FLYBY
     _force_handover_terminal_flyover(waypoints)
     _clear_runtime_flyover_markers(waypoints)
@@ -3217,6 +3311,7 @@ def _reverse_area_route_context(path_row: Dict[str, Any]) -> Dict[str, Any]:
     for start_key, end_key in (
         ("waypointStartXY", "waypointEndXY"),
         ("areaMissionStartXY", "areaMissionEndXY"),
+        ("areaSweepRouteStartXY", "areaSweepRouteEndXY"),
     ):
         start_value = deepcopy(path_row.get(start_key))
         end_value = deepcopy(path_row.get(end_key))
@@ -3236,6 +3331,50 @@ def _reverse_area_route_context(path_row: Dict[str, Any]) -> Dict[str, Any]:
     return reversed_row
 
 
+def _orient_area_scan_endpoints_from_outer_side(
+    scan_lines_xy: Sequence[Sequence[Tuple[float, float]]],
+    path_row: Dict[str, Any],
+) -> tuple[List[List[Tuple[float, float]]], bool]:
+    """Start an edge owner's serpentine at the original AREA exterior.
+
+    The split normal is ``(cos(move), -sin(move))``. Reversing every scan line
+    together changes only the filming endpoint preference; it preserves row
+    order, route-axis selection, and sequential AREA hand-over decisions.
+    """
+
+    rows = [list(line_xy) for line_xy in scan_lines_xy]
+    if not bool(path_row.get("areaOuterFirstSweep")):
+        return rows, False
+    side = str(path_row.get("areaOuterSide") or "").strip().lower()
+    if side not in {"min", "max"}:
+        return rows, False
+    bearing_deg = _to_float(path_row.get("bearingDeg"))
+    if bearing_deg is None:
+        return rows, False
+    first_line = next((line_xy for line_xy in rows if len(line_xy) >= 2), None)
+    if first_line is None:
+        return rows, False
+
+    bearing_rad = math.radians(float(bearing_deg))
+    normal_x = math.cos(bearing_rad)
+    normal_y = -math.sin(bearing_rad)
+    start_projection = (
+        normal_x * float(first_line[0][0])
+        + normal_y * float(first_line[0][1])
+    )
+    end_projection = (
+        normal_x * float(first_line[-1][0])
+        + normal_y * float(first_line[-1][1])
+    )
+    should_reverse = bool(
+        (side == "min" and start_projection > end_projection + 1e-6)
+        or (side == "max" and start_projection < end_projection - 1e-6)
+    )
+    if not should_reverse:
+        return rows, False
+    return [list(reversed(line_xy)) for line_xy in rows], True
+
+
 def _area_sweep_items_xy(
     path_row: Dict[str, Any],
     scan_lines_xy: List[List[Tuple[float, float]]],
@@ -3245,11 +3384,15 @@ def _area_sweep_items_xy(
     if not scan_lines_xy:
         return []
     start_xy = (
-        _xy_pair(path_row.get("waypointStartXY"))
+        _xy_pair(path_row.get("areaSweepRouteStartXY"))
+        or _xy_pair(path_row.get("waypointStartXY"))
         or _xy_pair(path_row.get("entryTPrimeXY"))
         or _xy_pair(path_row.get("tangentXY"))
     )
-    end_xy = _xy_pair(path_row.get("waypointEndXY"))
+    end_xy = (
+        _xy_pair(path_row.get("areaSweepRouteEndXY"))
+        or _xy_pair(path_row.get("waypointEndXY"))
+    )
     if start_xy is None:
         for line_xy in scan_lines_xy:
             if line_xy:
@@ -3331,6 +3474,7 @@ def _group_area_sweep_items_by_spacing(
     *,
     spacing_m: float,
     merge_short_tail: bool = True,
+    anchor_to_first_item: bool = False,
 ) -> List[List[Dict[str, Any]]]:
     if not items:
         return []
@@ -3343,7 +3487,11 @@ def _group_area_sweep_items_by_spacing(
     max_items_per_group = 256
     groups: List[List[Dict[str, Any]]] = []
     current_group: List[Dict[str, Any]] = [items[0]]
-    anchor_progress_m = 0.0
+    anchor_progress_m = (
+        float(items[0].get("progressM", 0.0) or 0.0)
+        if anchor_to_first_item
+        else 0.0
+    )
 
     for item in items[1:]:
         candidate_progress_m = float(item.get("progressM", anchor_progress_m) or anchor_progress_m)
@@ -4290,7 +4438,7 @@ def _estimate_line_search_speed_mps(
         for point_xy in (coord_to_xy(coord) for coord in sweep_coords)
         if point_xy is not None
     ]
-    return _estimate_line_search_speed_xy_mps(
+    estimated_speed_mps = _estimate_line_search_speed_xy_mps(
         prev_xy=prev_xy,
         anchor_xy=anchor_xy,
         sweep_xy=sweep_xy,
@@ -4300,6 +4448,71 @@ def _estimate_line_search_speed_mps(
         reference_xy=reference_xy,
         multiplier_cap_enabled=bool(multiplier_cap_enabled),
     )
+    planar_length_m = _line_length_xy(sweep_xy)
+    spatial_length_m = _line_search_coordinate_length_3d_m(sweep_coords)
+    if planar_length_m > 1e-6 and spatial_length_m > planar_length_m:
+        estimated_speed_mps *= float(spatial_length_m) / float(planar_length_m)
+        estimated_speed_mps = clamp_line_search_speed_mps(
+            estimated_speed_mps,
+            cruise_speed_mps=float(cruise_speed_mps),
+            speed_scale=float(speed_scale),
+            multiplier_cap_enabled=bool(multiplier_cap_enabled),
+        )
+    return float(estimated_speed_mps)
+
+
+def _activation_constrained_search_speed_mps(
+    current_search_speed_mps: float,
+    *,
+    origin_coords: Sequence[Dict[str, Any] | None],
+    anchor_coord: Dict[str, Any] | None,
+    sweep_coords: Sequence[Dict[str, Any]],
+    flight_speed_mps: float,
+    speed_scale: float,
+    activation_delay_s: float,
+    multiplier_cap_enabled: bool,
+) -> float:
+    """Keep the first scan feasible even when a stale helper WP is skipped."""
+
+    anchor_xy = coord_to_xy(anchor_coord) if isinstance(anchor_coord, dict) else None
+    if anchor_xy is None or flight_speed_mps <= 0.0:
+        return float(current_search_speed_mps)
+    transit_distances_m: List[float] = []
+    for origin_coord in origin_coords or []:
+        origin_xy = coord_to_xy(origin_coord) if isinstance(origin_coord, dict) else None
+        if origin_xy is None:
+            continue
+        distance_m = _distance_xy(origin_xy, anchor_xy)
+        if distance_m > 1.0:
+            transit_distances_m.append(float(distance_m))
+    sweep_length_m = _line_search_coordinate_length_3d_m(sweep_coords)
+    if not transit_distances_m or sweep_length_m <= 1e-6:
+        return float(current_search_speed_mps)
+    # The public entry helper may be skipped when the newly authorized path
+    # starts behind the aircraft. Use the shortest plausible activation leg.
+    transit_time_s = min(transit_distances_m) / float(flight_speed_mps)
+    available_scan_time_s = float(transit_time_s) - max(
+        0.0,
+        float(activation_delay_s),
+    )
+    if available_scan_time_s <= 0.05:
+        available_scan_time_s = max(0.05, float(transit_time_s) * 0.25)
+    try:
+        effective_scale = max(0.10, float(speed_scale))
+    except Exception:
+        effective_scale = 1.0
+    required_speed_mps = (
+        float(sweep_length_m)
+        / float(available_scan_time_s)
+        * float(effective_scale)
+    )
+    required_speed_mps = clamp_line_search_speed_mps(
+        required_speed_mps,
+        cruise_speed_mps=float(flight_speed_mps),
+        speed_scale=float(effective_scale),
+        multiplier_cap_enabled=bool(multiplier_cap_enabled),
+    )
+    return max(float(current_search_speed_mps), float(required_speed_mps))
 
 
 def _recompute_first_line_search_speed_from_entry_inplace(
@@ -4310,12 +4523,13 @@ def _recompute_first_line_search_speed_from_entry_inplace(
     fallback_search_speed_mps: float,
     speed_scale: float,
     multiplier_cap_enabled: bool = True,
+    activation_delay_s: float = 0.0,
 ) -> bool:
     first_line_idx = next(
         (
             idx
             for idx, waypoint in enumerate(waypoints)
-            if isinstance(waypoint, dict) and _line_search_coordinate_list(waypoint)
+            if isinstance(waypoint, dict) and _has_line_search_coordinates(waypoint)
         ),
         None,
     )
@@ -4344,10 +4558,196 @@ def _recompute_first_line_search_speed_from_entry_inplace(
         reference_coord=entry_coord if isinstance(entry_coord, dict) else None,
         multiplier_cap_enabled=bool(multiplier_cap_enabled),
     )
+    speed_mps = _activation_constrained_search_speed_mps(
+        speed_mps,
+        origin_coords=(previous_coord, entry_coord),
+        anchor_coord=(
+            waypoint.get("coordinate")
+            if isinstance(waypoint.get("coordinate"), dict)
+            else None
+        ),
+        sweep_coords=_line_search_coordinate_list(waypoint),
+        flight_speed_mps=float(transit_speed_mps),
+        speed_scale=float(speed_scale),
+        activation_delay_s=float(activation_delay_s),
+        multiplier_cap_enabled=bool(multiplier_cap_enabled),
+    )
     if speed_mps <= 0.0:
         return False
     line_search["searchSpeed"] = float(speed_mps)
     return True
+
+
+def _resynchronize_area_capture_speeds_inplace(
+    waypoints: List[Dict[str, Any]],
+    *,
+    fallback_search_speed_mps: float,
+    speed_scale: float,
+    default_transit_speed_mps: float,
+    activation_entry_coord: Dict[str, Any] | None = None,
+    activation_delay_s: float = 0.0,
+) -> int:
+    """Match every emitted AREA scan to its actual incoming public WP leg."""
+
+    changed = 0
+    first_capture_seen = False
+    for index in range(len(waypoints)):
+        waypoint = waypoints[index] if isinstance(waypoints[index], dict) else {}
+        sweep_coords = _line_search_coordinate_list(waypoint)
+        if not sweep_coords:
+            continue
+        previous = (
+            waypoints[index - 1]
+            if index > 0 and isinstance(waypoints[index - 1], dict)
+            else {}
+        )
+        previous_coord = (
+            previous.get("coordinate")
+            if isinstance(previous.get("coordinate"), dict)
+            else None
+        )
+        if not isinstance(previous_coord, dict) and isinstance(
+            activation_entry_coord,
+            dict,
+        ):
+            previous_coord = activation_entry_coord
+        anchor_coord = (
+            waypoint.get("coordinate")
+            if isinstance(waypoint.get("coordinate"), dict)
+            else None
+        )
+        if not isinstance(previous_coord, dict) or not isinstance(anchor_coord, dict):
+            continue
+        leg_speed_mps = _to_float(waypoint.get("speed"))
+        if leg_speed_mps is None or leg_speed_mps <= 0.0:
+            leg_speed_mps = max(1.0, float(default_transit_speed_mps))
+        search_speed_mps = _estimate_line_search_speed_mps(
+            prev_coord=previous_coord,
+            anchor_coord=anchor_coord,
+            sweep_coords=sweep_coords,
+            cruise_speed_mps=float(leg_speed_mps),
+            fallback_search_speed_mps=float(fallback_search_speed_mps),
+            speed_scale=float(speed_scale),
+            multiplier_cap_enabled=False,
+        )
+        if not first_capture_seen and isinstance(activation_entry_coord, dict):
+            search_speed_mps = _activation_constrained_search_speed_mps(
+                search_speed_mps,
+                origin_coords=(previous_coord, activation_entry_coord),
+                anchor_coord=anchor_coord,
+                sweep_coords=sweep_coords,
+                flight_speed_mps=float(leg_speed_mps),
+                speed_scale=float(speed_scale),
+                activation_delay_s=float(activation_delay_s),
+                multiplier_cap_enabled=False,
+            )
+        search_speed_mps, leg_speed_mps = _apply_area_scan_rate_slowdown(
+            estimated_search_speed_mps=float(search_speed_mps),
+            transit_speed_mps=float(leg_speed_mps),
+        )
+        if search_speed_mps <= 0.0:
+            continue
+        filming = (
+            waypoint.get("filmingProperty")
+            if isinstance(waypoint.get("filmingProperty"), dict)
+            else {}
+        )
+        line_search = (
+            filming.get("lineSearch")
+            if isinstance(filming.get("lineSearch"), dict)
+            else None
+        )
+        if line_search is None:
+            continue
+        waypoint["speed"] = round(float(leg_speed_mps), 2)
+        line_search["searchSpeed"] = float(search_speed_mps)
+        changed += 1
+        first_capture_seen = True
+    return int(changed)
+
+
+def _resynchronize_line_capture_speeds_inplace(
+    waypoints: List[Dict[str, Any]],
+    *,
+    fallback_search_speed_mps: float,
+    speed_scale: float,
+    default_transit_speed_mps: float,
+    multiplier_cap_enabled: bool,
+    activation_entry_coord: Dict[str, Any] | None = None,
+    activation_delay_s: float = 0.0,
+) -> int:
+    """Recompute every LINE camera rate from the final public WP geometry."""
+
+    changed = 0
+    first_capture_seen = False
+    for index in range(len(waypoints)):
+        waypoint = waypoints[index] if isinstance(waypoints[index], dict) else {}
+        sweep_coords = _line_search_coordinate_list(waypoint)
+        if not sweep_coords:
+            continue
+        previous = (
+            waypoints[index - 1]
+            if index > 0 and isinstance(waypoints[index - 1], dict)
+            else {}
+        )
+        previous_coord = (
+            previous.get("coordinate")
+            if isinstance(previous.get("coordinate"), dict)
+            else None
+        )
+        if not isinstance(previous_coord, dict) and isinstance(
+            activation_entry_coord,
+            dict,
+        ):
+            previous_coord = activation_entry_coord
+        anchor_coord = (
+            waypoint.get("coordinate")
+            if isinstance(waypoint.get("coordinate"), dict)
+            else None
+        )
+        if not isinstance(previous_coord, dict) or not isinstance(anchor_coord, dict):
+            continue
+        leg_speed_mps = _to_float(waypoint.get("speed"))
+        if leg_speed_mps is None or leg_speed_mps <= 0.0:
+            leg_speed_mps = max(1.0, float(default_transit_speed_mps))
+        search_speed_mps = _estimate_line_search_speed_mps(
+            prev_coord=previous_coord,
+            anchor_coord=anchor_coord,
+            sweep_coords=sweep_coords,
+            cruise_speed_mps=float(leg_speed_mps),
+            fallback_search_speed_mps=float(fallback_search_speed_mps),
+            speed_scale=float(speed_scale),
+            multiplier_cap_enabled=bool(multiplier_cap_enabled),
+        )
+        if not first_capture_seen and isinstance(activation_entry_coord, dict):
+            search_speed_mps = _activation_constrained_search_speed_mps(
+                search_speed_mps,
+                origin_coords=(previous_coord, activation_entry_coord),
+                anchor_coord=anchor_coord,
+                sweep_coords=sweep_coords,
+                flight_speed_mps=float(leg_speed_mps),
+                speed_scale=float(speed_scale),
+                activation_delay_s=float(activation_delay_s),
+                multiplier_cap_enabled=bool(multiplier_cap_enabled),
+            )
+        if search_speed_mps <= 0.0:
+            continue
+        filming = (
+            waypoint.get("filmingProperty")
+            if isinstance(waypoint.get("filmingProperty"), dict)
+            else {}
+        )
+        line_search = (
+            filming.get("lineSearch")
+            if isinstance(filming.get("lineSearch"), dict)
+            else None
+        )
+        if line_search is None:
+            continue
+        line_search["searchSpeed"] = float(search_speed_mps)
+        changed += 1
+        first_capture_seen = True
+    return int(changed)
 
 
 def _line_route_endpoint_anchor_xy(
@@ -4425,7 +4825,7 @@ def _snap_last_line_search_waypoint_to_route_endpoint(
     line_indices = [
         idx
         for idx, waypoint in enumerate(waypoints or [])
-        if isinstance(waypoint, dict) and _line_search_coordinate_list(waypoint)
+        if isinstance(waypoint, dict) and _has_line_search_coordinates(waypoint)
     ]
     if not line_indices:
         return 0
@@ -4971,7 +5371,7 @@ def _simplify_line_waypoints_to_start_and_search(
     line_search_waypoints = [
         waypoint
         for waypoint in waypoints
-        if isinstance(waypoint, dict) and _line_search_coordinate_list(waypoint)
+        if isinstance(waypoint, dict) and _has_line_search_coordinates(waypoint)
     ]
     if not line_search_waypoints:
         return 0
@@ -5072,6 +5472,27 @@ def build_mission_info_from_planned_row(
         if manual_fov_active:
             fov_key = "area_nadir_fov_deg" if int(pattern_type) == 3 else "area_custom_fov_deg"
             info["FOV"] = _runtime_manual_fov_value(fov_key, float(resolved_fov_deg or 10.0))
+        else:
+            # AREA 재계획은 지금까지 이전 임무의 FOV를 이월만 했다.  행 최대
+            # 현(스윕 방향)을 기하로 넣고 area 전용 마진으로 실시간 선택한다.
+            # None이면(비활성/실패) 기존 이월 FOV 그대로.
+            try:
+                row_chord_m = float(
+                    capture_physics.max_sweep_row_chord_m_xy(
+                        polygon_xy, bearing_deg if bearing_deg is not None else 0.0
+                    )
+                    or 0.0
+                )
+            except Exception:
+                row_chord_m = 0.0
+            try:
+                physics_area_fov = capture_physics.physics_area_fov_deg(
+                    row_length_m=row_chord_m
+                )
+            except Exception:
+                physics_area_fov = None
+            if physics_area_fov is not None and float(physics_area_fov) > 0.0:
+                info["FOV"] = round(float(physics_area_fov), 3)
         _apply_altitude_to_mission_info_inplace(info, aircraft_id=aircraft_id)
         return info
 
@@ -5356,30 +5777,71 @@ def build_flight_path_from_planned_row(
         else 1.0
     )
     search_speed_scale_multiplier = _path_row_search_speed_scale_multiplier(path_row)
-    geometry_search_speed_scale = max(
-        0.1,
-        float(base_geometry_search_speed_scale) * float(search_speed_scale_multiplier),
-    )
-    area_scan_completion_speed_scale = max(
+    capture_completion_speed_scale = max(
         1.0,
         min(
             1.5,
             float(
                 get_runtime_float(
-                    "next_collab_area_scan_completion_speed_scale",
+                    "next_collab_capture_completion_speed_scale",
                     1.10,
                 )
             ),
         ),
     )
-    area_geometry_search_speed_scale = (
-        float(geometry_search_speed_scale) * float(area_scan_completion_speed_scale)
+    geometry_search_speed_scale = max(
+        0.1,
+        float(base_geometry_search_speed_scale)
+        * float(search_speed_scale_multiplier)
+        * float(capture_completion_speed_scale),
+    )
+    first_capture_activation_delay_s = max(
+        0.0,
+        min(
+            10.0,
+            float(
+                get_runtime_float(
+                    "next_collab_first_capture_activation_delay_s",
+                    1.50,
+                )
+            ),
+        ),
+    )
+    area_first_capture_stale_entry_guard_s = max(
+        0.0,
+        min(
+            20.0,
+            float(
+                get_runtime_float(
+                    "next_collab_area_first_capture_stale_entry_guard_s",
+                    6.00,
+                )
+            ),
+        ),
+    )
+    area_first_capture_activation_delay_s = (
+        float(first_capture_activation_delay_s)
+        + float(area_first_capture_stale_entry_guard_s)
     )
     metrics["searchSpeedBaseScale"] = round(float(base_geometry_search_speed_scale), 3)
     metrics["searchSpeedScaleMultiplier"] = round(float(search_speed_scale_multiplier), 3)
+    metrics["captureCompletionSpeedScale"] = round(
+        float(capture_completion_speed_scale),
+        3,
+    )
     metrics["searchSpeedScale"] = round(float(geometry_search_speed_scale), 3)
+    # Keep the old metric name for log/dashboard readers while the active
+    # setting is shared by LINE and AREA.
     metrics["areaScanCompletionSpeedScale"] = round(
-        float(area_scan_completion_speed_scale),
+        float(capture_completion_speed_scale),
+        3,
+    )
+    metrics["firstCaptureActivationDelayS"] = round(
+        float(first_capture_activation_delay_s),
+        3,
+    )
+    metrics["areaFirstCaptureStaleEntryGuardS"] = round(
+        float(area_first_capture_stale_entry_guard_s),
         3,
     )
     metrics["transitSpeedMps"] = round(float(transit_speed_mps), 3)
@@ -5659,6 +6121,100 @@ def build_flight_path_from_planned_row(
         raw_entry_xy = coord_to_xy(entry_coord)
         if raw_entry_xy is not None:
             entry_xy = (float(raw_entry_xy[0]), float(raw_entry_xy[1]))
+    # AREA 진입점 앵커 방향: 진입이 서펜타인의 끝쪽이면 행 순서·행 방향을 통째로
+    # 뒤집는다.  LINE 은 이미 같은 반전(진입-근접 앵커)을 하는데 AREA 는 플래너의
+    # 정방향(canonical outbound) 순서를 그대로 렌더링해서, 한 기체가 연속으로 두
+    # 조각을 받는 순차 분할에서 두 번째 조각도 첫 조각과 같은 방향으로 "올라가는"
+    # 경로가 나왔다 — 끝점에서 이어받으면 내려오는 경로가 되어야 한다.
+    # 명시적 패스 계약(out/turn/return)은 자체 방향 기계가 있으므로 건드리지 않는다.
+    if (
+        not is_line_mission
+        and scan_lines_xy
+        and entry_xy is not None
+        and area_primary_pass is None
+        and not area_contract_reverse_route_axis
+        and _normalize_area_coverage_pass(
+            path_row.get("areaAssignedCoveragePass") or path_row.get("activeCoveragePass")
+        )
+        is None
+    ):
+        route_start_xy = (
+            _xy_pair(area_route_path_row.get("areaSweepRouteStartXY"))
+            or _xy_pair(area_route_path_row.get("waypointStartXY"))
+            or (
+                (float(scan_lines_xy[0][0][0]), float(scan_lines_xy[0][0][1]))
+                if scan_lines_xy[0]
+                else None
+            )
+        )
+        route_end_xy = (
+            _xy_pair(area_route_path_row.get("areaSweepRouteEndXY"))
+            or _xy_pair(area_route_path_row.get("waypointEndXY"))
+            or (
+                (float(scan_lines_xy[-1][-1][0]), float(scan_lines_xy[-1][-1][1]))
+                if scan_lines_xy[-1]
+                else None
+            )
+        )
+        sequential_direction_lock = path_row.get(
+            "areaSingleAircraftExecutionReversed"
+        )
+        should_reverse_for_entry = bool(
+            route_start_xy is not None
+            and route_end_xy is not None
+            and _distance_xy(entry_xy, route_end_xy) + 1e-6
+            < _distance_xy(entry_xy, route_start_xy)
+        )
+        if sequential_direction_lock is not None:
+            should_reverse_for_entry = bool(sequential_direction_lock)
+        if should_reverse_for_entry:
+            scan_lines_xy = [
+                list(reversed(line_xy)) for line_xy in reversed(scan_lines_xy)
+            ]
+            scan_line_three_point_rows_xy = [
+                _line_three_point_xy_with_settings(
+                    points_xy,
+                    auto_sweep_points=bool(scan_auto_sweep_points),
+                    points_per_leg=int(scan_points_per_leg),
+                    spacing_m=float(scan_auto_spacing_m),
+                )
+                for points_xy in scan_lines_xy
+            ]
+            area_route_path_row = _reverse_area_route_context(path_row)
+            metrics["areaEntryAnchoredReverse"] = True
+    outer_endpoint_contract_allowed = bool(
+        not is_line_mission
+        and area_primary_pass is None
+        and not area_contract_reverse_route_axis
+        and _normalize_area_coverage_pass(
+            path_row.get("areaAssignedCoveragePass")
+            or path_row.get("activeCoveragePass")
+        )
+        is None
+    )
+    if outer_endpoint_contract_allowed:
+        scan_lines_xy, outer_endpoint_reversed = (
+            _orient_area_scan_endpoints_from_outer_side(
+                scan_lines_xy,
+                path_row,
+            )
+        )
+        if bool(path_row.get("areaOuterFirstSweep")):
+            metrics["areaOuterFirstSweep"] = True
+            metrics["areaOuterSide"] = str(
+                path_row.get("areaOuterSide") or ""
+            ).strip().lower()
+        if outer_endpoint_reversed:
+            scan_line_three_point_rows_xy = [
+                _line_three_point_xy_with_settings(
+                    points_xy,
+                    auto_sweep_points=bool(scan_auto_sweep_points),
+                    points_per_leg=int(scan_points_per_leg),
+                    spacing_m=float(scan_auto_spacing_m),
+                )
+                for points_xy in scan_lines_xy
+            ]
+            metrics["areaOuterEndpointReversed"] = True
     transition_points_xy: List[Tuple[float, float]] = []
     locked_line_turn_prefix_xy: List[Tuple[float, float]] = []
     if is_line_mission:
@@ -5681,6 +6237,14 @@ def build_flight_path_from_planned_row(
             area_route_path_row.get("entryTPrimeXY"),
             area_route_path_row.get("waypointStartXY"),
         )
+        if bool(path_row.get("areaSingleAircraftSequentialSplit")):
+            # The planner still uses T'/start/out-leg geometry to choose the
+            # route and its direction, but a sequential AREA pair is handed
+            # over at the previous area's real capture exit. Command the UAV
+            # directly to the first capture waypoint; helper ingress points
+            # create the long offset detour this contract is meant to avoid.
+            path_row_transition_points = ()
+            metrics["areaSequentialIngressHelpersEmitted"] = False
     # Line rejoin paths can use these transition waypoints when they feed
     # naturally into the first sweep. If they would immediately reverse into
     # the first sweep, we fall back to the older direct-entry behavior below.
@@ -5979,6 +6543,9 @@ def build_flight_path_from_planned_row(
             area_sweep_items,
             spacing_m=float(_next_collab_area_route_wp_spacing_m()),
             merge_short_tail=True,
+            anchor_to_first_item=bool(
+                path_row.get("areaSingleAircraftSequentialSplit")
+            ),
         )
         metrics["areaGroupMs"] = _elapsed_ms(area_group_started)
         metrics["areaGroups"] = len(grouped_area_sweeps)
@@ -6056,7 +6623,7 @@ def build_flight_path_from_planned_row(
                     sweep_xy=last_emitted_sweep_xy,
                     cruise_speed_mps=float(transit_speed_mps),
                     fallback_search_speed_mps=float(search_speed_mps),
-                    speed_scale=float(area_geometry_search_speed_scale),
+                    speed_scale=float(geometry_search_speed_scale),
                     multiplier_cap_enabled=False,
                 )
                 line_search_speed_mps, merged_leg_speed_mps = _apply_area_scan_rate_slowdown(
@@ -6095,7 +6662,7 @@ def build_flight_path_from_planned_row(
                 sweep_xy=merged_sweep_xy,
                 cruise_speed_mps=float(transit_speed_mps),
                 fallback_search_speed_mps=float(search_speed_mps),
-                speed_scale=float(area_geometry_search_speed_scale),
+                speed_scale=float(geometry_search_speed_scale),
                 multiplier_cap_enabled=False,
             )
             line_search_speed_mps, group_leg_speed_mps = _apply_area_scan_rate_slowdown(
@@ -6423,7 +6990,7 @@ def build_flight_path_from_planned_row(
                             sweep_xy=reverse_sweep_xy,
                             cruise_speed_mps=float(transit_speed_mps),
                             fallback_search_speed_mps=float(search_speed_mps),
-                            speed_scale=float(area_geometry_search_speed_scale),
+                            speed_scale=float(geometry_search_speed_scale),
                             multiplier_cap_enabled=False,
                         )
                         (
@@ -6686,11 +7253,7 @@ def build_flight_path_from_planned_row(
             if reference_xy is not None
             else (coord_to_xy(prev_coord) if isinstance(prev_coord, dict) else None)
         )
-        fallback_speed_scale = (
-            float(geometry_search_speed_scale)
-            if is_line_mission
-            else float(area_geometry_search_speed_scale)
-        )
+        fallback_speed_scale = float(geometry_search_speed_scale)
         line_search_speed_mps = _estimate_line_search_speed_xy_mps(
             prev_xy=prev_xy_for_speed,
             anchor_xy=line_search_anchor_xy,
@@ -6780,7 +7343,7 @@ def build_flight_path_from_planned_row(
             str(waypoint.get("areaCoveragePass"))
             for waypoint in waypoints
             if isinstance(waypoint, dict)
-            and _line_search_coordinate_list(waypoint)
+            and _has_line_search_coordinates(waypoint)
             and waypoint.get("areaCoveragePass")
         }
         missing_passes = set(area_effective_passes) - emitted_passes
@@ -6792,7 +7355,7 @@ def build_flight_path_from_planned_row(
         metrics["areaCoveragePassesEmitted"] = sorted(emitted_passes)
         acquisition_ids: Dict[str, str] = {}
         for waypoint in waypoints:
-            if not isinstance(waypoint, dict) or not _line_search_coordinate_list(waypoint):
+            if not isinstance(waypoint, dict) or not _has_line_search_coordinates(waypoint):
                 continue
             pass_name = _normalize_area_coverage_pass(waypoint.get("areaCoveragePass"))
             if pass_name is None:
@@ -6819,7 +7382,7 @@ def build_flight_path_from_planned_row(
     if not is_line_mission and not bool(area_pass_contract.get("explicit")):
         acquisition_ids: Dict[str, str] = {}
         for waypoint in waypoints:
-            if not isinstance(waypoint, dict) or not _line_search_coordinate_list(waypoint):
+            if not isinstance(waypoint, dict) or not _has_line_search_coordinates(waypoint):
                 continue
             waypoint.pop("areaCoveragePass", None)
             pass_name = "forward"
@@ -6918,12 +7481,121 @@ def build_flight_path_from_planned_row(
             fallback_search_speed_mps=float(search_speed_mps),
             speed_scale=float(geometry_search_speed_scale),
             multiplier_cap_enabled=bool(line_search_multiplier_cap_enabled),
+            activation_delay_s=float(first_capture_activation_delay_s),
+        )
+        resynchronized_line_capture_count = (
+            _resynchronize_line_capture_speeds_inplace(
+                final_waypoints,
+                fallback_search_speed_mps=float(search_speed_mps),
+                speed_scale=float(geometry_search_speed_scale),
+                default_transit_speed_mps=float(transit_speed_mps),
+                multiplier_cap_enabled=bool(line_search_multiplier_cap_enabled),
+                activation_entry_coord=(
+                    entry_coord if isinstance(entry_coord, dict) else None
+                ),
+                activation_delay_s=float(first_capture_activation_delay_s),
+            )
+        )
+        metrics["lineCaptureSpeedsResynced3D"] = int(
+            resynchronized_line_capture_count
         )
         metrics["lineSquashSpeedMs"] = _elapsed_ms(step_started)
         metrics["lineSquashMs"] = _elapsed_ms(line_squash_started)
         step_started = time.perf_counter()
         _clamp_line_waypoint_fov_inplace(final_waypoints)
         metrics["lineSquashClampFovMs"] = _elapsed_ms(step_started)
+    elif bool(path_row.get("areaSingleAircraftSequentialSplit")):
+        # Keep the natural distance-based capture groups. WP1 is the first real
+        # sweep-axis anchor (not the first group's terminal anchor), followed by
+        # every distance-spaced capture WP. A short Area therefore remains one
+        # full start->end leg instead of being force-split into two half-legs.
+        capture_waypoints = [
+            waypoint
+            for waypoint in final_waypoints
+            if isinstance(waypoint, dict)
+            and _has_line_search_coordinates(waypoint)
+        ]
+        removed_helpers = len(final_waypoints) - len(capture_waypoints)
+        if final_waypoints and not capture_waypoints:
+            raise ValueError(
+                "sequential AREA path produced no capture waypoint"
+            )
+        first_sweep_anchor_xy = (
+            _xy_pair(area_sweep_items[0].get("anchorXY"))
+            if area_sweep_items and isinstance(area_sweep_items[0], dict)
+            else None
+        )
+        if first_sweep_anchor_xy is None:
+            raise ValueError(
+                "sequential AREA path produced no first sweep-axis anchor"
+            )
+        first_capture_coords = _line_search_coordinate_list(capture_waypoints[0])
+        orientation_coordinate = (
+            first_capture_coords[0] if first_capture_coords else None
+        )
+        start_waypoint = _make_hold_waypoint(
+            coordinate=_xy_to_coord_with_altitude(
+                first_sweep_anchor_xy,
+                altitude_fn,
+            ),
+            speed_mps=float(transit_speed_mps),
+            sensor_type=int(sensor_type),
+            field_of_view_deg=float(field_of_view_deg),
+            orientation_coordinate=orientation_coordinate,
+            waypoint_pass_type=int(PASS_FLYBY),
+            include_filming=True,
+        )
+        final_waypoints[:] = [start_waypoint] + capture_waypoints
+        sequential_sequence = int(
+            _to_float(path_row.get("areaSingleAircraftSequence")) or 0
+        )
+        resynchronized_capture_count = _resynchronize_area_capture_speeds_inplace(
+            final_waypoints,
+            fallback_search_speed_mps=float(search_speed_mps),
+            speed_scale=float(geometry_search_speed_scale),
+            default_transit_speed_mps=float(transit_speed_mps),
+            activation_entry_coord=(
+                entry_coord if isinstance(entry_coord, dict) else None
+            ),
+            activation_delay_s=float(area_first_capture_activation_delay_s),
+        )
+        entry_waypoint_reused = bool(
+            len(final_waypoints) >= 2
+            and not _line_search_coordinate_list(final_waypoints[0])
+            and all(
+                _line_search_coordinate_list(waypoint)
+                for waypoint in final_waypoints[1:]
+                if isinstance(waypoint, dict)
+            )
+        )
+        if not entry_waypoint_reused:
+            raise ValueError(
+                "sequential AREA path could not emit first point plus captures"
+            )
+        if sequential_sequence >= 2:
+            # The first capture-axis point may be approached from the preceding
+            # Area, but it must not become a mandatory fly-over corner.
+            final_waypoints[0]["_locked_sequential_area_entry_turn"] = True
+        metrics["areaSequentialCaptureOnly"] = False
+        metrics["areaSequentialEntryWaypointAdded"] = True
+        metrics["areaSequentialFirstCaptureReusedAsEntry"] = False
+        metrics["areaSequentialEntryWaypointSource"] = "first_sweep_axis_anchor"
+        metrics["areaSequentialEntryTurnFlybyLocked"] = bool(
+            sequential_sequence >= 2
+        )
+        metrics["areaSequentialCaptureSpeedsResynced"] = int(
+            resynchronized_capture_count
+        )
+        metrics["areaSequentialActivationEntryConstrained"] = bool(
+            isinstance(entry_coord, dict)
+        )
+        metrics["areaSequentialActivationDelayS"] = round(
+            float(area_first_capture_activation_delay_s),
+            3,
+        )
+        metrics["areaSequentialHelperWaypointsRemoved"] = int(
+            removed_helpers
+        )
     # Hand-over remains 0203 reference data only. Do not extend the final
     # InputMissionPlan route with an implicit terminal waypoint.
     metrics["handoverTerminalWaypointCount"] = 0
@@ -7016,6 +7688,75 @@ def build_flight_path_from_planned_row(
         )
     metrics["areaReciprocalTurnContractMs"] = _elapsed_ms(turn_contract_started)
     metrics["postAltitudeMs"] = _elapsed_ms(altitude_post_started)
+    # 경로·고도·촬영점(DEM 정규화)이 전부 확정된 시점에서, 실제 WP↔촬영점
+    # 기하로 요구공간해상도를 전수 검증하고 초과 시 임무 FOV를 내린다.
+    step_started = time.perf_counter()
+    try:
+        gsd_summary = capture_physics.certify_waypoint_gsd_inplace(
+            final_waypoints,
+            mission_info if isinstance(mission_info, dict) else None,
+        )
+    except Exception:
+        gsd_summary = {"error": "certify_failed"}
+    metrics["gsdCertifyMs"] = _elapsed_ms(step_started)
+    metrics["gsdCertify"] = {
+        key: gsd_summary.get(key)
+        for key in (
+            "checked",
+            "worstSlantM",
+            "worstAglM",
+            "worstAreaM2",
+            "requiredAreaM2",
+            "fovBeforeDeg",
+            "fovAfterDeg",
+            "clamped",
+            "unreachable",
+            "skipped",
+            "error",
+        )
+        if key in gsd_summary
+    }
+    # Altitude-rate limiting and filming-target DEM normalization above can
+    # change both the final 3D sweep length and the real incoming WP leg after
+    # the earlier geometry pass. Recompute from the payload that will actually
+    # be emitted so neither LINE nor an AREA fallback loses its timing margin.
+    final_capture_sync_started = time.perf_counter()
+    if is_line_mission:
+        final_capture_sync_count = _resynchronize_line_capture_speeds_inplace(
+            final_waypoints,
+            fallback_search_speed_mps=float(search_speed_mps),
+            speed_scale=float(geometry_search_speed_scale),
+            default_transit_speed_mps=float(transit_speed_mps),
+            multiplier_cap_enabled=bool(line_search_multiplier_cap_enabled),
+            activation_entry_coord=(
+                entry_coord if isinstance(entry_coord, dict) else None
+            ),
+            activation_delay_s=float(first_capture_activation_delay_s),
+        )
+        metrics["lineCaptureSpeedsResynced3D"] = int(
+            final_capture_sync_count
+        )
+    else:
+        final_capture_sync_count = _resynchronize_area_capture_speeds_inplace(
+            final_waypoints,
+            fallback_search_speed_mps=float(search_speed_mps),
+            speed_scale=float(geometry_search_speed_scale),
+            default_transit_speed_mps=float(transit_speed_mps),
+            activation_entry_coord=(
+                entry_coord if isinstance(entry_coord, dict) else None
+            ),
+            activation_delay_s=float(area_first_capture_activation_delay_s),
+        )
+        metrics["areaCaptureSpeedsResynced3D"] = int(
+            final_capture_sync_count
+        )
+        if bool(path_row.get("areaSingleAircraftSequentialSplit")):
+            metrics["areaSequentialCaptureSpeedsResynced"] = int(
+                final_capture_sync_count
+            )
+    metrics["finalCaptureSpeedSyncMs"] = _elapsed_ms(
+        final_capture_sync_started
+    )
     waypoint_id_started = time.perf_counter()
     if assign_waypoint_ids:
         reassign_unique_waypoint_ids_inplace(

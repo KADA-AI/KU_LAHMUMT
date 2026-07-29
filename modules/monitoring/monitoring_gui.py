@@ -371,6 +371,7 @@ from modules.monitoring.logic.rtb_replan import RtbReplanCoordinator
 from modules.monitoring.logic.target_detection_replan import (
     TargetDetectionCoordinator,
     build_target_bundle_from_target_info,
+    destroyed_target_ids_from_message,
 )
 from modules.monitoring.logic.target_info import (
     load_target_info,
@@ -596,6 +597,8 @@ class MainWindow(QMainWindow):
         self._0401_drain_timer = None
         self._0402_pending_lock = threading.Lock()
         self._0402_pending_payload = None
+        self._0402_pending_terminal_payloads: list[object] = []
+        self._0402_destroyed_target_ids_seen: set[int] = set()
         self._0402_pending_scheduled = False
         self._0402_last_signature: bytes | None = None
         self._0402_coalesce_ms = int(max(20, min(1000, self._env_float("MSM_0402_COALESCE_MS", 120.0))))
@@ -1188,6 +1191,9 @@ class MainWindow(QMainWindow):
                 "sensor_center_coordinate",
                 "coordinate",
                 "footprint_corners",
+                "boundary_guard_set_id",
+                "boundary_guard_cycle_count",
+                "boundary_guard_loop_active",
             }
             rows = [
                 {key: item.get(key) for key in keep_keys if key in item}
@@ -5502,17 +5508,37 @@ class MainWindow(QMainWindow):
 
     def _enqueue_0402_payload(self, payload: object | None) -> None:
         signature = self._payload_signature(payload)
+        destroyed_target_ids = destroyed_target_ids_from_message(payload)
         with self._0402_pending_lock:
             if signature is not None and signature == self._0402_last_signature:
                 self._record_rx_enqueue_event("0402", duplicate_signature=1, skipped=1)
                 return
             self._0402_last_signature = signature
-            self._0402_pending_payload = payload
+            new_destroyed_target_ids = (
+                set(destroyed_target_ids) - self._0402_destroyed_target_ids_seen
+            )
+            if new_destroyed_target_ids:
+                # Destruction is a terminal state transition and must not be
+                # overwritten by a newer routine 0402 sample during coalescing.
+                self._0402_destroyed_target_ids_seen.update(new_destroyed_target_ids)
+                self._0402_pending_terminal_payloads.append(payload)
+            else:
+                self._0402_pending_payload = payload
             if self._0402_pending_scheduled:
-                self._record_rx_enqueue_event("0402", coalesced_pending=1, scheduled=1)
+                self._record_rx_enqueue_event(
+                    "0402",
+                    coalesced_pending=0 if new_destroyed_target_ids else 1,
+                    terminal_pending=1 if new_destroyed_target_ids else 0,
+                    scheduled=1,
+                )
                 return
             self._0402_pending_scheduled = True
-        self._record_rx_enqueue_event("0402", accepted=1, scheduled=1)
+        self._record_rx_enqueue_event(
+            "0402",
+            accepted=1,
+            terminal_pending=1 if new_destroyed_target_ids else 0,
+            scheduled=1,
+        )
         self._invoke_on_ui_thread(self._schedule_0402_drain)
 
     def _schedule_0402_drain(self) -> None:
@@ -5525,15 +5551,21 @@ class MainWindow(QMainWindow):
 
     def _drain_0402_payload(self) -> None:
         with self._0402_pending_lock:
-            payload = self._0402_pending_payload
-            self._0402_pending_payload = None
+            if self._0402_pending_terminal_payloads:
+                payload = self._0402_pending_terminal_payloads.pop(0)
+            else:
+                payload = self._0402_pending_payload
+                self._0402_pending_payload = None
             self._0402_pending_scheduled = False
         if payload is None:
             return
         self._on_rx_0402(payload)
         should_reschedule = False
         with self._0402_pending_lock:
-            if self._0402_pending_payload is not None and not self._0402_pending_scheduled:
+            if (
+                self._0402_pending_terminal_payloads
+                or self._0402_pending_payload is not None
+            ) and not self._0402_pending_scheduled:
                 self._0402_pending_scheduled = True
                 should_reschedule = True
         if should_reschedule:
@@ -5582,7 +5614,9 @@ class MainWindow(QMainWindow):
                 pass
 
         try:
-            _rx_0402.receive_coalesce_messages = {"0402": self._0402_coalesce_ms}
+            # Do not coalesce in receive_center: this class owns a terminal-aware
+            # queue that preserves newly destroyed targets while still merging
+            # ordinary high-rate 0402 samples.
             self._rx0402_handler = _rx_0402
             register_listener("0402", self._rx0402_handler)
         except Exception as exc:

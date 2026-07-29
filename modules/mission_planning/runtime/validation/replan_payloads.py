@@ -7,6 +7,10 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Optional
 
 from modules.common import db_paths
+from modules.mission_planning.pipelines.type2_boundary_guard_loop import (
+    is_boundary_guard_loop,
+    validate_boundary_guard_flight_path_sets,
+)
 
 
 UINT32_MAX = 2**32 - 1
@@ -612,8 +616,17 @@ def validate_generated_artifact_payloads(
             next_id = to_int(waypoint.get("nextWaypointID"))
             if next_id is None or next_id == 0:
                 continue
-            if int(next_id) not in local_ids:
+            allow_boundary_cross_path = bool(
+                is_boundary_guard_loop(fp_payload)
+                and waypoint_index == len(waypoints) - 1
+            )
+            if int(next_id) not in local_ids and not allow_boundary_cross_path:
                 errors.append(f"{scope}: pathID={path_id} waypointIndex={waypoint_index} invalid nextWaypointID={next_id}")
+
+    try:
+        validate_boundary_guard_flight_path_sets(fp_by_id.values())
+    except ValueError as exc:
+        errors.append(f"{scope}: {exc}")
 
     if errors:
         if log:
@@ -853,10 +866,19 @@ def validate_replan_payloads(
             next_id = to_int(waypoint.get("nextWaypointID"))
             if next_id is None or next_id == 0:
                 continue
-            if int(next_id) not in local_ids:
+            allow_boundary_cross_path = bool(
+                is_boundary_guard_loop(fp_payload)
+                and wp_idx == len(waypoints) - 1
+            )
+            if int(next_id) not in local_ids and not allow_boundary_cross_path:
                 errors.append(
                     f"{scope}: pathID={path_id} waypointIndex={wp_idx} invalid nextWaypointID={next_id}"
                 )
+
+    try:
+        validate_boundary_guard_flight_path_sets(fp_by_id.values())
+    except ValueError as exc:
+        errors.append(f"{scope}: {exc}")
 
     if errors:
         if log:

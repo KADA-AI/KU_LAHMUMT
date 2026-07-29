@@ -155,6 +155,7 @@ def test_battle_position_hold_still_takes_cover() -> None:
         info = rows[mission_id]["individualMissionInfo"]
         assert "forceAltitudeM" not in info
         assert info["_lahTerminalCoverEnabled"] is True
+        assert info["_lahSharedTerminalCoverPoint"] is True
 
 
 def test_type1_egress_line_widths_are_icd_uint_json_values() -> None:

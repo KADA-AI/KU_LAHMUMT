@@ -13,7 +13,14 @@ from typing import Any, Mapping
 from modules.common import db_paths
 
 
-KEY_VERSION = "initial-plan-template-v8-control-transfer-lah-via-acp"
+# v13 also invalidates pre-boundary-loop templates whose Type-2 guard AREA
+# FlightPath tails ended at zero and whose IMP/FlightPath contract was absent.
+# v12 invalidated templates created before both operational and ground-maneuver
+# LAH terminal cover became one shared hide site.  Older cached 0302/0304 rows
+# either lack ``_lahSharedTerminalCoverPoint`` or contain the separate ACP-aware
+# hold that split the target phase across two locations.  It also refreshes the
+# target hold after the full-area, denser terrain-mask search was introduced.
+KEY_VERSION = "initial-plan-template-v13-boundary-guard-loop"
 DEFAULT_MAX_ENTRIES = 8
 
 _LOCK = threading.RLock()

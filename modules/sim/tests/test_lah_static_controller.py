@@ -206,7 +206,7 @@ def test_sim_service_does_not_apply_lah_dynamics_a_second_time() -> None:
     assert lah.s.x == pytest.approx(10.0)
 
 
-def test_attack_waypoint_waits_and_retries_when_target_lookup_is_transient(
+def test_attack_waypoint_retries_transient_lookup_then_kills_immediately(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     attack_wp = WaypointTarget(
@@ -240,9 +240,10 @@ def test_attack_waypoint_waits_and_retries_when_target_lookup_is_transient(
     monkeypatch.setattr(service, "_resolve_attack_target", lambda _id: target)
     service._step_once(0.1)
 
-    assert controller.current_target() is attack_wp
+    assert controller.current_target() is None
     assert service._get_weapon_counts(service.vehicles["LAH1"])["type3"] == 99
-    assert any(projectile.target_id == 11 for projectile in service._projectiles)
+    assert target.alive is False
+    assert "LAH1" in service._last_vehicle_fire
 
 
 def test_destroyed_attack_target_releases_hold_and_advances_waypoint(

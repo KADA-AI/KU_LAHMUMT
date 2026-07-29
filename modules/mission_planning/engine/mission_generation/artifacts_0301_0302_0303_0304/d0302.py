@@ -22,6 +22,11 @@ from modules.mission_planning.engine.mission_generation.id_allocation.allocator 
     reserve_path_id_blocks,
     reserve_path_ids,
 )
+from modules.mission_planning.pipelines.type2_boundary_guard_loop import (
+    BOUNDARY_GUARD_CONTRACT_KEYS,
+    apply_boundary_guard_contract,
+    extract_boundary_guard_contract,
+)
 
 
 
@@ -398,13 +403,27 @@ def build_mission_packages(
         ordered_list: list[dict] = []
         for im in fixed:
             im = _clean_individual_mission(im, cmpk_id)  # relatedMission 재설정 + 잡키 제거
-            ordered_list.append(OrderedDict([
+            contract = extract_boundary_guard_contract(
+                im,
+                im.get("individualMissionInfo"),
+            )
+            if contract:
+                apply_boundary_guard_contract(
+                    im,
+                    contract,
+                    include_individual_mission_info=True,
+                )
+            ordered = OrderedDict([
                 ("individualMissionID",   im["individualMissionID"]),
                 ("isDone",                im["isDone"]),
                 ("relatedMission",        im["relatedMission"]),
                 ("individualMissionInfo", im["individualMissionInfo"]),
                 ("pathID",                im["pathID"]),
-            ]))
+            ])
+            for key in BOUNDARY_GUARD_CONTRACT_KEYS:
+                if key in im:
+                    ordered[key] = im.get(key)
+            ordered_list.append(ordered)
 
         # 6) IMP 패키지 작성
         out.append(OrderedDict([

@@ -242,6 +242,10 @@ from modules.mission_planning.replanning.dispatcher import (
     should_use_post_attack_rejoin_pipeline,
     should_use_prior_post_rejoin_pipeline,
 )
+from modules.mission_planning.pipelines.type2_boundary_guard_loop import (
+    link_boundary_guard_flight_path_sets,
+    sync_boundary_guard_contract_from_flight_paths,
+)
 from modules.common.string_limits import limit_utf8_bytes
 
 configure_mission_process_console()
@@ -314,6 +318,9 @@ try:
         load_runtime_settings,
         runtime_override as runtime_settings_override,
         settings_path as runtime_settings_path,
+    )
+    from .MissionPlanner.capture_physics import (
+        sync_mission_fov_from_flight_plans,
     )
     from modules.monitoring.logic.replan_runtime_settings import get_target_detection_settings
     from modules.mission_planning.runtime.state.attack_assignment import (
@@ -395,6 +402,9 @@ except Exception:
         runtime_override as runtime_settings_override,
         settings_path as runtime_settings_path,
     )
+    from modules.mission_planning.MissionPlanner.capture_physics import (
+        sync_mission_fov_from_flight_plans,
+    )
     from modules.monitoring.logic.replan_runtime_settings import get_target_detection_settings
     from modules.mission_planning.runtime.state.attack_assignment import (
         get_last_assigned_manned_id,
@@ -410,6 +420,63 @@ from modules.common.settings_paths import fusion_runtime_working_dir
 
 _TEMP_DIR = PROJECT_ROOT / "temp"
 _CURRENT_REMAINING_HYBRID_BUILD_LOCK = threading.RLock()
+_ATTACK_PIPELINE_PRESERVED_NOOP_STATUSES = frozenset(
+    {
+        "preserved_existing_attacks",
+        "deferred_until_attack_slot_free",
+    }
+)
+
+
+def _attack_pipeline_preserved_noop_status(result_body: Any) -> Optional[str]:
+    """Return the normal no-regeneration attack status, if present."""
+    if not isinstance(result_body, dict):
+        return None
+    status = str(result_body.get("status") or "").strip().lower()
+    if status in _ATTACK_PIPELINE_PRESERVED_NOOP_STATUSES:
+        return status
+    return None
+
+
+def _post_attack_empty_result_completion_policy(
+    summary: Any,
+    plan_ids: Any,
+) -> Optional[Dict[str, str]]:
+    """Choose the terminal 0305 response for a post-attack result with no plan.
+
+    Monitoring owns a single active replan queue slot until it receives a
+    terminal signal.  Returning a non-benign ``skipped`` result without 0305
+    previously held that slot until its 120-second timeout.  Every empty result
+    now has an explicit terminal policy: a genuinely unnecessary replan is a
+    normal no-op; validation/load/tracking failures are terminal failures.
+    """
+
+    if plan_ids:
+        return None
+    payload = summary if isinstance(summary, dict) else {}
+    status = str(payload.get("status") or "").strip().lower()
+    reason = str(payload.get("reason") or "post_attack_empty_result").strip()
+    group_skip_reasons = {
+        str(evaluation.get("skip_reason") or "").strip()
+        for evaluation in (payload.get("group_evaluations") or [])
+        if isinstance(evaluation, dict)
+        and str(evaluation.get("skip_reason") or "").strip()
+    }
+    if status == "skipped" and (
+        reason == "rejoin_not_needed"
+        or "remaining_work_too_small" in group_skip_reasons
+    ):
+        detail = (
+            "잔여 임무 30% 미만"
+            if "remaining_work_too_small" in group_skip_reasons
+            else "협업 복귀 재계획 불필요"
+        )
+        return {"kind": "noop", "reason": reason, "detail": detail}
+    return {
+        "kind": "failure",
+        "reason": reason or "post_attack_empty_result",
+        "detail": f"공격 후 복귀 재계획 결과 없음 ({reason or 'unknown'})",
+    }
 
 
 def _current_remaining_hybrid_global_lock_enabled() -> bool:
@@ -4915,7 +4982,7 @@ class MainWindow(QMainWindow):
             "area_route_offset_scale": float(area_route_offset_scale),
             "area_first_packet_search_speed_scale": _get_float("area_first_packet_search_speed_scale", 1.2),
             "area_first_packet_sweep_group_scale": _get_float("area_first_packet_sweep_group_scale", 1.0),
-            "next_collab_area_density_scale": _get_float("next_collab_area_density_scale", 2.4),
+            "next_collab_area_density_scale": _get_float("next_collab_area_density_scale", 1.5),
             "uav_wp_interval_m": float(uav_wp_interval_m),
             "area_wp_interval_m": float(area_wp_interval_m),
             "lah_wp_interval_m": float(lah_wp_interval_m),
@@ -4984,10 +5051,26 @@ class MainWindow(QMainWindow):
             "next_collab_area_path0_trigger_sep_m": _get_float("next_collab_area_path0_trigger_sep_m", 1500.0),
             "next_collab_area_path0_target_sep_ratio": _get_float("next_collab_area_path0_target_sep_ratio", 0.20),
             "next_collab_turn_radius_scale": _get_float("next_collab_turn_radius_scale", 1.20),
+            "next_collab_turn_radius_uncertainty_margin_m": _get_float(
+                "next_collab_turn_radius_uncertainty_margin_m",
+                120.0,
+            ),
             "next_collab_takeover_first_step_ratio": _get_float("next_collab_takeover_first_step_ratio", 0.40),
             "next_collab_area_fov_scale": _get_float("next_collab_area_fov_scale", 1.00),
             "next_collab_area_search_speed_scale": _get_float("next_collab_area_search_speed_scale", 1.30),
             "next_collab_area_gsd_margin_ratio": _get_float("next_collab_area_gsd_margin_ratio", 0.90),
+            "next_collab_capture_completion_speed_scale": _get_float(
+                "next_collab_capture_completion_speed_scale",
+                1.10,
+            ),
+            "next_collab_first_capture_activation_delay_s": _get_float(
+                "next_collab_first_capture_activation_delay_s",
+                1.50,
+            ),
+            "next_collab_area_first_capture_stale_entry_guard_s": _get_float(
+                "next_collab_area_first_capture_stale_entry_guard_s",
+                6.00,
+            ),
             "next_collab_line_db_width_weight": _get_float("next_collab_line_db_width_weight", 0.30),
             "next_collab_line_db_sep_weight": _get_float("next_collab_line_db_sep_weight", 0.25),
             "next_collab_line_db_fov_weight": _get_float("next_collab_line_db_fov_weight", 0.45),
@@ -8217,6 +8300,13 @@ class MainWindow(QMainWindow):
                     wp_alloc_0304_obj,
                     waypoint_keys=("lahWaypointList", "waypointList"),
                 )
+                # Cached waypoint IDs were just replaced and each path tail was
+                # normalized to zero. Restore the Type-2 guard owner-set cycle
+                # against the new IDs before the cached artifact is validated.
+                link_boundary_guard_flight_path_sets(
+                    flight_plans_0303_cached,
+                    strict=True,
+                )
                 elapsed_ms = (time.perf_counter() - started) * 1000.0
                 meta = {
                     "elapsed_ms": round(float(elapsed_ms), 3),
@@ -8281,6 +8371,9 @@ class MainWindow(QMainWindow):
             attack_exclusion_ctx_indices = _collect_attack_exclusion_option_indices(ctx)
             attack_ctx = _filter_context_by_indices(ctx, attack_option_indices) if attack_option_indices else ctx
             attack_summary_info: Optional[Dict[str, Any]] = None
+            attack_preserved_noop_status: Optional[str] = None
+            attack_preserved_noop_log_path: Optional[str] = None
+            attack_preserved_source_plan_id: Optional[int] = None
             suppress_attack_exclusion_fallback = False
             attack_exclusion_source_plan_id = self._to_optional_int(
                 ctx.get("currentMissionPlanID")
@@ -8441,14 +8534,43 @@ class MainWindow(QMainWindow):
                     attack_result_body = (attack_result or {}).get("result") or {}
                     attack_updates = ((attack_result or {}).get("result") or {}).get("missionUpdates")
                     attack_failure_notice = str(attack_result_body.get("failure_notice") or "").strip()
-                    if not attack_updates and attack_failure_notice and not failure_notice_sent:
+                    attack_preserved_noop_status = (
+                        _attack_pipeline_preserved_noop_status(attack_result_body)
+                        if not attack_updates
+                        else None
+                    )
+                    if attack_preserved_noop_status:
+                        continuity_scan = attack_result_body.get("attackContinuityScan")
+                        if not isinstance(continuity_scan, dict):
+                            continuity_scan = {}
+                        attack_preserved_source_plan_id = self._to_optional_int(
+                            continuity_scan.get("sourcePlanID")
+                            or attack_exclusion_source_plan_id
+                        )
+                        attack_preserved_noop_log_path = str(log_path) if log_path else None
+                        self.log_sig.emit(
+                            "[ATTACK] 기존 공격 IMP/path/WP를 그대로 유지하는 정상 결과입니다 "
+                            f"(status={attack_preserved_noop_status}, "
+                            f"sourcePlanID={attack_preserved_source_plan_id})."
+                        )
+                    if (
+                        not attack_updates
+                        and not attack_preserved_noop_status
+                        and attack_failure_notice
+                        and not failure_notice_sent
+                    ):
                         self.log_sig.emit(f"[ATTACK] 공격 임무 생성 실패 -> 0305 재계획 완료(실패 사유) 발송: {attack_failure_notice}")
                         self._push_replan_failure_completion(attack_failure_notice)
                         failure_notice_sent = True
                     if not attack_updates and attack_trigger == "0402":
                         suppress_attack_exclusion_fallback = True
+                        discard_reason = (
+                            f"0402_attack_{attack_preserved_noop_status}"
+                            if attack_preserved_noop_status
+                            else "0402_attack_pipeline_empty"
+                        )
                         if attack_exclusion_future is not None:
-                            attack_exclusion_parallel_info["discardReason"] = "0402_attack_pipeline_empty"
+                            attack_exclusion_parallel_info["discardReason"] = discard_reason
                             cancelled = False
                             try:
                                 cancelled = bool(attack_exclusion_future.cancel())
@@ -8457,13 +8579,19 @@ class MainWindow(QMainWindow):
                             self._record_replan_timing_event(
                                 "attack_exclusion_parallel_discarded",
                                 extra={
-                                    "reason": "0402_attack_pipeline_empty",
+                                    "reason": discard_reason,
                                     "cancelled": bool(cancelled),
                                 },
                             )
-                        self.log_sig.emit(
-                            "[ATTACK] 0402 공격 특화안 생성 실패 -> 공격 배제 fallback을 생략하고 현재 계획을 유지합니다."
-                        )
+                        if attack_preserved_noop_status:
+                            self.log_sig.emit(
+                                "[ATTACK] 0402 기존 공격 유지 결과 -> 공격 배제 fallback 없이 "
+                                "현재 공격 계획을 계속 사용합니다."
+                            )
+                        else:
+                            self.log_sig.emit(
+                                "[ATTACK] 0402 공격 특화안 생성 실패 -> 공격 배제 fallback을 생략하고 현재 계획을 유지합니다."
+                            )
                     if attack_updates:
                         try:
                             self._finalize_attack_pipeline(
@@ -8510,7 +8638,36 @@ class MainWindow(QMainWindow):
                     if idx not in excluded_indices
                 ]
                 if not keep_indices:
-                    if attack_summary_info:
+                    if attack_preserved_noop_status:
+                        completion_detail = (
+                            "기존 공격 임무 유지 / 신규 표적은 공격 슬롯 확보 후 재계획"
+                            if attack_preserved_noop_status == "deferred_until_attack_slot_free"
+                            else "기존 공격 임무 유지 / 공격 재생성 불필요"
+                        )
+                        preserved_summary = {
+                            "mode": "attack",
+                            "status": attack_preserved_noop_status,
+                            "source_plan_id": attack_preserved_source_plan_id,
+                            "attack_log": attack_preserved_noop_log_path,
+                            "regenerated": False,
+                        }
+                        self._push_replan_noop_completion(reason, completion_detail)
+                        self._plan_status = "replan_skipped"
+                        self._submit_id_tab_update(
+                            scope=self._session_scope,
+                            plan_state=self._plan_status,
+                        )
+                        summary_info = preserved_summary
+                        plan_log_status = "success"
+                        plan_log_summary.update(preserved_summary)
+                        _record_step(
+                            "attack_pipeline",
+                            "complete",
+                            detail=preserved_summary,
+                            message="Existing attack graph preserved without regeneration.",
+                        )
+                        success = True
+                    elif attack_summary_info:
                         try:
                             self._schedule_plan_delivery(
                                 list(attack_ctx.get("plan_ids") or []),
@@ -14794,6 +14951,7 @@ class MainWindow(QMainWindow):
                             lah_rl_area_km=float(_rv.get("lah_rl_area_km", 10.0)),
                             wp_alloc=wp_alloc_0304,
                             initial_hold_by_aircraft=initial_hold_by_aircraft,
+                            runtime_payload=runtime_payload,
                         )
                         return plans, (time.perf_counter() - start) * 1000.0, _get_lah_mission_plan_timings()
 
@@ -15148,6 +15306,17 @@ class MainWindow(QMainWindow):
                     flight_plans_0303=flight_plans_0303,
                     variant_no=variant_no,
                 )
+                fov_sync = sync_mission_fov_from_flight_plans(
+                    missions,
+                    flight_plans_0303,
+                )
+                if fov_sync.get("updatedMissions") or fov_sync.get("normalizedWaypoints"):
+                    self.log_sig.emit(
+                        f"[INFO] DB-free FOV synchronized (variant={variant_no}): "
+                        f"missions={int(fov_sync.get('updatedMissions') or 0)}, "
+                        f"paths={int(fov_sync.get('matchedPaths') or 0)}, "
+                        f"waypoints={int(fov_sync.get('normalizedWaypoints') or 0)}"
+                    )
                 expected_path_ids = _expected_mission_path_ids(missions)
                 available_path_ids = _collect_valid_path_ids(flight_plans_0303)
                 available_path_ids.update(_collect_valid_path_ids(flight_plans_0304))
@@ -16840,18 +17009,37 @@ class MainWindow(QMainWindow):
                         exclusion_ms = (time.perf_counter() - exclusion_t0) * 1000.0
                     exclusion_payload = (exclusion_result or {}).get("result") or {}
                     exclusion_plan_id = exclusion_payload.get("missionPlanID")
-                    if exclusion_plan_id is None:
+                    exclusion_error = str(exclusion_payload.get("error") or "").strip()
+                    exclusion_updates = exclusion_payload.get("missionUpdates")
+                    if (
+                        exclusion_plan_id is None
+                        or exclusion_error
+                        or not isinstance(exclusion_updates, dict)
+                    ):
                         message = "공격 배제 재개 임무 생성에 실패했습니다."
                         if exclusion_payload.get("error") == "no_updates":
                             message = "공격 배제 재개 임무를 만들 수 있는 UAV가 없습니다."
-                        self.log_sig.emit(f"[ERR] {message} (variant={variant_no})")
+                        detail_reason = (
+                            exclusion_error
+                            or ("missionUpdates missing" if not isinstance(exclusion_updates, dict) else "")
+                        )
+                        self.log_sig.emit(
+                            f"[WARN] {message} 해당 옵션을 제외합니다 "
+                            f"(variant={variant_no}, reason={detail_reason or 'unknown'})."
+                        )
                         _record_issue(
                             "attack_exclusion_failed",
                             message,
                             detail={"variant": variant_no, "payload": exclusion_payload},
                         )
-                        plan_log_summary.update({"stop_reason": "attack_exclusion_failed", "variant": variant_no})
-                        _notify_failure_once("attack_exclusion_failed", detail={"variant": variant_no})
+                        plan_log_summary.setdefault("skipped_options", []).append(
+                            {
+                                "variant": variant_no,
+                                "option": int(option_code),
+                                "mode": "attack_exclusion",
+                                "reason": detail_reason or "invalid_result",
+                            }
+                        )
                         self._record_replan_timing_event(
                             "variant_finished",
                             extra={
@@ -16863,7 +17051,7 @@ class MainWindow(QMainWindow):
                                 "duration_ms": round(exclusion_ms, 3),
                             },
                         )
-                        return
+                        continue
                     try:
                         generated_plan_ids.append(int(exclusion_plan_id))
                     except Exception:
@@ -17373,6 +17561,7 @@ class MainWindow(QMainWindow):
                             lah_rl_area_km=float(_rv.get("lah_rl_area_km", 10.0)),
                             wp_alloc=wp_alloc_0304,
                             initial_hold_by_aircraft=initial_hold_by_aircraft,
+                            runtime_payload=runtime_payload,
                         )
                         return plans, (time.perf_counter() - start) * 1000.0, _get_lah_mission_plan_timings()
 
@@ -17392,6 +17581,10 @@ class MainWindow(QMainWindow):
                                 pid_map=pid_map,
                                 wp_alloc_0303_obj=wp_alloc_0303,
                                 wp_alloc_0304_obj=wp_alloc_0304,
+                            )
+                            sync_boundary_guard_contract_from_flight_paths(
+                                missions,
+                                flight_plans_0303,
                             )
                             flightpath_template_cache_hit = True
                             elapsed_0303_ms = float(template_fp_meta.get("elapsed_ms") or 0.0)
@@ -17639,6 +17832,17 @@ class MainWindow(QMainWindow):
                         flight_plans_0303=flight_plans_0303,
                         variant_no=variant_no,
                     )
+                    fov_sync = sync_mission_fov_from_flight_plans(
+                        missions,
+                        flight_plans_0303,
+                    )
+                    if fov_sync.get("updatedMissions") or fov_sync.get("normalizedWaypoints"):
+                        self.log_sig.emit(
+                            f"[INFO] DB-free FOV synchronized (variant={variant_no}): "
+                            f"missions={int(fov_sync.get('updatedMissions') or 0)}, "
+                            f"paths={int(fov_sync.get('matchedPaths') or 0)}, "
+                            f"waypoints={int(fov_sync.get('normalizedWaypoints') or 0)}"
+                        )
                     if (
                         initial_template_enabled_for_variant
                         and initial_template_payload is None
@@ -18473,25 +18677,26 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
             self._active_plan_context = ctx
-        if str(summary.get("status") or "").strip().lower() == "skipped" and not result.plan_ids:
-            skip_reason = str(summary.get("reason") or "rejoin_not_needed").strip() or "rejoin_not_needed"
-            group_skip_reasons: List[str] = []
-            group_evaluations = summary.get("group_evaluations")
-            if isinstance(group_evaluations, list):
-                for evaluation in group_evaluations:
-                    if not isinstance(evaluation, dict):
-                        continue
-                    group_skip_reason = str(evaluation.get("skip_reason") or "").strip()
-                    if group_skip_reason:
-                        group_skip_reasons.append(group_skip_reason)
-            if skip_reason == "rejoin_not_needed" or "remaining_work_too_small" in group_skip_reasons:
-                if "remaining_work_too_small" in group_skip_reasons:
-                    detail_text = "잔여 임무 30% 미만"
-                else:
-                    detail_text = "협업 복귀 재계획 불필요"
+        empty_result_policy = _post_attack_empty_result_completion_policy(
+            summary,
+            result.plan_ids,
+        )
+        if empty_result_policy is not None:
+            completion_kind = str(empty_result_policy.get("kind") or "")
+            detail_text = str(empty_result_policy.get("detail") or "").strip()
+            if completion_kind == "noop":
                 notice = "공격후 복귀 불필요: " + detail_text
-                self._push_0305(status=2, reason=f"{reason} / 재계획 불필요")
+                self._push_replan_noop_completion(reason, "재계획 불필요")
                 self._push_0001_notice(notice)
+            else:
+                skip_reason = str(
+                    empty_result_policy.get("reason") or "post_attack_empty_result"
+                )
+                self.log_sig.emit(
+                    "[POSTATTACK][ERR] 복귀 계획을 확정하지 못해 실패 완료 신호를 "
+                    f"즉시 전송합니다 (reason={skip_reason})."
+                )
+                self._push_replan_failure_completion(detail_text)
 
         if result.plan_ids:
             ctx["plan_ids"] = list(result.plan_ids)

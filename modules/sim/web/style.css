@@ -515,6 +515,17 @@ body {
   background: var(--accent-weak);
 }
 
+.distance-measurement-toggle.is-active {
+  border-color: #73e6ff;
+  color: #b9f4ff;
+  background: rgba(56, 215, 255, 0.16);
+  box-shadow: inset 0 0 0 1px rgba(115, 230, 255, 0.16);
+}
+
+.maplibregl-canvas.sim-map-distance-measure {
+  cursor: crosshair !important;
+}
+
 .status {
   position: absolute;
   bottom: 112px;

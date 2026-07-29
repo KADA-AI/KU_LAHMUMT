@@ -16,8 +16,16 @@ from ..algo.split_algorithms import mission_geometry
 from ..models import SplitPiece, SplitRunResult
 from modules.mission_planning.pipelines.lah_operational_mode import build_lah_special_sequence
 from modules.mission_planning.pipelines.ground_maneuver_mode import (
+    TYPE2_SELF_RELIANCE_OUTBOUND_LINE,
+    TYPE2_SELF_RELIANCE_RETURN_LINE,
     build_ground_maneuver_lah_sequence,
     build_urban_operation_lah_sequence,
+    resolve_type2_self_reliance_phase,
+)
+from modules.mission_planning.pipelines.type2_boundary_guard_loop import (
+    BOUNDARY_GUARD_CONTRACT_KEYS,
+    annotate_boundary_guard_set,
+    extract_boundary_guard_contract,
 )
 from modules.mission_planning.planning_modes import (
     MissionPlanningMode,
@@ -57,6 +65,13 @@ except Exception:
         )
     except Exception:
         _capture_aircraft_speed_kmh = None
+try:
+    from ... import capture_physics as _capture_physics
+except Exception:
+    try:
+        from modules.mission_planning.MissionPlanner import capture_physics as _capture_physics  # type: ignore
+    except Exception:
+        _capture_physics = None
 try:
     from ....runtime.json_io import dumps_json
 except Exception:
@@ -761,6 +776,72 @@ def _piece_speed_fov_sep(piece: SplitPiece) -> Tuple[float, float, float]:
             )
 
     width_ref_m = _to_float(exp.get("widthRefM"), 0.0)
+    # FOV 는 이 기체에 할당된 회랑 폭으로 골라야 한다.  widthRefM 은 스윕 기준축
+    # 투영 스팬이라 LINE 조각에서는 회랑 길이 쪽(실측 8 km 급)이 잡히는 경우가
+    # 있고, 그러면 physics_line_row 의 far_ground = 이격 + 폭/2 가 4 km 를 넘어
+    # FOV 가 1.7~1.9° 로 붕괴한다(실측: 선언 폭 970~1,490 m 인데 FOV 1.74).
+    # 붕괴한 FOV 로 촬영이 방출되는 사이 스윕 간격은 폭 기준으로 계산돼 서로
+    # 어긋났다.  조각이 자기 폭을 들고 있으면 그것을 우선한다.
+    piece_width_m = _to_float(data.get("width"), 0.0)
+    if piece_width_m > 0.0:
+        width_ref_m = float(piece_width_m)
+
+    # ── 물리 선택 우선 (DB-free) ────────────────────────────────────────────
+    # 요구공간해상도를 만족하는 실현가능 최대 FOV × margin 을 실시간 계산한다.
+    # AREA는 area 전용 마진(physics_area_fov_margin_ratio, 기본 0.6)이 적용돼
+    # 카메라 상한보다 한 단계 보수적으로 내려간다 — 실비행 급선회·뱅킹에서도
+    # 요구해상도가 유지되게.  sep = 촬영 이격거리 = 고도.  (스윕 bearing 은
+    # d0303 에서 정해지므로 행 기하는 여기서 전달하지 않는다.)
+    # LINE은 초기계획이라 측정 이격이 없으므로 기본 보어사이트(45°) 기준.
+    # None이면(비활성/실패) 아래 기존 FOV DB 경로로 그대로 진행한다.
+    try:
+        if _capture_physics is None:
+            raise RuntimeError("capture_physics unavailable")
+        if is_area_piece:
+            physics_fov = _capture_physics.physics_area_fov_deg()
+            if physics_fov is not None and float(physics_fov) > 0.0:
+                adjusted_fov = float(
+                    apply_runtime_camera_adjusted_fov_deg(
+                        float(physics_fov),
+                        _runtime_payload(),
+                        context=f"MISSION_PLAN 0302 UAV{int(piece.assigned_uav or 0)} PHYSICS_AREA",
+                    )
+                )
+                sep_out = float(
+                    _capture_physics.capture_altitude_m(_runtime_payload())
+                )
+                return (
+                    _capture_speed_kmh_or(speed_kmh, adjusted_fov),
+                    adjusted_fov,
+                    sep_out,
+                )
+        else:
+            physics_row = _capture_physics.physics_line_row(
+                float(width_ref_m or 0.0), 0.0
+            )
+            if isinstance(physics_row, dict) and float(physics_row.get("fov", 0.0) or 0.0) > 0.0:
+                sep_out = float(physics_row.get("sep", 0.0) or 0.0)
+                selected_fov = float(physics_row["fov"])
+                # LINE 기체는 회랑 길이축을 따라 이동하면서 횡방향 스윕을
+                # 순서대로 촬영한다. lineLengthM/uav_wp_interval_m은 카메라의
+                # 동시 지상거리가 아니므로 FOV 선택에 넣지 않는다. 여기서의
+                # 실제 품질거리는 할당된 회랑 폭 + SEP이며 physics_line_row가
+                # 이미 그 최악 횡거리를 계산한다.
+                adjusted_fov = float(
+                    apply_runtime_camera_adjusted_fov_deg(
+                        selected_fov,
+                        _runtime_payload(),
+                        context=f"MISSION_PLAN 0302 UAV{int(piece.assigned_uav or 0)} PHYSICS_LINE",
+                    )
+                )
+                return (
+                    _capture_speed_kmh_or(speed_kmh, adjusted_fov),
+                    adjusted_fov,
+                    sep_out,
+                )
+    except Exception:
+        pass
+
     rows = _rows_by_width(_load_fov_db_rows(), width_ref_m)
     if not rows:
         return float(speed_kmh), 0.0, 0.0
@@ -1305,6 +1386,9 @@ def _mission_info_by_type(
 def _piece_to_mission_info(piece: SplitPiece) -> Dict[str, Any]:
     info = _piece_to_mission_info_base(piece)
     data = piece.data if isinstance(piece.data, dict) else {}
+    contract = extract_boundary_guard_contract(data)
+    for key, value in contract.items():
+        info[key] = copy.deepcopy(value)
     # Type 4 donut patrol marker rides through the 0302 info so d0303 can build
     # the ring-lane route + radial lineSearch instead of the generic area sweep.
     if isinstance(data.get("_donutPatrol"), dict):
@@ -1445,6 +1529,25 @@ def _piece_runtime_meta(piece: SplitPiece) -> Dict[str, Any]:
     ):
         if key in data:
             meta[key] = data.get(key)
+    for key in (
+        "branchIndex",
+        "branchAreaSequentialSplit",
+        "branchAreaSequence",
+        "splitStage",
+        "splitCount",
+        "areaSequentialOwnerSlot",
+        "areaSequentialOwnerCount",
+        "areaSequentialWidthSplit",
+        "areaSequentialWidthSpanM",
+        "areaSequentialWidthTargetM",
+        "areaSequentialWidthLimitM",
+        "areaOuterOwner",
+        "areaOuterSide",
+        "areaOuterFirstSweep",
+        *BOUNDARY_GUARD_CONTRACT_KEYS,
+    ):
+        if key in data:
+            meta[key] = copy.deepcopy(data.get(key))
     for key in ("prevPoint", "nextPoint"):
         value = data.get(key)
         if isinstance(value, dict):
@@ -1579,6 +1682,113 @@ def _validate_0302_packages(packages: List[Dict[str, Any]]) -> None:
                 raise ValueError(f"[0302] IM {im_id}: targetID required")
 
 
+def _related_input_mission_id(mission: Dict[str, Any]) -> int:
+    related = (
+        mission.get("relatedMission")
+        if isinstance(mission.get("relatedMission"), dict)
+        else {}
+    )
+    return _to_int(related.get("inputMissionID"), 0)
+
+
+def _apply_input_order_execution_barrier(
+    packages: List[Dict[str, Any]],
+    *,
+    input_plan: Dict[str, Any],
+    target_input_id: int,
+) -> Dict[str, int]:
+    """Open one UAV input group and lock every later group.
+
+    Input mission IDs are identifiers, not a sortable execution sequence.  The
+    authoritative order is therefore the order in ``InputMissionPlan``.  This
+    helper intentionally leaves earlier and unknown missions untouched.
+    """
+
+    input_order: Dict[int, int] = {}
+    for index, row in enumerate(input_plan.get("inputMissionList") or []):
+        if not isinstance(row, dict):
+            continue
+        input_id = _to_int(row.get("inputMissionID"), 0)
+        if input_id > 0 and input_id not in input_order:
+            input_order[int(input_id)] = int(index)
+
+    target_index = input_order.get(int(target_input_id))
+    if target_index is None:
+        return {"targetUnblocked": 0, "laterBlocked": 0}
+
+    target_unblocked = 0
+    later_blocked = 0
+    for package in packages:
+        if not isinstance(package, dict) or _to_int(package.get("aircraftID"), 0) <= 3:
+            continue
+        missions = package.get("individualMissionList")
+        if not isinstance(missions, list):
+            continue
+        for mission in missions:
+            if not isinstance(mission, dict):
+                continue
+            input_id = _related_input_mission_id(mission)
+            mission_index = input_order.get(int(input_id))
+            if mission_index is None:
+                continue
+            if int(mission_index) == int(target_index):
+                mission.pop("executionBlockedUntilNextCollab", None)
+                mission.pop("ExecutionBlockedUntilNextCollab", None)
+                target_unblocked += 1
+            elif int(mission_index) > int(target_index):
+                mission["executionBlockedUntilNextCollab"] = True
+                mission.pop("ExecutionBlockedUntilNextCollab", None)
+                later_blocked += 1
+
+    return {
+        "targetUnblocked": int(target_unblocked),
+        "laterBlocked": int(later_blocked),
+    }
+
+
+def _apply_initial_type2_line_execution_barrier(
+    packages: List[Dict[str, Any]],
+    *,
+    input_plan: Dict[str, Any],
+) -> Optional[int]:
+    """Lock the initial UAV suffix at the first exact Type-2 branch LINE.
+
+    A valid Type-2 self-reliance package has an outbound LINE, guard AREA, and
+    return LINE.  The first represented LINE is the only initially open group;
+    each next-collaboration replan advances the barrier one input group at a
+    time.  Stale or malformed Type-2 lookalikes are ignored by the strict phase
+    resolver.
+    """
+
+    represented_input_ids = {
+        _related_input_mission_id(mission)
+        for package in packages
+        if isinstance(package, dict) and _to_int(package.get("aircraftID"), 0) > 3
+        for mission in (package.get("individualMissionList") or [])
+        if isinstance(mission, dict)
+    }
+    type2_line_phases = {
+        TYPE2_SELF_RELIANCE_OUTBOUND_LINE,
+        TYPE2_SELF_RELIANCE_RETURN_LINE,
+    }
+    for input_mission in input_plan.get("inputMissionList") or []:
+        if not isinstance(input_mission, dict):
+            continue
+        input_id = _to_int(input_mission.get("inputMissionID"), 0)
+        if input_id <= 0 or input_id not in represented_input_ids:
+            continue
+        phase = resolve_type2_self_reliance_phase(input_plan, int(input_id))
+        if phase not in type2_line_phases:
+            continue
+        _apply_input_order_execution_barrier(
+            packages,
+            input_plan=input_plan,
+            target_input_id=int(input_id),
+        )
+        return int(input_id)
+    return None
+
+
 def build_0302_packages_from_split(
     split_result: SplitRunResult,
     source: Optional[str] = None,
@@ -1616,6 +1826,36 @@ def _build_0302_packages_from_split_impl(split_result: SplitRunResult, source: O
             st = _to_float(row.get("startSec"), 0.0)
             events.append((float(st), 0, int(j), "inserted", row))
         events.sort(key=lambda x: (x[0], x[1], x[2]))
+
+        guard_rows_by_mission: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
+        for _, _, _, event_type, event_payload in events:
+            if event_type != "piece" or not isinstance(event_payload, SplitPiece):
+                continue
+            data = event_payload.data if isinstance(event_payload.data, dict) else {}
+            if data.get("_type2BoundaryGuardArea") is not True:
+                continue
+            package_token = str(data.get("_type2BoundaryGuardPackageID") or "0")
+            mission_token = str(
+                data.get("_type2BoundaryGuardInputMissionID")
+                or event_payload.mission_id
+                or event_payload.parent_order
+            )
+            guard_rows_by_mission.setdefault(
+                (package_token, mission_token), []
+            ).append(data)
+
+        guard_duration_s = _to_float(
+            get_runtime_value("type2_boundary_guard_duration_s", 600.0),
+            600.0,
+        )
+        for (package_token, mission_token), guard_rows in guard_rows_by_mission.items():
+            annotate_boundary_guard_set(
+                guard_rows,
+                set_id=(
+                    f"type2-boundary:{package_token}:{mission_token}:aircraft-{int(aid)}"
+                ),
+                duration_s=guard_duration_s,
+            )
 
         for _, _, _, etype, payload in events:
             runtime_meta: Dict[str, Any] = {}
@@ -1853,6 +2093,11 @@ def build_0302_packages_from_split_with_lah(
     )
     if not isinstance(cmpk, dict):
         return uav_packages
+
+    _apply_initial_type2_line_execution_barrier(
+        uav_packages,
+        input_plan=cmpk,
+    )
 
     max_im_id = 900_000_000
     for pkg in uav_packages:

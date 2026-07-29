@@ -79,6 +79,7 @@ def load_sweep_progress() -> Dict[int, Dict[str, Any]]:
                 "mission_id": line_entry.get("missionID"),
                 "input_mission_id": line_entry.get("inputMissionID"),
                 "mission_plan_id": line_entry.get("missionPlanID"),
+                "is_current": line_entry.get("isCurrent"),
                 "path_id": int(path_id),
                 "sweep_point_count": int(sweep_points),
                 "progress_percent": max(0, min(100, int(progress_percent or 0))),
@@ -970,6 +971,7 @@ def trim_waypoints_by_sweep_points(
     cut_points: int,
     *,
     preserve_waypoints: bool = False,
+    preserve_carrier_coordinates: bool = False,
     reference_coord_for_offset: Dict[str, Any] | None = None,
 ) -> Tuple[List[Dict[str, Any]], int]:
     if not waypoints or cut_points <= 0:
@@ -1021,18 +1023,19 @@ def trim_waypoints_by_sweep_points(
                 line_search["coordinateList"] = coords
                 fp["lineSearch"] = line_search
                 wp["filmingProperty"] = fp
-                realign_line_search_waypoint_to_first_sweep(
-                    wp,
-                    signed_offset_m=original_signed_offset_m,
-                    reference_coord_for_offset=reference_coord_for_offset,
-                    lookup_context=lookup_context,
-                )
+                if not preserve_carrier_coordinates:
+                    realign_line_search_waypoint_to_first_sweep(
+                        wp,
+                        signed_offset_m=original_signed_offset_m,
+                        reference_coord_for_offset=reference_coord_for_offset,
+                        lookup_context=lookup_context,
+                    )
                 new_list.append(wp)
                 continue
 
             # 1점만 남으면 lineSearch는 제거하고 일반 이동 waypoint로 유지.
             first = coords[0] if coords else None
-            if isinstance(first, dict):
+            if isinstance(first, dict) and not preserve_carrier_coordinates:
                 coord = wp.get("coordinate") if isinstance(wp, dict) else None
                 if not isinstance(coord, dict):
                     coord = {}
@@ -1073,12 +1076,13 @@ def trim_waypoints_by_sweep_points(
         line_search["coordinateList"] = coords
         fp["lineSearch"] = line_search
         wp["filmingProperty"] = fp
-        realign_line_search_waypoint_to_first_sweep(
-            wp,
-            signed_offset_m=original_signed_offset_m,
-            reference_coord_for_offset=reference_coord_for_offset,
-            lookup_context=lookup_context,
-        )
+        if not preserve_carrier_coordinates:
+            realign_line_search_waypoint_to_first_sweep(
+                wp,
+                signed_offset_m=original_signed_offset_m,
+                reference_coord_for_offset=reference_coord_for_offset,
+                lookup_context=lookup_context,
+            )
         new_list.append(wp)
     return new_list, removed_points
 
@@ -1088,6 +1092,7 @@ def merge_small_adjacent_line_search_waypoints(
     *,
     max_sweeps: int = 2,
     skip_last_pair: bool = False,
+    preserve_carrier_coordinates: bool = False,
     reference_coord_for_offset: Dict[str, Any] | None = None,
 ) -> Tuple[List[Dict[str, Any]], int]:
     if not waypoints or len(waypoints) < 2 or max_sweeps <= 0:
@@ -1148,11 +1153,12 @@ def merge_small_adjacent_line_search_waypoints(
         if isinstance(prev_fp, dict):
             prev_fp["lineSearch"] = prev_line_search
             prev_waypoint["filmingProperty"] = prev_fp
-            realign_line_search_waypoint_to_first_sweep(
-                prev_waypoint,
-                reference_coord_for_offset=reference_coord_for_offset,
-                lookup_context=lookup_context,
-            )
+            if not preserve_carrier_coordinates:
+                realign_line_search_waypoint_to_first_sweep(
+                    prev_waypoint,
+                    reference_coord_for_offset=reference_coord_for_offset,
+                    lookup_context=lookup_context,
+                )
         merged_count += 1
 
     return merged_waypoints, merged_count

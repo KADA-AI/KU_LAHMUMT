@@ -33,6 +33,73 @@ def _coerce_bool(value: Any, default: bool = False) -> bool:
     return default
 
 
+_BOUNDARY_GUARD_FIELDS: dict[str, tuple[str, ...]] = {
+    "loop": ("boundaryGuardLoop", "boundary_guard_loop"),
+    "loopVersion": (
+        "boundaryGuardLoopVersion",
+        "boundary_guard_loop_version",
+    ),
+    "setID": ("boundaryGuardSetID", "boundary_guard_set_id"),
+    "sequence": ("boundaryGuardSequence", "boundary_guard_sequence"),
+    "sequenceCount": (
+        "boundaryGuardSequenceCount",
+        "boundary_guard_sequence_count",
+    ),
+    "durationS": ("boundaryGuardDurationS", "boundary_guard_duration_s"),
+    "firstWaypointID": (
+        "boundaryGuardCycleFirstWaypointID",
+        "boundary_guard_cycle_first_wp_id",
+    ),
+    "lastWaypointID": (
+        "boundaryGuardCycleLastWaypointID",
+        "boundary_guard_cycle_last_wp_id",
+    ),
+}
+
+
+def _ci_present(mapping: Any, *keys: str) -> tuple[bool, Any]:
+    if not isinstance(mapping, dict):
+        return False, None
+    for key in keys:
+        if key in mapping:
+            return True, mapping[key]
+    lowered = {str(key).lower(): value for key, value in mapping.items()}
+    for key in keys:
+        if str(key).lower() in lowered:
+            return True, lowered[str(key).lower()]
+    return False, None
+
+
+def _boundary_guard_contract(*sources: Any) -> dict[str, Any]:
+    result: dict[str, Any] = {"loopPresent": False}
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        nested = source.get("boundaryGuard") or source.get("boundary_guard")
+        candidates = (source, nested) if isinstance(nested, dict) else (source,)
+        for candidate in candidates:
+            for field, aliases in _BOUNDARY_GUARD_FIELDS.items():
+                if field in result:
+                    continue
+                present, value = _ci_present(candidate, *aliases)
+                if not present:
+                    continue
+                if field == "loop":
+                    result[field] = _coerce_bool(value, False)
+                    result["loopPresent"] = True
+                elif field == "setID":
+                    result[field] = str(value or "").strip() or None
+                elif field == "durationS":
+                    try:
+                        duration = float(value)
+                    except Exception:
+                        duration = 0.0
+                    result[field] = duration if duration > 0.0 else None
+                else:
+                    result[field] = _coerce_int(value)
+    return result
+
+
 def _load_json(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
@@ -205,7 +272,10 @@ def _path_input_mission_index(individual_plans: Iterable[dict[str, Any]]) -> dic
         if not isinstance(plan, dict):
             continue
         aircraft_id = _coerce_int(plan.get("aircraftID") or plan.get("AircraftID"))
-        for mission in plan.get("individualMissionList") or []:
+        for sequence_order, mission in enumerate(
+            plan.get("individualMissionList") or [],
+            start=1,
+        ):
             if not isinstance(mission, dict):
                 continue
             path_id = _coerce_int(mission.get("pathID") or mission.get("PathID"))
@@ -226,6 +296,12 @@ def _path_input_mission_index(individual_plans: Iterable[dict[str, Any]]) -> dic
                 "inputMissionID": input_mission_id,
                 "individualMissionID": _coerce_int(
                     mission.get("individualMissionID") or mission.get("IndividualMissionID")
+                ),
+                "sequenceOrder": int(sequence_order),
+                **_boundary_guard_contract(
+                    mission,
+                    mission.get("individualMissionInfo") or {},
+                    related,
                 ),
             }
     return index
@@ -542,13 +618,18 @@ def build_features_from_flight_paths(
     flight_paths: Iterable[dict[str, Any]],
     *,
     done_path_ids: set[int] | None = None,
+    path_mission_index: dict[int, dict[str, Any]] | None = None,
+    input_mission_meta: dict[int, dict[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     features: list[dict[str, Any]] = []
     agent_counts: dict[str, int] = {}
     feature_id = 1
     done_paths = done_path_ids or set()
+    path_index = path_mission_index or {}
+    input_meta_index = input_mission_meta or {}
+    guard_groups: dict[tuple[int, int | None, str], list[dict[str, Any]]] = {}
 
-    for entry in flight_paths:
+    for source_order, entry in enumerate(flight_paths):
         if not isinstance(entry, dict):
             continue
         data = entry.get("data") if isinstance(entry.get("data"), dict) else entry
@@ -619,6 +700,129 @@ def build_features_from_flight_paths(
         feature_id += 1
         features.append(feature)
 
+        path_meta = path_index.get(int(path_id), {}) if path_id is not None else {}
+        contract = _boundary_guard_contract(data, path_meta)
+        input_mission_id = _coerce_int(path_meta.get("inputMissionID"))
+        input_meta = (
+            input_meta_index.get(int(input_mission_id), {})
+            if input_mission_id is not None
+            else {}
+        )
+        fallback = (
+            not bool(contract.get("loopPresent"))
+            and _coerce_int(input_meta.get("inputMissionPackageType")) == 2
+            and _coerce_int(input_meta.get("inputMissionType")) == 3
+            and _coerce_int(input_meta.get("regionType")) == 7
+        )
+        if bool(contract.get("loop", False)) or fallback:
+            set_id = str(contract.get("setID") or "").strip()
+            if not set_id:
+                set_id = (
+                    f"boundary-guard:{int(aircraft_id)}:"
+                    f"{int(input_mission_id or 0)}"
+                )
+            key = (int(aircraft_id), input_mission_id, set_id)
+            guard_groups.setdefault(key, []).append(
+                {
+                    "feature": feature,
+                    "contract": contract,
+                    "sourceOrder": int(source_order),
+                    "sequenceOrder": _coerce_int(path_meta.get("sequenceOrder")),
+                }
+            )
+
+    for (_aircraft_id, _input_id, set_id), members in guard_groups.items():
+        explicit_sequences = [
+            _coerce_int(member["contract"].get("sequence"))
+            for member in members
+        ]
+        if (
+            all(value is not None and int(value) > 0 for value in explicit_sequences)
+            and len({int(value) for value in explicit_sequences}) == len(members)
+        ):
+            members.sort(key=lambda member: int(member["contract"]["sequence"]))
+        else:
+            members.sort(
+                key=lambda member: (
+                    int(member["sequenceOrder"])
+                    if member["sequenceOrder"] is not None
+                    else 1_000_000 + int(member["sourceOrder"])
+                )
+            )
+
+        all_wp_ids = [
+            int(wp_id)
+            for member in members
+            for wp_id in member["feature"].get("wpIds") or []
+            if wp_id is not None
+        ]
+        if not all_wp_ids:
+            continue
+        first_explicit = _coerce_int(
+            members[0]["contract"].get("firstWaypointID")
+        )
+        last_explicit = _coerce_int(
+            members[-1]["contract"].get("lastWaypointID")
+        )
+        first_wp_id = (
+            int(first_explicit)
+            if first_explicit is not None and int(first_explicit) in all_wp_ids
+            else int(all_wp_ids[0])
+        )
+        last_wp_id = (
+            int(last_explicit)
+            if last_explicit is not None and int(last_explicit) in all_wp_ids
+            else int(all_wp_ids[-1])
+        )
+
+        first_coord: list[float] | None = None
+        first_alt: float | None = None
+        tail_member = members[-1]
+        for member in members:
+            feature = member["feature"]
+            wp_ids = feature.get("wpIds") or []
+            if first_wp_id in wp_ids:
+                idx = wp_ids.index(first_wp_id)
+                first_coord = list(feature["coords"][idx])
+                first_alt = feature["alts"][idx]
+            if last_wp_id in wp_ids:
+                tail_member = member
+        if first_coord is None:
+            first_coord = list(members[0]["feature"]["coords"][0])
+            first_alt = members[0]["feature"]["alts"][0]
+
+        duration_s = next(
+            (
+                float(member["contract"]["durationS"])
+                for member in members
+                if member["contract"].get("durationS") is not None
+            ),
+            None,
+        )
+        for sequence, member in enumerate(members, start=1):
+            feature = member["feature"]
+            feature.update(
+                {
+                    "boundaryGuardLoop": True,
+                    "boundaryGuardLoopVersion": int(
+                        _coerce_int(member["contract"].get("loopVersion")) or 1
+                    ),
+                    "boundaryGuardSetID": str(set_id),
+                    "boundaryGuardSequence": int(sequence),
+                    "boundaryGuardSequenceCount": int(len(members)),
+                    "boundaryGuardDurationS": duration_s,
+                    "boundaryGuardCycleFirstWaypointID": int(first_wp_id),
+                    "boundaryGuardCycleLastWaypointID": int(last_wp_id),
+                }
+            )
+
+        # Only the final child gets one display-only closing segment.  The
+        # waypoint arrays remain finite and untouched, so labels/current-WP
+        # logic cannot recurse or duplicate the first point.
+        tail_feature = tail_member["feature"]
+        tail_feature["loopClosureCoord"] = first_coord
+        tail_feature["loopClosureAlt"] = first_alt
+
     return features, agent_counts
 
 
@@ -648,6 +852,26 @@ def build_mission_plan_payload(
         or mission_plan.get("inputMissionPackageId")
     )
     input_plan, input_plan_path = _load_input_plan_for_package(base, input_package_id)
+    loaded_input_package_id = _input_package_id(input_plan)
+    input_package_id_normalized = bool(
+        input_plan
+        and input_package_id is not None
+        and loaded_input_package_id != int(input_package_id)
+    )
+    if input_package_id_normalized:
+        # The planner treats the MissionPlan reference / direct filename as
+        # authoritative for legacy snapshots whose embedded package ID is
+        # stale (for example InputMissionPlan/3.json declaring ID 4).  Keep the
+        # SIM payload on that same identity contract without rewriting the
+        # user's source snapshot.
+        package_key_updated = False
+        for key in list(input_plan):
+            if str(key).lower() != "inputmissionpackageid":
+                continue
+            input_plan[key] = int(input_package_id)
+            package_key_updated = True
+        if not package_key_updated:
+            input_plan["inputMissionPackageID"] = int(input_package_id)
     normalize_input_mission_plan_float_fields(input_plan)
     input_plans = [input_plan] if input_plan else []
 
@@ -731,6 +955,29 @@ def build_mission_plan_payload(
 
     done_path_ids = {pid for pid, is_done in path_done_map.items() if is_done}
     path_mission_index = _path_input_mission_index(individual_plans)
+    input_mission_meta: dict[int, dict[str, Any]] = {}
+    package_type = _coerce_int(
+        input_plan.get("inputMissionPackageType")
+        or input_plan.get("InputMissionPackageType")
+        or input_plan.get("packageType")
+    )
+    for mission in input_plan.get("inputMissionList") or []:
+        if not isinstance(mission, dict):
+            continue
+        input_id = _coerce_int(
+            mission.get("inputMissionID") or mission.get("InputMissionID")
+        )
+        if input_id is None:
+            continue
+        input_mission_meta[int(input_id)] = {
+            "inputMissionPackageType": package_type,
+            "inputMissionType": _coerce_int(
+                mission.get("inputMissionType") or mission.get("InputMissionType")
+            ),
+            "regionType": _coerce_int(
+                mission.get("regionType") or mission.get("RegionType")
+            ),
+        }
     sweep_line_spacing_summaries = _build_sweep_line_spacing_summaries(
         flight_paths,
         path_mission_index,
@@ -742,6 +989,8 @@ def build_mission_plan_payload(
     features, agent_counts = build_features_from_flight_paths(
         flight_paths,
         done_path_ids=done_path_ids,
+        path_mission_index=path_mission_index,
+        input_mission_meta=input_mission_meta,
     )
 
     # Display-only roles the ICD cannot express (concealment points).  Absent
@@ -771,6 +1020,8 @@ def build_mission_plan_payload(
         "ok": True,
         "missionPlanID": int(mission_plan_id),
         "inputMissionPackageID": input_package_id,
+        "inputMissionPackageSourceID": loaded_input_package_id,
+        "inputMissionPackageIDNormalized": input_package_id_normalized,
         "inputMissionPlanPath": str(input_plan_path) if input_plan_path is not None else None,
         "missionReferencePackageID": mission_ref_id,
         "individualMissionPackageIDs": individual_package_ids,

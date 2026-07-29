@@ -1280,6 +1280,53 @@ class _MissionAreaState:
     coverage_acquisition_id: str | None = None
     coverage_generation_token: object | None = None
     coverage_depth_contract_active: bool = False
+    boundary_guard_loop: bool = False
+    boundary_guard_loop_version: int | None = None
+    boundary_guard_set_id: str | None = None
+    boundary_guard_sequence: int | None = None
+    boundary_guard_sequence_count: int | None = None
+    boundary_guard_duration_s: float | None = None
+    boundary_guard_cycle_first_waypoint_id: int | None = None
+    boundary_guard_cycle_last_waypoint_id: int | None = None
+    boundary_guard_cycle_count: int = 0
+    boundary_guard_first_cycle_complete: bool = False
+
+
+def _reset_area_state_cycle_runtime(state: _MissionAreaState) -> None:
+    """Reset only one guard set's live coverage for its next scan cycle."""
+
+    state.covered_geometry = GeometryCollection()
+    state.completed_cut_line_indexes = set()
+    state.cut_lines = []
+    state.last_cut_line_index = -1
+    state.progress_origin_line_index = None
+    state.progress_boundary_line_index = None
+    state.progress_direction_sign = None
+    state.provisional_frontier_line_index = None
+    state.last_nearest_cut_line_index = None
+    state.tracking_cut_line_index = None
+    state.tracking_projection_min_m = None
+    state.tracking_projection_max_m = None
+    state.tracking_sample_count = 0
+    state.tracking_path_length_m = 0.0
+    state.tracking_last_center_xy = None
+    state.centerline_points = []
+    state.last_center_xy = None
+    state.last_update_ms = None
+    state.done = False
+    state.area_row_progress_state = AreaRowProgressState()
+    state.area_row_progress_last_sample_ms = None
+    state.area_progress_source = None
+    state.area_progress_sweep_points = None
+    state.area_progress_sweep_point_count = None
+    state.area_progress_boundary_line_index = None
+    state.area_progress_current_waypoint_id = None
+    state.area_progress_confidence = None
+    state.area_footprint_candidate_line_index = None
+    state.area_footprint_candidate_seen_count = 0
+    state.area_footprint_candidate_first_ms = None
+    state.area_footprint_candidate_last_ms = None
+    state.coverage_rebuild_signature = None
 
 
 def _normalize_area_coverage_pass(value: object | None) -> str | None:
@@ -1439,6 +1486,19 @@ def _copy_area_pass_runtime(
     target.area_footprint_candidate_first_ms = source.area_footprint_candidate_first_ms
     target.area_footprint_candidate_last_ms = source.area_footprint_candidate_last_ms
     target.coverage_rebuild_signature = None
+    if (
+        target.boundary_guard_loop
+        and target.boundary_guard_set_id
+        and target.boundary_guard_set_id == source.boundary_guard_set_id
+    ):
+        target.boundary_guard_cycle_count = max(
+            int(target.boundary_guard_cycle_count),
+            int(source.boundary_guard_cycle_count),
+        )
+        target.boundary_guard_first_cycle_complete = bool(
+            target.boundary_guard_first_cycle_complete
+            or source.boundary_guard_first_cycle_complete
+        )
 
 
 def _new_area_coverage_pass_state(
@@ -1508,6 +1568,22 @@ def _new_area_coverage_pass_state(
         coverage_acquisition_id=root.coverage_acquisition_id,
         coverage_generation_token=root.coverage_generation_token,
         coverage_depth_contract_active=bool(root.coverage_depth_contract_active),
+        boundary_guard_loop=bool(root.boundary_guard_loop),
+        boundary_guard_loop_version=root.boundary_guard_loop_version,
+        boundary_guard_set_id=root.boundary_guard_set_id,
+        boundary_guard_sequence=root.boundary_guard_sequence,
+        boundary_guard_sequence_count=root.boundary_guard_sequence_count,
+        boundary_guard_duration_s=root.boundary_guard_duration_s,
+        boundary_guard_cycle_first_waypoint_id=(
+            root.boundary_guard_cycle_first_waypoint_id
+        ),
+        boundary_guard_cycle_last_waypoint_id=(
+            root.boundary_guard_cycle_last_waypoint_id
+        ),
+        boundary_guard_cycle_count=int(root.boundary_guard_cycle_count),
+        boundary_guard_first_cycle_complete=bool(
+            root.boundary_guard_first_cycle_complete
+        ),
     )
     if covered_seed is not None and not covered_seed.is_empty:
         _restore_planned_cut_progress(child)
@@ -2119,6 +2195,20 @@ def _top_level_area_replan_geometry(
     area_threshold_m2: float,
     bridge_gap_m: float,
 ) -> BaseGeometry:
+    """Return the one outer AREA envelope used by top-level replanning.
+
+    Detailed coverage depth keeps the exact photographed/unphotographed
+    geometry separately.  This top-level geometry is deliberately the convex
+    ownership envelope, capped by the immutable input AREA so it can never
+    grow beyond the user-supplied mission boundary.
+
+    ``bridge_gap_m`` remains in the signature for call-site compatibility.  A
+    morphological closing is no longer used here: it preserved connected
+    stair-step and narrow-neck shapes and made the result depend on whether
+    tiny gaps happened to exist between otherwise identical fragments.
+    """
+
+    del bridge_gap_m
     polygons = _iter_polygons(remaining_geometry)
     try:
         merged = unary_union(polygons) if polygons else remaining_geometry
@@ -2135,51 +2225,46 @@ def _top_level_area_replan_geometry(
     if merged is None or merged.is_empty:
         return GeometryCollection()
 
-    base_area_m2 = max(0.0, float(merged.area or 0.0))
-    base_count = max(1, len(_iter_polygons(merged)))
-    gap_m = max(0.0, float(bridge_gap_m or 0.0))
-    if gap_m > 0.0:
-        try:
-            closed = merged.buffer(gap_m, join_style=2).buffer(-gap_m, join_style=2)
-            if assignment_geometry is not None and not assignment_geometry.is_empty:
-                closed = assignment_geometry.intersection(closed)
-            closed = _filter_small_polygons(closed, area_threshold_m2=float(area_threshold_m2))
-            closed_area_m2 = max(0.0, float(closed.area or 0.0)) if closed is not None else 0.0
-            max_allowed_area_m2 = max(
-                float(base_area_m2) * 1.06,
-                float(base_area_m2) + max(float(area_threshold_m2) * 6.0, 20_000.0),
-            )
-            if (
-                closed is not None
-                and not closed.is_empty
-                and float(closed_area_m2) <= float(max_allowed_area_m2)
-                and len(_iter_polygons(closed)) <= int(base_count)
-            ):
-                return closed
-        except Exception:
-            pass
-
-    polygons = _iter_polygons(merged)
-    if len(polygons) > 1:
-        try:
-            hull = unary_union(polygons).convex_hull
-            if hull is not None and not hull.is_empty:
-                if assignment_geometry is not None and not assignment_geometry.is_empty:
-                    hull = assignment_geometry.intersection(hull)
-                hull_area_m2 = max(0.0, float(getattr(hull, "area", 0.0) or 0.0))
-                # convex hull은 계단형 잔여에서 이미 깎인 오목부까지 잔여로 되살릴 수 있다.
-                # assignment 클립 후에도 면적이 10% 넘게 자라면 hull을 버리고 다중 폴리곤을
-                # 유지한다(플래너는 컴포넌트별 분할을 지원).
-                if (
-                    hull is not None
-                    and not hull.is_empty
-                    and hull_area_m2 <= float(base_area_m2) * 1.10
-                ):
-                    return hull
-        except Exception:
-            pass
-
+    try:
+        hull = merged.convex_hull
+        if hull is None or hull.is_empty:
+            return merged
+        if assignment_geometry is not None and not assignment_geometry.is_empty:
+            hull = assignment_geometry.intersection(hull)
+        if hull is not None and not hull.is_valid:
+            hull = hull.buffer(0)
+        hull = _filter_small_polygons(
+            hull,
+            area_threshold_m2=float(area_threshold_m2),
+        )
+        if hull is not None and not hull.is_empty:
+            return hull
+    except Exception:
+        pass
     return merged
+
+
+def _per_assignment_area_replan_geometry(
+    remaining_assignment_pairs: list[tuple[BaseGeometry, BaseGeometry]],
+    *,
+    area_threshold_m2: float,
+    bridge_gap_m: float,
+) -> BaseGeometry:
+    """Convex-clean each active child without bridging completed children."""
+
+    parts: list[BaseGeometry] = []
+    for remaining_geometry, assignment_geometry in remaining_assignment_pairs:
+        if remaining_geometry is None or remaining_geometry.is_empty:
+            continue
+        part = _top_level_area_replan_geometry(
+            remaining_geometry,
+            assignment_geometry,
+            area_threshold_m2=float(area_threshold_m2),
+            bridge_gap_m=float(bridge_gap_m),
+        )
+        if part is not None and not part.is_empty:
+            parts.append(part)
+    return _merge_state_geometries(parts)
 
 
 def _line_block_lateral_sort_key(
@@ -2962,6 +3047,81 @@ def _area_remaining_simplify_tolerance_m(states: list[_MissionAreaState]) -> flo
     return max(0.8, min(max_half_width_m * 0.35, 8.0))
 
 
+def _stable_input_area_geometry(
+    states: list[_MissionAreaState],
+) -> BaseGeometry:
+    """Project the immutable input AREA boundary into the active state CRS.
+
+    An individual mission's ``assignment_geometry`` may already be a clipped
+    replan result.  Using it as the hull cap would reproduce the very
+    stair-step outline the hull is meant to remove.  ``input_area_list`` comes
+    from the referenced InputMissionPlan and therefore remains the correct
+    maximum boundary across successive replans.
+    """
+
+    if not states:
+        return GeometryCollection()
+    transformer = states[0].coverage_def.transformer
+
+    def _polygon(coords: object) -> BaseGeometry:
+        points = [
+            xy
+            for xy in (
+                _project_xy(transformer, _coord(item))
+                for item in (coords or [])
+            )
+            if xy is not None
+        ]
+        if len(points) < 3:
+            return GeometryCollection()
+        try:
+            polygon = Polygon(points)
+            if not polygon.is_valid:
+                polygon = polygon.buffer(0)
+        except Exception:
+            return GeometryCollection()
+        return (
+            polygon
+            if polygon is not None and not polygon.is_empty
+            else GeometryCollection()
+        )
+
+    outer_parts: list[BaseGeometry] = []
+    hole_parts: list[BaseGeometry] = []
+    for state in states:
+        for row in state.input_area_list or []:
+            if not isinstance(row, dict):
+                continue
+            polygon = _polygon(row.get("coordinateList"))
+            if polygon is None or polygon.is_empty:
+                continue
+            (hole_parts if bool(row.get("isHole")) else outer_parts).append(
+                polygon
+            )
+
+    if not outer_parts:
+        for state in states:
+            polygon = _polygon(state.input_coordinate_list)
+            if polygon is not None and not polygon.is_empty:
+                outer_parts.append(polygon)
+
+    if not outer_parts:
+        return GeometryCollection()
+    try:
+        result = unary_union(outer_parts)
+        if hole_parts:
+            result = result.difference(unary_union(hole_parts))
+        if result is not None and not result.is_valid:
+            result = result.buffer(0)
+    except Exception:
+        return GeometryCollection()
+    return (
+        result
+        if result is not None and not result.is_empty
+        else GeometryCollection()
+    )
+
+
 def _coarsen_area_remaining_geometry(
     geometry: BaseGeometry,
     assignment_geometry: BaseGeometry,
@@ -2989,6 +3149,20 @@ def _coarsen_area_remaining_geometry(
             )
             if simplified is not None and not simplified.is_empty:
                 result = simplified
+        except Exception:
+            pass
+    # Hole filtering and simplification are cleanup operations only. Reapply
+    # the immutable input boundary as the final hard cap even if GEOS rejected
+    # one of those operations, so no fallback can grow outside the input AREA.
+    if assignment_geometry is not None and not assignment_geometry.is_empty:
+        try:
+            result = assignment_geometry.intersection(result)
+            if result is not None and not result.is_valid:
+                result = result.buffer(0)
+            result = _filter_small_polygons(
+                result,
+                area_threshold_m2=float(area_threshold_m2),
+            )
         except Exception:
             pass
     return result if result is not None and not result.is_empty else GeometryCollection()
@@ -4691,6 +4865,33 @@ def _area_ownership_details_for_states(
                 "isCurrent": bool(state.is_current),
                 "isDone": bool(state.done),
             }
+        if state.boundary_guard_loop and state.boundary_guard_set_id:
+            detail.update(
+                {
+                    "boundaryGuardLoop": True,
+                    "boundaryGuardLoopVersion": int(
+                        state.boundary_guard_loop_version or 1
+                    ),
+                    "boundaryGuardSetID": str(state.boundary_guard_set_id),
+                    "boundaryGuardSequence": state.boundary_guard_sequence,
+                    "boundaryGuardSequenceCount": (
+                        state.boundary_guard_sequence_count
+                    ),
+                    "boundaryGuardDurationS": state.boundary_guard_duration_s,
+                    "boundaryGuardCycleFirstWaypointID": (
+                        state.boundary_guard_cycle_first_waypoint_id
+                    ),
+                    "boundaryGuardCycleLastWaypointID": (
+                        state.boundary_guard_cycle_last_waypoint_id
+                    ),
+                    "boundaryGuardCycleCount": int(
+                        state.boundary_guard_cycle_count
+                    ),
+                    "boundaryGuardFirstCycleComplete": bool(
+                        state.boundary_guard_first_cycle_complete
+                    ),
+                }
+            )
         if state.coverage_pass_states:
             pass_rows: list[dict[str, Any]] = []
             for pass_name in state.coverage_pass_order:
@@ -4936,6 +5137,15 @@ class MissionProgressAreaSnapshotMonitor:
         # Persistent by input mission: survives individual/path ID changes
         # caused by attack, resume and ownership re-splitting.
         self._coverage_depth_ledgers: dict[int, SpatialCoverageDepthLedger] = {}
+        # Type-2 boundary guard coverage is namespaced by immutable loop set.
+        # Sets can wrap asynchronously, so never reset the whole input merely
+        # because one UAV returned to its first waypoint.
+        self._boundary_guard_cycle_by_set: dict[str, int] = {}
+        self._boundary_guard_last_waypoint_by_set: dict[str, int] = {}
+        self._boundary_guard_set_by_waypoint_id: dict[int, str] = {}
+        self._boundary_guard_published_baseline_by_set: dict[str, int] = {}
+        self._boundary_guard_last_published_count_by_set: dict[str, int] = {}
+        self._boundary_guard_rearm_pending_set_ids: set[str] = set()
 
     def set_ui_updates_enabled(self, enabled: bool) -> None:
         _ = enabled
@@ -5005,22 +5215,29 @@ class MissionProgressAreaSnapshotMonitor:
         self,
         states: list[_MissionAreaState],
         geometry: BaseGeometry | None,
+        *,
+        clip_to_assignment: bool = True,
     ) -> tuple[dict[str, Any], float]:
         """Serialize a depth/observation band without replan coarsening.
 
         Replan remaining polygons intentionally bridge tiny gaps and remove
         slivers.  Applying that cleanup to source observations would inflate
         measured coverage after a cold load, so portable ledger geometry uses
-        the raw clipped polygon bands instead.
+        the raw clipped polygon bands instead.  The immutable input boundary
+        passes ``clip_to_assignment=False`` because a later assignment may
+        already have been reduced by an earlier replan.
         """
 
         if not states or geometry is None or geometry.is_empty:
             return {"coordinateList": [], "lineList": [], "areaList": []}, 0.0
-        assignment = _merge_state_geometries(
-            [state.assignment_geometry for state in states]
-        )
         try:
-            clipped = assignment.intersection(geometry)
+            if clip_to_assignment:
+                assignment = _merge_state_geometries(
+                    [state.assignment_geometry for state in states]
+                )
+                clipped = assignment.intersection(geometry)
+            else:
+                clipped = geometry
             if not clipped.is_valid:
                 clipped = clipped.buffer(0)
         except Exception:
@@ -5137,6 +5354,11 @@ class MissionProgressAreaSnapshotMonitor:
                         "coveragePass": pass_name,
                         "individualMissionID": int(observation_state.mission_id),
                         "sourceMissionPlanID": observation_state.source_plan_id,
+                        "boundaryGuardSetID": (
+                            observation_state.boundary_guard_set_id
+                            if observation_state.boundary_guard_loop
+                            else None
+                        ),
                     },
                 )
                 if normalized_pass is not None:
@@ -5259,6 +5481,10 @@ class MissionProgressAreaSnapshotMonitor:
                     "acquisitionID": source_id,
                     "aircraftID": _as_int(row.get("aircraftID", row.get("aircraft_id"))),
                     "coveragePass": row.get("coveragePass", row.get("coverage_pass")),
+                    "boundaryGuardSetID": row.get(
+                        "boundaryGuardSetID",
+                        row.get("boundary_guard_set_id"),
+                    ),
                     "source": "portable_depth_observation",
                 },
             )
@@ -5303,6 +5529,176 @@ class MissionProgressAreaSnapshotMonitor:
         self._load_mission_plan(mission_plan_id)
 
 
+    def _drop_boundary_guard_set_depth_observations(self, set_id: str) -> None:
+        for ledger in self._coverage_depth_ledgers.values():
+            stale_source_ids = [
+                str(source_id)
+                for source_id, attribution in ledger.attribution_by_source.items()
+                if str(
+                    (attribution or {}).get("boundaryGuardSetID") or ""
+                ).strip()
+                == str(set_id)
+            ]
+            for source_id in stale_source_ids:
+                ledger.observations_by_source.pop(str(source_id), None)
+                ledger.attribution_by_source.pop(str(source_id), None)
+
+
+    def _reset_boundary_guard_set_cycle(
+        self,
+        set_id: str,
+        cycle_count: int,
+    ) -> bool:
+        normalized_set_id = str(set_id or "").strip()
+        if not normalized_set_id:
+            return False
+        previous_count = int(
+            self._boundary_guard_cycle_by_set.get(normalized_set_id, 0) or 0
+        )
+        next_count = max(0, int(cycle_count))
+        if next_count <= previous_count:
+            return False
+        matched = False
+        for state in self._states.values():
+            if (
+                not state.boundary_guard_loop
+                or str(state.boundary_guard_set_id or "").strip()
+                != normalized_set_id
+            ):
+                continue
+            matched = True
+            for cycle_state in [
+                state,
+                *state.coverage_pass_states.values(),
+            ]:
+                _reset_area_state_cycle_runtime(cycle_state)
+                cycle_state.boundary_guard_cycle_count = int(next_count)
+                cycle_state.boundary_guard_first_cycle_complete = True
+        if not matched:
+            return False
+        self._boundary_guard_cycle_by_set[normalized_set_id] = int(next_count)
+        self._drop_boundary_guard_set_depth_observations(normalized_set_id)
+        return True
+
+
+    def _update_boundary_guard_cycle_observations(
+        self,
+        agent_states: list[dict[str, Any]],
+    ) -> bool:
+        changed = False
+        for row in agent_states or []:
+            if not isinstance(row, dict):
+                continue
+            aircraft_id = _as_int(row.get("aircraft_id"))
+            if aircraft_id is None:
+                continue
+            current_waypoint_id = _as_int(row.get("current_waypoint_id"))
+            mapped_set_id = (
+                self._boundary_guard_set_by_waypoint_id.get(
+                    int(current_waypoint_id)
+                )
+                if current_waypoint_id is not None
+                else None
+            )
+            published_set_id = str(
+                row.get("boundary_guard_set_id") or ""
+            ).strip()
+            set_id = published_set_id or str(mapped_set_id or "").strip()
+            if not set_id:
+                continue
+            contract_states = [
+                state
+                for state in self._states.values()
+                if state.boundary_guard_loop
+                and str(state.boundary_guard_set_id or "").strip() == set_id
+                and int(state.aircraft_id) == int(aircraft_id)
+            ]
+            if not contract_states:
+                continue
+            if _as_int(row.get("flight_mode")) == 9:
+                # Tracking keeps the duration clock running, but neither its
+                # temporary waypoint nor saved target may advance a scan cycle.
+                continue
+            published_count = _as_int(row.get("boundary_guard_cycle_count"))
+            next_count: int | None = None
+            if published_count is not None and published_count >= 0:
+                logical_count = int(
+                    self._boundary_guard_cycle_by_set.get(set_id, 0) or 0
+                )
+                previous_published_count = (
+                    self._boundary_guard_last_published_count_by_set.get(set_id)
+                )
+                if set_id in self._boundary_guard_rearm_pending_set_ids:
+                    # A plan reload replaces the SIM controller and its raw
+                    # cycle counter may restart at zero while this monitor must
+                    # retain the stable guard set's logical cycle.  Rebase the
+                    # raw generation onto that logical count instead of
+                    # treating the first new raw count as cycle zero.
+                    self._boundary_guard_published_baseline_by_set[set_id] = int(
+                        published_count
+                    ) - int(logical_count)
+                    self._boundary_guard_rearm_pending_set_ids.discard(set_id)
+                elif (
+                    previous_published_count is not None
+                    and int(published_count) < int(previous_published_count)
+                ):
+                    # Defend against an old-controller sample arriving between
+                    # the plan decision and the new controller's first sample.
+                    # The raw counter is monotonic within one controller, so a
+                    # regression denotes a new raw generation.
+                    self._boundary_guard_published_baseline_by_set[set_id] = int(
+                        published_count
+                    ) - int(logical_count)
+                baseline = int(
+                    self._boundary_guard_published_baseline_by_set.get(set_id, 0)
+                    or 0
+                )
+                if int(published_count) < baseline:
+                    baseline = int(published_count) - int(logical_count)
+                    self._boundary_guard_published_baseline_by_set[set_id] = (
+                        baseline
+                    )
+                self._boundary_guard_last_published_count_by_set[set_id] = int(
+                    published_count
+                )
+                next_count = max(0, int(published_count) - int(baseline))
+            elif mapped_set_id == set_id and current_waypoint_id is not None:
+                contract = contract_states[0]
+                previous_waypoint_id = (
+                    self._boundary_guard_last_waypoint_by_set.get(set_id)
+                )
+                if (
+                    previous_waypoint_id is not None
+                    and contract.boundary_guard_cycle_last_waypoint_id is not None
+                    and contract.boundary_guard_cycle_first_waypoint_id is not None
+                    and int(previous_waypoint_id)
+                    == int(contract.boundary_guard_cycle_last_waypoint_id)
+                    and int(current_waypoint_id)
+                    == int(contract.boundary_guard_cycle_first_waypoint_id)
+                ):
+                    next_count = (
+                        int(self._boundary_guard_cycle_by_set.get(set_id, 0) or 0)
+                        + 1
+                    )
+            if next_count is not None:
+                changed = bool(
+                    self._reset_boundary_guard_set_cycle(set_id, int(next_count))
+                    or changed
+                )
+            if (
+                mapped_set_id == set_id
+                and current_waypoint_id is not None
+                and current_waypoint_id > 0
+            ):
+                self._boundary_guard_last_waypoint_by_set[set_id] = int(
+                    current_waypoint_id
+                )
+        if changed:
+            self._invalidate_runtime_cache()
+            self._last_snapshot_persist_monotonic = 0.0
+        return changed
+
+
     def reset_input_coverage(self, input_mission_id: int | None) -> int:
         """지정 input 임무의 area 커버리지를 초기화한다 (재수행 0803 execute=2 용).
 
@@ -5327,6 +5723,7 @@ class MissionProgressAreaSnapshotMonitor:
             # temporarily unavailable; the next snapshot write will retry.
             pass
         reset_count = 0
+        rearmed_guard_set_ids: set[str] = set()
         for state in self._states.values():
             if _as_int(state.input_id) != int(target_input_id):
                 continue
@@ -5334,35 +5731,19 @@ class MissionProgressAreaSnapshotMonitor:
                 continue
             reset_states = [state, *state.coverage_pass_states.values()]
             for reset_state in reset_states:
-                reset_state.covered_geometry = GeometryCollection()
-                reset_state.completed_cut_line_indexes = set()
-                reset_state.cut_lines = []
-                reset_state.last_cut_line_index = -1
-                reset_state.progress_origin_line_index = None
-                reset_state.progress_boundary_line_index = None
-                reset_state.progress_direction_sign = None
-                reset_state.provisional_frontier_line_index = None
-                reset_state.last_nearest_cut_line_index = None
-                reset_state.tracking_cut_line_index = None
-                reset_state.tracking_projection_min_m = None
-                reset_state.tracking_projection_max_m = None
-                reset_state.tracking_sample_count = 0
-                reset_state.tracking_path_length_m = 0.0
-                reset_state.tracking_last_center_xy = None
-                reset_state.centerline_points = []
-                reset_state.last_center_xy = None
-                reset_state.last_update_ms = None
-                reset_state.done = False
-                reset_state.area_row_progress_state = AreaRowProgressState()
-                reset_state.area_row_progress_last_sample_ms = None
-                reset_state.area_progress_source = None
-                reset_state.area_progress_sweep_points = None
-                reset_state.area_progress_sweep_point_count = None
-                reset_state.area_progress_boundary_line_index = None
-                reset_state.area_progress_current_waypoint_id = None
-                reset_state.area_progress_confidence = None
-                reset_state.coverage_rebuild_signature = None
+                _reset_area_state_cycle_runtime(reset_state)
+                if reset_state.boundary_guard_loop:
+                    reset_state.boundary_guard_cycle_count = 0
+                    reset_state.boundary_guard_first_cycle_complete = False
+            if state.boundary_guard_loop and state.boundary_guard_set_id:
+                rearmed_guard_set_ids.add(str(state.boundary_guard_set_id))
             reset_count += 1
+        for set_id in rearmed_guard_set_ids:
+            self._boundary_guard_cycle_by_set[str(set_id)] = 0
+            self._boundary_guard_last_waypoint_by_set.pop(str(set_id), None)
+            self._boundary_guard_published_baseline_by_set.pop(str(set_id), None)
+            self._boundary_guard_rearm_pending_set_ids.add(str(set_id))
+            self._drop_boundary_guard_set_depth_observations(str(set_id))
         if reset_count:
             self._invalidate_runtime_cache()
             self._last_snapshot_persist_monotonic = 0.0
@@ -5378,6 +5759,7 @@ class MissionProgressAreaSnapshotMonitor:
             self._dirty = True
             return
         self._progress_snapshot = self._progress_tracker.update(timestamp_ms, agent_states or [])
+        self._update_boundary_guard_cycle_observations(agent_states or [])
         self._coverage_progress_last_signature = persist_coverage_progress(
             mission_view=self._mission_view,
             snapshot=self._progress_snapshot,
@@ -5801,11 +6183,14 @@ class MissionProgressAreaSnapshotMonitor:
 
     def _load_mission_plan(self, mission_plan_id: int | None) -> None:
         previous_plan_id = _as_int((self._mission_view or {}).get("mission_plan_id"))
-        if (
+        plan_changed = (
             previous_plan_id is not None
             and previous_plan_id > 0
             and mission_plan_id is not None
             and int(previous_plan_id) != int(mission_plan_id)
+        )
+        if (
+            plan_changed
         ):
             # 플랜 전환으로 이전 상태를 버리기 전에 마지막 잔여 스냅샷을 강제
             # 저장한다. 저장 주기 지연으로 오래된(더 넓은) 잔여가 store에 남으면
@@ -5820,6 +6205,11 @@ class MissionProgressAreaSnapshotMonitor:
             and int(previous_plan_id) == int(mission_plan_id)
         )
         previous_state_by_mission = dict(self._states)
+        previous_guard_set_ids = {
+            str(state.boundary_guard_set_id)
+            for state in previous_state_by_mission.values()
+            if state.boundary_guard_loop and state.boundary_guard_set_id
+        }
         previous_area_states_by_input: dict[int, list[_MissionAreaState]] = {}
         for previous_area_state in previous_state_by_mission.values():
             previous_input_id = _as_int(previous_area_state.input_id)
@@ -5842,6 +6232,14 @@ class MissionProgressAreaSnapshotMonitor:
         # 지역을 다시 훑게 된다 (0604 재촬영/완료영역 부활 리포트의 원인).
         previous_area_covered_by_input: dict[int, BaseGeometry] = {}
         previous_area_covered_by_input_pass: dict[tuple[int, str], BaseGeometry] = {}
+        previous_guard_covered_by_set: dict[
+            tuple[int, str, int],
+            BaseGeometry,
+        ] = {}
+        previous_guard_covered_by_set_pass: dict[
+            tuple[int, str, int, str],
+            BaseGeometry,
+        ] = {}
         # LINE 재분할(예: 표적 추적으로 3대 -> 2대)에서는 mission/path ID와
         # 각 band의 경계가 모두 바뀔 수 있다. 항공기별 state만 매칭하면 떠난
         # 항공기가 이미 촬영한 조각이 유실되거나, 반대로 그 항공기의 미촬영
@@ -5871,9 +6269,36 @@ class MissionProgressAreaSnapshotMonitor:
                 prev_input_id = _as_int(prev_state.input_id)
                 if prev_input_id is None or prev_input_id <= 0:
                     continue
+                guard_set_id = str(
+                    prev_state.boundary_guard_set_id or ""
+                ).strip()
+                guard_cycle_count = int(
+                    prev_state.boundary_guard_cycle_count or 0
+                )
                 for pass_name, pass_state in prev_state.coverage_pass_states.items():
                     pass_geometry = pass_state.covered_geometry
                     if pass_geometry is None or pass_geometry.is_empty:
+                        continue
+                    if prev_state.boundary_guard_loop and guard_set_id:
+                        guard_pass_key = (
+                            int(prev_input_id),
+                            guard_set_id,
+                            int(guard_cycle_count),
+                            str(pass_name),
+                        )
+                        previous_guard_pass_geometry = (
+                            previous_guard_covered_by_set_pass.get(
+                                guard_pass_key
+                            )
+                        )
+                        previous_guard_covered_by_set_pass[guard_pass_key] = (
+                            pass_geometry
+                            if previous_guard_pass_geometry is None
+                            else merge_coverage_geometry(
+                                previous_guard_pass_geometry,
+                                pass_geometry,
+                            )
+                        )
                         continue
                     pass_key = (int(prev_input_id), str(pass_name))
                     previous_pass_geometry = previous_area_covered_by_input_pass.get(pass_key)
@@ -5885,6 +6310,24 @@ class MissionProgressAreaSnapshotMonitor:
                 geometry = prev_state.covered_geometry
                 if geometry is None or geometry.is_empty:
                     continue
+                if prev_state.boundary_guard_loop and guard_set_id:
+                    guard_key = (
+                        int(prev_input_id),
+                        guard_set_id,
+                        int(guard_cycle_count),
+                    )
+                    previous_guard_geometry = previous_guard_covered_by_set.get(
+                        guard_key
+                    )
+                    previous_guard_covered_by_set[guard_key] = (
+                        geometry
+                        if previous_guard_geometry is None
+                        else merge_coverage_geometry(
+                            previous_guard_geometry,
+                            geometry,
+                        )
+                    )
+                    continue
                 existing = previous_area_covered_by_input.get(int(prev_input_id))
                 previous_area_covered_by_input[int(prev_input_id)] = (
                     geometry
@@ -5894,6 +6337,13 @@ class MissionProgressAreaSnapshotMonitor:
         self._mission_view = build_uav_mission_view(mission_plan_id, uav_ids=_UAV_IDS)
         self._progress_tracker.reset(self._mission_view)
         self._progress_snapshot = self._progress_tracker.update(None, None)
+        completed_input_ids = {
+            int(input_id)
+            for row in (self._mission_view or {}).get("input_missions") or []
+            if isinstance(row, dict)
+            and bool(row.get("is_done"))
+            and (input_id := _as_int(row.get("input_mission_id"))) is not None
+        }
         self._states = {}
         self._current_mission_by_aircraft = {}
         self._last_timestamp_ms = None
@@ -5905,6 +6355,10 @@ class MissionProgressAreaSnapshotMonitor:
             current_mid = _as_int(self._current_mission_by_aircraft.get(aid))
             split_geometry_counts: dict[tuple[int, str], int] = {}
             for mission in entry.get("missions") or []:
+                if not isinstance(mission, dict):
+                    continue
+                if bool(mission.get("execution_blocked_until_next_collab")):
+                    continue
                 input_id = _as_int(mission.get("input_id"))
                 mission_kind = _mission_geometry_kind(mission)
                 if input_id is None or input_id <= 0 or mission_kind == "-":
@@ -5912,6 +6366,10 @@ class MissionProgressAreaSnapshotMonitor:
                 key = (int(input_id), str(mission_kind))
                 split_geometry_counts[key] = int(split_geometry_counts.get(key, 0)) + 1
             for mission in entry.get("missions") or []:
+                if not isinstance(mission, dict):
+                    continue
+                if bool(mission.get("execution_blocked_until_next_collab")):
+                    continue
                 mid = _as_int(mission.get("individual_mission_id"))
                 if mid is None:
                     continue
@@ -5936,7 +6394,38 @@ class MissionProgressAreaSnapshotMonitor:
                     coverage_def = build_mission_coverage_definition(mission)
                 if coverage_def is None:
                     continue
-                done = bool(mission.get("is_done"))
+                mission_guard_set_id = str(
+                    mission.get("boundary_guard_set_id") or ""
+                ).strip()
+                mission_guard_loop_active = bool(
+                    mission.get("boundary_guard_loop")
+                ) and (
+                    input_id is None
+                    or int(input_id) not in completed_input_ids
+                )
+                guard_has_runtime_history = bool(
+                    mission_guard_loop_active
+                    and mission_guard_set_id
+                    and (
+                        mission_guard_set_id in previous_guard_set_ids
+                        or int(
+                            self._boundary_guard_cycle_by_set.get(
+                                mission_guard_set_id,
+                                0,
+                            )
+                            or 0
+                        )
+                        >= 1
+                    )
+                )
+                # IndividualMissionPlan.isDone records the completed traversal
+                # from the DB.  For a stable looping guard set it is prior-cycle
+                # history, not permission to suppress the current cycle.  The
+                # carried geometry below can immediately mark the state done
+                # again when this cycle really is already complete.
+                done = bool(mission.get("is_done")) and not bool(
+                    guard_has_runtime_history
+                )
                 planned_cut_lines, cut_half_width_m = _build_planned_sweep_lines(mission, coverage_def)
                 area_row_definition = (
                     build_area_row_progress_definition(
@@ -5999,7 +6488,25 @@ class MissionProgressAreaSnapshotMonitor:
                     # 커버리지를 새 할당 영역으로 잘라 seeding한다. 이후
                     # _restore_planned_cut_progress 가 새 컷라인 기준으로 완료
                     # 인덱스를 복원한다.
-                    seed = previous_area_covered_by_input.get(int(input_id))
+                    mission_guard_cycle_count = int(
+                        self._boundary_guard_cycle_by_set.get(
+                            mission_guard_set_id,
+                            0,
+                        )
+                        or 0
+                    )
+                    seed = (
+                        previous_guard_covered_by_set.get(
+                            (
+                                int(input_id),
+                                mission_guard_set_id,
+                                int(mission_guard_cycle_count),
+                            )
+                        )
+                        if bool(mission.get("boundary_guard_loop"))
+                        and mission_guard_set_id
+                        else previous_area_covered_by_input.get(int(input_id))
+                    )
                     if seed is not None and not seed.is_empty:
                         try:
                             preserved_covered = coverage_def.assignment_geometry.intersection(seed)
@@ -6070,6 +6577,28 @@ class MissionProgressAreaSnapshotMonitor:
                         or str(mission.get("coverage_depth_policy") or "").strip().lower()
                         == "spatial_capture_depth"
                     ),
+                    boundary_guard_loop=bool(mission_guard_loop_active),
+                    boundary_guard_loop_version=_as_int(
+                        mission.get("boundary_guard_loop_version")
+                    ),
+                    boundary_guard_set_id=(
+                        mission_guard_set_id or None
+                    ),
+                    boundary_guard_sequence=_as_int(
+                        mission.get("boundary_guard_sequence")
+                    ),
+                    boundary_guard_sequence_count=_as_int(
+                        mission.get("boundary_guard_sequence_count")
+                    ),
+                    boundary_guard_duration_s=_as_float(
+                        mission.get("boundary_guard_duration_s")
+                    ),
+                    boundary_guard_cycle_first_waypoint_id=_as_int(
+                        mission.get("boundary_guard_cycle_first_waypoint_id")
+                    ),
+                    boundary_guard_cycle_last_waypoint_id=_as_int(
+                        mission.get("boundary_guard_cycle_last_waypoint_id")
+                    ),
                     sweep_waypoint_ids={
                         int(wp.get("waypoint_id"))
                         for wp in (mission.get("waypoints") or [])
@@ -6081,6 +6610,36 @@ class MissionProgressAreaSnapshotMonitor:
                     preferred_track_vector=_mission_track_vector(mission, coverage_def),
                     done=done,
                 )
+                if (
+                    state.boundary_guard_loop
+                    and state.boundary_guard_set_id
+                ):
+                    stable_cycle_count = int(
+                        self._boundary_guard_cycle_by_set.get(
+                            str(state.boundary_guard_set_id),
+                            0,
+                        )
+                        or 0
+                    )
+                    if (
+                        previous_state is not None
+                        and previous_state.boundary_guard_set_id
+                        == state.boundary_guard_set_id
+                    ):
+                        stable_cycle_count = max(
+                            int(stable_cycle_count),
+                            int(previous_state.boundary_guard_cycle_count or 0),
+                        )
+                    state.boundary_guard_cycle_count = int(stable_cycle_count)
+                    state.boundary_guard_first_cycle_complete = bool(
+                        stable_cycle_count >= 1
+                        or (
+                            previous_state is not None
+                            and previous_state.boundary_guard_set_id
+                            == state.boundary_guard_set_id
+                            and previous_state.boundary_guard_first_cycle_complete
+                        )
+                    )
                 if done and planned_cut_lines:
                     state.completed_cut_line_indexes = set(range(len(planned_cut_lines)))
                     state.cut_lines = list(planned_cut_lines[-800:])
@@ -6134,8 +6693,20 @@ class MissionProgressAreaSnapshotMonitor:
                             and input_id is not None
                             and not state.coverage_depth_contract_active
                         ):
-                            pass_seed = previous_area_covered_by_input_pass.get(
-                                (int(input_id), str(pass_name))
+                            pass_seed = (
+                                previous_guard_covered_by_set_pass.get(
+                                    (
+                                        int(input_id),
+                                        str(state.boundary_guard_set_id),
+                                        int(state.boundary_guard_cycle_count or 0),
+                                        str(pass_name),
+                                    )
+                                )
+                                if state.boundary_guard_loop
+                                and state.boundary_guard_set_id
+                                else previous_area_covered_by_input_pass.get(
+                                    (int(input_id), str(pass_name))
+                                )
                             )
                             if pass_seed is not None and not pass_seed.is_empty:
                                 try:
@@ -6154,6 +6725,96 @@ class MissionProgressAreaSnapshotMonitor:
                 if state.coverage_depth_contract_active:
                     self._seed_area_depth_ledger_from_contract(state, mission)
                 self._states[mid] = state
+        current_guard_set_ids = {
+            str(state.boundary_guard_set_id)
+            for state in self._states.values()
+            if state.boundary_guard_loop and state.boundary_guard_set_id
+        }
+        for ledger in self._coverage_depth_ledgers.values():
+            stale_guard_sources = [
+                str(source_id)
+                for source_id, attribution in ledger.attribution_by_source.items()
+                if str(
+                    (attribution or {}).get("boundaryGuardSetID") or ""
+                ).strip()
+                and str(
+                    (attribution or {}).get("boundaryGuardSetID") or ""
+                ).strip()
+                not in current_guard_set_ids
+            ]
+            for source_id in stale_guard_sources:
+                ledger.observations_by_source.pop(source_id, None)
+                ledger.attribution_by_source.pop(source_id, None)
+        self._boundary_guard_cycle_by_set = {
+            str(set_id): max(
+                int(self._boundary_guard_cycle_by_set.get(str(set_id), 0) or 0),
+                max(
+                    [
+                        int(state.boundary_guard_cycle_count or 0)
+                        for state in self._states.values()
+                        if state.boundary_guard_set_id == str(set_id)
+                    ]
+                    or [0]
+                ),
+            )
+            for set_id in current_guard_set_ids
+        }
+        self._boundary_guard_last_waypoint_by_set = {
+            str(set_id): int(waypoint_id)
+            for set_id, waypoint_id in self._boundary_guard_last_waypoint_by_set.items()
+            if str(set_id) in current_guard_set_ids
+        }
+        self._boundary_guard_published_baseline_by_set = {
+            str(set_id): int(count)
+            for set_id, count in self._boundary_guard_published_baseline_by_set.items()
+            if str(set_id) in current_guard_set_ids
+        }
+        self._boundary_guard_last_published_count_by_set = {
+            str(set_id): int(count)
+            for set_id, count in self._boundary_guard_last_published_count_by_set.items()
+            if str(set_id) in current_guard_set_ids
+        }
+        self._boundary_guard_rearm_pending_set_ids &= current_guard_set_ids
+        if plan_changed:
+            # The new SIM plan rebuilds controllers even when the immutable
+            # owner set survives.  Its published counter is therefore a new
+            # raw generation that must be offset onto the retained logical
+            # cycle on the first status sample.
+            self._boundary_guard_rearm_pending_set_ids.update(
+                (previous_guard_set_ids & current_guard_set_ids)
+            )
+        self._boundary_guard_set_by_waypoint_id = {}
+        for entry in (self._mission_view or {}).get("uav_entries") or []:
+            for mission in entry.get("missions") or []:
+                if not bool(mission.get("boundary_guard_loop")):
+                    continue
+                set_id = str(
+                    mission.get("boundary_guard_set_id") or ""
+                ).strip()
+                if not set_id:
+                    continue
+                for waypoint in mission.get("waypoints") or []:
+                    waypoint_id = _as_int(waypoint.get("waypoint_id"))
+                    if waypoint_id is not None and waypoint_id > 0:
+                        self._boundary_guard_set_by_waypoint_id[
+                            int(waypoint_id)
+                        ] = str(set_id)
+        for state in self._states.values():
+            set_id = str(state.boundary_guard_set_id or "").strip()
+            if not state.boundary_guard_loop or not set_id:
+                continue
+            cycle_count = int(
+                self._boundary_guard_cycle_by_set.get(set_id, 0) or 0
+            )
+            state.boundary_guard_cycle_count = cycle_count
+            state.boundary_guard_first_cycle_complete = bool(
+                state.boundary_guard_first_cycle_complete or cycle_count >= 1
+            )
+            for pass_state in state.coverage_pass_states.values():
+                pass_state.boundary_guard_cycle_count = cycle_count
+                pass_state.boundary_guard_first_cycle_complete = bool(
+                    state.boundary_guard_first_cycle_complete
+                )
         self._invalidate_runtime_cache()
         self._last_snapshot_persist_monotonic = 0.0
         self._request_refresh(force=True)
@@ -6556,15 +7217,45 @@ class MissionProgressAreaSnapshotMonitor:
             max(_area_remaining_hole_threshold_m2(state) for state in states),
         )
         bridge_gap_m = _area_remaining_bridge_gap_m(states)
-        replan_geometry = _top_level_area_replan_geometry(
-            remaining_geometry,
-            assignment_geometry,
+        stable_input_geometry = _stable_input_area_geometry(states)
+        hull_limit_geometry = (
+            stable_input_geometry
+            if stable_input_geometry is not None
+            and not stable_input_geometry.is_empty
+            else assignment_geometry
+        )
+        # Never build one convex hull across every split child mission.  Once
+        # one child is complete its remaining geometry is empty; a global hull
+        # around the other UAV/stage fragments would nevertheless span the
+        # empty assignment again and resurrect already photographed ground.
+        #
+        # Hull each still-active child only inside its immutable assignment,
+        # then union the results.  This keeps the desired simple convex outline
+        # within a child while preserving completed child cut-outs.
+        remaining_assignment_pairs: list[tuple[BaseGeometry, BaseGeometry]] = []
+        for state in states:
+            if remaining_geometry_override is None:
+                state_remaining = self._get_cached_remaining_geometry(state)
+            else:
+                try:
+                    state_remaining = state.assignment_geometry.intersection(
+                        remaining_geometry_override
+                    )
+                except Exception:
+                    state_remaining = GeometryCollection()
+            if state_remaining is None or state_remaining.is_empty:
+                continue
+            remaining_assignment_pairs.append(
+                (state_remaining, state.assignment_geometry)
+            )
+        replan_geometry = _per_assignment_area_replan_geometry(
+            remaining_assignment_pairs,
             area_threshold_m2=float(area_threshold_m2),
             bridge_gap_m=float(bridge_gap_m),
         )
         replan_geometry = _coarsen_area_remaining_geometry(
             replan_geometry,
-            assignment_geometry,
+            hull_limit_geometry,
             area_threshold_m2=float(area_threshold_m2),
             hole_threshold_m2=float(hole_threshold_m2),
             simplify_tolerance_m=_area_remaining_simplify_tolerance_m(states),
@@ -6626,10 +7317,18 @@ class MissionProgressAreaSnapshotMonitor:
             assignment_geometry = _merge_state_geometries([state.assignment_geometry for state in states])
             area_assignment_detail: dict[str, Any] | None = None
             if str(entry.get("missionType") or "-") == "area":
+                stable_input_geometry = _stable_input_area_geometry(states)
+                stable_assignment_geometry = (
+                    stable_input_geometry
+                    if stable_input_geometry is not None
+                    and not stable_input_geometry.is_empty
+                    else assignment_geometry
+                )
                 area_assignment_detail, _assignment_area_m2 = (
                     self._build_exact_area_geometry_detail(
                         states,
-                        assignment_geometry,
+                        stable_assignment_geometry,
+                        clip_to_assignment=False,
                     )
                 )
             planned_area_m2 = float(max(0.0, assignment_geometry.area or 0.0))
@@ -6967,6 +7666,9 @@ class MissionProgressAreaSnapshotMonitor:
                         "acquisitionID": str(source_id),
                         "aircraftID": _as_int(attribution.get("aircraftID")),
                         "coveragePass": pass_name,
+                        "boundaryGuardSetID": attribution.get(
+                            "boundaryGuardSetID"
+                        ),
                         "individualMissionID": _as_int(
                             attribution.get("individualMissionID")
                         ),
@@ -6992,6 +7694,87 @@ class MissionProgressAreaSnapshotMonitor:
                 "sourceCoordinateList": deepcopy(source_coordinate_list) if len(source_coordinate_list) >= 2 else [],
                 "remainingDetail": remaining_detail_payload,
             }
+            boundary_guard_states = [
+                state
+                for state in states
+                if state.boundary_guard_loop and state.boundary_guard_set_id
+            ]
+            if boundary_guard_states:
+                boundary_guard_set_progress: list[dict[str, Any]] = []
+                for set_id in sorted(
+                    {
+                        str(state.boundary_guard_set_id)
+                        for state in boundary_guard_states
+                    }
+                ):
+                    set_states = [
+                        state
+                        for state in boundary_guard_states
+                        if str(state.boundary_guard_set_id) == str(set_id)
+                    ]
+                    cycle_count = max(
+                        [
+                            int(state.boundary_guard_cycle_count or 0)
+                            for state in set_states
+                        ]
+                        or [0]
+                    )
+                    boundary_guard_set_progress.append(
+                        {
+                            "boundaryGuardSetID": str(set_id),
+                            "aircraftIDs": sorted(
+                                {
+                                    int(state.aircraft_id)
+                                    for state in set_states
+                                }
+                            ),
+                            "individualMissionIDs": sorted(
+                                {
+                                    int(state.mission_id)
+                                    for state in set_states
+                                }
+                            ),
+                            "boundaryGuardCycleCount": int(cycle_count),
+                            "boundaryGuardFirstCycleComplete": bool(
+                                cycle_count >= 1
+                                or any(
+                                    state.boundary_guard_first_cycle_complete
+                                    for state in set_states
+                                )
+                            ),
+                            "currentCycleDone": bool(set_states)
+                            and all(
+                                bool(state.done)
+                                or _is_state_geometrically_done(state)
+                                for state in set_states
+                            ),
+                        }
+                    )
+                mission_snapshot.update(
+                    {
+                        "boundaryGuardLoop": True,
+                        "boundaryGuardLoopVersion": max(
+                            [
+                                int(state.boundary_guard_loop_version or 1)
+                                for state in boundary_guard_states
+                            ]
+                            or [1]
+                        ),
+                        "boundaryGuardDurationS": max(
+                            [
+                                float(state.boundary_guard_duration_s or 0.0)
+                                for state in boundary_guard_states
+                            ]
+                            or [0.0]
+                        ),
+                        "boundaryGuardCycleCoveragePolicy": (
+                            "current_cycle_per_set"
+                        ),
+                        "boundaryGuardSetProgress": (
+                            boundary_guard_set_progress
+                        ),
+                    }
+                )
             if area_assignment_detail is not None:
                 mission_snapshot["areaAssignmentDetail"] = deepcopy(
                     area_assignment_detail
@@ -7207,6 +7990,9 @@ class MissionProgressAreaSnapshotMonitor:
                                 "acquisitionID": str(source_id),
                                 "aircraftID": _as_int(attribution.get("aircraftID")),
                                 "coveragePass": pass_name,
+                                "boundaryGuardSetID": attribution.get(
+                                    "boundaryGuardSetID"
+                                ),
                                 "coveredAreaM2": float(
                                     max(0.0, owner_source_geometry.area or 0.0)
                                 ),

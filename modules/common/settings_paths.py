@@ -52,26 +52,47 @@ def algo_settings_dir() -> Path:
     return ALGO_SETTINGS_DIR
 
 
+_ALGO_SETTINGS_RESOLVED: dict[str, Path] = {}
+
+
 def algo_settings_file(name: str) -> Path:
     """Resolve an algorithm-settings file, migrating a legacy ``settings/`` copy.
 
     The legacy source is copied (never deleted) so an older checkout can still
     roll back to it.
+
+    The migration is one-time, but this is called for every settings read - and
+    settings are read per waypoint on the planning hot path - so once a target
+    is known to exist its resolved path is remembered and the filesystem probe
+    is skipped.  Only the existence check is cached; the file's *contents* are
+    still re-checked by the caller on every read.
     """
+    cached = _ALGO_SETTINGS_RESOLVED.get(name)
+    if cached is not None:
+        return cached
     target = ALGO_SETTINGS_DIR / name
     try:
         if target.exists():
+            _ALGO_SETTINGS_RESOLVED[name] = target
             return target
         legacy = SETTINGS_DIR / name
         ALGO_SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
         if legacy.exists():
             shutil.copyfile(legacy, target)
+        if target.exists():
+            _ALGO_SETTINGS_RESOLVED[name] = target
         return target
     except Exception:
         legacy = SETTINGS_DIR / name
         if legacy.exists():
             return legacy
         return target
+
+
+def clear_algo_settings_path_cache() -> None:
+    """Forget resolved algorithm-settings paths (used after a file is removed)."""
+
+    _ALGO_SETTINGS_RESOLVED.clear()
 
 
 def writable_algo_settings_file(name: str) -> Path:

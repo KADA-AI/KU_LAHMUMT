@@ -8,6 +8,9 @@ from modules.mission_planning.MissionPlanner.data_def.mission_helpers import (
     terrain_elev,
     terrain_elev_many,
 )
+from modules.mission_planning.MissionPlanner.dynamics.lah_op_envlp import (
+    DEFAULT_ENVELOPE,
+)
 
 
 # 50 m is the operational hard floor.  Planning at 75 m leaves 25 m for DEM
@@ -315,7 +318,7 @@ def _polyline_stations(
     return stations
 
 
-def _low_terrain_strength() -> float:
+def _low_terrain_strength(runtime_payload: dict[str, Any] | None = None) -> float:
     """Operator dial for the low-terrain search, from runtime settings.
 
     ``lah_low_terrain_strength``: 0 disables the detour search entirely,
@@ -327,7 +330,13 @@ def _low_terrain_strength() -> float:
             get_runtime_float,
         )
 
-        value = float(get_runtime_float("lah_low_terrain_strength", 1.0))
+        value = float(
+            get_runtime_float(
+                "lah_low_terrain_strength",
+                1.0,
+                runtime_payload,
+            )
+        )
     except Exception:
         return 1.0
     if not math.isfinite(value):
@@ -870,6 +879,7 @@ def _prefer_low_terrain_horizontal_route(
     ]
     | None,
     constrained_leg_start_index: int,
+    runtime_payload: dict[str, Any] | None = None,
 ) -> list[tuple[float, float]]:
     if len(route) < 2:
         return list(route)
@@ -877,7 +887,15 @@ def _prefer_low_terrain_horizontal_route(
     first_constrained_leg = max(0, int(constrained_leg_start_index))
     # Resolved once per route: reading the dial goes through the runtime
     # settings payload, which is too expensive to repeat per leg.
-    strength = _low_terrain_strength()
+    if runtime_payload is None:
+        strength = _low_terrain_strength()
+    else:
+        try:
+            strength = _low_terrain_strength(runtime_payload)
+        except TypeError:
+            # Preserve compatibility with diagnostic/test hooks that replaced
+            # the historical zero-argument resolver.
+            strength = _low_terrain_strength()
     for leg_index, (start, end) in enumerate(zip(route, route[1:])):
         if leg_index < first_constrained_leg:
             # Live-position/previous-mission ingress has no applicable mission
@@ -1068,6 +1086,278 @@ def _limit_adaptive_profile_indices(
     return sorted(retained)
 
 
+def _altitude_smoothing_config(
+    runtime_payload: dict[str, Any] | None = None,
+) -> tuple[bool, float, float, float]:
+    """Resolve the LAH vertical-profile knobs once per generated route."""
+
+    try:
+        from modules.mission_planning.MissionPlanner.runtime_settings import (
+            get_runtime_bool,
+            get_runtime_float,
+        )
+
+        enabled = bool(
+            get_runtime_bool(
+                "lah_altitude_smoothing_enabled",
+                True,
+                runtime_payload,
+            )
+        )
+        max_dip_depth_m = float(
+            get_runtime_float(
+                "lah_altitude_short_dip_max_depth_m",
+                30.0,
+                runtime_payload,
+            )
+        )
+        max_dip_span_m = float(
+            get_runtime_float(
+                "lah_altitude_short_dip_max_span_m",
+                1200.0,
+                runtime_payload,
+            )
+        )
+        redundant_tolerance_m = float(
+            get_runtime_float(
+                "lah_altitude_redundant_tolerance_m",
+                3.0,
+                runtime_payload,
+            )
+        )
+    except Exception:
+        return True, 30.0, 1200.0, 3.0
+    if not math.isfinite(max_dip_depth_m):
+        max_dip_depth_m = 30.0
+    if not math.isfinite(max_dip_span_m):
+        max_dip_span_m = 1200.0
+    if not math.isfinite(redundant_tolerance_m):
+        redundant_tolerance_m = 3.0
+    return (
+        bool(enabled),
+        min(max(0.0, max_dip_depth_m), 500.0),
+        min(max(0.0, max_dip_span_m), 20_000.0),
+        min(max(0.0, redundant_tolerance_m), 100.0),
+    )
+
+
+def _fill_short_altitude_dips(
+    samples: list[dict[str, float]],
+    selected_indices: list[int],
+    selected_altitudes: dict[int, float],
+    *,
+    max_depth_m: float,
+    max_span_m: float,
+) -> None:
+    """Raise short valleys to the chord between their surrounding high points."""
+
+    if len(selected_indices) < 3 or max_depth_m <= 0.0 or max_span_m <= 0.0:
+        return
+    ordered = list(selected_indices)
+    # A second pass lets two neighbouring low points become one smooth bridge
+    # after the shorter sub-valleys were lifted on the first pass.
+    for _pass in range(2):
+        changed = False
+        for left_pos in range(len(ordered) - 2):
+            left_index = ordered[left_pos]
+            left_m = float(samples[left_index]["cum_m"])
+            for right_pos in range(left_pos + 2, len(ordered)):
+                right_index = ordered[right_pos]
+                right_m = float(samples[right_index]["cum_m"])
+                span_m = right_m - left_m
+                if span_m > max_span_m + 1e-6:
+                    break
+                if span_m <= 1e-6:
+                    continue
+                left_alt_m = float(selected_altitudes[left_index])
+                right_alt_m = float(selected_altitudes[right_index])
+                lifts: list[tuple[int, float]] = []
+                valid_bridge = True
+                for middle_pos in range(left_pos + 1, right_pos):
+                    middle_index = ordered[middle_pos]
+                    fraction = (
+                        float(samples[middle_index]["cum_m"]) - left_m
+                    ) / span_m
+                    chord_alt_m = left_alt_m + (
+                        right_alt_m - left_alt_m
+                    ) * fraction
+                    current_alt_m = float(selected_altitudes[middle_index])
+                    lift_m = chord_alt_m - current_alt_m
+                    if lift_m < -1e-6 or lift_m > max_depth_m + 1e-6:
+                        valid_bridge = False
+                        break
+                    if lift_m > 1e-6:
+                        lifts.append((middle_index, chord_alt_m))
+                if not valid_bridge or not lifts:
+                    continue
+                for middle_index, chord_alt_m in lifts:
+                    selected_altitudes[middle_index] = max(
+                        float(selected_altitudes[middle_index]),
+                        float(chord_alt_m),
+                    )
+                changed = True
+        if not changed:
+            break
+
+
+def _smooth_altitudes_for_vertical_rates(
+    samples: list[dict[str, float]],
+    selected_indices: list[int],
+    selected_altitudes: dict[int, float],
+    *,
+    cruise_speed_mps: float,
+) -> None:
+    """Raise the profile into climb/descent-rate-feasible linear ramps."""
+
+    if len(selected_indices) < 2:
+        return
+    speed_mps = max(1.0, float(cruise_speed_mps))
+    climb_rate_mps = max(
+        0.1,
+        float(getattr(DEFAULT_ENVELOPE, "climb_rate_mps", 8.9))
+        * float(LAH_VERTICAL_RATE_USE_RATIO),
+    )
+    descent_rate_mps = max(
+        0.1,
+        float(getattr(DEFAULT_ENVELOPE, "descent_rate_mps", 7.0))
+        * float(LAH_VERTICAL_RATE_USE_RATIO),
+    )
+    climb_grade = climb_rate_mps / speed_mps
+    descent_grade = descent_rate_mps / speed_mps
+
+    # Raising one side can tighten the opposite direction on the next pass.
+    # Two alternating passes converge for this one-dimensional max envelope.
+    for _pass in range(2):
+        for left_index, right_index in reversed(
+            list(zip(selected_indices, selected_indices[1:]))
+        ):
+            distance_m = max(
+                0.0,
+                float(samples[right_index]["cum_m"])
+                - float(samples[left_index]["cum_m"]),
+            )
+            selected_altitudes[left_index] = max(
+                float(selected_altitudes[left_index]),
+                float(selected_altitudes[right_index])
+                - climb_grade * distance_m,
+            )
+        for left_index, right_index in zip(selected_indices, selected_indices[1:]):
+            distance_m = max(
+                0.0,
+                float(samples[right_index]["cum_m"])
+                - float(samples[left_index]["cum_m"]),
+            )
+            selected_altitudes[right_index] = max(
+                float(selected_altitudes[right_index]),
+                float(selected_altitudes[left_index])
+                - descent_grade * distance_m,
+            )
+
+
+def _prune_redundant_altitude_indices(
+    samples: list[dict[str, float]],
+    required_altitudes: list[float],
+    selected_indices: list[int],
+    selected_altitudes: dict[int, float],
+    protected_anchor_indices: list[int],
+    *,
+    max_waypoint_spacing_m: float,
+    altitude_tolerance_m: float,
+) -> list[int]:
+    """Remove DEM-only points whose surrounding 3-D chord is already safe."""
+
+    retained = list(selected_indices)
+    protected = {int(index) for index in protected_anchor_indices}
+    protected.update((retained[0], retained[-1]))
+    hard_spacing_m = max(25.0, float(max_waypoint_spacing_m))
+    tolerance_m = max(0.0, float(altitude_tolerance_m))
+
+    def _cross_track_distance_m(
+        left_index: int,
+        middle_index: int,
+        right_index: int,
+    ) -> float:
+        left = samples[left_index]
+        middle = samples[middle_index]
+        right = samples[right_index]
+        mid_lat = (
+            float(left["latitude"])
+            + float(middle["latitude"])
+            + float(right["latitude"])
+        ) / 3.0
+        metres_per_lon = _METRES_PER_DEGREE_LAT * math.cos(math.radians(mid_lat))
+        ax = (
+            float(middle["longitude"]) - float(left["longitude"])
+        ) * metres_per_lon
+        ay = (
+            float(middle["latitude"]) - float(left["latitude"])
+        ) * _METRES_PER_DEGREE_LAT
+        bx = (
+            float(right["longitude"]) - float(left["longitude"])
+        ) * metres_per_lon
+        by = (
+            float(right["latitude"]) - float(left["latitude"])
+        ) * _METRES_PER_DEGREE_LAT
+        norm_sq = bx * bx + by * by
+        if norm_sq <= 1e-9:
+            return math.hypot(ax, ay)
+        fraction = min(max((ax * bx + ay * by) / norm_sq, 0.0), 1.0)
+        return math.hypot(ax - bx * fraction, ay - by * fraction)
+
+    changed = True
+    while changed and len(retained) >= 3:
+        changed = False
+        for position in range(1, len(retained) - 1):
+            middle_index = retained[position]
+            if middle_index in protected:
+                continue
+            left_index = retained[position - 1]
+            right_index = retained[position + 1]
+            left_m = float(samples[left_index]["cum_m"])
+            right_m = float(samples[right_index]["cum_m"])
+            span_m = right_m - left_m
+            if span_m <= 1e-6 or span_m > hard_spacing_m + 1e-6:
+                continue
+            # DEM-only altitude vertices may be removed, but a genuine
+            # horizontal valley/ridge detour must keep its bend.
+            if (
+                _cross_track_distance_m(left_index, middle_index, right_index)
+                > 5.0
+            ):
+                continue
+            left_alt_m = float(selected_altitudes[left_index])
+            right_alt_m = float(selected_altitudes[right_index])
+            middle_fraction = (
+                float(samples[middle_index]["cum_m"]) - left_m
+            ) / span_m
+            middle_chord_alt_m = left_alt_m + (
+                right_alt_m - left_alt_m
+            ) * middle_fraction
+            if (
+                abs(float(selected_altitudes[middle_index]) - middle_chord_alt_m)
+                > tolerance_m + 1e-6
+            ):
+                continue
+
+            chord_is_safe = True
+            for sample_index in range(left_index, right_index + 1):
+                fraction = (
+                    float(samples[sample_index]["cum_m"]) - left_m
+                ) / span_m
+                chord_alt_m = left_alt_m + (
+                    right_alt_m - left_alt_m
+                ) * fraction
+                if chord_alt_m + 1e-6 < float(required_altitudes[sample_index]):
+                    chord_is_safe = False
+                    break
+            if not chord_is_safe:
+                continue
+            retained.pop(position)
+            changed = True
+            break
+    return retained
+
+
 def build_lah_terrain_following_path(
     route_coordinates: Iterable[Any],
     *,
@@ -1087,15 +1377,19 @@ def build_lah_terrain_following_path(
     ]
     | None = None,
     low_terrain_constrained_leg_start_index: int = 0,
+    cruise_speed_mps: float = 40.0,
+    runtime_payload: dict[str, Any] | None = None,
 ) -> list[dict[str, float | int]]:
     """Build a compact DEM-following LAH route.
 
     DEM is loaded once in a dense batch.  Output waypoints are then selected by
     terrain shape: a point is added when the straight 3-D chord would penetrate
     the required DEM clearance, when the chord would float excessively above
-    the terrain profile, or when the safety maximum spacing is exceeded.  This
-    keeps flat routes compact while retaining ridge/valley detail.  Input route
-    corners are always kept.
+    the terrain profile, or when the safety maximum spacing is exceeded.  Short
+    shallow descents are bridged, unavoidable climbs/descents are lifted into
+    rate-feasible ramps, and redundant DEM-only altitude vertices are removed
+    only after the replacement chord is checked against every dense DEM sample.
+    Input route corners and genuine horizontal detours are always kept.
     """
 
     route: list[tuple[float, float]] = []
@@ -1109,6 +1403,7 @@ def build_lah_terrain_following_path(
     if not route:
         return []
 
+    source_route = list(route)
     if prefer_low_terrain and len(route) >= 2:
         route = _prefer_low_terrain_horizontal_route(
             route,
@@ -1120,12 +1415,22 @@ def build_lah_terrain_following_path(
             edge_samples=low_terrain_edge_samples,
             segment_allowed=low_terrain_segment_allowed,
             constrained_leg_start_index=low_terrain_constrained_leg_start_index,
+            runtime_payload=runtime_payload,
         )
 
     samples, anchor_indices = _sample_horizontal_route(
         route,
         sample_spacing_m=sample_spacing_m,
     )
+    protected_anchor_indices = [
+        int(anchor_indices[route_index])
+        for route_index, route_point in enumerate(route)
+        if route_index < len(anchor_indices)
+        and any(
+            _distance_m(route_point, source_point) <= 0.5
+            for source_point in source_route
+        )
+    ]
     terrain_values = _load_terrain_profile(samples, terrain_provider)
     clearance = max(0.0, float(clearance_m))
     required_altitudes = [float(ground) + clearance for ground in terrain_values]
@@ -1170,6 +1475,36 @@ def build_lah_terrain_following_path(
         selected_altitudes[right_index] = max(
             selected_altitudes[right_index],
             float(interval_peak_m),
+        )
+
+    (
+        altitude_smoothing_enabled,
+        max_dip_depth_m,
+        max_dip_span_m,
+        redundant_tolerance_m,
+    ) = _altitude_smoothing_config(runtime_payload)
+    if altitude_smoothing_enabled:
+        _fill_short_altitude_dips(
+            samples,
+            selected_indices,
+            selected_altitudes,
+            max_depth_m=max_dip_depth_m,
+            max_span_m=max_dip_span_m,
+        )
+        _smooth_altitudes_for_vertical_rates(
+            samples,
+            selected_indices,
+            selected_altitudes,
+            cruise_speed_mps=cruise_speed_mps,
+        )
+        selected_indices = _prune_redundant_altitude_indices(
+            samples,
+            required_altitudes,
+            selected_indices,
+            selected_altitudes,
+            protected_anchor_indices,
+            max_waypoint_spacing_m=max_waypoint_spacing_m,
+            altitude_tolerance_m=redundant_tolerance_m,
         )
 
     result: list[dict[str, float | int]] = []

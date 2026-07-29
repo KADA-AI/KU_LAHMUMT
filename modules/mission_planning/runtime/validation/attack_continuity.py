@@ -276,8 +276,8 @@ def compare_post_attack_pairs(
     """Compare stable unfinished-attack identities after one target closes.
 
     Closing one target must not reset a second queued attack on the same LAH.
-    The closed target is ignored on both sides because its completed prefix may
-    safely remain in a preserved package until the queued attack finishes.
+    Its non-attack descent geometry may remain, but no executable attack command
+    for the closed target may survive in the candidate package.
     """
 
     closed = {int(value) for value in closed_target_ids}
@@ -291,12 +291,18 @@ def compare_post_attack_pairs(
         for row in candidate_rows or []
         if int(_to_int(row.get("targetID")) or 0) not in closed
     )
+    stale_closed = sorted(
+        attack_identity(row)
+        for row in candidate_rows or []
+        if int(_to_int(row.get("targetID")) or 0) in closed
+    )
     missing = sorted((expected - actual).elements())
     unexpected = sorted((actual - expected).elements())
     return {
-        "ok": not missing and not unexpected,
+        "ok": not missing and not unexpected and not stale_closed,
         "expected": sorted(expected.elements()),
         "actual": sorted(actual.elements()),
         "missing": missing,
         "unexpected": unexpected,
+        "staleClosed": stale_closed,
     }

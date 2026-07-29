@@ -65,6 +65,9 @@ from modules.mission_planning.MissionPlanner.runtime_settings import (
     get_runtime_camera_coverage_scale,
     read_fov_db_rows_from_path,
 )
+from modules.mission_planning.MissionPlanner.planning_enhanced.algo.split_runner import (
+    _width_split_pair_units,
+)
 
 from ._constants import (
     MODE_IDLE, MODE_DRAW_AREA, MODE_DRAW_LINE, MODE_LINE_WIDTH_PENDING,
@@ -136,6 +139,81 @@ def _safe_comb_perm_count(comb_n: int, comb_r: int, perm_n: int, perm_r: int) ->
         return 0
 
 
+def _projected_polygon_span_m(
+    points_xy: Any,
+    axis_x: float,
+    axis_y: float,
+) -> float:
+    """Return the full polygon depth along a unit route axis.
+
+    A center-line chord can be much shorter than an oblique or concave AREA.
+    Waypoint route length must cover the polygon's complete projection instead
+    of inheriting that shape-dependent chord length.
+    """
+
+    axis_length = math.hypot(float(axis_x), float(axis_y))
+    if axis_length <= 1e-9:
+        return 0.0
+    ux = float(axis_x) / axis_length
+    uy = float(axis_y) / axis_length
+    projections: List[float] = []
+    for point_xy in points_xy or []:
+        if not isinstance(point_xy, (tuple, list)) or len(point_xy) < 2:
+            continue
+        try:
+            x_value = float(point_xy[0])
+            y_value = float(point_xy[1])
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(x_value) or not math.isfinite(y_value):
+            continue
+        projections.append((x_value * ux) + (y_value * uy))
+    if len(projections) < 2:
+        return 0.0
+    return max(0.0, float(max(projections) - min(projections)))
+
+
+def _area_sweep_route_axis_xy(
+    path_row: Dict[str, Any],
+    overlay: Dict[str, Any] | None = None,
+) -> Tuple[float, float, str]:
+    """Resolve the stable route axis used to lay out AREA sweep rows.
+
+    ``waypointStartXY -> waypointEndXY`` is an ingress/turn solution. It can
+    point at a different angle for every sequential 700 m piece even though
+    all pieces were cut with one shared AREA bearing. Sweep geometry must use
+    that shared planner bearing; ingress only decides how the UAV reaches and
+    orders the resulting rows.
+    """
+
+    bearing_raw = path_row.get("bearingDeg")
+    if bearing_raw is None and isinstance(overlay, dict):
+        bearing_raw = overlay.get("bearingDeg")
+    try:
+        bearing_deg = float(bearing_raw)
+    except (TypeError, ValueError):
+        bearing_deg = float("nan")
+    if math.isfinite(bearing_deg):
+        theta = math.radians(bearing_deg % 360.0)
+        return math.sin(theta), math.cos(theta), "planner_bearing"
+
+    start_xy = path_row.get("waypointStartXY") or path_row.get("tangentXY")
+    end_xy = path_row.get("waypointEndXY")
+    if (
+        isinstance(start_xy, (tuple, list))
+        and len(start_xy) >= 2
+        and isinstance(end_xy, (tuple, list))
+        and len(end_xy) >= 2
+    ):
+        dx = float(end_xy[0]) - float(start_xy[0])
+        dy = float(end_xy[1]) - float(start_xy[1])
+        length_m = math.hypot(dx, dy)
+        if length_m > 1.0e-6:
+            return dx / length_m, dy / length_m, "waypoint_fallback"
+
+    return 0.0, 1.0, "north_fallback"
+
+
 def _clone_fov_db_cache_rows(
     cached: _FovCachePayload,
 ) -> Tuple[List[Dict[str, float]], List[float]]:
@@ -180,6 +258,20 @@ class DivisionPlannerWindow(QMainWindow):
             scale = float(get_runtime_float("next_collab_turn_radius_scale", 1.20))
         return max(0.1, float(scale))
 
+    def _turn_radius_uncertainty_margin_m(self) -> float:
+        try:
+            margin_m = float(
+                get_runtime_float(
+                    "next_collab_turn_radius_uncertainty_margin_m",
+                    120.0,
+                )
+            )
+        except Exception:
+            margin_m = 120.0
+        if not math.isfinite(margin_m):
+            margin_m = 120.0
+        return max(0.0, min(2_000.0, margin_m))
+
     def _aircraft_turn_radius_override_m(self, aircraft_id: int | None) -> float | None:
         if aircraft_id is None:
             return None
@@ -192,7 +284,16 @@ class DivisionPlannerWindow(QMainWindow):
             return None
         if not math.isfinite(radius_m) or radius_m <= 1.0:
             return None
-        return min(20_000.0, radius_m * float(self._turn_radius_scale_value()))
+        observed_radius_m = radius_m * float(self._turn_radius_scale_value())
+        reference_radius_m = self._turn_radius_for_speed_m(
+            self._aircraft_turn_speed_mps(aircraft_id),
+            aircraft_id=aircraft_id,
+        )
+        return min(
+            20_000.0,
+            max(observed_radius_m, reference_radius_m)
+            + self._turn_radius_uncertainty_margin_m(),
+        )
 
     def _aircraft_turn_speed_mps(self, aircraft_id: int | None) -> float:
         if aircraft_id is not None:
@@ -210,9 +311,13 @@ class DivisionPlannerWindow(QMainWindow):
         observed_radius_m = self._aircraft_turn_radius_override_m(aircraft_id)
         if observed_radius_m is not None:
             return float(observed_radius_m)
-        return self._turn_radius_for_speed_m(
-            self._aircraft_turn_speed_mps(aircraft_id),
-            aircraft_id=aircraft_id,
+        return min(
+            20_000.0,
+            self._turn_radius_for_speed_m(
+                self._aircraft_turn_speed_mps(aircraft_id),
+                aircraft_id=aircraft_id,
+            )
+            + self._turn_radius_uncertainty_margin_m(),
         )
 
     def _turn_radius_for_speed_m(
@@ -1196,9 +1301,9 @@ class DivisionPlannerWindow(QMainWindow):
         except Exception:
             base_density = 1.2
         try:
-            next_density = float(get_runtime_float("next_collab_area_density_scale", max(base_density, 2.4)))
+            next_density = float(get_runtime_float("next_collab_area_density_scale", max(base_density, 1.5)))
         except Exception:
-            next_density = max(base_density, 2.4)
+            next_density = max(base_density, 1.5)
         if base_density <= 1e-6 or next_density <= 1e-6:
             return 1.0
         return max(1.0, min(5.0, float(next_density) / float(base_density)))
@@ -1445,9 +1550,9 @@ class DivisionPlannerWindow(QMainWindow):
         except Exception:
             base_density = 1.2
         try:
-            density = float(get_runtime_float("next_collab_area_density_scale", max(base_density, 2.4)))
+            density = float(get_runtime_float("next_collab_area_density_scale", max(base_density, 1.5)))
         except Exception:
-            density = max(base_density, 2.4)
+            density = max(base_density, 1.5)
         density = max(float(density), 1e-6)
         return max(float(footprint_m) / float(density), 1.0)
 
@@ -4083,6 +4188,13 @@ class DivisionPlannerWindow(QMainWindow):
         _mid_line_len_m = float(base_row.get("midLineLengthM", 0.0) or 0.0)
         if _mid_line_len_m > shape_length_m:
             shape_length_m = float(_mid_line_len_m)
+        polygon_span_m = _projected_polygon_span_m(
+            base_row.get("partPolygonXY"),
+            ux,
+            uy,
+        )
+        if polygon_span_m > shape_length_m:
+            shape_length_m = float(polygon_span_m)
 
         # MP_End: start_xy + shape_length along ingress direction
         mp_end_xy = (
@@ -4396,6 +4508,39 @@ class DivisionPlannerWindow(QMainWindow):
                 "pieceLines": piece_lines,
             }
 
+        # A 700 m sequential split produces stage 1..N for each original
+        # UAV-owned strip. Prediction assignment must solve that sequence as
+        # one indivisible unit. Otherwise its "reuse UAVs after the
+        # first N pieces" branch assigns the remaining halves independently
+        # and can pile several of them onto the currently closest aircraft.
+        assignment_units = _width_split_pair_units(
+            [piece for piece, _target_xy in target_items]
+        )
+        assignment_members_by_piece_id: Dict[int, List[SplitPiece]] = {}
+        if len(assignment_units) < len(target_items):
+            paired_target_items: List[Tuple[SplitPiece, Tuple[float, float]]] = []
+            for unit in assignment_units:
+                members = [
+                    target_items[index][0]
+                    for index in unit
+                    if 0 <= int(index) < len(target_items)
+                ]
+                if not members:
+                    continue
+                representative_index = int(unit[0])
+                representative_piece, representative_target_xy = target_items[
+                    representative_index
+                ]
+                assignment_members_by_piece_id[id(representative_piece)] = members
+                paired_target_items.append(
+                    (representative_piece, representative_target_xy)
+                )
+            target_items = paired_target_items
+        else:
+            assignment_members_by_piece_id = {
+                id(piece): [piece] for piece, _target_xy in target_items
+            }
+
         reference_bearing_deg = self._mid_line_reference_bearing_deg(
             [piece for piece, _target_xy in target_items]
         )
@@ -4526,15 +4671,11 @@ class DivisionPlannerWindow(QMainWindow):
                 assigned_records.append((piece, best_aid, best_branch, best_dist, best_score, best_turn_info))
                 used_uavs.add(best_aid)
 
-        turn_penalty_count = sum(
-            1
-            for _piece, _aid, _branch, dist_m, score_m, _turn_info in assigned_records
-            if float(score_m) > float(dist_m) + 1e-6
-        )
+        turn_penalty_count = 0
         for piece, best_aid, best_branch, best_dist, best_score, turn_info in assigned_records:
-            piece.assigned_uav = int(best_aid)
-            assigned_pieces += 1
-            uav_summary[best_aid] = int(uav_summary.get(best_aid, 0)) + 1
+            members = assignment_members_by_piece_id.get(id(piece), [piece])
+            if float(best_score) > float(best_dist) + 1e-6:
+                turn_penalty_count += len(members)
             turn_suffix = ""
             if turn_guard_enabled:
                 if bool(turn_info.get("feasible", False)):
@@ -4544,10 +4685,14 @@ class DivisionPlannerWindow(QMainWindow):
                     turn_suffix = ", T0 penalized"
                 elif feasible_aircraft_by_piece.get(int(piece.piece_index or 0), set()):
                     turn_suffix = ", T0 no-penalty"
-            piece_lines.append(
-                f"  P{piece.piece_index}: UAV{best_aid} "
-                f"({best_branch}, {best_dist:.1f}m{turn_suffix})"
-            )
+            for member in members:
+                member.assigned_uav = int(best_aid)
+                assigned_pieces += 1
+                uav_summary[best_aid] = int(uav_summary.get(best_aid, 0)) + 1
+                piece_lines.append(
+                    f"  P{member.piece_index}: UAV{best_aid} "
+                    f"({best_branch}, {best_dist:.1f}m{turn_suffix})"
+                )
 
         return {
             "pieceCount": int(len(split_result.pieces)),
@@ -4556,6 +4701,21 @@ class DivisionPlannerWindow(QMainWindow):
             "pieceLines": piece_lines,
             "turnGuardEnabled": bool(turn_guard_enabled),
             "turnPenaltyCount": int(turn_penalty_count),
+            "assignmentUnitCount": int(len(target_items)),
+            "widthPairCount": int(
+                sum(
+                    1
+                    for members in assignment_members_by_piece_id.values()
+                    if len(members) >= 2
+                )
+            ),
+            "widthSequenceCount": int(
+                sum(
+                    1
+                    for members in assignment_members_by_piece_id.values()
+                    if len(members) >= 2
+                )
+            ),
         }
 
     def _largest_polygon_xy(self, geom: Any) -> Optional[Polygon]:
@@ -8053,6 +8213,21 @@ class DivisionPlannerWindow(QMainWindow):
                         proj_len = abs(proj1 - proj0)
                         if proj_len > shape_length_m:
                             shape_length_m = proj_len
+                piece_poly_for_span = self._path_row_piece_polygon_xy(
+                    {
+                        "aircraftID": int(aid),
+                        "pieceIndex": int(piece_index),
+                        "partPolygonXY": overlay.get("partPolygonXY"),
+                    }
+                )
+                if piece_poly_for_span is not None and not piece_poly_for_span.is_empty:
+                    polygon_span_m = _projected_polygon_span_m(
+                        list(piece_poly_for_span.exterior.coords),
+                        ux,
+                        uy,
+                    )
+                    if polygon_span_m > shape_length_m:
+                        shape_length_m = float(polygon_span_m)
                 if shape_length_m <= 1e-6:
                     shape_length_m = length_m
 
@@ -8241,28 +8416,19 @@ class DivisionPlannerWindow(QMainWindow):
                 piece_poly = self._path_row_piece_polygon_xy(path_row)
 
                 # ---- s-t frame: ingress direction (T0 → WP_E) ----
-                wp_start_raw = path_row.get("waypointStartXY") or path_row.get("tangentXY")
-                wp_end_raw = path_row.get("waypointEndXY")
-                if (
-                    isinstance(wp_start_raw, (tuple, list)) and len(wp_start_raw) >= 2
-                    and isinstance(wp_end_raw, (tuple, list)) and len(wp_end_raw) >= 2
-                ):
-                    dx = float(wp_end_raw[0]) - float(wp_start_raw[0])
-                    dy = float(wp_end_raw[1]) - float(wp_start_raw[1])
-                    ingress_len = math.hypot(dx, dy)
-                    if ingress_len > 1e-6:
-                        ux = dx / ingress_len   # s-axis (ingress direction)
-                        uy = dy / ingress_len
-                    else:
-                        theta = math.radians(float(overlay.get("bearingDeg", 0.0) or 0.0) % 360.0)
-                        ux = math.sin(theta)
-                        uy = math.cos(theta)
-                else:
-                    theta = math.radians(float(overlay.get("bearingDeg", 0.0) or 0.0) % 360.0)
-                    ux = math.sin(theta)
-                    uy = math.cos(theta)
+                # The T0 -> WP_E line is a piece-local ingress solution. Using
+                # it as the scan frame rotates each follow-up 700 m piece.
+                # Keep the capture rows on the shared planner bearing instead.
+                ux, uy, sweep_axis_source = _area_sweep_route_axis_xy(
+                    path_row,
+                    overlay,
+                )
                 vx = uy                # t-axis (perpendicular to ingress)
                 vy = -ux
+                path_row["areaSweepAxisSource"] = str(sweep_axis_source)
+                path_row["areaSweepAxisBearingDeg"] = (
+                    math.degrees(math.atan2(ux, uy)) + 360.0
+                ) % 360.0
 
                 # determine s-t extents from polygon or boxXY
                 if piece_poly is not None and not piece_poly.is_empty:
@@ -8373,6 +8539,24 @@ class DivisionPlannerWindow(QMainWindow):
                 path_row["sweepLineListXY"] = sweep_lines_xy
                 path_row["sweepFootM"] = float(foot_m)
                 path_row["sweepLineCount"] = int(n_lines)
+                if sweep_lines_xy:
+                    first_s = sum(
+                        (float(point_xy[0]) * ux) + (float(point_xy[1]) * uy)
+                        for point_xy in sweep_lines_xy[0]
+                    ) / len(sweep_lines_xy[0])
+                    last_s = sum(
+                        (float(point_xy[0]) * ux) + (float(point_xy[1]) * uy)
+                        for point_xy in sweep_lines_xy[-1]
+                    ) / len(sweep_lines_xy[-1])
+                    center_t = 0.5 * (float(min_t) + float(max_t))
+                    path_row["areaSweepRouteStartXY"] = (
+                        (first_s * ux) + (center_t * vx),
+                        (first_s * uy) + (center_t * vy),
+                    )
+                    path_row["areaSweepRouteEndXY"] = (
+                        (last_s * ux) + (center_t * vx),
+                        (last_s * uy) + (center_t * vy),
+                    )
 
                 lines.append(
                     f"  UAV{aid}/P{piece_idx}: foot={foot_m:.1f}m (step={sweep_step_m:.1f}m, line-rule)"
@@ -8489,15 +8673,13 @@ class DivisionPlannerWindow(QMainWindow):
                     and isinstance(wp_end_raw, (tuple, list)) and len(wp_end_raw) >= 2
                 ):
                     continue
-                dx = float(wp_end_raw[0]) - float(wp_start_raw[0])
-                dy = float(wp_end_raw[1]) - float(wp_start_raw[1])
-                ingress_len = math.hypot(dx, dy)
-                if ingress_len <= 1e-6:
-                    continue
-                ux = dx / ingress_len
-                uy = dy / ingress_len
+                ux, uy, sweep_axis_source = _area_sweep_route_axis_xy(path_row)
                 vx = uy
                 vy = -ux
+                path_row["areaSweepAxisSource"] = str(sweep_axis_source)
+                path_row["areaSweepAxisBearingDeg"] = (
+                    math.degrees(math.atan2(ux, uy)) + 360.0
+                ) % 360.0
 
                 sep_cand_m = float(path_row.get("sepCandM", 0.0) or 0.0)
                 sep_ref_m = float(path_row.get("gsdSepM", 0.0) or 0.0)
@@ -8638,6 +8820,24 @@ class DivisionPlannerWindow(QMainWindow):
                 path_row["sweepLineListXY"] = sweep_lines_xy
                 path_row["sweepFootM"] = float(foot_m)
                 path_row["sweepLineCount"] = int(n_lines)
+                if sweep_lines_xy:
+                    first_s = sum(
+                        (float(point_xy[0]) * ux) + (float(point_xy[1]) * uy)
+                        for point_xy in sweep_lines_xy[0]
+                    ) / len(sweep_lines_xy[0])
+                    last_s = sum(
+                        (float(point_xy[0]) * ux) + (float(point_xy[1]) * uy)
+                        for point_xy in sweep_lines_xy[-1]
+                    ) / len(sweep_lines_xy[-1])
+                    center_t = 0.5 * (float(min_t) + float(max_t))
+                    path_row["areaSweepRouteStartXY"] = (
+                        (first_s * ux) + (center_t * vx),
+                        (first_s * uy) + (center_t * vy),
+                    )
+                    path_row["areaSweepRouteEndXY"] = (
+                        (last_s * ux) + (center_t * vx),
+                        (last_s * uy) + (center_t * vy),
+                    )
 
                 start_label = str(path_row.get("startLabel", "T") or "T")
                 lines.append(

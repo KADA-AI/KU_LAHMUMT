@@ -30,6 +30,7 @@ from modules.mission_planning.MissionPlanner.runtime_settings import (
     get_runtime_attack_target_type_priority,
     get_runtime_attack_weapon_type,
     get_runtime_attack_weapon_type_for_target_type,
+    pin_runtime_settings,
     pop_runtime_camera_fov_adjustment_logs,
 )
 from modules.mission_planning.MissionPlanner.data_def.filming_altitude_guard import (
@@ -41,6 +42,7 @@ from modules.mission_planning.MissionPlanner.data_def.mission_helpers import (
     terrain_elev_many,
 )
 from modules.mission_planning.MissionPlanner.data_def.lah_terrain_path import (
+    LAH_LOW_LEVEL_CLEARANCE_M,
     LAH_LOW_TERRAIN_CORRIDOR_M,
     LAH_LOW_TERRAIN_MIN_LEG_M,
     LAH_VERTICAL_RATE_USE_RATIO,
@@ -51,7 +53,7 @@ from modules.mission_planning.engine.mission_generation.id_allocation.allocator 
     reserve_mission_plan_ids,
 )
 from modules.mission_planning.engine.mission_generation.artifacts_0301_0302_0303_0304.d0304 import (
-    normalize_lah_eta_seconds_inplace,
+    enforce_lah_kinematic_feasibility_inplace,
 )
 from modules.mission_planning.MissionPlanner.dynamics.lah_op_envlp import DEFAULT_ENVELOPE
 from modules.mission_planning.runtime.debug_artifacts import debug_artifact_mode, write_debug_json
@@ -82,6 +84,12 @@ from modules.mission_planning.runtime.validation.attack_continuity import (
     missing_attack_identities,
 )
 from modules.mission_planning.pipelines.attack_los_altitude import profile_with_batch_dem
+from modules.mission_planning.pipelines.type2_boundary_guard_loop import (
+    clear_boundary_guard_contract,
+    extract_boundary_guard_contract,
+    finalize_boundary_guard_flight_path_sets_in_mission_order,
+    is_boundary_guard_loop,
+)
 from modules.mission_planning.runtime.state.attack_assignment import (
     get_last_assigned_manned_id,
     get_used_manned_ids,
@@ -151,6 +159,7 @@ from modules.mission_planning.replanning.triggers.prior.pipeline import (
     _load_done_input_ids_for_plan,
     _load_latest_mission_progress_plan_id,
     _normalize_altitude_value,
+    _mission_execution_blocked_until_next_collab,
     _prepare_uav_collaborative_resume_replan,
     _project_coordinate,
     _resolve_plan_artifacts,
@@ -159,6 +168,8 @@ from modules.mission_planning.replanning.triggers.prior.pipeline import (
     _reserve_waypoint_block,
     warm_prior_mission_pipeline,
     _sync_resume_mission_info_with_waypoints,
+    _waypoints_declare_line_capture,
+    _waypoints_have_executable_line_capture,
 )
 from modules.mission_planning.pipelines.mission_planning_attack_helpers import (
     choose_attack_weapon_type,
@@ -173,6 +184,7 @@ from modules.mission_planning.pipelines.lah_operational_mode import (
     special_target_contains_coordinate,
 )
 from modules.mission_planning.pipelines.ground_maneuver_mode import (
+    TYPE2_SELF_RELIANCE_GUARD_AREA,
     TYPE2_SELF_RELIANCE_OUTBOUND_LINE,
     TYPE2_SELF_RELIANCE_RETURN_LINE,
     detect_ground_maneuver_attack_profile,
@@ -212,8 +224,8 @@ _ATTACK_ASSIST_RASTER_PATHS_CACHE: Dict[str, List[Any]] = {}
 _ATTACK_POINT_SUBPROCESS_DISABLED_REASON: Optional[str] = None
 _UAV_TRACKING_MIN_FLIGHT_ALTITUDE_M = 700.0
 _UAV_TRACKING_MAX_FLIGHT_ALTITUDE_M = 2200.0
-_UAV_ATTACK_COMPLETION_HOLD_SECONDS = 300
-_UAV_ATTACK_COMPLETION_HOLD_RADIUS_M = 400
+_UAV_ATTACK_COMPLETION_HOLD_SECONDS = 5
+_UAV_ATTACK_COMPLETION_HOLD_RADIUS_M = 180
 _UAV_ATTACK_COMPLETION_HOLD_SPEED_MPS = 30.0
 _LAH_ATTACK_MAX_SPEED_KMH_FALLBACK = 265.0
 _LAH_ATTACK_ROUTE_MIN_LOOKAHEAD_S = 10.0
@@ -260,6 +272,9 @@ _ATTACK_POINT_META_KEYS = (
     "attack_other_enemy_considered_count",
     "attack_other_enemy_visible_count",
     "attack_other_enemy_unknown_count",
+    "attack_altitude_control",
+    "attack_point_base_clearance_m",
+    "attack_point_popup_los_certified",
 )
 ATTACK_FAILURE_NOTICES: Dict[str, str] = {
     "attack_weapon_unavailable": "공격 불가: 공격기 탄약 부족",
@@ -277,6 +292,7 @@ ATTACK_FAILURE_NOTICES: Dict[str, str] = {
     "attack_assignment_failed": "공격 불가: 무장/편대 배정 실패",
     "attack_override_artifacts_empty": "공격 불가: 산출물 없음",
     "attack_validation_failed": "공격 불가: 산출물 검증 실패",
+    "attack_tactical_certification_failed": "공격 보류: 안전 경로 인증 실패",
     "attack_tactical_no_engageable_target": "공격 보류: LOS 공격점 계산 불가",
 }
 
@@ -561,6 +577,8 @@ def _cache_attack_point(cache_key: Tuple[float, ...], result: Dict[str, Any]) ->
 
 def _copy_cached_attack_point(cached: Dict[str, Any], friendly_norm: Dict[str, Any]) -> Dict[str, Any]:
     result = dict(cached)
+    if str(result.get("attack_altitude_control") or "") == "sim_los_popup":
+        return result
     terrain_altitude = _normalize_altitude_value(result.get("terrain_altitude_m"))
     altitude_offset = _to_float(result.get("altitude_offset_m"))
     if terrain_altitude is not None and altitude_offset is not None:
@@ -649,6 +667,25 @@ def _preserve_attack_point_altitude(value: Any) -> bool:
         mode.startswith("los_area")
         or mode.startswith("special_")
         or (isinstance(value, dict) and value.get("los_verified") is True)
+        or (
+            isinstance(value, dict)
+            and str(value.get("attack_altitude_control") or "").strip().lower()
+            == "sim_los_popup"
+        )
+    )
+
+
+def _sim_controls_attack_altitude(value: Any) -> bool:
+    """Whether the serialized point is only a low popup base.
+
+    These points deliberately remain at terrain-safe low level.  The simulator,
+    not the mission planner, owns the temporary climb until target LOS opens.
+    """
+
+    return bool(
+        isinstance(value, dict)
+        and str(value.get("attack_altitude_control") or "").strip().lower()
+        == "sim_los_popup"
     )
 
 
@@ -668,6 +705,17 @@ def _apply_lah_altitude_floor(
     lah_coord: Optional[Dict[str, Any]],
 ) -> Optional[Dict[str, Any]]:
     if not isinstance(coord, dict):
+        return coord
+    if _sim_controls_attack_altitude(coord):
+        # A live-aircraft altitude floor is a legacy planner-side pop-up.  It
+        # must never overwrite the low base of a SIM-controlled LOS attack.
+        coord.pop("lah_altitude_floor_m", None)
+        coord.pop("altitude_floor_applied", None)
+        popup_base_altitude = _normalize_altitude_value(
+            coord.get("altitude") or coord.get("alt")
+        )
+        if popup_base_altitude is not None:
+            coord["altitude"] = int(popup_base_altitude)
         return coord
     if not isinstance(lah_coord, dict):
         return coord
@@ -1291,6 +1339,23 @@ def run_attack_plan_pipeline(
     ctx: Dict[str, Any],
     log_callback: Optional[LogCallback] = None,
 ) -> Dict[str, Any]:
+    """Execute the specialized attack-planning pre-processing flow.
+
+    The whole run is executed with the runtime settings pinned: one replan
+    performs tens of thousands of settings reads, and every one of them
+    otherwise re-stats the settings file.  Pinning also guarantees the plan is
+    built against a single configuration rather than picking up an edit
+    halfway through.
+    """
+
+    with pin_runtime_settings():
+        return _run_attack_plan_pipeline_impl(ctx, log_callback)
+
+
+def _run_attack_plan_pipeline_impl(
+    ctx: Dict[str, Any],
+    log_callback: Optional[LogCallback] = None,
+) -> Dict[str, Any]:
     """
     Execute the specialized attack-planning pre-processing flow.
     Returns a dictionary that is also persisted to DSS_Internal/log_attack_algorithm.json.
@@ -1486,6 +1551,21 @@ def run_attack_plan_pipeline(
             f"currently applied plan instead of risking target loss: {committed_attack_scan_errors[:3]}"
         )
         return _finish()
+    committed_attack_rows, stale_destroyed_attack_rows = (
+        _partition_committed_attacks_by_destroyed_targets(
+            committed_attack_rows,
+            target_entries,
+        )
+    )
+    if stale_destroyed_attack_rows:
+        attack_log["result"]["staleDestroyedCommittedAttacks"] = [
+            dict(row) for row in stale_destroyed_attack_rows
+        ]
+        _emit(
+            "[ATTACK][CONTINUITY] Destroyed target attack command(s) excluded "
+            "from active capacity and preservation -> "
+            f"{[(row.get('aircraftID'), row.get('targetID')) for row in stale_destroyed_attack_rows]}."
+        )
     committed_attack_aircraft_ids = {
         int(row["aircraftID"])
         for row in committed_attack_rows
@@ -1780,6 +1860,9 @@ def run_attack_plan_pipeline(
             f"alt={attack_point['altitude']}m" if attack_point.get("altitude") is not None else "alt=unknown"
         )
         los_display = (
+            ", los=SIM popup at attack point"
+            if str(attack_point.get("attack_altitude_control") or "") == "sim_los_popup"
+            else
             f", los=verified, losDistance={float(attack_point.get('los_distance_m')):.1f}m, "
             f"losRequiredAlt={float(attack_point.get('los_required_altitude_m')):.1f}m"
             if attack_point.get("los_verified") is True
@@ -2997,6 +3080,35 @@ def _same_target_identity(left: Dict[str, Any], right: Dict[str, Any]) -> bool:
     return bool(left_key and right_key and left_key == right_key)
 
 
+def _partition_committed_attacks_by_destroyed_targets(
+    committed_attack_rows: List[Dict[str, Any]],
+    target_entries: List[Dict[str, Any]],
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Separate executable commitments from commands whose target is gone."""
+
+    destroyed_target_ids = {
+        int(target_id)
+        for target_id in (
+            _to_int(entry.get("target_id") or entry.get("targetID"))
+            for entry in target_entries or []
+            if isinstance(entry, dict)
+            and bool(entry.get("is_destroyed") or entry.get("isDestroyed"))
+        )
+        if target_id is not None and int(target_id) > 0
+    }
+    live: List[Dict[str, Any]] = []
+    stale: List[Dict[str, Any]] = []
+    for row in committed_attack_rows or []:
+        if not isinstance(row, dict):
+            continue
+        target_id = _to_int(row.get("targetID") or row.get("target_id"))
+        if target_id is not None and int(target_id) in destroyed_target_ids:
+            stale.append(dict(row))
+        else:
+            live.append(dict(row))
+    return live, stale
+
+
 def _partition_novel_attack_targets(
     requested_targets: List[Dict[str, Any]],
     committed_attack_rows: List[Dict[str, Any]],
@@ -3804,9 +3916,6 @@ _DEFAULT_SPEED_MPS = 40.0
 # five minutes left the manned aircraft parked long after the strike, so this
 # is only a floor to sit on until the follow-up replan moves them.
 _LAH_COVER_HOLD_DEFAULT_SECONDS = 60
-# Smallest pop-up that still counts as leaving cover. A firing point level
-# with the hide point produces a zero-length leg the aircraft never flies.
-_LAH_MIN_POPUP_CLIMB_M = 5.0
 # Slowest speed a manned waypoint may be emitted with.  Zero is not a valid
 # transit command - the aircraft never leaves the point - and stops are carried
 # by ``hovering``/``loiter`` instead.
@@ -3842,6 +3951,7 @@ def _build_attack_collab_agent_state_map(
 ) -> Dict[int, Dict[str, Any]]:
     state_map: Dict[int, Dict[str, Any]] = {}
     current_count = 0
+    prediction_count = 0
     for aid, state in agent_index.items():
         if aid is None:
             continue
@@ -3850,14 +3960,23 @@ def _build_attack_collab_agent_state_map(
         speed = _to_float((state or {}).get("speed")) if isinstance(state, dict) else None
         if coord is not None:
             current_count += 1
-        state_map[int(aid)] = {
-            "coordinate": dict(coord or {}),
-            "heading": heading,
-            "speed": speed,
-        }
+        state_copy = deepcopy(state) if isinstance(state, dict) else {}
+        state_copy["coordinate"] = dict(coord or {})
+        if coord is not None and _normalize_coordinate(state_copy.get("currentCoordinate")) is None:
+            state_copy["currentCoordinate"] = dict(coord)
+        if heading is not None:
+            state_copy["heading"] = float(heading)
+            state_copy.setdefault("headingDeg", float(heading))
+        if speed is not None:
+            state_copy["speed"] = float(speed)
+            state_copy.setdefault("speedMps", float(speed))
+        if _normalize_coordinate(state_copy.get("linePredictedEntryCoordinate")) is not None:
+            prediction_count += 1
+        state_map[int(aid)] = state_copy
     emit(
-        "[ATTACK][COLLAB] Remaining UAV entry uses current coordinates "
-        f"(count={current_count})."
+        "[ATTACK][COLLAB] Remaining UAV entry keeps current motion and LINE "
+        "activation prediction context "
+        f"(current={current_count}, predicted={prediction_count})."
     )
     return state_map
 
@@ -4193,6 +4312,7 @@ def _compute_attack_point(
                     "losError": direct_los_error,
                 }
             )
+        result = _attack_point_low_level_base(result) or result
         return result, None
     cache_key = _build_attack_point_cache_key(
         friendly_norm,
@@ -4249,6 +4369,7 @@ def _compute_attack_point(
                 else:
                     los_error = f"{los_error}; fallback={fallback_error}"
             if los_result is not None:
+                los_result = _attack_point_low_level_base(los_result) or los_result
                 if constrained_corridors:
                     los_result["mission_zone_source_plan_id"] = _to_int(
                         coverage_meta.get("sourcePlanID")
@@ -4376,6 +4497,9 @@ def _compute_attack_point(
                         "losError": str(los_error or "terrain_profile_unavailable"),
                     }
                 )
+            emergency_result = (
+                _attack_point_low_level_base(emergency_result) or emergency_result
+            )
             return emergency_result, None
         if coverage_relaxed:
             constrained_selection = dict(constrained_selection)
@@ -4442,7 +4566,7 @@ def _compute_attack_point(
             ]
             if len(input_ids) == 1:
                 result["mission_zone_input_mission_id"] = int(input_ids[0])
-        _apply_lah_altitude_floor(result, friendly_norm)
+        result = _attack_point_low_level_base(result) or result
         cache_limit = _cache_attack_point(cache_key, result)
         if cache_stats is not None:
             cache_stats.update(
@@ -4484,6 +4608,7 @@ def _compute_attack_point(
                 "mission_zone_count": len(constrained_corridors),
             }
         )
+        fallback = _attack_point_low_level_base(fallback) or fallback
         return fallback, None
 
 
@@ -5844,6 +5969,7 @@ def _freshen_attack_exclusion_artifact_ids(
         imp_copy["aircraftID"] = int(aircraft_id)
         imp_copy["timestamp"] = int(now_ms)
         cloned_missions: List[Dict[str, Any]] = []
+        cloned_paths: List[Dict[str, Any]] = []
         mission_id_rows: List[Dict[str, int]] = []
 
         for mission_row in package_row["missions"]:
@@ -5869,6 +5995,7 @@ def _freshen_attack_exclusion_artifact_ids(
                 )
             path_dest = db_paths.get_db_subpath("FlightPath", f"{int(new_path_id)}.json")
             path_entries.append((path_dest, path_copy))
+            cloned_paths.append(path_copy)
             mission_id_rows.append(
                 {
                     "sourceIndividualMissionID": int(mission_row["sourceMissionID"]),
@@ -5878,6 +6005,15 @@ def _freshen_attack_exclusion_artifact_ids(
                 }
             )
 
+        # Reassigning waypoint IDs relinks each path internally and therefore
+        # clears its tail link.  Type-2 AREA boundary children deliberately
+        # use cross-path tail links to form one cycle, so rebuild that cycle
+        # after every child in this package has its final waypoint IDs.
+        finalize_boundary_guard_flight_path_sets_in_mission_order(
+            cloned_missions,
+            cloned_paths,
+            strict=True,
+        )
         imp_copy["individualMissionList"] = cloned_missions
         imp_dest = db_paths.get_db_subpath(
             "IndividualMissionPlan", f"{int(new_imp_id)}.json"
@@ -6129,9 +6265,9 @@ def _build_uav_attack_completion_hold_waypoint(
         {},
     )
     final_coord = (
-        _normalize_coordinate(_extract_final_uav_coordinate(fp_data))
+        _normalize_coordinate(fallback_coordinate)
+        or _normalize_coordinate(_extract_final_uav_coordinate(fp_data))
         or _normalize_coordinate(template_wp.get("coordinate"))
-        or _normalize_coordinate(fallback_coordinate)
     )
     if final_coord is None:
         return None
@@ -6164,9 +6300,11 @@ def _build_uav_attack_completion_hold_waypoint(
     filming.pop("lineSearch", None)
     filming.pop("areaSearch", None)
     filming.pop("autoTracking", None)
+    filming.pop("aircraftFixed", None)
     filming["coordinateOrientation"] = {"coordinate": deepcopy(final_coord)}
     marker_wp["filmingProperty"] = filming
     marker_wp["attackCompletionBoundaryHold"] = True
+    marker_wp["noCaptureCompletionLoiter"] = True
     return marker_wp
 
 
@@ -6266,8 +6404,20 @@ def _load_attack_cached_waypoint_ids(
         waypoint_ids[int(path_id)] = []
         return []
 
+    # FlightPath uses a vehicle-specific waypoint-list key.  The cached attack
+    # resolver used to inspect only ``waypointList`` (the UAV spelling), so a
+    # LAH path containing ``lahWaypointList`` looked empty whenever 0401 did
+    # not provide a currentWaypointID.  That silently dropped every manned
+    # descriptor and was later misreported as a tactical-certification error.
+    waypoint_items: List[Any] = []
+    for key in ("waypointList", "uavWaypointList", "lahWaypointList"):
+        candidate_items = fp_data.get(key)
+        if isinstance(candidate_items, list) and candidate_items:
+            waypoint_items = candidate_items
+            break
+
     resolved_ids: List[int] = []
-    for wp in fp_data.get("waypointList", []):
+    for wp in waypoint_items:
         waypoint_id = _to_int((wp or {}).get("waypointID")) if isinstance(wp, dict) else None
         if waypoint_id is None:
             continue
@@ -6305,39 +6455,108 @@ def _resolve_plan_artifacts_cached(
     missions = imp_data.get("individualMissionList") or []
     target_mission: Optional[Tuple[int, int]] = None
     previous_wp: Optional[int] = None
-    resolved_current_wp = current_waypoint_id
+    current_wp_int = _to_int(current_waypoint_id)
+    resolved_current_wp = current_wp_int
 
-    for mission in missions:
-        path_id = _to_int((mission or {}).get("pathID"))
-        individual_mission_id = _to_int((mission or {}).get("individualMissionID"))
-        if path_id is None or individual_mission_id is None:
-            continue
-        waypoints = _load_attack_cached_waypoint_ids(cache, int(path_id), emit=emit)
-        if not waypoints:
-            continue
-        waypoint_index_by_id: Dict[int, int] = {}
-        for idx, waypoint_id in enumerate(waypoints):
-            waypoint_index_by_id.setdefault(int(waypoint_id), int(idx))
-        current_index = waypoint_index_by_id.get(int(current_waypoint_id))
-        if current_index is not None:
-            idx = int(current_index)
-            previous_wp = waypoints[idx - 1] if idx > 0 else None
-            target_mission = (individual_mission_id, path_id)
-            break
+    if current_wp_int is not None:
+        for mission in missions:
+            if not isinstance(mission, dict):
+                continue
+            if bool(mission.get("isDone")):
+                continue
+            if _mission_execution_blocked_until_next_collab(mission):
+                continue
+            path_id = _to_int(mission.get("pathID"))
+            individual_mission_id = _to_int(mission.get("individualMissionID"))
+            if path_id is None or individual_mission_id is None:
+                continue
+            waypoints = _load_attack_cached_waypoint_ids(cache, int(path_id), emit=emit)
+            if not waypoints:
+                continue
+            waypoint_index_by_id: Dict[int, int] = {}
+            for idx, waypoint_id in enumerate(waypoints):
+                waypoint_index_by_id.setdefault(int(waypoint_id), int(idx))
+            current_index = waypoint_index_by_id.get(int(current_wp_int))
+            if current_index is not None:
+                idx = int(current_index)
+                previous_wp = waypoints[idx - 1] if idx > 0 else None
+                target_mission = (individual_mission_id, path_id)
+                break
 
     if target_mission is None and missions and allow_first_mission_fallback:
-        fallback = missions[0] or {}
-        mission_id = _to_int(fallback.get("individualMissionID")) or 0
-        path_id = _to_int(fallback.get("pathID")) or 0
-        waypoints = _load_attack_cached_waypoint_ids(cache, int(path_id), emit=emit)
-        if waypoints:
-            resolved_current_wp = waypoints[0]
-            previous_wp = None
-        target_mission = (mission_id, path_id)
-        emit(
-            "[PRIOR] Falling back to first mission for aircraft "
-            f"{aircraft_id} (current waypoint not found in plan)."
-        )
+        fallback: Optional[Dict[str, Any]] = None
+        fallback_waypoints: List[int] = []
+        fallback_label = "first pending mission"
+
+        for candidate in missions:
+            if not isinstance(candidate, dict) or bool(candidate.get("isDone")):
+                continue
+            if _mission_execution_blocked_until_next_collab(candidate):
+                continue
+            candidate_path_id = _to_int(candidate.get("pathID"))
+            candidate_mission_id = _to_int(candidate.get("individualMissionID"))
+            if candidate_path_id is None or candidate_mission_id is None:
+                continue
+            candidate_waypoints = _load_attack_cached_waypoint_ids(
+                cache,
+                int(candidate_path_id),
+                emit=emit,
+            )
+            if not candidate_waypoints:
+                continue
+            fallback = candidate
+            fallback_waypoints = candidate_waypoints
+            break
+
+        if fallback is None:
+            has_collaboration_barrier = any(
+                _mission_execution_blocked_until_next_collab(candidate)
+                for candidate in missions
+            )
+            fallback_label = (
+                "last completed mission before collaboration barrier"
+                if has_collaboration_barrier
+                else "last completed mission"
+            )
+            for candidate in reversed(missions):
+                if not isinstance(candidate, dict):
+                    continue
+                if _mission_execution_blocked_until_next_collab(candidate):
+                    continue
+                candidate_path_id = _to_int(candidate.get("pathID"))
+                candidate_mission_id = _to_int(candidate.get("individualMissionID"))
+                if candidate_path_id is None or candidate_mission_id is None:
+                    continue
+                candidate_waypoints = _load_attack_cached_waypoint_ids(
+                    cache,
+                    int(candidate_path_id),
+                    emit=emit,
+                )
+                if not candidate_waypoints:
+                    continue
+                fallback = candidate
+                fallback_waypoints = candidate_waypoints
+                break
+
+        if fallback is not None:
+            mission_id = _to_int(fallback.get("individualMissionID"))
+            path_id = _to_int(fallback.get("pathID"))
+            if mission_id is not None and path_id is not None:
+                if bool(fallback.get("isDone")):
+                    resolved_current_wp = int(fallback_waypoints[-1])
+                    previous_wp = (
+                        int(fallback_waypoints[-2])
+                        if len(fallback_waypoints) > 1
+                        else None
+                    )
+                else:
+                    resolved_current_wp = int(fallback_waypoints[0])
+                    previous_wp = None
+                target_mission = (int(mission_id), int(path_id))
+                emit(
+                    f"[PRIOR] Falling back to {fallback_label} for aircraft "
+                    f"{aircraft_id} (current waypoint not found in plan)."
+                )
 
     if target_mission is None:
         return None
@@ -6652,10 +6871,55 @@ def _mark_attack_followups_execution_blocked(
         input_id = _extract_related_input_mission_id(mission)
         if input_id is not None and int(input_id) == int(current_input_id):
             mission.pop("executionBlockedUntilNextCollab", None)
+            mission.pop("ExecutionBlockedUntilNextCollab", None)
             continue
         mission["executionBlockedUntilNextCollab"] = True
+        mission.pop("ExecutionBlockedUntilNextCollab", None)
         blocked += 1
     return int(blocked)
+
+
+def _release_first_attack_followup_input_group(
+    missions: List[Dict[str, Any]],
+) -> Tuple[int, Optional[int]]:
+    """Release only the next input group after a completed Type-2 LINE.
+
+    The completed branch itself is the handoff into the first retained input.
+    Later inputs still represent future collaboration boundaries and must keep
+    their blockers until their own handoff.
+    """
+
+    released_input_id = next(
+        (
+            input_id
+            for mission in missions
+            if isinstance(mission, dict)
+            and (
+                input_id := _extract_related_input_mission_id(mission)
+            )
+            is not None
+        ),
+        None,
+    )
+    if released_input_id is None:
+        return 0, None
+
+    cleared = 0
+    for mission in missions:
+        if not isinstance(mission, dict):
+            continue
+        input_id = _extract_related_input_mission_id(mission)
+        if input_id is None or int(input_id) != int(released_input_id):
+            continue
+        had_block = bool(
+            "executionBlockedUntilNextCollab" in mission
+            or "ExecutionBlockedUntilNextCollab" in mission
+        )
+        mission.pop("executionBlockedUntilNextCollab", None)
+        mission.pop("ExecutionBlockedUntilNextCollab", None)
+        if had_block:
+            cleared += 1
+    return int(cleared), int(released_input_id)
 
 
 def _attack_completion_boundary_follow_up_sources(
@@ -7499,13 +7763,10 @@ def _apply_attack_plan_overrides(
                     f"standoff={selection.get('min_standoff_m')}/{selection.get('preferred_standoff_m')}m."
                 )
 
-            _apply_lah_altitude_floor(resolved_attack_coord, aircraft_coord)
-            if bool((resolved_attack_coord or {}).get("altitude_floor_applied")):
-                emit(
-                    "[ATTACK][POINT] Attack altitude raised to current LAH altitude "
-                    f"(aircraft={int(aircraft_id)}, target={sequence_target.get('target_id')}, "
-                    f"floor={resolved_attack_coord.get('lah_altitude_floor_m')}m)."
-                )
+            resolved_attack_coord = (
+                _attack_point_low_level_base(resolved_attack_coord)
+                or resolved_attack_coord
+            )
 
             if resolved_attack_coord.get("altitude") is None:
                 resolved_attack_coord["altitude"] = (
@@ -8914,7 +9175,7 @@ def _apply_attack_plan_overrides(
         ]
         _set_override_failure(
             "attack_tactical_certification_failed",
-            attack_failure_notice("attack_override_failed"),
+            attack_failure_notice("attack_tactical_certification_failed"),
         )
         emit(
             "[ATTACK][TACTICAL][ERR] Attack option rejected before state/file "
@@ -9914,6 +10175,109 @@ def _offset_coordinate_m(
     return shifted
 
 
+def _attack_low_level_clearance_m() -> float:
+    """Terrain clearance carried by the planned attack/popup-base route."""
+
+    value = get_runtime_attack_float("attack_low_level_clearance_m", 30.0)
+    try:
+        value = float(value)
+    except Exception:
+        value = 30.0
+    if not math.isfinite(value):
+        value = 30.0
+    return max(1.0, value)
+
+
+def _attack_point_low_level_base(
+    attack_coord: Optional[Dict[str, Any]],
+    *,
+    conceal_coord: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Replace a precomputed firing altitude with a terrain-safe popup base.
+
+    The horizontal attack-point solver is still useful: it tells us *where* a
+    sightline can be opened.  The altitude of that sightline is no longer part
+    of the mission contract, however.  SIM climbs from this low-level base until
+    its own terrain LOS opens, fires, and returns to this altitude.
+    """
+
+    attack = _normalize_coordinate(attack_coord)
+    if attack is None:
+        return None
+    conceal = _normalize_coordinate(conceal_coord)
+    result = dict(attack_coord or {})
+    result["latitude"] = float(attack["latitude"])
+    result["longitude"] = float(attack["longitude"])
+
+    clearance_m = _attack_low_level_clearance_m()
+    terrain_floor_m: Optional[float] = None
+    terrain_altitude_m = _to_float(result.get("terrain_altitude_m"))
+    if terrain_altitude_m is not None and math.isfinite(terrain_altitude_m):
+        terrain_floor_m = float(terrain_altitude_m) + float(clearance_m)
+    else:
+        try:
+            profile = build_lah_terrain_following_path(
+                [attack],
+                clearance_m=float(clearance_m),
+                prefer_low_terrain=False,
+            )
+        except Exception:
+            profile = []
+        if profile:
+            terrain_floor_m = _to_float(profile[-1].get("altitude"))
+
+    conceal_altitude_m = (
+        _to_float(conceal.get("altitude")) if conceal is not None else None
+    )
+    lateral_m = (
+        _haversine_distance_m(conceal, attack)
+        if conceal is not None
+        else None
+    )
+    base_candidates: List[float] = []
+    if terrain_floor_m is not None and math.isfinite(terrain_floor_m):
+        base_candidates.append(float(terrain_floor_m))
+    # For the deliberately tiny hide->attack separation, retain the certified
+    # hide altitude unless the adjacent DEM cell requires a higher safe floor.
+    min_offset_m = max(
+        1.0,
+        get_runtime_attack_float("attack_point_min_horizontal_offset_m", 5.0),
+    )
+    if (
+        conceal_altitude_m is not None
+        and math.isfinite(conceal_altitude_m)
+        and lateral_m is not None
+        and float(lateral_m) <= float(min_offset_m) * 2.0
+    ):
+        base_candidates.append(float(conceal_altitude_m))
+    if not base_candidates:
+        original_altitude_m = _to_float(attack.get("altitude"))
+        if original_altitude_m is not None and math.isfinite(original_altitude_m):
+            base_candidates.append(float(original_altitude_m))
+    if not base_candidates:
+        base_candidates.append(0.0)
+
+    popup_was_certified = bool(result.get("los_verified"))
+    result["altitude"] = int(math.ceil(max(base_candidates)))
+    result["attack_altitude_control"] = "sim_los_popup"
+    result["attack_point_base_clearance_m"] = float(clearance_m)
+    result["attack_point_popup_los_certified"] = bool(popup_was_certified)
+    # These fields described the old planner-commanded pop-up altitude.  Keeping
+    # them beside a low attack WP makes the packet internally contradictory.
+    for key in (
+        "altitude_offset_m",
+        "los_required_altitude_m",
+        "los_selected_altitude_m",
+        "los_altitude_adjusted",
+        "lah_altitude_floor_m",
+        "altitude_floor_applied",
+    ):
+        result.pop(key, None)
+    if "los_verified" in result:
+        result["los_verified"] = False
+    return result
+
+
 def _attack_popup_candidates(hide: Dict[str, Any]) -> List[Tuple[Dict[str, Any], float]]:
     """Where the aircraft may pop up from, nearest first.
 
@@ -10199,15 +10563,11 @@ def _attack_coordinate_at_hide_endpoint(
     emit: Optional[Callable[[str], None]] = None,
     aircraft_id: Optional[int] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Turn the certified hide point into the firing point above it.
+    """Choose a low-level popup base beside the certified hide point.
 
-    A gunship engages from cover: it holds behind terrain and climbs just
-    enough to see the target, it does not fly to a separate firing position and
-    back.  The concealment endpoint already sits on terrain that masks it, so
-    the attack point is that same latitude/longitude with the altitude the LOS
-    profile says is needed.  There is deliberately no attack-altitude ceiling:
-    proximity to the certified hide point wins, and the selected point climbs
-    to the lowest altitude at which the target LOS is open.
+    LOS solving still chooses the best horizontal position, but its firing
+    altitude is certification data only.  The mission carries a terrain-safe
+    concealed altitude and SIM owns the climb-until-visible/fire/descend cycle.
     """
 
     hide = _normalize_coordinate(hide_coord)
@@ -10217,10 +10577,13 @@ def _attack_coordinate_at_hide_endpoint(
     if not bool(get_runtime_attack_int("attack_point_at_hide_endpoint", 1)):
         return None
 
-    # Climb only as far as the sightline needs.  The ordinary attack point sits
-    # ground+300 m because it is chosen without regard to cover; popping up out
-    # of a hide position must not throw that concealment away.
+    # The firing altitude is evaluated only to prove the selected horizontal
+    # position can open LOS.  It is deliberately not serialized into the WP.
     popup_margin_m = get_runtime_attack_float("attack_point_hide_popup_margin_m", 30.0)
+    minimum_offset_m = max(
+        1.0,
+        get_runtime_attack_float("attack_point_min_horizontal_offset_m", 5.0),
+    )
 
     best: Optional[Dict[str, Any]] = None
     best_altitude_m: Optional[int] = None
@@ -10244,6 +10607,21 @@ def _attack_coordinate_at_hide_endpoint(
         else _attack_popup_candidates(hide)
     )
     for candidate, offset_m in candidates:
+        # An armed WP must remain distinct from the preceding hide WP.  Move the
+        # old straight-up candidate a few metres toward the target and certify
+        # LOS again at that actual horizontal position.
+        if float(offset_m) <= 0.5:
+            bearing_deg = _bearing_between(
+                float(hide["latitude"]),
+                float(hide["longitude"]),
+                float(target["latitude"]),
+                float(target["longitude"]),
+            )
+            shifted = _project_coordinate(hide, bearing_deg, float(minimum_offset_m))
+            candidate = _normalize_coordinate(shifted) or _offset_coordinate_m(
+                hide, float(minimum_offset_m), 0.0
+            )
+            offset_m = float(minimum_offset_m)
         result, error = _compute_attack_los_altitude_batch_dem(
             candidate,
             target,
@@ -10357,20 +10735,16 @@ def _attack_coordinate_at_hide_endpoint(
             )
         return None
 
-    coordinate = dict(best)
-    # A firing point that sits exactly on the hide point is a contradiction:
-    # concealment means the sightline is blocked, and a shot means it is open.
-    # It happens when the sightline grazes the terrain by well under a metre, so
-    # the two tests read the same ridge differently.  Always leave cover by a
-    # real, flyable margin.
-    hide_altitude_m = _normalize_altitude_value(hide.get("altitude"))
-    if hide_altitude_m is not None and best_offset_m <= 0.5:
-        floor_altitude_m = int(hide_altitude_m) + int(_LAH_MIN_POPUP_CLIMB_M)
-        if int(best_altitude_m) < floor_altitude_m:
-            best_altitude_m = floor_altitude_m
-            coordinate["altitude"] = int(floor_altitude_m)
+    coordinate = _attack_point_low_level_base(best, conceal_coord=hide)
+    if coordinate is None:
+        return None
+    # Reaching this branch means `_lowest_firing_altitude_m` found the LOS
+    # crossing at the selected XY.  Preserve that fact separately from the
+    # low planned altitude, whose own `los_verified` value is intentionally
+    # false until SIM performs the climb.
+    coordinate["attack_point_popup_los_certified"] = True
     coordinate["attack_point_at_hide_endpoint"] = True
-    coordinate["attack_point_vertical_popup"] = bool(best_offset_m <= 0.5)
+    coordinate["attack_point_vertical_popup"] = True
     if isinstance(best_exposure, dict):
         coordinate["attack_other_enemy_los_checked"] = bool(
             best_exposure.get("checked")
@@ -10384,8 +10758,7 @@ def _attack_coordinate_at_hide_endpoint(
         coordinate["attack_other_enemy_unknown_count"] = int(
             best_exposure.get("unknownCount") or 0
         )
-    if best_offset_m > 0.0:
-        coordinate["attack_point_popup_offset_m"] = float(best_offset_m)
+    coordinate["attack_point_popup_offset_m"] = float(best_offset_m)
     if emit is not None:
         hide_altitude = _normalize_altitude_value(hide.get("altitude"))
         climb_text = (
@@ -10394,8 +10767,9 @@ def _attack_coordinate_at_hide_endpoint(
             else "climb=unknown"
         )
         emit(
-            "[ATTACK][TACTICAL] Attack point placed above the hide endpoint "
-            f"(aircraft={aircraft_id}, alt={coordinate.get('altitude')}m, {climb_text}, "
+            "[ATTACK][TACTICAL] Low-level SIM popup base placed beside the hide endpoint "
+            f"(aircraft={aircraft_id}, baseAlt={coordinate.get('altitude')}m, "
+            f"certifiedPopup={best_altitude_m}m, {climb_text}, "
             f"lateral={int(best_offset_m)}m, candidates={solved}/{len(candidates)}, "
             f"otherEnemyVisible={coordinate.get('attack_other_enemy_visible_count', 0)}, "
             f"otherEnemyUnknown={coordinate.get('attack_other_enemy_unknown_count', 0)})."
@@ -10596,12 +10970,10 @@ def _rebase_lah_path_etas(
 def _lah_attack_window_seconds_from_waypoints(
     popup_waypoints: List[Dict[str, Any]],
 ) -> Optional[int]:
-    """Measure the hide -> fire -> regain-hide window of a built attack path.
+    """Measure the planned hide-to-popup-base window of an attack path.
 
-    A wingman holding in cover must wait out the shooter's whole exposure, so
-    the number is taken from the emitted waypoints rather than re-estimated:
-    the ETA span covers climb, shot and descent, and the terminal dwells cover
-    the settle time at either end.
+    SIM owns the unplanned LOS climb/fire/descent interval, so this value is
+    only the serialized approach span plus its endpoint dwell metadata.
     """
 
     waypoints = [item for item in (popup_waypoints or []) if isinstance(item, dict)]
@@ -10639,10 +11011,9 @@ def _record_lah_tactical_points(
         )
 
         if conceal_coordinate is not None:
-            # A pop-up attack touches the concealment ground twice: before the
-            # climb and again on the way down.  The climb and the shot share
-            # that ground position but sit above it, so altitude is what
-            # separates "in cover" from "exposed".
+            # Only planned low-level points at or below the certified
+            # concealment altitude may be published as cover.  SIM's temporary
+            # LOS climb/descent is deliberately absent from this waypoint list.
             conceal_altitude_m = _normalize_altitude_value(
                 (_normalize_coordinate(conceal_coordinate) or {}).get("altitude")
             )
@@ -10689,11 +11060,7 @@ def _same_lah_ground_position(
     *,
     tolerance_deg: float = 1e-6,
 ) -> bool:
-    """Same latitude/longitude, altitude ignored.
-
-    A pop-up climbs and sinks over one spot, so the concealment ground position
-    is shared by waypoints at different altitudes.
-    """
+    """Same latitude/longitude, altitude ignored."""
 
     a = _normalize_coordinate(left)
     b = _normalize_coordinate(right)
@@ -10866,6 +11233,7 @@ def _build_lah_low_level_waypoint_route(
     waypoint_id_provider: Callable[[], int],
     speed_mps: float,
     terminal_template: Optional[Dict[str, Any]] = None,
+    clearance_m: Optional[float] = None,
 ) -> List[Dict[str, Any]]:
     """Build an adaptive DEM-clearance route with a feasible vertical ETA.
 
@@ -10879,6 +11247,11 @@ def _build_lah_low_level_waypoint_route(
 
     profile = build_lah_terrain_following_path(
         route_coordinates,
+        clearance_m=(
+            float(clearance_m)
+            if clearance_m is not None
+            else LAH_LOW_LEVEL_CLEARANCE_M
+        ),
         prefer_low_terrain=bool(get_runtime_attack_int("lah_route_prefer_low_terrain", 1)),
         low_terrain_corridor_m=get_runtime_attack_float(
             "lah_route_low_terrain_corridor_m", LAH_LOW_TERRAIN_CORRIDOR_M
@@ -10886,6 +11259,7 @@ def _build_lah_low_level_waypoint_route(
         low_terrain_min_leg_m=get_runtime_attack_float(
             "lah_route_low_terrain_min_leg_m", LAH_LOW_TERRAIN_MIN_LEG_M
         ),
+        cruise_speed_mps=float(speed_mps),
     )
     if not profile:
         return []
@@ -10967,62 +11341,41 @@ def _build_lah_low_level_attack_waypoints(
     route_coordinates: Optional[List[Dict[str, Any]]] = None,
     regain_cover_coord: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
-    """Pop up from cover, fire, sink back - or approach low when far away.
+    """Fly to a low popup base and leave the LOS climb/descent to SIM.
 
-    ``regain_cover_coord`` appends the descent back behind terrain after the
-    shot.  A pop-up attack is climb, fire, sink: without it the aircraft holds
-    the firing altitude - where, line of sight being symmetric, it is visible -
-    until some later replan happens to move it.
+    The attack attribute belongs only to the final low-level waypoint.  If the
+    selected attack ground position differs from the hide point, every
+    terrain-following waypoint between them remains in this same individual
+    attack mission.  ``regain_cover_coord`` is retained as an API-compatible
+    input but no planner-side pop-up/descent waypoint is emitted.
     """
 
-    cover_norm = _normalize_coordinate(regain_cover_coord)
-    attack_norm = _normalize_coordinate(attack_coord)
-    # A firing point solved from the hide endpoint sits inside its immediate
-    # neighbourhood, so the aircraft simply climbs towards it - diagonally when
-    # the search stepped aside for a lower sightline.  Routing that through the
-    # terrain follower would fly a separate low-level approach for a couple of
-    # hundred metres, which is neither faster nor more covered, and it replaces
-    # the certified hide altitude with the router's own DEM floor.
-    direct_popup = bool(
-        cover_norm is not None
-        and attack_norm is not None
-        and (
-            _same_lah_ground_position(cover_norm, attack_norm)
-            or bool((attack_coord or {}).get("attack_point_at_hide_endpoint"))
-        )
-    )
-    if direct_popup:
-        cover_start = _build_lah_waypoint_from_template(
-            template_wp,
-            int(waypoint_id_provider()),
-            cover_norm,
-            0,
-            mark_attack=False,
-            target_id=None,
-            speed_override_mps=speed_mps,
-        )
-        cover_start["isDone"] = False
-        cover_start["eta"] = 0
-        cover_start["hovering"] = {"time": int(_attack_cover_hold_seconds())}
-        approach = [cover_start]
+    del regain_cover_coord
+    approach_coordinates = [
+        coord
+        for coord in (route_coordinates or [start_coord, attack_coord])
+        if _normalize_coordinate(coord) is not None
+    ]
+    if not approach_coordinates:
+        approach_coordinates = [start_coord, attack_coord]
+    elif len(approach_coordinates) == 1:
+        approach_coordinates.append(attack_coord)
     else:
-        approach_coordinates = [
-            coord
-            for coord in (route_coordinates or [start_coord, attack_coord])
-            if _normalize_coordinate(coord) is not None
-        ]
-        if not approach_coordinates:
-            approach_coordinates = [start_coord, attack_coord]
-        elif len(approach_coordinates) == 1:
-            approach_coordinates.append(attack_coord)
-        else:
-            approach_coordinates[-1] = attack_coord
-        approach = _build_lah_low_level_waypoint_route(
-            template_wp=template_wp,
-            route_coordinates=approach_coordinates,
-            waypoint_id_provider=waypoint_id_provider,
-            speed_mps=speed_mps,
-        )
+        approach_coordinates[-1] = attack_coord
+    attack_clearance_m = (
+        _attack_low_level_clearance_m()
+        if str((attack_coord or {}).get("attack_altitude_control") or "")
+        == "sim_los_popup"
+        or bool((attack_coord or {}).get("attack_point_at_hide_endpoint"))
+        else None
+    )
+    approach = _build_lah_low_level_waypoint_route(
+        template_wp=template_wp,
+        route_coordinates=approach_coordinates,
+        waypoint_id_provider=waypoint_id_provider,
+        speed_mps=speed_mps,
+        clearance_m=attack_clearance_m,
+    )
     attack_wp = _build_lah_waypoint_from_template(
         template_wp,
         int(attack_waypoint_id),
@@ -11085,91 +11438,13 @@ def _build_lah_low_level_attack_waypoints(
     elif approach:
         approach[-1]["nextWaypointID"] = int(attack_waypoint_id)
 
-    cover_wp = _build_lah_regain_cover_waypoint(
-        template_wp=template_wp,
-        attack_wp=attack_wp,
-        attack_coord=attack_coord,
-        regain_cover_coord=regain_cover_coord,
-        waypoint_id_provider=waypoint_id_provider,
-        speed_mps=speed_mps,
-        attack_eta_s=int(attack_eta_s),
-    )
-    if cover_wp is None:
-        legacy = approach + [attack_wp]
-        _apply_leg_fuel(legacy)
-        return legacy
-    # ICD 0304 ecf is per-leg fuel, not a terminal marker; the only terminal
-    # contract is nextWaypointID, which now belongs to the descent.
-    attack_wp["nextWaypointID"] = int(cover_wp["waypointID"])
-    combined = approach + [attack_wp, cover_wp]
+    combined = approach + [attack_wp]
     _apply_leg_fuel(combined)
     return combined
 
 
-def _build_lah_regain_cover_waypoint(
-    *,
-    template_wp: Dict[str, Any],
-    attack_wp: Dict[str, Any],
-    attack_coord: Dict[str, Any],
-    regain_cover_coord: Optional[Dict[str, Any]],
-    waypoint_id_provider: Callable[[], int],
-    speed_mps: float,
-    attack_eta_s: int,
-) -> Optional[Dict[str, Any]]:
-    """Return to the exact certified cover coordinate after the shot.
-
-    Returns ``None`` when there is nothing to descend to, so the attack path
-    keeps its previous shape rather than emitting a degenerate waypoint.
-    """
-
-    if not bool(get_runtime_attack_int("attack_regain_cover_enabled", 1)):
-        return None
-    cover = _normalize_coordinate(regain_cover_coord)
-    attack_norm = _normalize_coordinate(attack_coord)
-    if cover is None or attack_norm is None:
-        return None
-    cover_altitude_m = _normalize_altitude_value(cover.get("altitude"))
-    attack_altitude_m = _normalize_altitude_value(attack_norm.get("altitude"))
-    if cover_altitude_m is None or attack_altitude_m is None:
-        return None
-    if int(cover_altitude_m) >= int(attack_altitude_m):
-        # No pop-up happened, so there is nothing to sink back from.
-        return None
-
-    # The concealment certificate belongs to this exact XY and altitude.  A
-    # lateral popup must come back to it; copying only the cover altitude onto
-    # the firing XY creates an uncertified (and potentially below-DEM) point.
-    descend_coord = {
-        "latitude": float(cover["latitude"]),
-        "longitude": float(cover["longitude"]),
-        "altitude": int(cover_altitude_m),
-    }
-    cover_wp = _build_lah_waypoint_from_template(
-        template_wp,
-        int(waypoint_id_provider()),
-        descend_coord,
-        0,
-        mark_attack=False,
-        target_id=None,
-        speed_override_mps=speed_mps,
-    )
-    cover_wp["isDone"] = False
-    descent_m = float(attack_altitude_m) - float(cover_altitude_m)
-    vertical_rate_mps = _lah_planned_vertical_rate_mps(-descent_m)
-    vertical_s = max(0.0, descent_m) / vertical_rate_mps
-    horizontal_m = _haversine_distance_m(attack_norm, cover) or 0.0
-    horizontal_s = float(horizontal_m) / max(0.1, float(speed_mps))
-    descent_s = int(math.ceil(max(vertical_s, horizontal_s) - 1e-9))
-    cover_wp["eta"] = int(min(0xFFFFFFFF, int(attack_eta_s) + max(1, descent_s)))
-    cover_wp["ecf"] = 1.0
-    cover_wp["nextWaypointID"] = 0
-    # Dwell belongs in hovering.time, never in eta: eta is arrival time.
-    cover_wp["hovering"] = {"time": int(_attack_cover_hold_seconds())}
-    return cover_wp
-
-
 def _attack_cover_hold_seconds() -> int:
-    """Seconds the manned aircraft sits in cover either side of the pop-up."""
+    """Seconds the manned aircraft settles in cover before the popup base."""
 
     return max(0, get_runtime_attack_int("attack_cover_hold_seconds", 10))
 
@@ -11724,6 +11999,34 @@ def _predict_replan_resume_anchor(
     if anchor is None:
         return None
 
+    max_distance_m = max(
+        0.0,
+        get_runtime_attack_float("replan_start_trim_max_lookahead_m", 600.0),
+    )
+    line_prediction = _normalize_coordinate(
+        (state or {}).get("linePredictedEntryCoordinate")
+    )
+    line_prediction_lead_s = _to_float((state or {}).get("linePredictionLeadS"))
+    line_prediction_age_s = _to_float((state or {}).get("lineTurnDataAgeS"))
+    line_prediction_fresh = bool(
+        line_prediction is not None
+        and line_prediction_lead_s is not None
+        and 0.0 < float(line_prediction_lead_s) <= 12.0
+        and line_prediction_age_s is not None
+        and 0.0 <= float(line_prediction_age_s) <= 5.0
+    )
+    if line_prediction_fresh and line_prediction is not None:
+        prediction_distance_m = _haversine_distance_m(anchor, line_prediction) or 0.0
+        if float(prediction_distance_m) > 1.0:
+            if max_distance_m > 0.0 and float(prediction_distance_m) > max_distance_m:
+                line_prediction = _interpolate_coordinate(
+                    anchor,
+                    line_prediction,
+                    max_distance_m / float(prediction_distance_m),
+                )
+            line_prediction["altitude"] = anchor.get("altitude")
+            return _normalize_coordinate(line_prediction) or anchor
+
     velocity = (state or {}).get("velocity") if isinstance(state, dict) else {}
     heading = _to_float((state or {}).get("heading"))
     if heading is None and isinstance(velocity, dict):
@@ -11734,8 +12037,10 @@ def _predict_replan_resume_anchor(
     if heading is None or speed_mps is None or speed_mps <= 0:
         return anchor
 
-    lookahead_s = max(0.0, get_runtime_attack_float("replan_start_trim_lookahead_s", 8.0))
-    max_distance_m = max(0.0, get_runtime_attack_float("replan_start_trim_max_lookahead_m", 600.0))
+    lookahead_s = max(
+        0.0,
+        get_runtime_attack_float("replan_start_trim_lookahead_s", 8.0),
+    )
     distance_m = float(speed_mps) * lookahead_s
     if max_distance_m > 0.0:
         distance_m = min(distance_m, max_distance_m)
@@ -11747,6 +12052,99 @@ def _predict_replan_resume_anchor(
         return anchor
     projected["altitude"] = anchor.get("altitude")
     return _normalize_coordinate(projected) or anchor
+
+
+def _line_resume_activation_anchor_on_carrier(
+    current_coord: Optional[Dict[str, Any]],
+    predicted_coord: Optional[Dict[str, Any]],
+    resume_waypoints: List[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """Move the first reused LINE carrier only as far as activation lookahead.
+
+    ``predicted_coord`` supplies the distance expected to be flown while the
+    replacement plan is generated and authorized.  The point itself can be
+    slightly off the old route while an aircraft is turning, so walk that
+    distance on the original directed carrier instead.  Later carrier
+    waypoints are intentionally never moved.
+    """
+
+    current = _normalize_coordinate(current_coord) if isinstance(current_coord, dict) else None
+    predicted = _normalize_coordinate(predicted_coord) if isinstance(predicted_coord, dict) else None
+    if current is None or predicted is None:
+        return None
+    lookahead_distance_m = _haversine_distance_m(current, predicted)
+    if lookahead_distance_m is None or float(lookahead_distance_m) <= 1.0:
+        return None
+
+    lat0_rad = math.radians(float(current["latitude"]))
+    lon_scale_m = max(1.0, 111_320.0 * math.cos(lat0_rad))
+
+    def _vector_from_current(coord: Dict[str, Any]) -> Tuple[float, float]:
+        return (
+            (float(coord["longitude"]) - float(current["longitude"])) * lon_scale_m,
+            (float(coord["latitude"]) - float(current["latitude"])) * 111_132.0,
+        )
+
+    predicted_vector = _vector_from_current(predicted)
+    predicted_norm = math.hypot(float(predicted_vector[0]), float(predicted_vector[1]))
+    if predicted_norm <= 1.0:
+        return None
+
+    directed_carrier: List[Dict[str, Any]] = []
+    for waypoint in resume_waypoints or []:
+        if not isinstance(waypoint, dict):
+            continue
+        candidate = _normalize_coordinate(waypoint.get("coordinate"))
+        if candidate is None:
+            continue
+        distance_from_current_m = _haversine_distance_m(current, candidate) or 0.0
+        if float(distance_from_current_m) <= 2.0:
+            continue
+        if not directed_carrier:
+            candidate_vector = _vector_from_current(candidate)
+            forward_dot = (
+                float(candidate_vector[0]) * float(predicted_vector[0])
+                + float(candidate_vector[1]) * float(predicted_vector[1])
+            )
+            # A stale current carrier may already be behind the aircraft.  Do
+            # not build the new first leg through it; look for the next point
+            # in the original directed suffix.
+            if forward_dot <= 0.0:
+                continue
+        if directed_carrier:
+            previous = directed_carrier[-1]
+            if (_haversine_distance_m(previous, candidate) or 0.0) <= 2.0:
+                continue
+        directed_carrier.append(candidate)
+
+    if not directed_carrier:
+        return None
+
+    remaining_m = float(lookahead_distance_m)
+    cursor = dict(current)
+    for carrier_coord in directed_carrier:
+        segment_m = _haversine_distance_m(cursor, carrier_coord) or 0.0
+        if float(segment_m) <= 1.0:
+            cursor = dict(carrier_coord)
+            continue
+        if remaining_m <= float(segment_m):
+            activation = _interpolate_coordinate(
+                cursor,
+                carrier_coord,
+                remaining_m / float(segment_m),
+            )
+            if current.get("altitude") is not None:
+                activation["altitude"] = current.get("altitude")
+            return _normalize_coordinate(activation)
+        remaining_m -= float(segment_m)
+        cursor = dict(carrier_coord)
+
+    # The lookahead reached the terminal carrier.  Clamping to the terminal is
+    # safer than projecting beyond the assigned LINE geometry.
+    terminal = dict(directed_carrier[-1])
+    if current.get("altitude") is not None:
+        terminal["altitude"] = current.get("altitude")
+    return _normalize_coordinate(terminal)
 
 
 def _waypoint_keep_start_index_before_anchor(
@@ -12612,6 +13010,22 @@ def _type2_branch_line_completion_confirmed(
     return bool(authoritative and not has_remaining)
 
 
+def _attack_source_path_can_skip_resume_split(
+    source_waypoints: List[Dict[str, Any]],
+) -> bool:
+    """Return true only when a one-point path has no nested LINE capture.
+
+    A Type-2 LINE can carry its whole remaining sweep in one top-level
+    waypoint.  The carrier count therefore cannot be used as a completion
+    signal while ``lineSearch.coordinateList`` still exists.
+    """
+
+    return bool(
+        len(source_waypoints) <= 1
+        and not _waypoints_declare_line_capture(source_waypoints)
+    )
+
+
 def _split_done_resume_path(
     source_fp_data: Dict[str, Any],
     *,
@@ -12625,9 +13039,12 @@ def _split_done_resume_path(
     waypoint_id_provider: Optional[Callable[[], int]] = None,
     timing: Optional[Dict[str, Any]] = None,
     synchronize_line_search_to_geometry: bool = False,
+    preserve_line_carrier_coordinates: bool = False,
+    apply_line_activation_anchor: bool = False,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Optional[int]]:
     split_started_total = time.perf_counter()
     waypoints = list(source_fp_data.get("waypointList") or [])
+    source_declares_line_capture = _waypoints_declare_line_capture(waypoints)
     done_waypoints: List[Dict[str, Any]] = []
     resume_waypoints: List[Dict[str, Any]] = []
     removed_wp_id: Optional[int] = None
@@ -12732,7 +13149,11 @@ def _split_done_resume_path(
         removedWaypointID=removed_wp_id,
     )
 
-    if resume_waypoints and resume_trim_anchor_coord is not None:
+    if (
+        resume_waypoints
+        and resume_trim_anchor_coord is not None
+        and not preserve_line_carrier_coordinates
+    ):
         trim_anchor_started = time.perf_counter()
         resume_before_trim = [deepcopy(item) for item in resume_waypoints if isinstance(item, dict)]
         resume_waypoints, stale_removed = _trim_waypoints_before_replan_anchor(
@@ -12762,6 +13183,7 @@ def _split_done_resume_path(
             skipped=True,
             hasResumeWaypoints=bool(resume_waypoints),
             hasResumeTrimAnchor=resume_trim_anchor_coord is not None,
+            carrierCoordinatesPreserved=bool(preserve_line_carrier_coordinates),
         )
 
     done_count_started = time.perf_counter()
@@ -12935,6 +13357,7 @@ def _split_done_resume_path(
             resume_waypoints,
             cut_points,
             preserve_waypoints=True,
+            preserve_carrier_coordinates=bool(preserve_line_carrier_coordinates),
             reference_coord_for_offset=resume_offset_reference_coord,
         )
         _record_split_stage(
@@ -12963,6 +13386,7 @@ def _split_done_resume_path(
         resume_waypoints, merged_groups = merge_small_adjacent_line_search_waypoints(
             resume_waypoints,
             max_sweeps=2,
+            preserve_carrier_coordinates=bool(preserve_line_carrier_coordinates),
             reference_coord_for_offset=resume_offset_reference_coord,
         )
         _record_split_stage(
@@ -12982,6 +13406,32 @@ def _split_done_resume_path(
             time.perf_counter(),
             skipped=True,
             resumeWaypointCount=0,
+        )
+
+    if (
+        source_declares_line_capture
+        and not _waypoints_have_executable_line_capture(resume_waypoints)
+    ):
+        removed_non_capture_waypoint_count = len(resume_waypoints)
+        resume_waypoints = []
+        emit(
+            "[ATTACK][UAV] No executable LINE capture remains; discarded "
+            f"{removed_non_capture_waypoint_count} fly-by/return waypoint(s) "
+            "so the caller can emit one completion loiter."
+        )
+        _record_split_stage(
+            "discard_no_capture_resume",
+            time.perf_counter(),
+            applied=True,
+            removedWaypointCount=int(removed_non_capture_waypoint_count),
+        )
+    else:
+        _record_split_stage(
+            "discard_no_capture_resume",
+            time.perf_counter(),
+            applied=False,
+            sourceDeclaresLineCapture=bool(source_declares_line_capture),
+            resumeWaypointCount=len(resume_waypoints),
         )
 
     for wp in done_waypoints:
@@ -13020,14 +13470,48 @@ def _split_done_resume_path(
             or _normalize_coordinate((resume_waypoints[0] or {}).get("coordinate"))
         )
         realign_started = time.perf_counter()
-        reanchored = realign_line_search_waypoints_to_first_sweep(
-            resume_waypoints,
-            reference_coord_for_offset=resume_reference_coord,
-        )
+        reanchored = 0
+        activation_anchor_applied = False
+        if preserve_line_carrier_coordinates:
+            if apply_line_activation_anchor:
+                activation_anchor = _line_resume_activation_anchor_on_carrier(
+                    resume_reference_coord,
+                    resume_trim_anchor_coord,
+                    resume_waypoints,
+                )
+                if activation_anchor is not None:
+                    first_capture_waypoint = next(
+                        (
+                            waypoint
+                            for waypoint in resume_waypoints
+                            if isinstance(waypoint, dict)
+                            and isinstance(
+                                ((waypoint.get("filmingProperty") or {}).get("lineSearch")),
+                                dict,
+                            )
+                        ),
+                        None,
+                    )
+                    if first_capture_waypoint is not None:
+                        first_capture_waypoint["coordinate"] = dict(activation_anchor)
+                        activation_anchor_applied = True
+                        emit(
+                            "[ATTACK][UAV] Reused LINE carrier kept in its original direction; "
+                            "only the first capture waypoint was advanced to the predicted "
+                            "plan-activation position."
+                        )
+        else:
+            reanchored = realign_line_search_waypoints_to_first_sweep(
+                resume_waypoints,
+                reference_coord_for_offset=resume_reference_coord,
+            )
         _record_split_stage(
             "realign_line_search_waypoints_to_first_sweep",
             realign_started,
             reanchoredWaypoints=reanchored,
+            carrierCoordinatesPreserved=bool(preserve_line_carrier_coordinates),
+            activationAnchorEnabled=bool(apply_line_activation_anchor),
+            activationAnchorApplied=bool(activation_anchor_applied),
             resumeWaypointCount=len(resume_waypoints),
         )
         if reanchored > 0:
@@ -13257,6 +13741,16 @@ def _build_uav_attack_tracking_package(
     tracking_target_id_value = tracking_target_id if tracking_target_id is not None else 0
 
     original_entry = deepcopy(target_mission_template)
+    source_boundary_guard_contract = extract_boundary_guard_contract(
+        original_entry,
+        original_entry.get("individualMissionInfo"),
+        fp_data,
+    )
+    source_boundary_guard_set_id = (
+        str(source_boundary_guard_contract.get("boundaryGuardSetID") or "").strip()
+        if is_boundary_guard_loop(source_boundary_guard_contract)
+        else ""
+    )
     base_rel_block = dict(original_entry.get("relatedMission") or {})
     input_mission_id = _to_int(base_rel_block.get("inputMissionID")) or _to_int((ctx.get("mission_ids") or [None])[0]) or 0
     prior_mission_id = _to_int(base_rel_block.get("priorMissionID")) or 0
@@ -13307,9 +13801,30 @@ def _build_uav_attack_tracking_package(
     mission_resume.pop("executionBlockedUntilNextCollab", None)
     source_waypoints = list(fp_data.get("waypointList") or [])
     source_single_point = len(source_waypoints) <= 1
+    source_path_can_skip_resume_split = _attack_source_path_can_skip_resume_split(
+        source_waypoints
+    )
+    source_type2_line_phase = _source_type2_self_reliance_phase(
+        source_plan_id=_to_int(getattr(artifacts, "source_plan_id", None)),
+        input_mission_id=int(input_mission_id),
+    )
+    type2_line_completion_confirmed = _type2_branch_line_completion_confirmed(
+        source_plan_id=_to_int(getattr(artifacts, "source_plan_id", None)),
+        input_mission_id=int(input_mission_id),
+        path_id=_to_int(getattr(artifacts, "path_id", None)),
+        sweep_progress=sweep_progress,
+    )
+    reuse_directed_line_carrier = bool(
+        source_type2_line_phase
+        in {
+            TYPE2_SELF_RELIANCE_OUTBOUND_LINE,
+            TYPE2_SELF_RELIANCE_RETURN_LINE,
+        }
+        and _waypoints_declare_line_capture(source_waypoints)
+    )
     split_started = time.perf_counter()
     split_timing: Dict[str, Any] = {}
-    if source_single_point:
+    if source_path_can_skip_resume_split:
         done_waypoints = deepcopy(source_waypoints)
         for wp in done_waypoints:
             if isinstance(wp, dict):
@@ -13318,7 +13833,8 @@ def _build_uav_attack_tracking_package(
         removed_wp_id = _to_int((done_waypoints[-1] or {}).get("waypointID")) if done_waypoints else None
         emit(
             "[ATTACK][UAV] Source path has a single waypoint; "
-            "preserving it as done and skipping done/resume split."
+            "it has no nested LINE capture, so it is preserved as done and "
+            "the done/resume split is skipped."
         )
     else:
         done_waypoints, resume_waypoints, removed_wp_id = _split_done_resume_path(
@@ -13326,27 +13842,32 @@ def _build_uav_attack_tracking_package(
             artifacts=artifacts,
             sweep_progress=sweep_progress,
             emit=emit,
-            force_nonempty_resume=True,
+            force_nonempty_resume=not type2_line_completion_confirmed,
             append_replan_anchor=True,
             replan_coordinate=agent_coord,
             resume_trim_anchor_coord=replan_resume_anchor,
             waypoint_id_provider=id_reservation.next_waypoint,
             timing=split_timing,
-            synchronize_line_search_to_geometry=(
-                _source_type2_self_reliance_phase(
-                    source_plan_id=_to_int(getattr(artifacts, "source_plan_id", None)),
-                    input_mission_id=int(input_mission_id),
-                )
-                in {
-                    TYPE2_SELF_RELIANCE_OUTBOUND_LINE,
-                    TYPE2_SELF_RELIANCE_RETURN_LINE,
-                }
-            ),
+            synchronize_line_search_to_geometry=bool(reuse_directed_line_carrier),
+            preserve_line_carrier_coordinates=bool(reuse_directed_line_carrier),
+            # The tracker leaves this branch to prosecute the target.  Its
+            # eventual return position is unknown here, so keep every original
+            # carrier coordinate and choose the activation point at post-attack
+            # release time instead of freezing an attack-time prediction.
+            apply_line_activation_anchor=False,
         )
+        if type2_line_completion_confirmed:
+            emit(
+                "[ATTACK][UAV] Type-2 LINE completion is authoritative; "
+                "the resume carrier may collapse to the terminal hold instead "
+                "of restoring already captured sweep points."
+            )
     _record_builder_stage(
         "split_done_resume",
         split_started,
         sourceSinglePoint=bool(source_single_point),
+        sourcePathCanSkipResumeSplit=bool(source_path_can_skip_resume_split),
+        type2LineCompletionConfirmed=bool(type2_line_completion_confirmed),
         doneWaypointCount=len(done_waypoints or []),
         resumeWaypointCount=len(resume_waypoints or []),
         removedWaypointID=removed_wp_id,
@@ -13387,18 +13908,20 @@ def _build_uav_attack_tracking_package(
     resume_fp_data["aircraftID"] = descriptor["aircraft_id"]
     resume_fp_data["individualMissionID"] = resume_individual_id
 
-    type2_branch_line_complete = _type2_branch_line_completion_confirmed(
-        source_plan_id=_to_int(getattr(artifacts, "source_plan_id", None)),
-        input_mission_id=int(input_mission_id),
-        path_id=_to_int(getattr(artifacts, "path_id", None)),
-        sweep_progress=sweep_progress,
+    type2_branch_collaboration_barrier = bool(
+        source_type2_line_phase
+        in {
+            TYPE2_SELF_RELIANCE_OUTBOUND_LINE,
+            TYPE2_SELF_RELIANCE_GUARD_AREA,
+            TYPE2_SELF_RELIANCE_RETURN_LINE,
+        }
     )
     completion_boundary_hold = False
-    if not resume_waypoints and not type2_branch_line_complete:
+    if not resume_waypoints:
         hold_waypoint = _build_uav_attack_completion_hold_waypoint(
             fp_data,
             waypoint_id=id_reservation.next_waypoint(),
-            fallback_coordinate=agent_coord,
+            fallback_coordinate=tracking_flight_coord,
         )
         if hold_waypoint is not None:
             resume_waypoints = [hold_waypoint]
@@ -13417,19 +13940,20 @@ def _build_uav_attack_tracking_package(
             mission_info["SPEED"] = float(_UAV_ATTACK_COMPLETION_HOLD_SPEED_MPS)
             mission_resume["individualMissionInfo"] = mission_info
             completion_boundary_hold = True
+            if source_boundary_guard_set_id:
+                # The synthetic boundary hold is not an AREA guard child and
+                # must not participate in the remaining observation cycle.
+                clear_boundary_guard_contract(
+                    mission_resume,
+                    include_individual_mission_info=True,
+                )
+                clear_boundary_guard_contract(resume_fp_data)
             emit(
                 "[ATTACK][UAV] Current collaborative sweep has no remaining geometry; "
                 "inserted final capture-point loiter; future input missions will be retained "
                 "but execution-blocked until the next collaborative handoff "
                 f"(aircraft={descriptor['aircraft_id']}, inputMissionID={input_mission_id})."
             )
-    elif not resume_waypoints:
-        emit(
-            "[ATTACK][TYPE2-LINE-SUFFIX] Completed branch LINE removed; "
-            "following AREA/LINE missions remain executable "
-            f"(aircraft={descriptor['aircraft_id']}, inputMissionID={input_mission_id})."
-        )
-
     has_resume = bool(resume_waypoints)
     follow_up_missions: List[Dict[str, Any]] = []
     follow_up_paths: List[Tuple[Path, Dict[str, Any]]] = []
@@ -13471,13 +13995,13 @@ def _build_uav_attack_tracking_package(
             return None
         follow_up_missions, follow_up_paths, follow_up_stats = follow_up_artifacts
         blocked_follow_up_count = 0
-        if completion_boundary_hold:
+        if completion_boundary_hold or type2_branch_collaboration_barrier:
             blocked_follow_up_count = _mark_attack_followups_execution_blocked(
                 follow_up_missions,
                 current_input_id=int(input_mission_id),
             )
             emit(
-                "[ATTACK][UAV] Retained future mission artifacts at completed collaboration "
+                "[ATTACK][UAV] Retained future mission artifacts behind the collaboration "
                 f"boundary (aircraft={descriptor['aircraft_id']}, "
                 f"blockedFollowUps={int(blocked_follow_up_count)})."
             )
@@ -13503,7 +14027,7 @@ def _build_uav_attack_tracking_package(
 
     target_eta = int(tracking_eta_s) if isinstance(tracking_eta_s, int) and tracking_eta_s >= 0 else 30
     target_loiter_time = target_eta
-    if collaborative_resume is not None:
+    if collaborative_resume is not None and not completion_boundary_hold:
         release_started = time.perf_counter()
         release_end_coord = _extract_final_uav_coordinate(fp_data)
         release_start_coord = _normalize_coordinate(tracking_flight_coord)
@@ -13613,6 +14137,22 @@ def _build_uav_attack_tracking_package(
         imp_data["individualMissionList"] = mission_list
     if 0 <= target_index < len(mission_list):
         prefix = [deepcopy(mission) for mission in mission_list[:target_index] if isinstance(mission, dict)]
+        if source_boundary_guard_set_id:
+            # These are already-flown children before the current guard child.
+            # Keeping them in a fresh IMP would replay completed guard pieces
+            # and mix the old 1..N contract with the new remaining subset.
+            prefix = [
+                mission
+                for mission in prefix
+                if str(
+                    extract_boundary_guard_contract(
+                        mission,
+                        mission.get("individualMissionInfo"),
+                    ).get("boundaryGuardSetID")
+                    or ""
+                ).strip()
+                != source_boundary_guard_set_id
+            ]
         rebuilt = list(prefix)
         if mission_done is not None:
             rebuilt.append(mission_done)
@@ -13649,6 +14189,40 @@ def _build_uav_attack_tracking_package(
     if resume_fp_dest is not None:
         write_entries.append((resume_fp_dest, resume_fp_data))
     write_entries.extend((dest, payload) for dest, payload in follow_up_paths)
+    if source_boundary_guard_set_id and not completion_boundary_hold:
+        guard_missions = [
+            mission
+            for mission in mission_list
+            if isinstance(mission, dict)
+            and str(
+                extract_boundary_guard_contract(
+                    mission,
+                    mission.get("individualMissionInfo"),
+                ).get("boundaryGuardSetID")
+                or ""
+            ).strip()
+            == source_boundary_guard_set_id
+        ]
+        guard_paths = [
+            payload
+            for _dest, payload in write_entries
+            if isinstance(payload, dict)
+            and str(
+                extract_boundary_guard_contract(payload).get("boundaryGuardSetID")
+                or ""
+            ).strip()
+            == source_boundary_guard_set_id
+        ]
+        guard_summary = finalize_boundary_guard_flight_path_sets_in_mission_order(
+            guard_missions,
+            guard_paths,
+            strict=True,
+        )
+        emit(
+            "[ATTACK][UAV] Type-2 boundary guard remaining cycle rebuilt "
+            f"(set={source_boundary_guard_set_id}, children={len(guard_paths)}, "
+            f"summary={guard_summary.get(source_boundary_guard_set_id) or {}})."
+        )
     _validate_generated_artifact_write_entries(
         scope=f"attack_uav_tracking:{new_imp_id}",
         individual_mission_plans=[imp_data],
@@ -13760,6 +14334,28 @@ def _build_uav_attack_resume_package(
 
     replan_coord = _normalize_coordinate((state or {}).get("coordinate")) or {}
     replan_resume_anchor = _predict_replan_resume_anchor(replan_coord, state)
+    source_type2_line_phase = _source_type2_self_reliance_phase(
+        source_plan_id=_to_int(getattr(artifacts, "source_plan_id", None)),
+        input_mission_id=int(input_mission_id),
+    )
+    reuse_directed_line_carrier = (
+        source_type2_line_phase
+        in {
+            TYPE2_SELF_RELIANCE_OUTBOUND_LINE,
+            TYPE2_SELF_RELIANCE_RETURN_LINE,
+        }
+        and _waypoints_declare_line_capture(
+            list(fp_data.get("waypointList") or [])
+        )
+    )
+    type2_branch_collaboration_barrier = bool(
+        source_type2_line_phase
+        in {
+            TYPE2_SELF_RELIANCE_OUTBOUND_LINE,
+            TYPE2_SELF_RELIANCE_GUARD_AREA,
+            TYPE2_SELF_RELIANCE_RETURN_LINE,
+        }
+    )
 
     split_started = time.perf_counter()
     split_timing: Dict[str, Any] = {}
@@ -13773,16 +14369,20 @@ def _build_uav_attack_resume_package(
         resume_trim_anchor_coord=replan_resume_anchor,
         waypoint_id_provider=id_reservation.next_waypoint,
         timing=split_timing,
+        preserve_line_carrier_coordinates=bool(reuse_directed_line_carrier),
         synchronize_line_search_to_geometry=(
-            _source_type2_self_reliance_phase(
-                source_plan_id=_to_int(getattr(artifacts, "source_plan_id", None)),
-                input_mission_id=int(input_mission_id),
-            )
+            source_type2_line_phase
             in {
                 TYPE2_SELF_RELIANCE_OUTBOUND_LINE,
                 TYPE2_SELF_RELIANCE_RETURN_LINE,
             }
         ),
+        # A Type-2 lineSearch is synchronized to the incoming carrier leg.
+        # Pulling only its first carrier to a short plan-activation lookahead
+        # leaves the long nested sweep untouched and can multiply searchSpeed
+        # by an order of magnitude.  Keep every directed carrier fixed; the
+        # ordinary entry/replan waypoint handles continuity from the live UAV.
+        apply_line_activation_anchor=False,
     )
     split_timing_summary = {
         "elapsedMs": _elapsed_ms_detail(split_started),
@@ -13819,14 +14419,8 @@ def _build_uav_attack_resume_package(
     resume_fp_data["aircraftID"] = descriptor["aircraft_id"]
     resume_fp_data["individualMissionID"] = resume_individual_id
 
-    type2_branch_line_complete = _type2_branch_line_completion_confirmed(
-        source_plan_id=_to_int(getattr(artifacts, "source_plan_id", None)),
-        input_mission_id=int(input_mission_id),
-        path_id=_to_int(getattr(artifacts, "path_id", None)),
-        sweep_progress=sweep_progress,
-    )
     completion_boundary_hold = False
-    if not resume_waypoints and not type2_branch_line_complete:
+    if not resume_waypoints:
         hold_waypoint = _build_uav_attack_completion_hold_waypoint(
             fp_data,
             waypoint_id=id_reservation.next_waypoint(),
@@ -13855,13 +14449,6 @@ def _build_uav_attack_resume_package(
                 "but execution-blocked until the next collaborative handoff "
                 f"(aircraft={descriptor['aircraft_id']}, inputMissionID={input_mission_id})."
             )
-    elif not resume_waypoints:
-        emit(
-            "[ATTACK][TYPE2-LINE-SUFFIX] Completed branch LINE removed; "
-            "following AREA/LINE missions remain executable "
-            f"(aircraft={descriptor['aircraft_id']}, inputMissionID={input_mission_id})."
-        )
-
     has_resume = bool(resume_waypoints)
     follow_up_missions: List[Dict[str, Any]] = []
     follow_up_paths: List[Tuple[Path, Dict[str, Any]]] = []
@@ -13900,13 +14487,13 @@ def _build_uav_attack_resume_package(
         if follow_up_artifacts is None:
             return None
         follow_up_missions, follow_up_paths, _follow_up_stats = follow_up_artifacts
-        if completion_boundary_hold:
+        if completion_boundary_hold or type2_branch_collaboration_barrier:
             blocked_follow_up_count = _mark_attack_followups_execution_blocked(
                 follow_up_missions,
                 current_input_id=int(input_mission_id),
             )
             emit(
-                "[ATTACK][UAV] Retained future mission artifacts at completed collaboration "
+                "[ATTACK][UAV] Retained future mission artifacts behind the collaboration "
                 f"boundary (aircraft={descriptor['aircraft_id']}, "
                 f"blockedFollowUps={int(blocked_follow_up_count)})."
             )
@@ -14306,6 +14893,10 @@ def _certify_incremental_append_hide_endpoint(
     if resource_dir is None:
         emit("[ATTACK][APPEND][WARN] DEM resource unavailable for inherited-hide certification.")
         return None
+    hide_altitude_m = _to_float(hide.get("altitude"))
+    if hide_altitude_m is None or not math.isfinite(float(hide_altitude_m)):
+        emit("[ATTACK][APPEND][WARN] inherited hide altitude unavailable.")
+        return None
 
     enemy_rows = contact.get("enemy_targets") or contact.get("enemy_coordinates") or []
     enemy_checked = _hide_point_masked_from_every_enemy(
@@ -14362,15 +14953,107 @@ def _certify_incremental_append_hide_endpoint(
     if len(visible_uav_ids) < int(required_links):
         emit(
             "[ATTACK][APPEND][WARN] inherited endpoint lost required UAV LOS "
-            f"(links={len(visible_uav_ids)}/{required_links}); append deferred."
+            f"(links={len(visible_uav_ids)}/{required_links}); relocation required."
         )
         return None
     return {
+        "certified": True,
         "enemyCheckedCount": int(enemy_checked),
         "uavLinkCount": len(visible_uav_ids),
         "requiredUavLinks": int(required_links),
         "visibleUavIDs": visible_uav_ids,
     }
+
+
+def _resolve_incremental_append_hide_endpoint(
+    append_origin: Dict[str, Any],
+    descriptor: Dict[str, Any],
+    state: Dict[str, Any],
+    *,
+    emit: Callable[[str], None],
+) -> Tuple[Dict[str, Any], Dict[str, Any], List[Dict[str, Any]]]:
+    """Resolve a usable hide point without changing the committed graph.
+
+    The appended mission may leave the committed path's terminal point and fly
+    to a newly certified concealment/communication point.  If no such point can
+    be certified, retain the ordinary attack-builder behaviour and emit a
+    clearly marked direct terrain-safe route instead of deleting the option.
+    """
+
+    origin = _normalize_coordinate(append_origin) or dict(append_origin)
+    certificate = _certify_incremental_append_hide_endpoint(
+        origin,
+        descriptor,
+        emit=emit,
+    )
+    if certificate is not None:
+        return dict(origin), dict(certificate), [dict(origin)]
+
+    relocation_state = dict(state or {})
+    relocation_state["coordinate"] = dict(origin)
+    tactical_plan = _plan_lah_enemy_contact_response(
+        descriptor,
+        relocation_state,
+        role="attacker",
+        emit=emit,
+    )
+    relocated_hide = _lah_tactical_endpoint_coordinate(tactical_plan)
+    if relocated_hide is not None:
+        relocated_certificate = _certify_incremental_append_hide_endpoint(
+            relocated_hide,
+            descriptor,
+            emit=emit,
+        )
+        if relocated_certificate is not None:
+            route_coordinates: List[Dict[str, Any]] = [dict(origin)]
+            for raw_waypoint in (
+                tactical_plan.get("routeWaypoints")
+                if isinstance(tactical_plan, dict)
+                else []
+            ) or []:
+                coord = _normalize_coordinate(raw_waypoint)
+                if coord is None:
+                    continue
+                if route_coordinates and _same_lah_3d_coordinate(
+                    route_coordinates[-1], coord
+                ):
+                    continue
+                route_coordinates.append(dict(coord))
+            if not _same_lah_3d_coordinate(route_coordinates[-1], relocated_hide):
+                route_coordinates.append(dict(relocated_hide))
+            relocated_certificate = {
+                **dict(relocated_certificate),
+                "relocated": True,
+                "relocationRoutePointCount": len(route_coordinates),
+            }
+            emit(
+                "[ATTACK][APPEND] inherited endpoint was unsuitable; "
+                "a replacement concealment/UAV-link point was certified "
+                f"(routePoints={len(route_coordinates)}, "
+                f"links={relocated_certificate.get('uavLinkCount')}/"
+                f"{relocated_certificate.get('requiredUavLinks')})."
+            )
+            return (
+                dict(relocated_hide),
+                relocated_certificate,
+                route_coordinates,
+            )
+
+    emit(
+        "[ATTACK][APPEND][WARN] no replacement concealment/UAV-link point was "
+        "certified; generating the appended terrain-safe direct route with "
+        "degraded tactical metadata instead of deleting the attack option."
+    )
+    return (
+        dict(origin),
+        {
+            "certified": False,
+            "relocated": False,
+            "degradedDirect": True,
+            "reason": "no_certified_append_hide",
+        },
+        [dict(origin)],
+    )
 
 
 def _append_attack_mission_preserving_graph(
@@ -14529,13 +15212,14 @@ def _build_lah_incremental_attack_append_package(
         emit("[ATTACK][APPEND][WARN] committed path endpoint coordinate is missing.")
         return None
 
-    hide_certificate = _certify_incremental_append_hide_endpoint(
-        append_start,
-        descriptor,
-        emit=emit,
+    attack_hide, hide_certificate, append_route_coordinates = (
+        _resolve_incremental_append_hide_endpoint(
+            append_start,
+            descriptor,
+            state,
+            emit=emit,
+        )
     )
-    if hide_certificate is None:
-        return None
 
     assigned = valid_targets[0]
     target_coord = _normalize_coordinate(
@@ -14547,7 +15231,7 @@ def _build_lah_incremental_attack_append_package(
         return None
     contact = descriptor.get("enemy_contact") if isinstance(descriptor.get("enemy_contact"), dict) else {}
     attack_coord = _attack_coordinate_at_hide_endpoint(
-        append_start,
+        attack_hide,
         target_coord,
         threat_targets=contact.get("enemy_targets") or contact.get("enemy_coordinates"),
         attack_target_id=int(target_id),
@@ -14589,8 +15273,8 @@ def _build_lah_incremental_attack_append_package(
         target_id=int(target_id),
         weapon_type=_to_int(selected_weapon_type),
         speed_mps=_lah_max_attack_speed_mps(),
-        route_coordinates=[dict(append_start), dict(attack_coord)],
-        regain_cover_coord=dict(append_start),
+        route_coordinates=append_route_coordinates + [dict(attack_coord)],
+        regain_cover_coord=dict(attack_hide),
     )
     if not attack_waypoints or not any(
         isinstance(waypoint, dict)
@@ -14865,6 +15549,11 @@ def _build_lah_attack_sequence_package(
     attack_missions: List[Dict[str, Any]] = []
     attack_path_payloads: List[Tuple[Path, Dict[str, Any]]] = []
     attack_sequence_meta: List[Dict[str, Any]] = []
+    # The run to cover is emitted as its own individual mission ahead of the
+    # first attack; only that attack carries the certified hide prelude.
+    ingress_waypoints: List[Dict[str, Any]] = []
+    ingress_individual_id: Optional[int] = None
+    ingress_path_id: Optional[int] = None
     attack_speed_mps = _lah_max_attack_speed_mps()
     emit(
         f"[ATTACK][LAH] Using max attack speed "
@@ -14958,7 +15647,11 @@ def _build_lah_attack_sequence_package(
         valid_targets = engageable_targets
 
     for idx, assigned in enumerate(valid_targets):
-        attack_coord = _normalize_coordinate(assigned.get("attack_coord") or assigned.get("coordinate"))
+        assigned_attack_coord = assigned.get("attack_coord") or assigned.get("coordinate")
+        attack_coord = _attach_attack_point_metadata(
+            _normalize_coordinate(assigned_attack_coord),
+            assigned_attack_coord,
+        )
         if not attack_coord:
             continue
         assigned_attack_target_id = _to_int(
@@ -15070,16 +15763,16 @@ def _build_lah_attack_sequence_package(
             else dict(tactical_endpoint or predicted_attack_start)
         )
         if attack_from_hide is not None:
-            # A local pop-up is not a transit mission.  Sending this two-point
-            # leg through the general mission-zone router made an aircraft enter
-            # a distant corridor and U-turn before firing.
+            # Keep the hide-to-popup-base leg inside this attack mission.  It is
+            # terrain-followed at the dedicated ~30 m clearance by the low-level
+            # builder and must not be sent through a distant mission-zone route.
             attack_route_coordinates = [dict(attack_start_coord), dict(attack_coord)]
             attack_route_meta = {
                 "sourcePlanID": _to_int(getattr(artifacts, "source_plan_id", None)),
                 "zoneCount": 0,
                 "routePointCount": 2,
                 "constrained": False,
-                "reason": "tactical_vertical_popup",
+                "reason": "tactical_low_level_popup_base",
             }
         else:
             attack_route_coordinates, attack_route_meta = _build_lah_mission_constrained_attack_route(
@@ -15104,7 +15797,8 @@ def _build_lah_attack_sequence_package(
             weapon_type=selected_weapon_type,
             speed_mps=attack_speed_mps,
             route_coordinates=attack_route_coordinates,
-            # Sink back behind the same terrain the pop-up came from.
+            # API compatibility only: SIM now performs the LOS climb/descent at
+            # the armed low-level waypoint, so no planner-side return WP is made.
             regain_cover_coord=tactical_endpoint if tactical_endpoint is not None else None,
         )
         if idx == 0 and tactical_endpoint is not None:
@@ -15116,10 +15810,36 @@ def _build_lah_attack_sequence_package(
                 terminal_hover_seconds=_attack_cover_hold_seconds(),
             )
             if tactical_waypoints:
+                # The run to cover and the action at cover are separate
+                # purposes, so they are separate individual missions: [run to
+                # cover] then [hide -> low popup base]. They share exactly one
+                # waypoint - the certified hide endpoint - which belongs to the
+                # attack path so that path does not begin with a zero-length leg
+                # the aircraft never registers arriving on. SIM owns the
+                # unplanned climb/fire/descent at the terminal armed waypoint.
+                ingress_waypoints, cover_entry = _split_lah_cover_ingress_waypoints(
+                    tactical_waypoints
+                )
                 attack_waypoints = _prepend_lah_tactical_waypoints(
-                    tactical_waypoints,
+                    cover_entry,
                     attack_waypoints,
                 )
+                if ingress_waypoints:
+                    # The attack path is now standalone: drop the elapsed time
+                    # the movement mission owns, keeping every leg intact.
+                    _rebase_lah_path_etas(
+                        attack_waypoints,
+                        base_eta_s=_to_int(ingress_waypoints[-1].get("eta")) or 0,
+                    )
+                    ingress_individual_id = int(id_reservation.next_individual())
+                    ingress_path_id = int(id_reservation.next_path(int(aircraft_id)))
+                else:
+                    # Already at cover: keep the single combined path rather
+                    # than emitting an empty movement mission.
+                    attack_waypoints = _prepend_lah_tactical_waypoints(
+                        tactical_waypoints,
+                        attack_waypoints,
+                    )
         allocated_waypoint_ids.extend(
             int(waypoint.get("waypointID"))
             for waypoint in attack_waypoints
@@ -15274,6 +15994,44 @@ def _build_lah_attack_sequence_package(
         resume_fp_data["postAttackSourceTargetID"] = int(last_attack_target_id)
     resume_fp_data["lahWaypointList"] = resume_waypoints
 
+    mission_ingress: Optional[Dict[str, Any]] = None
+    ingress_fp_data: Optional[Dict[str, Any]] = None
+    if (
+        ingress_waypoints
+        and ingress_individual_id is not None
+        and ingress_path_id is not None
+    ):
+        mission_ingress = {
+            "individualMissionID": int(ingress_individual_id),
+            "isDone": False,
+            "relatedMission": dict(related_template),
+            # Downstream sweeps must treat this as part of the attack branch,
+            # not as a legacy return route.
+            "lahCoverIngress": True,
+            "individualMissionInfo": {
+                "individualMissionType": 7,
+                "patternType": 10,
+                "autoZoomIn": False,
+                "targetID": None,
+                "coordinateList": _lah_waypoints_to_coordinate_list(ingress_waypoints),
+            },
+            "pathID": int(ingress_path_id),
+        }
+        ingress_fp_data = {
+            "timestamp": now_ms,
+            "Source": _extract_path_source(fp_data),
+            "pathID": int(ingress_path_id),
+            "aircraftID": aircraft_id,
+            "individualMissionID": int(ingress_individual_id),
+            "lahCoverIngress": True,
+            "lahWaypointList": ingress_waypoints,
+        }
+        emit(
+            "[ATTACK][TACTICAL] Run-to-cover split into its own individual mission "
+            f"(aircraft={int(aircraft_id)}, im={int(ingress_individual_id)}, "
+            f"path={int(ingress_path_id)}, points={len(ingress_waypoints)})."
+        )
+
     imp_data["individualMissionPackageID"] = new_imp_id
     imp_data["timestamp"] = now_ms
     mission_list = imp_data.get("individualMissionList")
@@ -15285,7 +16043,10 @@ def _build_lah_attack_sequence_package(
         for mission in mission_list[:target_index]
         if isinstance(mission, dict)
     ] if 0 <= target_index < len(mission_list) else []
-    rebuilt = prefix + list(attack_missions)
+    rebuilt = prefix
+    if mission_ingress is not None:
+        rebuilt = rebuilt + [mission_ingress]
+    rebuilt = rebuilt + list(attack_missions)
     if has_resume:
         rebuilt.append(mission_resume)
     rebuilt.extend(follow_up_missions)
@@ -15298,6 +16059,13 @@ def _build_lah_attack_sequence_package(
     imp_dest = db_paths.get_db_subpath("IndividualMissionPlan", f"{new_imp_id}.json")
     resume_fp_dest = db_paths.get_db_subpath("FlightPath", f"{int(resume_path_id)}.json") if has_resume else None
     write_entries: List[Tuple[Path, Dict[str, Any]]] = [(imp_dest, imp_data)]
+    if ingress_fp_data is not None and ingress_path_id is not None:
+        write_entries.append(
+            (
+                db_paths.get_db_subpath("FlightPath", f"{int(ingress_path_id)}.json"),
+                ingress_fp_data,
+            )
+        )
     write_entries.extend((dest, payload) for dest, payload in attack_path_payloads)
     if resume_fp_dest is not None:
         write_entries.append((resume_fp_dest, resume_fp_data))
@@ -15429,7 +16197,10 @@ def _build_lah_attack_package(
         entry_alt = int(current_altitude_floor)
     entry_coord["altitude"] = entry_alt
 
-    attack_coord_norm = _normalize_coordinate(attack_coord)
+    attack_coord_norm = _attach_attack_point_metadata(
+        _normalize_coordinate(attack_coord),
+        attack_coord,
+    )
     if not attack_coord_norm:
         emit("[ATTACK][LAH] Attack coordinate unavailable for manned aircraft.")
         return None
@@ -15709,10 +16480,11 @@ def _build_lah_attack_package(
         route_coordinates=attack_route_coordinates,
     )
     # The run to cover and the action at cover are separate purposes, so they
-    # are separate individual missions: [run to cover] then [hide -> fire ->
-    # regain hide].  They share exactly one waypoint - the certified hide
-    # endpoint - which belongs to the attack path so that path does not begin
-    # with a zero-length leg the aircraft never registers arriving on.
+    # are separate individual missions: [run to cover] then [hide -> low popup
+    # base]. They share exactly one waypoint - the certified hide endpoint -
+    # which belongs to the attack path so that path does not begin with a
+    # zero-length leg the aircraft never registers arriving on. SIM owns the
+    # unplanned climb/fire/descent at the terminal armed waypoint.
     ingress_waypoints: List[Dict[str, Any]] = []
     ingress_individual_id: Optional[int] = None
     ingress_path_id: Optional[int] = None
@@ -16608,8 +17380,14 @@ def _prepare_attack_json_payload(path: Path, data: Dict[str, Any]) -> Dict[str, 
             _apply_runtime_flyover_to_flight_path_payload(data)
         except Exception:
             pass
-    if has_lah_waypoints:
-        normalize_lah_eta_seconds_inplace(lah_waypoint_list)
+    if has_lah_waypoints or (
+        has_waypoints and _to_int(data.get("aircraftID")) in (1, 2, 3)
+    ):
+        enforce_lah_kinematic_feasibility_inplace(
+            data,
+            preserve_existing_timing=True,
+            allocate_waypoint_ids=None,
+        )
     if has_waypoints or has_lah_waypoints:
         sanitize_flight_path_payload_filming_altitudes(data)
     if isinstance(data, dict) and Path(path).parent.name == "FlightPath":
@@ -16644,6 +17422,11 @@ def _validate_generated_artifact_write_entries(
         if isinstance(payload, dict) and _to_int(payload.get("pathID")) is not None
     ]
     for payload in flight_paths:
+        enforce_lah_kinematic_feasibility_inplace(
+            payload,
+            preserve_existing_timing=True,
+            allocate_waypoint_ids=None,
+        )
         normalize_flight_path_waypoint_altitudes_inplace(payload)
         normalize_flight_path_waypoint_speeds_inplace(payload)
     return validate_generated_artifact_payloads(

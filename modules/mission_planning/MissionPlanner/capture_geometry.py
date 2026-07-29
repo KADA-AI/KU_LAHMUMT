@@ -24,20 +24,19 @@ from __future__ import annotations
 import math
 from typing import Any, Dict, Optional
 
-from .runtime_settings import get_runtime_float, load_runtime_settings
+from .runtime_settings import get_runtime_float, load_runtime_settings_readonly
 
 
 def _resolve_runtime_payload(runtime_cfg: Dict[str, Any] | None) -> Dict[str, Any]:
     """Resolve the settings payload once per public call.
 
-    get_runtime_float(payload=None) deep-copies the whole settings payload on
-    every call; loading it once here keeps the capture law out of the known
-    runtime-settings deepcopy bottleneck on replan paths.
+    Read-only: nothing here mutates the payload, so the cached document is used
+    directly rather than a per-call deep copy of the whole settings file.
     """
     if isinstance(runtime_cfg, dict):
         return runtime_cfg
     try:
-        payload = load_runtime_settings()
+        payload = load_runtime_settings_readonly()
     except Exception:
         payload = {}
     return payload if isinstance(payload, dict) else {}
@@ -49,7 +48,9 @@ CAPTURE_SCAN_MIN_AIRCRAFT_SPEED_MPS = 40.0
 CAPTURE_SCAN_MAX_AIRCRAFT_SPEED_MPS = 55.0
 CAPTURE_SCAN_PREFERRED_INTERVAL_S = 1.0
 CAPTURE_SPACING_SCALE = 1.0
-CAPTURE_AREA_SPACING_SCALE = 1.0
+# Base overlap leaves 0.8 × footprint.  Multiplying by 5/6 makes the AREA
+# strip spacing exactly 2/3 × footprint, i.e. 1.5 × search-line density.
+CAPTURE_AREA_SPACING_SCALE = 5.0 / 6.0
 CAPTURE_IMAGE_WIDTH_PX = 1920.0
 CAPTURE_IMAGE_HEIGHT_PX = 1080.0
 CAPTURE_MIN_SWEEP_SPACING_M = 1.0
@@ -159,7 +160,7 @@ def nadir_footprint_m(
 
 
 def capture_area_spacing_scale(runtime_cfg: Dict[str, Any] | None = None) -> float:
-    """Area-only densifier on top of the unified law (0.5 = twice as dense)."""
+    """AREA-only spacing multiplier; default gives 1.5× footprint density."""
     scale = get_runtime_float(
         "capture_area_spacing_scale",
         CAPTURE_AREA_SPACING_SCALE,
@@ -202,7 +203,7 @@ def area_vertical_sweep_spacing_m(
     altitude_m: Optional[float] = None,
     runtime_cfg: Dict[str, Any] | None = None,
 ) -> Optional[float]:
-    """Area 세로 간격 = 통일 법칙 * capture_area_spacing_scale."""
+    """AREA 세로 간격 = 통일 법칙 * 전용 배수(기본 footprint / 1.5)."""
     runtime_cfg = _resolve_runtime_payload(runtime_cfg)
     return vertical_sweep_spacing_m(
         fov_deg,

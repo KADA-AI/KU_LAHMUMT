@@ -102,9 +102,19 @@ def test_initial_region2_uses_direct_nadir_route_without_line_search(
     [flight_path] = d0303.build_flight_plans([mission], cruise_speed=40.0)
     waypoints = flight_path["waypointList"]
 
-    assert len(waypoints) == 2
-    assert [wp["coordinate"]["latitude"] for wp in waypoints] == [38.0, 38.02]
-    assert [wp["coordinate"]["longitude"] for wp in waypoints] == [127.0, 127.03]
+    assert len(waypoints) == 4
+    assert waypoints[0]["coordinate"]["latitude"] == pytest.approx(38.0)
+    assert waypoints[0]["coordinate"]["longitude"] == pytest.approx(127.0)
+    assert waypoints[-1]["coordinate"]["latitude"] == pytest.approx(38.02)
+    assert waypoints[-1]["coordinate"]["longitude"] == pytest.approx(127.03)
+    route_gaps_m = [
+        d0303._dist_between_coords(
+            waypoints[index - 1]["coordinate"],
+            waypoints[index]["coordinate"],
+        )
+        for index in range(1, len(waypoints))
+    ]
+    assert max(route_gaps_m) <= 1500.0
     for waypoint in waypoints:
         filming = waypoint["filmingProperty"]
         assert filming["fieldOfView"] == 15.0

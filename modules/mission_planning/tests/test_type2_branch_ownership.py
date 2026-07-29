@@ -426,31 +426,28 @@ def test_type2_guard_area_replan_keeps_each_owner_and_emits_two_rows(
 
     def _fake_planner(**kwargs: Any) -> SimpleNamespace:
         entries = list(kwargs["aircraft_entries"])
-        assert len(entries) == 2
         real_id = int(entries[0]["aircraftID"])
-        virtual_id = int(entries[1]["aircraftID"])
         assert real_id in UAV_IDS
-        assert virtual_id not in UAV_IDS
-        planner_owner_pairs.append((real_id, virtual_id))
+        if len(entries) == 2:
+            virtual_id = int(entries[1]["aircraftID"])
+            assert virtual_id not in UAV_IDS
+            planner_owner_pairs.append((real_id, virtual_id))
         real_xy = next_collab_pipeline.coord_to_xy(entries[0]["coordinate"])
         assert real_xy is not None
         x, y = float(real_xy[0]), float(real_xy[1])
         return SimpleNamespace(
             expected_paths=[
                 {
-                    "aircraftID": real_id,
-                    "pieceIndex": 1,
-                    "waypointStartXY": (x, y),
-                    "waypointEndXY": (x + 100.0, y),
-                    "routeXY": [(x, y), (x + 100.0, y)],
-                },
-                {
-                    "aircraftID": virtual_id,
-                    "pieceIndex": 2,
-                    "waypointStartXY": (x + 100.0, y),
-                    "waypointEndXY": (x + 200.0, y),
-                    "routeXY": [(x + 100.0, y), (x + 200.0, y)],
-                },
+                    "aircraftID": int(entry["aircraftID"]),
+                    "pieceIndex": int(index),
+                    "waypointStartXY": (x + (index - 1) * 100.0, y),
+                    "waypointEndXY": (x + index * 100.0, y),
+                    "routeXY": [
+                        (x + (index - 1) * 100.0, y),
+                        (x + index * 100.0, y),
+                    ],
+                }
+                for index, entry in enumerate(entries, start=1)
             ],
             split_result=SimpleNamespace(pieces=[]),
             mid_line_segments=[],
@@ -504,8 +501,8 @@ def test_type2_guard_area_replan_keeps_each_owner_and_emits_two_rows(
     )
 
     assert result is None  # Deliberately stopped at the ID reservation boundary.
-    # Every component is planned twice: once to learn where the first piece
-    # ends, then again with the planning-only partner re-seeded at that exit.
+    # After the real-owner width pass, every component is planned twice with
+    # the synthetic sequence: once for geometry and once from the prior exit.
     assert [real_id for real_id, _virtual_id in planner_owner_pairs] == [6, 6, 5, 5, 4, 4]
     assert len(reserved_rows) == 1
     assert set(reserved_rows[0]) == set(UAV_IDS)
@@ -607,9 +604,9 @@ def test_type2_shared_boundary_replan_keeps_two_halves_per_co_owner(
     )
 
     assert result is None
-    # Each component runs a second pass that re-seeds the planning-only
-    # partners at their owners' first-piece exits.
-    assert planner_entry_counts == [4, 4, 2, 2]
+    # Each component first runs with real owners, then twice with N-stage
+    # synthetic entries (initial geometry and preceding-exit re-seed).
+    assert planner_entry_counts == [2, 4, 4, 1, 2, 2]
     assert len(reserved_rows) == 1
     for aircraft_id in UAV_IDS:
         rows = reserved_rows[0][aircraft_id]
@@ -649,6 +646,188 @@ def test_type2_replan_without_authoritative_state_fails_closed(
 ) -> None:
     with pytest.raises(RuntimeError, match="immutable branch ownership is unavailable"):
         _run_branch_plan(swapped=True, apply_assignment=False)
+
+
+def _artifact_mission(
+    input_mission_id: int,
+    *,
+    line: dict[str, Any] | None = None,
+    area: dict[str, Any] | None = None,
+    branch_index: int | None = None,
+) -> dict[str, Any]:
+    info: dict[str, Any] = {
+        "individualMissionType": 6 if line is not None else 4,
+        "lineList": [deepcopy(line)] if line is not None else [],
+        "areaList": [deepcopy(area)] if area is not None else [],
+    }
+    mission: dict[str, Any] = {
+        "relatedMission": {"inputMissionID": int(input_mission_id)},
+        "individualMissionInfo": info,
+    }
+    if branch_index is not None:
+        mission["branchIndex"] = int(branch_index)
+    return mission
+
+
+def test_next_collab_restores_missing_state_from_assigned_area_artifacts(
+    isolated_branch_state: Path,
+) -> None:
+    from modules.mission_planning.replanning.triggers.next_collab import (
+        pipeline as next_collab_pipeline,
+    )
+
+    input_data = _type2_branch_package()
+    branch_areas = input_data["inputMissionList"][1]["missionDetail"]["areaList"]
+    packages = {
+        4: {
+            "individualMissionList": [
+                _artifact_mission(BRANCH_MISSION_IDS[1], area=branch_areas[0])
+            ]
+        },
+        5: {
+            "individualMissionList": [
+                _artifact_mission(BRANCH_MISSION_IDS[1], area=branch_areas[0])
+            ]
+        },
+        6: {
+            "individualMissionList": [
+                _artifact_mission(BRANCH_MISSION_IDS[1], area=branch_areas[1])
+            ]
+        },
+    }
+    messages: list[str] = []
+
+    is_branch, ownership = (
+        next_collab_pipeline._resolve_locked_type2_ownership_with_artifact_recovery(
+            input_data=deepcopy(input_data),
+            target_input_id=BRANCH_MISSION_IDS[1],
+            packages_by_aircraft=deepcopy(packages),
+            target_aircraft_ids=list(UAV_IDS),
+            emit=messages.append,
+        )
+    )
+
+    assert is_branch is True
+    assert ownership == {0: [4, 5], 1: [6]}
+    assert branch_ownership.get_branch_ownership(PACKAGE_ID) == ownership
+    assert branch_ownership.get_branch_meta(PACKAGE_ID)["branch_mission_ids"] == list(
+        BRANCH_MISSION_IDS
+    )
+    assert any("restored immutable branch ownership" in message for message in messages)
+
+    # Once reconstructed, the persisted immutable map remains authoritative even
+    # if the caller has no usable geometry on a later invocation.
+    is_branch_again, ownership_again = (
+        next_collab_pipeline._resolve_locked_type2_ownership_with_artifact_recovery(
+            input_data=deepcopy(input_data),
+            target_input_id=BRANCH_MISSION_IDS[2],
+            packages_by_aircraft={},
+            target_aircraft_ids=list(reversed(UAV_IDS)),
+            emit=messages.append,
+        )
+    )
+    assert is_branch_again is True
+    assert ownership_again == ownership
+
+
+def test_next_collab_restores_missing_state_from_assigned_line_artifacts(
+    isolated_branch_state: Path,
+) -> None:
+    from modules.mission_planning.replanning.triggers.next_collab import (
+        pipeline as next_collab_pipeline,
+    )
+
+    input_data = _type2_branch_package()
+    branch_lines = input_data["inputMissionList"][0]["missionDetail"]["lineList"]
+    packages = {
+        4: {
+            "individualMissionList": [
+                _artifact_mission(BRANCH_MISSION_IDS[0], line=branch_lines[0])
+            ]
+        },
+        5: {
+            "individualMissionList": [
+                _artifact_mission(BRANCH_MISSION_IDS[0], line=branch_lines[0])
+            ]
+        },
+        6: {
+            "individualMissionList": [
+                _artifact_mission(BRANCH_MISSION_IDS[0], line=branch_lines[1])
+            ]
+        },
+    }
+
+    is_branch, ownership = (
+        next_collab_pipeline._resolve_locked_type2_ownership_with_artifact_recovery(
+            input_data=deepcopy(input_data),
+            target_input_id=BRANCH_MISSION_IDS[0],
+            packages_by_aircraft=deepcopy(packages),
+            target_aircraft_ids=list(UAV_IDS),
+            emit=lambda _message: None,
+        )
+    )
+
+    assert is_branch is True
+    assert ownership == {0: [4, 5], 1: [6]}
+
+
+def test_ambiguous_source_artifacts_do_not_invent_type2_ownership(
+    isolated_branch_state: Path,
+) -> None:
+    from modules.mission_planning.replanning.triggers.next_collab import (
+        pipeline as next_collab_pipeline,
+    )
+
+    input_data = _type2_branch_package()
+    ambiguous_line = _line_branch(127.050, 38.000, 38.010)
+    packages = {
+        aircraft_id: {
+            "individualMissionList": [
+                _artifact_mission(BRANCH_MISSION_IDS[0], line=ambiguous_line)
+            ]
+        }
+        for aircraft_id in UAV_IDS
+    }
+
+    is_branch, ownership = (
+        next_collab_pipeline._resolve_locked_type2_ownership_with_artifact_recovery(
+            input_data=deepcopy(input_data),
+            target_input_id=BRANCH_MISSION_IDS[0],
+            packages_by_aircraft=deepcopy(packages),
+            target_aircraft_ids=list(UAV_IDS),
+            emit=lambda _message: None,
+        )
+    )
+
+    assert is_branch is True
+    assert ownership == {}
+    assert branch_ownership.get_branch_ownership(PACKAGE_ID) == {}
+
+
+def test_0302_preserves_branch_index_as_recovery_lineage() -> None:
+    from modules.mission_planning.MissionPlanner.planning_enhanced.io.export_0302 import (
+        _piece_runtime_meta,
+    )
+    from modules.mission_planning.MissionPlanner.planning_enhanced.models import SplitPiece
+
+    piece = SplitPiece(
+        parent_order=2,
+        mission_id=BRANCH_MISSION_IDS[1],
+        mission_type=3,
+        piece_index=1,
+        data={
+            "branchIndex": 1,
+            "branchAreaSequentialSplit": True,
+            "branchAreaSequence": 2,
+        },
+        assigned_uav=6,
+    )
+
+    assert _piece_runtime_meta(piece) == {
+        "branchIndex": 1,
+        "branchAreaSequentialSplit": True,
+        "branchAreaSequence": 2,
+    }
 
 
 def _replan_without(*absent_aircraft: int):

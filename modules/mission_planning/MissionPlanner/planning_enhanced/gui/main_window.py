@@ -93,7 +93,7 @@ class MainWindow(QMainWindow):
     def _is_area_dubins_enabled(self) -> bool:
         payload = load_runtime_settings()
         values = payload.get("values") if isinstance(payload.get("values"), dict) else {}
-        return bool(values.get("area_dubins_entry_links_enabled", True))
+        return bool(values.get("area_dubins_entry_links_enabled", False))
 
     def _set_area_dubins_enabled(self, enabled: bool) -> None:
         payload = load_runtime_settings()

@@ -17,6 +17,9 @@ from modules.monitoring.logic.area_search_interpolation import (
     resolve_frame_sample_fractions,
 )
 from modules.monitoring.logic.capture_gate import evaluate_capture_gate
+from modules.monitoring.logic.boundary_guard_progress import (
+    BoundaryGuardProgressGate,
+)
 from modules.monitoring.logic.mission_coverage import (
     MissionCoverageDefinition,
     build_footprint_geometry,
@@ -42,6 +45,15 @@ from modules.monitoring.logic.spatial_coverage_depth import (
     SpatialCoverageDepthLedger,
     stable_capture_source_id,
 )
+from modules.mission_planning.MissionPlanner.runtime_settings import get_runtime_float
+
+try:
+    from modules.mission_planning.runtime.attack_tracking_state import (
+        list_active_tracking_assignments,
+    )
+except Exception:
+    def list_active_tracking_assignments() -> list[dict[str, Any]]:
+        return []
 
 _ON_MISSION_STARTUP_GUARD_MS = 10000
 _ON_MISSION_BLOCK_FLIGHT_MODES = {1, 2, 3}
@@ -374,6 +386,10 @@ class MissionMeta:
     coverage_acquisition_id: str | None = None
     coverage_generation_token: object | None = None
     coverage_required_depth: int = 1
+    input_mission_type: int | None = None
+    region_type: int | None = None
+    boundary_guard_loop: bool = False
+    boundary_guard_set_id: str | None = None
 
 
 @dataclass
@@ -419,6 +435,12 @@ class MissionProgressTracker:
         self._on_mission_startup_guard_first_wp: dict[int, int | None] = {}
         self._on_mission_startup_guard_baselined: set[int] = set()
         self._on_mission_startup_guard_start_ms: dict[int, int] = {}
+        self._boundary_guard_gate = BoundaryGuardProgressGate(
+            default_duration_s=max(
+                0.001,
+                float(get_runtime_float("type2_boundary_guard_duration_s", 600.0)),
+            )
+        )
         self.reset({})
 
     def set_system_mode(self, mode_code: int | None) -> None:
@@ -492,8 +514,14 @@ class MissionProgressTracker:
         self._mission_line_defs: dict[int, LineSweepDefinition] = {}
         self._mission_line_state: dict[int, LineSweepState] = {}
         self._forced_active_input_id: int | None = None
+        self._declared_current_input_id: int | None = (
+            _coerce_int(view.get("current_input_mission_id"))
+            if isinstance(view, dict)
+            else None
+        )
         self._fallback_baseline_ms: dict[int, int] = {}
         self._fallback_baseline_monotonic: dict[int, float] = {}
+        self._boundary_guard_gate.configure(view)
 
         if not view:
             return
@@ -522,6 +550,12 @@ class MissionProgressTracker:
             )
             for mission in entry.get("missions") or []:
                 if not isinstance(mission, dict):
+                    continue
+                if bool(mission.get("execution_blocked_until_next_collab")):
+                    # Retained future artifacts are not part of the executable
+                    # controller sequence yet.  Keeping them in the progress
+                    # fallback list lets WP=0/flying=2 falsely finish work that
+                    # SIM never loaded.
                     continue
                 mission_id = _coerce_int(mission.get("individual_mission_id"))
                 if mission_id is None:
@@ -832,6 +866,18 @@ class MissionProgressTracker:
                         else mission.get("flight_path_timestamp_ms")
                     ),
                     coverage_required_depth=int(required_depth),
+                    input_mission_type=_coerce_int(
+                        mission.get("input_mission_type")
+                    ),
+                    region_type=_coerce_int(mission.get("region_type")),
+                    boundary_guard_loop=bool(
+                        mission.get("boundary_guard_loop")
+                    ),
+                    boundary_guard_set_id=(
+                        str(mission.get("boundary_guard_set_id")).strip()
+                        if mission.get("boundary_guard_set_id") is not None
+                        else None
+                    ),
                 )
                 self._mission_meta[mission_id] = meta
                 coverage_def = build_mission_coverage_definition(mission)
@@ -1048,15 +1094,21 @@ class MissionProgressTracker:
         new_completed_waypoints: list[dict[str, Any]] = []
         if timestamp_ms is not None:
             self._last_timestamp_ms = int(timestamp_ms)
-        if not agent_states:
-            return self._build_snapshot(
-                timestamp_ms,
-                new_completed_individual,
-                [],
-                new_completed_waypoints,
-            )
-
-        for state in agent_states:
+        tracking_assignments: list[dict[str, Any]] = []
+        try:
+            tracking_assignments = [
+                dict(item)
+                for item in list_active_tracking_assignments()
+                if isinstance(item, dict)
+            ]
+        except Exception:
+            tracking_assignments = []
+        self._boundary_guard_gate.update(
+            timestamp_ms=timestamp_ms,
+            agent_states=agent_states or [],
+            active_tracking_assignments=tracking_assignments,
+        )
+        for state in agent_states or []:
             if not isinstance(state, dict):
                 continue
             aircraft_id = _coerce_int(state.get("aircraft_id"))
@@ -1078,6 +1130,19 @@ class MissionProgressTracker:
                 # previous mission after a "next collab base mission" trigger), do
                 # not let it block the remaining aircraft from being processed.
                 continue
+
+        # Boundary guard loops intentionally never publish flying/filming=2.
+        # Once the monitor-observed duration/cycle/tracking contract is met,
+        # complete through the normal MissionProgress path so new_completed_*
+        # and the existing 0503 recommendation validation remain authoritative.
+        for input_id in self._boundary_guard_gate.ready_input_ids():
+            for mission_id in self._input_to_missions.get(int(input_id), []):
+                self._force_complete_mission(
+                    mission_id=int(mission_id),
+                    timestamp_ms=timestamp_ms,
+                    out_completed_individual=new_completed_individual,
+                    out_waypoint_updates=new_completed_waypoints,
+                )
 
         formation_map = self._sync_formation_followers(timestamp_ms, new_completed_individual)
         new_completed_input: list[int] = []
@@ -1138,6 +1203,19 @@ class MissionProgressTracker:
         if mission_id is None:
             return
 
+        mission_meta = self._mission_meta.get(int(mission_id))
+        boundary_guard_pending = bool(
+            mission_meta is not None
+            and mission_meta.input_id is not None
+            and self._boundary_guard_gate.is_guard_input(mission_meta.input_id)
+            and not self._boundary_guard_gate.is_ready(mission_meta.input_id)
+        )
+        if boundary_guard_pending and flying_status == 2:
+            # A child path tail may still emit the legacy completion status
+            # while the controller advances to the next loop child.  It is not
+            # the ten-minute guard completion boundary.
+            flying_status = 1
+
         has_direct_wp_match = (
             current_wp is not None
             and self._mission_contains_waypoint(int(mission_id), int(current_wp))
@@ -1167,7 +1245,11 @@ class MissionProgressTracker:
                 flying_status=flying_status,
                 filming_status=filming_status,
             )
-        if combined_on_mission != 2 and has_direct_wp_match:
+        if (
+            combined_on_mission != 2
+            and has_direct_wp_match
+            and not boundary_guard_pending
+        ):
             self._complete_prior_missions_on_waypoint_jump(
                 aircraft_id=aircraft_id,
                 prev_mission_id=prev_mission_id,
@@ -1363,6 +1445,14 @@ class MissionProgressTracker:
                 forced_int = None
             if forced_int is not None and forced_int in self._input_mission_ids:
                 return forced_int
+        declared_input_id = self._declared_current_input_id
+        if declared_input_id is not None:
+            try:
+                declared_int = int(declared_input_id)
+            except Exception:
+                declared_int = None
+            if declared_int is not None and declared_int in self._input_mission_ids:
+                return declared_int
         active_counts: dict[int, int] = {}
         done_counts: dict[int, int] = {}
         for mission_id in self._aircraft_current_mission.values():
@@ -1558,6 +1648,7 @@ class MissionProgressTracker:
         mission_ids = self._input_to_missions.get(int(input_id), [])
         self.reset_missions(mission_ids)
         self._completed_input_ids.discard(int(input_id))
+        self._boundary_guard_gate.reset_input(int(input_id))
         return list(mission_ids)
 
     def reset_missions(self, mission_ids: list[int]) -> None:
@@ -3145,6 +3236,28 @@ class MissionProgressTracker:
                 mission_progress,
                 done_override=done_override,
             )
+        boundary_guard_progress = self._boundary_guard_gate.statuses()
+        for input_id, guard_status in boundary_guard_progress.items():
+            progress_row = input_progress.get(int(input_id))
+            if progress_row is None:
+                continue
+            duration_s = max(0.001, float(guard_status.get("duration_s") or 0.0))
+            elapsed_s = max(0.0, float(guard_status.get("elapsed_s") or 0.0))
+            ready = bool(guard_status.get("ready"))
+            guard_percent = (
+                100
+                if ready
+                else min(99, int(round(min(elapsed_s, duration_s) / duration_s * 100.0)))
+            )
+            progress_row.update(
+                {
+                    "progress_percent": int(guard_percent),
+                    "actual_seconds": int(round(min(elapsed_s, duration_s))),
+                    "planned_seconds": int(round(duration_s)),
+                    "done": bool(ready),
+                    "boundary_guard": dict(guard_status),
+                }
+            )
 
         package_coverage: dict[int, dict[str, Any]] = {}
         package_footprint_coverage: dict[int, dict[str, Any]] = {}
@@ -3210,6 +3323,7 @@ class MissionProgressTracker:
             "active_input_id": self.get_active_input_id(),
             "package_progress": package_progress,
             "input_progress": input_progress,
+            "boundary_guard_progress": boundary_guard_progress,
             "plan_progress": plan_progress,
             "package_coverage": package_coverage,
             "input_coverage": input_coverage,

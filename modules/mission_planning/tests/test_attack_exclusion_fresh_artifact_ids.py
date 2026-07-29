@@ -177,3 +177,127 @@ def test_fresh_id_pass_runs_before_tracking_strip_and_validation() -> None:
     validate_at = source.index('scope="attack_exclusion"')
 
     assert fresh_at < strip_at < validate_at
+
+
+def test_fresh_id_pass_relinks_boundary_guard_children_after_waypoint_refresh(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        attack.db_paths,
+        "get_db_subpath",
+        lambda kind, name: tmp_path / kind / name,
+    )
+    monkeypatch.setattr(
+        attack,
+        "read_json_cached",
+        lambda path, kind=None: json.loads(Path(path).read_text(encoding="utf-8")),
+    )
+    monkeypatch.setattr(
+        attack,
+        "_validate_generated_artifact_write_entries",
+        lambda **_kwargs: {},
+    )
+
+    def _write_batch(entries):
+        for path, payload in entries:
+            path = Path(path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(payload), encoding="utf-8")
+        return []
+
+    monkeypatch.setattr(attack, "_write_json_files_batch", _write_batch)
+
+    contract = {
+        "boundaryGuardLoop": True,
+        "boundaryGuardLoopVersion": 1,
+        "boundaryGuardSetID": "type2-boundary:3:5:aircraft-4",
+        "boundaryGuardSequenceCount": 2,
+        "boundaryGuardDurationS": 600.0,
+    }
+    missions = []
+    paths = []
+    for sequence, mission_id, path_id, waypoint_ids in (
+        (1, 9_000_011, 4_000_011, (411, 412)),
+        (2, 9_000_012, 4_000_012, (421, 422)),
+    ):
+        row_contract = {**contract, "boundaryGuardSequence": sequence}
+        missions.append(
+            {
+                "individualMissionID": mission_id,
+                "pathID": path_id,
+                **row_contract,
+                "individualMissionInfo": dict(row_contract),
+            }
+        )
+        paths.append(
+            {
+                "pathID": path_id,
+                "aircraftID": 4,
+                "individualMissionID": mission_id,
+                **row_contract,
+                "waypointList": [
+                    {
+                        "waypointID": waypoint_ids[0],
+                        "nextWaypointID": waypoint_ids[1],
+                    },
+                    {
+                        "waypointID": waypoint_ids[1],
+                        "nextWaypointID": 421 if sequence == 1 else 411,
+                    },
+                ],
+            }
+        )
+
+    _write(
+        tmp_path,
+        "IndividualMissionPlan",
+        8_000_014,
+        {
+            "individualMissionPackageID": 8_000_014,
+            "aircraftID": 4,
+            "individualMissionList": missions,
+        },
+    )
+    for path in paths:
+        _write(tmp_path, "FlightPath", path["pathID"], path)
+
+    reservation = ReplanIdReservation(
+        imp_ids=ReservedIdBlock("imp", [8_000_114]),
+        individual_ids=ReservedIdBlock(
+            "individual",
+            [9_000_111, 9_000_112],
+        ),
+        waypoint_ids=ReservedIdBlock(
+            "waypoint",
+            [11_101, 11_102, 11_103, 11_104],
+        ),
+        path_ids_by_aircraft={
+            4: ReservedIdBlock("path[4]", [4_000_111, 4_000_112]),
+        },
+    )
+    plan = {
+        "missionPlanID": 7_000_029,
+        "aircraftList": [
+            {"aircraftID": 4, "individualMissionPackageID": 8_000_014}
+        ],
+    }
+
+    attack._freshen_attack_exclusion_artifact_ids(
+        plan,
+        now_ms=123456,
+        emit=lambda _message: None,
+        id_reservation=reservation,
+    )
+
+    first_path = _read(tmp_path, "FlightPath", 4_000_111)
+    second_path = _read(tmp_path, "FlightPath", 4_000_112)
+    assert first_path["boundaryGuardSequence"] == 1
+    assert second_path["boundaryGuardSequence"] == 2
+    assert first_path["waypointList"][-1]["nextWaypointID"] == 11_103
+    assert second_path["waypointList"][-1]["nextWaypointID"] == 11_101
+
+    refreshed_imp = _read(tmp_path, "IndividualMissionPlan", 8_000_114)
+    refreshed_missions = refreshed_imp["individualMissionList"]
+    assert [row["boundaryGuardSequence"] for row in refreshed_missions] == [1, 2]
+    assert all(row["boundaryGuardSequenceCount"] == 2 for row in refreshed_missions)

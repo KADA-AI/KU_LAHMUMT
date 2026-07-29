@@ -5,6 +5,9 @@ import json
 from importlib import reload
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+from modules.mission_planning.pipelines.type2_boundary_guard_loop import (
+    sync_boundary_guard_contract_from_flight_paths,
+)
 try:
     from ....runtime.json_io import dumps_json, prepare_json_payload
 except Exception:
@@ -359,6 +362,7 @@ def build_0303_0304_from_0302_packages(
             cruise_speed=float(effective_lah_cruise),
             manned_plan_mode=manned_plan_mode,
             initial_hold_by_aircraft=initial_hold_by_aircraft,
+            runtime_payload=runtime_payload,
         )
 
     if uav_missions and lah_missions:
@@ -379,6 +383,18 @@ def build_0303_0304_from_0302_packages(
             list(flight_plans_0303),
             lah_missions=list(lah_missions),
         )
+
+    package_missions = [
+        mission
+        for package in packages
+        if isinstance(package, dict)
+        for mission in (package.get("individualMissionList") or [])
+        if isinstance(mission, dict)
+    ]
+    sync_boundary_guard_contract_from_flight_paths(
+        package_missions,
+        flight_plans_0303,
+    )
 
     return list(flight_plans_0303), list(flight_plans_0304)
 

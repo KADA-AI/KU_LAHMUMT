@@ -633,6 +633,36 @@ def _feature_properties(
         "sweepPointCount": progress_total,
         "mappedBoundaryLineIndex": boundary_index,
     }
+    boundary_guard_loop = bool(
+        _pick(row, "boundaryGuardLoop", "boundary_guard_loop")
+        or _pick(mission, "boundaryGuardLoop", "boundary_guard_loop")
+    )
+    if boundary_guard_loop:
+        properties.update(
+            {
+                "boundaryGuardLoop": 1,
+                "boundaryGuardSetID": _pick(
+                    row,
+                    "boundaryGuardSetID",
+                    "boundary_guard_set_id",
+                ),
+                "boundaryGuardCycleCount": _to_int(
+                    _pick(
+                        row,
+                        "boundaryGuardCycleCount",
+                        "boundary_guard_cycle_count",
+                    )
+                )
+                or 0,
+                "boundaryGuardDurationS": _to_float(
+                    _pick(
+                        row,
+                        "boundaryGuardDurationS",
+                        "boundary_guard_duration_s",
+                    )
+                ),
+            }
+        )
     if isinstance(coverage_pass_detail, dict):
         coverage_pass = str(
             _pick(coverage_pass_detail, "coveragePass", "coverage_pass") or ""
@@ -1311,6 +1341,85 @@ def _features_from_snapshot(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
 
         mission_area = _polygons_area_degrees(mission_polygons)
         owner_area = _polygons_area_degrees([polygon for _owner, polygon in owner_polygons])
+        is_boundary_guard = bool(
+            _pick(mission, "boundaryGuardLoop", "boundary_guard_loop")
+            or any(
+                bool(_pick(owner, "boundaryGuardLoop", "boundary_guard_loop"))
+                for owner, _polygon in owner_polygons
+            )
+        )
+        if is_boundary_guard and owner_polygons:
+            # A boundary-guard cycle resets independently per aircraft/set.
+            # The mission-level remainingDetail is only their aggregate union;
+            # rendering that union loses the three owner regions and makes a
+            # new cycle look as if it never revived.  Keep one unioned feature
+            # per owner so the live snapshot exposes each reset immediately.
+            owner_groups: dict[
+                str,
+                dict[str, Any],
+            ] = {}
+            for owner, polygon in owner_polygons:
+                set_id = str(
+                    _pick(
+                        owner,
+                        "boundaryGuardSetID",
+                        "boundary_guard_set_id",
+                    )
+                    or ""
+                ).strip()
+                aircraft_id = _to_int(
+                    _pick(owner, "aircraftID", "aircraftId", "aircraft_id")
+                )
+                owner_key = (
+                    f"set:{set_id}"
+                    if set_id
+                    else f"aircraft:{aircraft_id}:mission:"
+                    f"{_to_int(_pick(owner, 'individualMissionID', 'missionID'))}"
+                )
+                group = owner_groups.setdefault(
+                    owner_key,
+                    {
+                        "owner": dict(owner),
+                        "polygons": [],
+                        "remainingAreas": [],
+                        "allDone": True,
+                    },
+                )
+                group["polygons"].append(polygon)
+                remaining_area = _to_float(
+                    _pick(owner, "remainingAreaM2", "remaining_area_m2")
+                )
+                if remaining_area is not None:
+                    group["remainingAreas"].append(max(0.0, remaining_area))
+                group["allDone"] = bool(group["allDone"]) and bool(
+                    _pick(owner, "isDone", "done")
+                )
+            for group in owner_groups.values():
+                owner = group["owner"]
+                if len(group["remainingAreas"]) > 1:
+                    owner["remainingAreaM2"] = float(
+                        sum(group["remainingAreas"])
+                    )
+                owner["isDone"] = bool(group["allDone"])
+                mapped_geometry = _mapped_polygon_union(group["polygons"])
+                if mapped_geometry is None:
+                    continue
+                features.append(
+                    {
+                        "type": "Feature",
+                        "id": feature_id,
+                        "geometry": mapped_geometry,
+                        "properties": _feature_properties(
+                            snapshot_plan_id=snapshot_plan_id,
+                            mission=mission,
+                            owner=owner,
+                            geometry_source="boundaryGuardOwnerRemaining",
+                            area_index=1,
+                        ),
+                    }
+                )
+                feature_id += 1
+            continue
         use_owner_projection = bool(
             owner_polygons
             and not mission_polygons

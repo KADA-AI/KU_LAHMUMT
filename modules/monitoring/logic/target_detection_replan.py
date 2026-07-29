@@ -477,11 +477,120 @@ def _extract_message_target_entries(message: object) -> list[dict[str, Any]]:
     return entries
 
 
+def destroyed_target_ids_from_message(message: object | None) -> set[int]:
+    """Return target IDs carrying an explicit destroyed transition in 0402."""
+
+    return {
+        int(target_id)
+        for entry in _extract_message_target_entries(message)
+        if _coerce_bool(entry.get("isDestroyed")) is True
+        and (target_id := _coerce_int(entry.get("targetID"))) is not None
+        and int(target_id) > 0
+    }
+
+
+def _current_plan_tracking_target_pairs(
+    current_mission_plan_id: int | None,
+    active_assignments: list[dict[str, Any]],
+) -> set[tuple[int, int]]:
+    """Find active tracker/target pairs that are still executable in the plan.
+
+    Incremental attack replans can preserve an older tracker while replacing
+    its IMP/path IDs. The runtime assignment then legitimately points at the
+    older attack plan even though the current plan still contains the same
+    aircraft/target tracking branch. This artifact check is the safe fallback
+    for that lineage gap.
+    """
+
+    plan_id = _coerce_int(current_mission_plan_id)
+    if plan_id is None or plan_id <= 0:
+        return set()
+
+    target_by_aircraft: dict[int, int] = {}
+    for assignment in active_assignments or []:
+        if not isinstance(assignment, dict) or not bool(assignment.get("active")):
+            continue
+        aircraft_id = _coerce_int(assignment.get("aircraft_id"))
+        target_id = _coerce_int(assignment.get("target_id"))
+        if (
+            aircraft_id is None
+            or aircraft_id <= 0
+            or target_id is None
+            or target_id <= 0
+        ):
+            continue
+        target_by_aircraft[int(aircraft_id)] = int(target_id)
+    if not target_by_aircraft:
+        return set()
+
+    plan_data = load_db_json("MissionPlan", int(plan_id))
+    if not isinstance(plan_data, dict) or not plan_data:
+        return set()
+
+    pairs: set[tuple[int, int]] = set()
+    for aircraft_entry in plan_data.get("aircraftList") or []:
+        if not isinstance(aircraft_entry, dict):
+            continue
+        aircraft_id = _coerce_int(aircraft_entry.get("aircraftID"))
+        if aircraft_id is None or int(aircraft_id) not in target_by_aircraft:
+            continue
+        package_id = _coerce_int(
+            aircraft_entry.get("individualMissionPackageID")
+            or aircraft_entry.get("individualMissionPlanPackageID")
+            or aircraft_entry.get("individualMissionPackageId")
+        )
+        if package_id is None or package_id <= 0:
+            continue
+        imp_data = load_db_json("IndividualMissionPlan", int(package_id))
+        target_id = int(target_by_aircraft[int(aircraft_id)])
+        for mission in imp_data.get("individualMissionList") or []:
+            if not isinstance(mission, dict) or bool(mission.get("isDone")):
+                continue
+            mission_info = (
+                mission.get("individualMissionInfo")
+                if isinstance(mission.get("individualMissionInfo"), dict)
+                else {}
+            )
+            related = (
+                mission.get("relatedMission")
+                if isinstance(mission.get("relatedMission"), dict)
+                else {}
+            )
+            mission_target_id = _coerce_int(
+                mission_info.get("targetID")
+                or related.get("targetID")
+                or mission.get("targetID")
+            )
+            if mission_target_id == target_id:
+                pairs.add((int(aircraft_id), int(target_id)))
+                break
+    return pairs
+
+
+def _tracking_assignment_matches_current_plan(
+    assignment: dict[str, Any],
+    *,
+    current_plan_lineage: set[int],
+    current_plan_target_pairs: set[tuple[int, int]],
+) -> bool:
+    if _tracking_assignment_matches_plan_lineage(
+        assignment,
+        current_plan_lineage=current_plan_lineage,
+    ):
+        return True
+    aircraft_id = _coerce_int(assignment.get("aircraft_id"))
+    target_id = _coerce_int(assignment.get("target_id"))
+    if aircraft_id is None or target_id is None:
+        return False
+    return (int(aircraft_id), int(target_id)) in current_plan_target_pairs
+
+
 def _extract_destroyed_tracking_entries_from_info(
     info: dict[str, Any] | None,
     *,
     active_assignments: list[dict[str, Any]],
     current_plan_lineage: set[int],
+    current_plan_target_pairs: set[tuple[int, int]] | None = None,
 ) -> list[dict[str, Any]]:
     target_map = info.get("targetList") if isinstance(info, dict) else None
     if not isinstance(target_map, dict):
@@ -491,9 +600,10 @@ def _extract_destroyed_tracking_entries_from_info(
     for assignment in active_assignments or []:
         if not isinstance(assignment, dict) or not bool(assignment.get("active")):
             continue
-        if not _tracking_assignment_matches_plan_lineage(
+        if not _tracking_assignment_matches_current_plan(
             assignment,
             current_plan_lineage=current_plan_lineage,
+            current_plan_target_pairs=set(current_plan_target_pairs or set()),
         ):
             continue
         target_id = _coerce_int(assignment.get("target_id"))
@@ -958,15 +1068,17 @@ def _tracking_assignment_matches_close_event(
     assignment: dict[str, Any],
     *,
     current_plan_lineage: set[int],
+    current_plan_target_pairs: set[tuple[int, int]],
     target_id: int,
 ) -> bool:
     if not isinstance(assignment, dict) or not bool(assignment.get("active")):
         return False
     if _coerce_int(assignment.get("target_id")) != int(target_id):
         return False
-    return _tracking_assignment_matches_plan_lineage(
+    return _tracking_assignment_matches_current_plan(
         assignment,
         current_plan_lineage=current_plan_lineage,
+        current_plan_target_pairs=current_plan_target_pairs,
     )
 
 
@@ -1006,18 +1118,28 @@ def _resolve_close_event_assignments(
     *,
     active_assignments: list[dict[str, Any]],
     current_plan_lineage: set[int],
+    current_plan_target_pairs: set[tuple[int, int]] | None = None,
     target_id: int,
     watcher_id: int | None,
 ) -> dict[str, Any]:
+    executable_pairs = set(current_plan_target_pairs or set())
     candidate_assignments = [
         assignment
         for assignment in active_assignments
         if _tracking_assignment_matches_close_event(
             assignment,
             current_plan_lineage=current_plan_lineage,
+            current_plan_target_pairs=executable_pairs,
             target_id=int(target_id),
         )
     ]
+    lineage_recovered = any(
+        not _tracking_assignment_matches_plan_lineage(
+            assignment,
+            current_plan_lineage=current_plan_lineage,
+        )
+        for assignment in candidate_assignments
+    )
     candidate_aircraft_ids = sorted(
         {
             int(_coerce_int(item.get("aircraft_id")))
@@ -1032,6 +1154,7 @@ def _resolve_close_event_assignments(
             "candidate_aircraft_ids": candidate_aircraft_ids,
             "resolved_watcher_id": watcher_id,
             "match_strategy": "no_target_plan_match",
+            "lineage_recovered": False,
         }
     if watcher_id is None or watcher_id not in watcher_uav_ids:
         return {
@@ -1039,6 +1162,7 @@ def _resolve_close_event_assignments(
             "candidate_aircraft_ids": candidate_aircraft_ids,
             "resolved_watcher_id": watcher_id,
             "match_strategy": "watcher_unavailable",
+            "lineage_recovered": bool(lineage_recovered),
         }
 
     watcher_matched = [
@@ -1052,6 +1176,7 @@ def _resolve_close_event_assignments(
             "candidate_aircraft_ids": candidate_aircraft_ids,
             "resolved_watcher_id": watcher_id,
             "match_strategy": "watcher_match",
+            "lineage_recovered": bool(lineage_recovered),
         }
 
     if len(candidate_aircraft_ids) == 1:
@@ -1060,6 +1185,7 @@ def _resolve_close_event_assignments(
             "candidate_aircraft_ids": candidate_aircraft_ids,
             "resolved_watcher_id": int(candidate_aircraft_ids[0]),
             "match_strategy": "target_plan_fallback",
+            "lineage_recovered": bool(lineage_recovered),
         }
 
     return {
@@ -1067,6 +1193,7 @@ def _resolve_close_event_assignments(
         "candidate_aircraft_ids": candidate_aircraft_ids,
         "resolved_watcher_id": watcher_id,
         "match_strategy": "ambiguous_watcher_mismatch",
+        "lineage_recovered": bool(lineage_recovered),
     }
 
 
@@ -1139,6 +1266,10 @@ class TargetDetectionCoordinator:
         current_plan_lineage = resolve_plan_lineage_ids(int(current_mission_plan_id)) or {
             int(current_mission_plan_id)
         }
+        current_plan_target_pairs = _current_plan_tracking_target_pairs(
+            int(current_mission_plan_id),
+            active_assignments,
+        )
         close_cfg = _post_attack_rejoin_config()
         close_cooldown_ms = max(
             0,
@@ -1151,6 +1282,7 @@ class TargetDetectionCoordinator:
             target_info,
             active_assignments=active_assignments,
             current_plan_lineage=current_plan_lineage,
+            current_plan_target_pairs=current_plan_target_pairs,
         )
         close_entries_by_target: dict[int, dict[str, Any]] = {}
         for entry in sorted(
@@ -1177,6 +1309,7 @@ class TargetDetectionCoordinator:
             close_match = _resolve_close_event_assignments(
                 active_assignments=active_assignments,
                 current_plan_lineage=current_plan_lineage,
+                current_plan_target_pairs=current_plan_target_pairs,
                 target_id=int(target_id),
                 watcher_id=watcher_id,
             )
@@ -1188,6 +1321,7 @@ class TargetDetectionCoordinator:
                 if _coerce_int(item) is not None
             ]
             match_strategy = str(close_match.get("match_strategy") or "")
+            lineage_recovered = bool(close_match.get("lineage_recovered"))
             if not matched_assignments:
                 if match_strategy == "ambiguous_watcher_mismatch":
                     logs.append(
@@ -1201,6 +1335,13 @@ class TargetDetectionCoordinator:
                         f"(targetID={target_id}, eventWatcher={watcher_id})"
                     )
                 continue
+            if lineage_recovered:
+                logs.append(
+                    "[0402-close] stale tracking-plan lineage recovered from current "
+                    "MissionPlan artifact "
+                    f"(targetID={target_id}, trackingAircraft={candidate_aircraft_ids}, "
+                    f"currentPlanID={current_mission_plan_id})"
+                )
             if (
                 match_strategy == "target_plan_fallback"
                 and watcher_id is not None
@@ -1270,6 +1411,7 @@ class TargetDetectionCoordinator:
                 "isDestroyed": True,
                 "threat": entry.get("threat"),
                 "matchStrategy": match_strategy,
+                "trackingLineageRecovered": bool(lineage_recovered),
                 "trackingAircraftIDList": [
                     int(_coerce_int(item.get("aircraft_id")))
                     for item in matched_assignments

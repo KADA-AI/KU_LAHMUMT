@@ -285,7 +285,7 @@ class LAHStaticWaypointController(WaypointPIDController):
             self.uav.s.z = tz
             self._hold_position()
 
-            if not self.blocked and self.curr_idx in self.block_indices:
+            if not self.blocked and self._should_enter_input_block():
                 self._enter_block(tx, ty, tz, target)
                 return True
 

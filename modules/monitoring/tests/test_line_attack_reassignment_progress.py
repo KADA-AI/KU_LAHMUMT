@@ -15,6 +15,7 @@ def _line_mission(
     latitude: float,
     reverse: bool = False,
     source_coords: list[dict[str, float]] | None = None,
+    independent_line_progress: bool = False,
 ) -> dict[str, object]:
     coords = [
         {"latitude": float(latitude), "longitude": 127.0, "altitude": 100},
@@ -27,6 +28,7 @@ def _line_mission(
         "input_id": int(input_id),
         "path_id": int(path_id),
         "is_done": False,
+        "independent_line_progress": bool(independent_line_progress),
         "line_list": [{"width": 300.0, "coordinateList": coords}],
         "input_line_list": [{"width": 900.0, "coordinateList": coords}],
         "input_coordinate_list": list(source_coords or coords),
@@ -251,6 +253,54 @@ def test_retired_attack_owner_is_excluded_from_next_plan_common_frontier() -> No
             assert runtime.carry_source_aircraft_ids == (4, 5)
 
 
+def test_noncurrent_pending_line_does_not_receive_common_coverage() -> None:
+    plan1 = _view(
+        1,
+        [
+            (4, _line_mission(mission_id=41, input_id=10, path_id=401, latitude=38.000)),
+            (5, _line_mission(mission_id=51, input_id=10, path_id=501, latitude=38.003)),
+            (6, _line_mission(mission_id=61, input_id=10, path_id=601, latitude=38.006)),
+        ],
+    )
+    plan2 = _view(
+        2,
+        [
+            (4, _line_mission(mission_id=42, input_id=10, path_id=402, latitude=38.001)),
+            (5, _line_mission(mission_id=52, input_id=10, path_id=502, latitude=38.004)),
+        ],
+    )
+    # UAV4 is still tracking an attack; path 402 is only its pending resume
+    # suffix. UAV5 remains the live LINE owner.
+    plan2["uav_entries"][0]["current_individual_mission_id"] = 999
+    views = {1: plan1, 2: plan2}
+
+    with patch(
+        "modules.monitoring.logic.line_scan_progress_monitor.build_uav_mission_view",
+        side_effect=lambda plan_id: views[int(plan_id)],
+    ), patch.object(LineScanProgressMonitor, "_persist", return_value=None):
+        monitor = LineScanProgressMonitor()
+        monitor.apply_mission_plan(1)
+        for runtime in monitor._missions.values():
+            length_m = float(runtime.line_def.line_lengths_m[0])
+            covered_m = length_m * 0.30
+            runtime.state.covered_intervals_by_line = {0: [(0.0, covered_m)]}
+            runtime.state.covered_length_m = covered_m
+
+        monitor.apply_mission_plan(2)
+
+        by_aircraft = {
+            int(runtime.aircraft_id): runtime
+            for runtime in monitor._missions.values()
+        }
+        assert by_aircraft[4].is_current is False
+        assert by_aircraft[4].state.covered_length_m == pytest.approx(0.0)
+        assert by_aircraft[4].carry_source_aircraft_ids == ()
+        assert (
+            by_aircraft[5].state.covered_length_m
+            / by_aircraft[5].line_def.planned_length_m
+        ) == pytest.approx(0.30, abs=0.01)
+
+
 def test_explicit_non_line_waypoint_retires_stale_line_runtime() -> None:
     mission = _line_mission(
         mission_id=41,
@@ -285,3 +335,123 @@ def test_explicit_non_line_waypoint_retires_stale_line_runtime() -> None:
         assert runtime.is_current is False
         assert runtime.state.covered_length_m == pytest.approx(0.0)
         assert monitor.snapshot()["entries"][0]["isCurrent"] is False
+
+
+def test_type2_independent_branch_new_suffix_does_not_inherit_input_progress() -> None:
+    plan1 = _view(
+        1,
+        [
+            (
+                aircraft_id,
+                _line_mission(
+                    mission_id=(aircraft_id * 10) + 1,
+                    input_id=4,
+                    path_id=(aircraft_id * 100) + 1,
+                    latitude=38.0 + (aircraft_id * 0.003),
+                    independent_line_progress=True,
+                ),
+            )
+            for aircraft_id in (4, 5, 6)
+        ],
+    )
+    plan2 = _view(
+        2,
+        [
+            (
+                aircraft_id,
+                _line_mission(
+                    mission_id=(aircraft_id * 10) + 2,
+                    input_id=4,
+                    path_id=(aircraft_id * 100) + 2,
+                    latitude=38.001 + (aircraft_id * 0.003),
+                    independent_line_progress=True,
+                ),
+            )
+            for aircraft_id in (4, 5, 6)
+        ],
+    )
+    views = {1: plan1, 2: plan2}
+
+    with patch(
+        "modules.monitoring.logic.line_scan_progress_monitor.build_uav_mission_view",
+        side_effect=lambda plan_id: views[int(plan_id)],
+    ), patch.object(LineScanProgressMonitor, "_persist", return_value=None):
+        monitor = LineScanProgressMonitor()
+        monitor.apply_mission_plan(1)
+        for runtime in monitor._missions.values():
+            length_m = float(runtime.line_def.line_lengths_m[0])
+            covered_m = length_m * 0.60
+            runtime.state.covered_intervals_by_line = {0: [(0.0, covered_m)]}
+            runtime.state.covered_length_m = covered_m
+
+        monitor.apply_mission_plan(2)
+
+        for runtime in monitor._missions.values():
+            assert runtime.independent_line_progress is True
+            assert runtime.state.covered_length_m == pytest.approx(0.0)
+            assert runtime.state.covered_intervals_by_line == {}
+            assert runtime.carry_source_aircraft_ids == ()
+        assert all(
+            "coverageCarryPolicy" not in entry
+            for entry in monitor.snapshot()["entries"]
+        )
+
+
+def test_type2_independent_branch_preserves_only_same_aircraft_exact_path() -> None:
+    path_id = 401
+    first = _line_mission(
+        mission_id=41,
+        input_id=4,
+        path_id=path_id,
+        latitude=38.0,
+        independent_line_progress=True,
+    )
+    pending = _line_mission(
+        mission_id=42,
+        input_id=4,
+        path_id=path_id,
+        latitude=38.0,
+        independent_line_progress=True,
+    )
+    resumed = _line_mission(
+        mission_id=43,
+        input_id=4,
+        path_id=path_id,
+        latitude=38.0,
+        independent_line_progress=True,
+    )
+    plan1 = _view(1, [(4, first)])
+    plan2 = _view(2, [(4, pending)])
+    plan2["uav_entries"][0]["current_individual_mission_id"] = 999
+    plan3 = _view(3, [(4, resumed)])
+    views = {1: plan1, 2: plan2, 3: plan3}
+
+    with patch(
+        "modules.monitoring.logic.line_scan_progress_monitor.build_uav_mission_view",
+        side_effect=lambda plan_id: views[int(plan_id)],
+    ), patch.object(LineScanProgressMonitor, "_persist", return_value=None):
+        monitor = LineScanProgressMonitor()
+        monitor.apply_mission_plan(1)
+        runtime = next(iter(monitor._missions.values()))
+        length_m = float(runtime.line_def.line_lengths_m[0])
+        covered_m = length_m * 0.35
+        runtime.state.covered_intervals_by_line = {0: [(0.0, covered_m)]}
+        runtime.state.covered_length_m = covered_m
+        runtime.visited_line_indexes.add(0)
+        runtime.line_visit_sequence.append(0)
+        runtime.line_transition_count = 3
+
+        monitor.apply_mission_plan(2)
+        pending_runtime = next(iter(monitor._missions.values()))
+        assert pending_runtime.is_current is False
+        assert pending_runtime.state.covered_length_m == pytest.approx(covered_m)
+
+        monitor.apply_mission_plan(3)
+        resumed_runtime = next(iter(monitor._missions.values()))
+        assert resumed_runtime.is_current is True
+        assert resumed_runtime.state.covered_length_m == pytest.approx(covered_m)
+        assert resumed_runtime.line_transition_count == 3
+        assert resumed_runtime.carry_source_aircraft_ids == ()
+        assert monitor.snapshot()["entries"][0]["coverageCarryPolicy"] == (
+            "same_aircraft_exact_path"
+        )

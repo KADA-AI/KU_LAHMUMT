@@ -18,7 +18,7 @@ import { initDynamicsCalibrationPanel } from "./js/dynamics_calibration_panel.js
 import { initMissionOptionPopup } from "./js/mission_option_popup.js";
 import { initMissionRecommendPopup } from "./js/mission_recommend_popup.js";
 import { initReplanNoticePopup } from "./js/replan_notice_popup.js";
-import { initMissionPaths } from "./js/mission_paths.js?v=20260725-lah-point-roles-1";
+import { initMissionPaths } from "./js/mission_paths.js?v=20260729-boundary-guard-cycle-1";
 import { initVehicleMarkers } from "./js/vehicle_markers.js";
 import { initTargetMarkers } from "./js/target_markers.js";
 import { initEnemyLahLos } from "./js/enemy_lah_los.js?v=20260725-lah-role-layout-2";
@@ -27,6 +27,7 @@ import { initProjectileMarkers } from "./js/projectile_markers.js";
 import { initImpactEffects } from "./js/impact_effects.js";
 import { initRemainingAreas } from "./js/remaining_areas.js";
 import { initMissionReferenceMarkers } from "./js/mission_reference_markers.js";
+import { initDistanceMeasurement } from "./js/distance_measurement.js?v=20260729-distance-measure-1";
 import { getAgentCoordinate, getUiState, updateUiField } from "./js/agent_store.js";
 import { logStatus } from "./js/status_log.js";
 import { initSimClient } from "./js/sim_client.js";
@@ -241,6 +242,11 @@ import { initSimClient } from "./js/sim_client.js";
   initSidePanel();
   initMissionPanel(map);
   initScenarioPanel(map);
+  const distanceMeasurement = initDistanceMeasurement(map, {
+    button: document.getElementById("toggle-distance-measurement"),
+    onStatus: setStatus,
+  });
+  window.distanceMeasurement = distanceMeasurement;
   init0401Panel();
   initRightSidePanel();
   initIntegrationPanel();

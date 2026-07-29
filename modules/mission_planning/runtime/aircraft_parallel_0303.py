@@ -36,6 +36,21 @@ except Exception:
         runtime_settings_override = None  # type: ignore
 
 try:
+    from ..pipelines.type2_boundary_guard_loop import (
+        is_boundary_guard_loop,
+        link_boundary_guard_flight_path_sets,
+        sync_boundary_guard_contract_from_flight_paths,
+        validate_boundary_guard_flight_path_sets,
+    )
+except Exception:
+    from modules.mission_planning.pipelines.type2_boundary_guard_loop import (  # type: ignore
+        is_boundary_guard_loop,
+        link_boundary_guard_flight_path_sets,
+        sync_boundary_guard_contract_from_flight_paths,
+        validate_boundary_guard_flight_path_sets,
+    )
+
+try:
     from modules.common import replan_perf
 except Exception:
     import sys as _sys
@@ -938,6 +953,7 @@ def validate_0303_parallel_merge_output(plans: List[Dict[str, Any]]) -> Dict[str
     for plan_idx, plan in enumerate(plans or []):
         if not isinstance(plan, dict):
             continue
+        boundary_guard_plan = is_boundary_guard_loop(plan)
         aid = _mission_aircraft_id(plan)
         if aid is not None and int(aid) not in first_index_by_aircraft:
             first_index_by_aircraft[int(aid)] = int(plan_idx)
@@ -956,8 +972,18 @@ def validate_0303_parallel_merge_output(plans: List[Dict[str, Any]]) -> Dict[str
             if wp_idx + 1 < len(waypoints) and isinstance(waypoints[wp_idx + 1], dict):
                 expected_next = int(_safe_int(waypoints[wp_idx + 1].get("waypointID"), 0) or 0)
             actual_next = int(_safe_int(wp.get("nextWaypointID"), 0) or 0)
+            if boundary_guard_plan and wp_idx + 1 == len(waypoints):
+                # A guard child tail deliberately crosses into the next child
+                # (or back to the set's first child).  The exact target is
+                # checked below against the complete explicit guard contract.
+                continue
             if actual_next != expected_next:
                 errors.append(f"nextWaypointID:{plan.get('pathID')}:{wp_idx}")
+
+    try:
+        validate_boundary_guard_flight_path_sets(plans)
+    except (TypeError, ValueError) as exc:
+        errors.append(f"boundaryGuardLoop:{exc}")
 
     formation_order_violations: List[str] = []
     for plan_idx, plan in enumerate(plans or []):
@@ -1165,7 +1191,12 @@ def _summarize_line_search_counts(plans: List[Dict[str, Any]]) -> Dict[str, int]
     }
 
 
-def reassign_waypoint_ids_inplace(plans: List[Dict[str, Any]], wp_alloc: Any) -> int:
+def reassign_waypoint_ids_inplace(
+    plans: List[Dict[str, Any]],
+    wp_alloc: Any,
+    *,
+    missions: Optional[List[Dict[str, Any]]] = None,
+) -> int:
     if wp_alloc is None or not hasattr(wp_alloc, "alloc"):
         raise RuntimeError("Waypoint allocator unavailable for 0303 aircraft parallel output.")
     waypoint_refs = _waypoint_rows_from_plans(plans)
@@ -1185,6 +1216,13 @@ def reassign_waypoint_ids_inplace(plans: List[Dict[str, Any]], wp_alloc: Any) ->
                 waypoints[idx]["nextWaypointID"] = int(waypoints[idx + 1].get("waypointID", 0) or 0)
         if isinstance(waypoints[-1], dict):
             waypoints[-1]["nextWaypointID"] = 0
+    # d0303 links a Type-2 guard set while each parallel worker still uses
+    # local waypoint IDs.  Global reassignment above necessarily invalidates
+    # those cross-child targets and cycle IDs, so restore the complete owner
+    # set only after every merged path has its final waypoint ID.
+    link_boundary_guard_flight_path_sets(plans, strict=True)
+    if missions is not None:
+        sync_boundary_guard_contract_from_flight_paths(missions, plans)
     return count
 
 
@@ -1412,7 +1450,11 @@ def build_0303_flight_plans_aircraft_parallel(
         _normalize_timestamps(built)
         _phase("dependency_normalize_timestamps", phase_started_dep)
         phase_started_dep = time.perf_counter()
-        reassigned = reassign_waypoint_ids_inplace(built, wp_alloc)
+        reassigned = reassign_waypoint_ids_inplace(
+            built,
+            wp_alloc,
+            missions=clean_missions,
+        )
         _phase("dependency_reassign_waypoint_ids", phase_started_dep)
         merge_validation = validate_0303_parallel_merge_output(built)
         if not bool(merge_validation.get("valid")):
@@ -1567,7 +1609,11 @@ def build_0303_flight_plans_aircraft_parallel(
                 _normalize_timestamps(built_proc)
                 _phase("process_normalize_timestamps", phase_started)
                 phase_started = time.perf_counter()
-                reassigned_proc = reassign_waypoint_ids_inplace(built_proc, wp_alloc)
+                reassigned_proc = reassign_waypoint_ids_inplace(
+                    built_proc,
+                    wp_alloc,
+                    missions=clean_missions,
+                )
                 _phase("process_reassign_waypoint_ids", phase_started)
                 merge_validation = validate_0303_parallel_merge_output(built_proc)
                 if bool(merge_validation.get("valid")):
@@ -1663,7 +1709,11 @@ def build_0303_flight_plans_aircraft_parallel(
     _normalize_timestamps(built)
     _phase("normalize_timestamps", phase_started)
     phase_started = time.perf_counter()
-    reassigned = reassign_waypoint_ids_inplace(built, wp_alloc)
+    reassigned = reassign_waypoint_ids_inplace(
+        built,
+        wp_alloc,
+        missions=clean_missions,
+    )
     _phase("reassign_waypoint_ids", phase_started)
     merge_validation = validate_0303_parallel_merge_output(built)
     if not bool(merge_validation.get("valid")):

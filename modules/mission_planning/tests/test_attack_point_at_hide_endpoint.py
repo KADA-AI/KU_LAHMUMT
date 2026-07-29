@@ -48,6 +48,7 @@ def test_firing_point_stays_in_the_hide_points_neighbourhood() -> None:
         * 111_320.0
         * math.cos(math.radians(HIDE["latitude"])),
     )
+    assert lateral_m >= 1.0, "the armed WP must be distinct from the hide WP"
     assert lateral_m <= radius_m + 1.0
     assert lateral_m == pytest.approx(result.get("attack_point_popup_offset_m", 0.0), abs=1.0)
 
@@ -75,21 +76,30 @@ def test_stepping_aside_never_costs_altitude() -> None:
     assert int(result["altitude"]) <= int(straight_up["altitude"])
 
 
-def test_altitude_is_the_line_of_sight_requirement_not_the_default_offset() -> None:
-    """The ordinary attack point sits ground+300 m; popping up must not."""
+def test_altitude_is_a_low_popup_base_not_the_los_firing_altitude() -> None:
+    """SIM, not the mission packet, owns the climb needed to open LOS."""
 
     if not _dem_available():
         pytest.skip("operational regional DEM is not installed")
 
     result = ap._attack_coordinate_at_hide_endpoint(HIDE, TARGET)
     assert result is not None
-    assert result["los_verified"] is True
+    assert result["attack_altitude_control"] == "sim_los_popup"
+    assert result["attack_point_popup_los_certified"] is True
+    assert result["los_verified"] is False
+    assert "los_required_altitude_m" not in result
+    assert "los_selected_altitude_m" not in result
 
-    required_m = float(result["los_required_altitude_m"])
-    altitude_m = float(result["altitude"])
-    # Just enough to clear the sightline, not the 300 m stand-off baseline.
-    assert altitude_m >= required_m - 1.0
-    assert altitude_m < required_m + 250.0
+    firing, error = ap._compute_attack_los_altitude_batch_dem(
+        result,
+        TARGET,
+        lah_floor_coord=result,
+        altitude_offset_m=ap.get_runtime_attack_float(
+            "attack_point_hide_popup_margin_m", 30.0
+        ),
+    )
+    assert error is None and firing is not None
+    assert float(result["altitude"]) < float(firing["altitude"])
 
 
 def test_the_aircraft_is_never_told_to_descend_for_the_shot() -> None:

@@ -170,6 +170,32 @@ def _mission_execution_blocked_until_next_collab(mission: Any) -> bool:
     )
 
 
+def _mission_execution_blocked_for_load(
+    mission: Any,
+    *,
+    input_mission_id: int | None,
+    start_input_mission_id: int | None,
+    preserved_active_input_mission_id: int | None,
+) -> bool:
+    """Apply the collaboration block without stopping an already-active input."""
+
+    if not _mission_execution_blocked_until_next_collab(mission):
+        return False
+    if (
+        input_mission_id is not None
+        and start_input_mission_id is not None
+        and int(input_mission_id) == int(start_input_mission_id)
+    ):
+        return False
+    if (
+        input_mission_id is not None
+        and preserved_active_input_mission_id is not None
+        and int(input_mission_id) == int(preserved_active_input_mission_id)
+    ):
+        return False
+    return True
+
+
 def _wrap_heading_deg(value: float) -> float:
     return float(value) % 360.0
 
@@ -395,6 +421,223 @@ def _order_waypoints(raw: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
             ordered.append(wp)
 
     return ordered
+
+
+_BOUNDARY_GUARD_CONTRACT_FIELDS: dict[str, tuple[str, ...]] = {
+    "loop": ("boundaryGuardLoop", "boundary_guard_loop"),
+    "loop_version": (
+        "boundaryGuardLoopVersion",
+        "boundary_guard_loop_version",
+    ),
+    "set_id": ("boundaryGuardSetID", "boundary_guard_set_id"),
+    "sequence": ("boundaryGuardSequence", "boundary_guard_sequence"),
+    "sequence_count": (
+        "boundaryGuardSequenceCount",
+        "boundary_guard_sequence_count",
+    ),
+    "duration_s": ("boundaryGuardDurationS", "boundary_guard_duration_s"),
+    "cycle_first_wp_id": (
+        "boundaryGuardCycleFirstWaypointID",
+        "boundary_guard_cycle_first_wp_id",
+    ),
+    "cycle_last_wp_id": (
+        "boundaryGuardCycleLastWaypointID",
+        "boundary_guard_cycle_last_wp_id",
+    ),
+}
+
+
+def _get_ci_present(mapping: Any, *keys: str) -> tuple[bool, Any]:
+    """Case-insensitive lookup which preserves an explicit ``False`` value."""
+
+    if not isinstance(mapping, dict):
+        return False, None
+    for key in keys:
+        if key in mapping:
+            return True, mapping[key]
+    lowered = {str(key).lower(): value for key, value in mapping.items()}
+    for key in keys:
+        lowered_key = str(key).lower()
+        if lowered_key in lowered:
+            return True, lowered[lowered_key]
+    return False, None
+
+
+def _boundary_guard_contract(*sources: Any) -> dict[str, Any]:
+    """Read the durable boundary-loop contract from protocol dictionaries.
+
+    Earlier sources have precedence.  The separate ``loop_present`` flag is
+    important: an explicit false disables the Type-2/region-7 compatibility
+    fallback.
+    """
+
+    result: dict[str, Any] = {"loop_present": False}
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        nested = _get_ci(source, "boundaryGuard", "boundary_guard")
+        candidates = (source, nested) if isinstance(nested, dict) else (source,)
+        for candidate in candidates:
+            for field, aliases in _BOUNDARY_GUARD_CONTRACT_FIELDS.items():
+                if field in result:
+                    continue
+                present, value = _get_ci_present(candidate, *aliases)
+                if not present:
+                    continue
+                if field == "loop":
+                    result[field] = _coerce_bool(value, False)
+                    result["loop_present"] = True
+                elif field == "set_id":
+                    text = str(value or "").strip()
+                    result[field] = text or None
+                elif field == "duration_s":
+                    parsed = _coerce_float(value, 0.0)
+                    result[field] = parsed if parsed > 0.0 else None
+                else:
+                    result[field] = _coerce_int(value, None)
+    return result
+
+
+def _boundary_guard_wp_fields(
+    wp: dict[str, Any],
+    contract: dict[str, Any] | None,
+) -> dict[str, Any]:
+    # ``_resolve_boundary_guard_sequence_contracts`` returns the canonical
+    # internal shape (``loop``, ``set_id``, ``cycle_first_wp_id``, ...).
+    # Do not feed that shape back through the wire-format parser: the parser
+    # intentionally reads protocol names such as ``boundaryGuardLoop`` and
+    # would otherwise discard the already-resolved path contract.
+    resolved = dict(contract or {})
+    wp_contract = _boundary_guard_contract(wp)
+    for field in _BOUNDARY_GUARD_CONTRACT_FIELDS:
+        if field in wp_contract:
+            resolved[field] = wp_contract[field]
+    if bool(wp_contract.get("loop_present")):
+        resolved["loop_present"] = True
+    next_wp_id = _coerce_int(
+        _get_ci(wp, "nextWaypointID", "NextWaypointID"),
+        None,
+    )
+    return {
+        "next_wp_id": next_wp_id,
+        "boundary_guard_loop": bool(resolved.get("loop", False)),
+        "boundary_guard_loop_version": resolved.get("loop_version"),
+        "boundary_guard_set_id": resolved.get("set_id"),
+        "boundary_guard_sequence": resolved.get("sequence"),
+        "boundary_guard_sequence_count": resolved.get("sequence_count"),
+        "boundary_guard_duration_s": resolved.get("duration_s"),
+        "boundary_guard_cycle_first_wp_id": resolved.get("cycle_first_wp_id"),
+        "boundary_guard_cycle_last_wp_id": resolved.get("cycle_last_wp_id"),
+    }
+
+
+def _resolve_boundary_guard_sequence_contracts(
+    aircraft_id: int,
+    sequence: list[dict[str, Any]],
+    flight_by_path: dict[int, dict],
+) -> dict[int, dict[str, Any]]:
+    """Resolve one full guard cycle across consecutive child FlightPaths."""
+
+    groups: dict[tuple[int | None, str], list[dict[str, Any]]] = {}
+    for ordinal, item in enumerate(sequence):
+        path_id = _coerce_int(item.get("path_id"), None)
+        if path_id is None:
+            continue
+        data = flight_by_path.get(int(path_id))
+        if not isinstance(data, dict):
+            continue
+        contract = _boundary_guard_contract(data, item)
+        fallback = (
+            not bool(contract.get("loop_present"))
+            and _coerce_int(item.get("package_type"), None) == 2
+            and _coerce_int(item.get("input_mission_type"), None) == 3
+            and _coerce_int(item.get("region_type"), None) == 7
+        )
+        if not bool(contract.get("loop", False)) and not fallback:
+            continue
+        input_id = _coerce_int(item.get("input_mission_id"), None)
+        set_id = str(contract.get("set_id") or "").strip()
+        if not set_id:
+            set_id = f"boundary-guard:{int(aircraft_id)}:{int(input_id or 0)}"
+        groups.setdefault((input_id, set_id), []).append(
+            {
+                "ordinal": int(ordinal),
+                "path_id": int(path_id),
+                "contract": contract,
+                "data": data,
+            }
+        )
+
+    resolved: dict[int, dict[str, Any]] = {}
+    for (_input_id, set_id), members in groups.items():
+        explicit_sequences = [
+            _coerce_int(member["contract"].get("sequence"), None)
+            for member in members
+        ]
+        if (
+            all(value is not None and int(value) > 0 for value in explicit_sequences)
+            and len({int(value) for value in explicit_sequences}) == len(members)
+        ):
+            members.sort(
+                key=lambda member: int(member["contract"].get("sequence"))
+            )
+        else:
+            members.sort(key=lambda member: int(member["ordinal"]))
+
+        waypoint_ids: list[int] = []
+        ids_by_path: dict[int, list[int]] = {}
+        for member in members:
+            ids: list[int] = []
+            for wp in _order_waypoints(_extract_waypoints(member["data"])):
+                if not isinstance(wp, dict):
+                    continue
+                wp_id = _coerce_int(_get_ci(wp, "waypointID", "WaypointID"), None)
+                if wp_id is not None and int(wp_id) > 0:
+                    ids.append(int(wp_id))
+            ids_by_path[int(member["path_id"])] = ids
+            waypoint_ids.extend(ids)
+        if not waypoint_ids:
+            continue
+
+        first_contract = members[0]["contract"]
+        last_contract = members[-1]["contract"]
+        explicit_first = _coerce_int(first_contract.get("cycle_first_wp_id"), None)
+        explicit_last = _coerce_int(last_contract.get("cycle_last_wp_id"), None)
+        first_wp_id = (
+            int(explicit_first)
+            if explicit_first is not None and int(explicit_first) in waypoint_ids
+            else int(waypoint_ids[0])
+        )
+        last_wp_id = (
+            int(explicit_last)
+            if explicit_last is not None and int(explicit_last) in waypoint_ids
+            else int(waypoint_ids[-1])
+        )
+        duration_s = next(
+            (
+                float(member["contract"]["duration_s"])
+                for member in members
+                if member["contract"].get("duration_s") is not None
+            ),
+            None,
+        )
+        sequence_count = len(members)
+        for sequence_idx, member in enumerate(members, start=1):
+            path_id = int(member["path_id"])
+            resolved[path_id] = {
+                "loop_present": True,
+                "loop": True,
+                "loop_version": int(
+                    _coerce_int(member["contract"].get("loop_version"), 1) or 1
+                ),
+                "set_id": str(set_id),
+                "sequence": int(sequence_idx),
+                "sequence_count": int(sequence_count),
+                "duration_s": duration_s,
+                "cycle_first_wp_id": int(first_wp_id),
+                "cycle_last_wp_id": int(last_wp_id),
+            }
+    return resolved
 
 
 def _label_to_aircraft_id(label: str) -> Optional[int]:
@@ -678,11 +921,18 @@ _FOOTPRINT_MIN_PREFERRED_RIGHT_PROJECTION = 0.20
 _FOOTPRINT_FOV_INTERPRETATION = "diagonal_full"
 _TERRAIN_LOS_SAMPLE_STEP_M = 10.0
 _TERRAIN_LOS_CLEARANCE_M = LOS_CLEARANCE_M
-# A masked firing point is climbed out of rather than held: the planner and
-# the simulator read the ridge a few metres apart, and the aircraft must not
-# park at a point it can never shoot from.
-_ATTACK_LOS_CLIMB_RATE_MPS = 8.0
-_ATTACK_LOS_MAX_CLIMB_M = 600.0
+# An armed attack WP is a low-level popup base.  SIM owns the vertical action:
+# climb until its own LOS opens, fire immediately, then descend to the exact
+# planned altitude before releasing the waypoint.
+# Attack popups are intentionally accelerated for simulation pacing.  The
+# ordinary waypoint controller keeps the operational LAH rates; only the short
+# vertical expose/fire/re-conceal action uses these values.
+_ATTACK_LOS_CLIMB_RATE_MPS = 125.0
+# Descend faster than the popup climb so a high ridge-clearance shot does not
+# leave the demo waiting on a long vertical return before the route resumes.
+_ATTACK_LOS_DESCENT_RATE_MPS = 250.0
+_ATTACK_LOS_ALTITUDE_TOLERANCE_M = 0.25
+_LAH_MISSION_GROUND_CLEARANCE_M = 30.0
 _TERRAIN_LOS_TARGET_HEIGHT_M = ENEMY_OBSERVER_HEIGHT_M
 # A ground target stands on the terrain. Spawning it at z=0 put it at sea level
 # - hundreds of metres underground here - which the LOS kernels quietly hid by
@@ -3438,7 +3688,49 @@ class SimulationService:
             "loiter_dir": float(getattr(controller, "loiter_dir", 1.0) or 1.0),
             "loiter_angle": float(getattr(controller, "loiter_angle", 0.0) or 0.0),
             "loiter_angle_locked": bool(getattr(controller, "loiter_angle_locked", False)),
+            "boundary_guard_cycle_counts": dict(
+                getattr(controller, "boundary_guard_cycle_counts", {}) or {}
+            ),
         }
+
+    @staticmethod
+    def _restore_stable_boundary_guard_cycle_counts(
+        controller: WaypointPIDController,
+        snapshot: dict[str, Any],
+    ) -> bool:
+        """Restore only cycle counters whose immutable guard set still exists.
+
+        Replanning intentionally changes waypoint/path IDs, so the full
+        controller signature is often incompatible even though the Type-2
+        boundary guard owner set is unchanged.  Its cycle counter is independent
+        of cursor/loiter state and is safe to carry by stable set ID alone.
+        """
+
+        current_set_ids = {
+            str(getattr(target, "boundary_guard_set_id", "") or "").strip()
+            for target in (getattr(controller, "targets", None) or [])
+            if bool(getattr(target, "boundary_guard_loop", False))
+            and str(
+                getattr(target, "boundary_guard_set_id", "") or ""
+            ).strip()
+        }
+        saved_counts = {
+            str(set_id or "").strip(): max(
+                0,
+                int(_coerce_int(count, 0) or 0),
+            )
+            for set_id, count in dict(
+                snapshot.get("boundary_guard_cycle_counts") or {}
+            ).items()
+            if str(set_id or "").strip()
+        }
+        restored_counts = {
+            str(set_id): int(saved_counts[set_id])
+            for set_id in current_set_ids
+            if set_id in saved_counts
+        }
+        controller.boundary_guard_cycle_counts = restored_counts
+        return bool(restored_counts)
 
     def _restore_controller_progress(
         self,
@@ -3447,6 +3739,7 @@ class SimulationService:
     ) -> bool:
         if not isinstance(controller, WaypointPIDController) or not isinstance(snapshot, dict):
             return False
+        self._restore_stable_boundary_guard_cycle_counts(controller, snapshot)
         current_signature = self._controller_progress_signature(controller)
         saved_signature = tuple(snapshot.get("signature") or ())
         if not current_signature or current_signature != saved_signature:
@@ -3659,6 +3952,15 @@ class SimulationService:
             (item for item in input_mission_plans if isinstance(item, dict)),
             key=lambda item: _coerce_float(item.get("timestamp"), 0.0),
         ):
+            package_type = _coerce_int(
+                _get_ci(
+                    plan,
+                    "inputMissionPackageType",
+                    "InputMissionPackageType",
+                    "packageType",
+                ),
+                None,
+            )
             for mission in plan.get("inputMissionList") or []:
                 if not isinstance(mission, dict):
                     continue
@@ -3671,6 +3973,7 @@ class SimulationService:
                         None,
                     ),
                     "region_type": _coerce_int(_get_ci(mission, "regionType", "RegionType"), None),
+                    "package_type": package_type,
                 }
 
         for entry in individual_mission_plans:
@@ -3702,6 +4005,7 @@ class SimulationService:
                         "input_mission_id": input_id,
                         "input_mission_type": input_meta.get("input_mission_type"),
                         "region_type": input_meta.get("region_type"),
+                        "package_type": input_meta.get("package_type"),
                         "individual_mission_id": _coerce_int(
                             _get_ci(im, "individualMissionID", "IndividualMissionID"),
                             None,
@@ -3712,6 +4016,7 @@ class SimulationService:
                         ),
                         "pattern_type": _coerce_int(_get_ci(info, "patternType", "PatternType"), None),
                         "complete_loiter_after_assignment": _is_post_attack_assignment_hold(im),
+                        **_boundary_guard_contract(im, info, rel),
                     }
 
         for entry in flight_paths:
@@ -3770,6 +4075,7 @@ class SimulationService:
                     flight_by_aircraft.setdefault(aircraft_id, []).append(path_id)
             path_sep_m = path_sep_by_id.get(int(path_id)) if path_id is not None else None
             path_mission_meta = mission_meta_by_path.get(int(path_id), {}) if path_id is not None else {}
+            path_guard_contract = _boundary_guard_contract(data, path_mission_meta)
 
             waypoints: list[dict] = []
             for wp in waypoints_raw:
@@ -3853,6 +4159,7 @@ class SimulationService:
                             wp,
                         ),
                         "sep_m": path_sep_m,
+                        **_boundary_guard_wp_fields(wp, path_guard_contract),
                     }
                 )
 
@@ -3926,6 +4233,30 @@ class SimulationService:
             formation_wp_ids_by_path[int(pid)] = ids
 
         seq_by_aircraft: dict[int, list[dict]] = {}
+        prev_active_input_by_aircraft: dict[int, int] = {}
+        if preserve_state and prev_input_order and prev_input_idx:
+            for raw_aircraft_id, raw_order in prev_input_order.items():
+                aircraft_id = _coerce_int(raw_aircraft_id, None)
+                raw_current_index = prev_input_idx.get(raw_aircraft_id)
+                if raw_current_index is None and aircraft_id is not None:
+                    raw_current_index = prev_input_idx.get(int(aircraft_id))
+                current_index = _coerce_int(
+                    raw_current_index,
+                    None,
+                )
+                if (
+                    aircraft_id is None
+                    or current_index is None
+                    or not isinstance(raw_order, list)
+                    or current_index < 0
+                    or current_index >= len(raw_order)
+                ):
+                    continue
+                active_input_id = _coerce_int(raw_order[current_index], None)
+                if active_input_id is not None:
+                    prev_active_input_by_aircraft[int(aircraft_id)] = int(
+                        active_input_id
+                    )
         for entry in individual_mission_plans:
             if not isinstance(entry, dict):
                 continue
@@ -3954,8 +4285,14 @@ class SimulationService:
                 # as planning templates, but are not executable before the
                 # explicit next-collaborative-mission handoff.
                 if (
-                    not is_explicit_start
-                    and _mission_execution_blocked_until_next_collab(im)
+                    _mission_execution_blocked_for_load(
+                        im,
+                        input_mission_id=input_id,
+                        start_input_mission_id=start_input_mission_id,
+                        preserved_active_input_mission_id=(
+                            prev_active_input_by_aircraft.get(int(aircraft_id))
+                        ),
+                    )
                 ):
                     continue
                 try:
@@ -4005,12 +4342,14 @@ class SimulationService:
                         "individual_mission_id": individual_id,
                         "input_mission_type": input_meta.get("input_mission_type"),
                         "region_type": input_meta.get("region_type"),
+                        "package_type": input_meta.get("package_type"),
                         "individual_mission_type": _coerce_int(
                             _get_ci(info, "individualMissionType", "IndividualMissionType"),
                             None,
                         ),
                         "pattern_type": _coerce_int(_get_ci(info, "patternType", "PatternType"), None),
                         "complete_loiter_after_assignment": _is_post_attack_assignment_hold(im),
+                        **_boundary_guard_contract(im, info, rel),
                     }
                 )
 
@@ -4068,6 +4407,11 @@ class SimulationService:
             ordered_latlons: list[tuple[float, float]] = []
             for aircraft_id, seq in seq_by_aircraft.items():
                 combined: list[dict] = []
+                guard_contract_by_path = _resolve_boundary_guard_sequence_contracts(
+                    int(aircraft_id),
+                    seq,
+                    flight_by_path,
+                )
                 block_indices.setdefault(aircraft_id, {})
                 last_input = None
                 order_list = order_per_aircraft.get(aircraft_id) or []
@@ -4088,6 +4432,7 @@ class SimulationService:
                     data = flight_by_path.get(pid)
                     if not isinstance(data, dict):
                         continue
+                    path_guard_contract = guard_contract_by_path.get(int(pid), {})
                     path_sep_m = path_sep_by_id.get(int(pid))
                     wps = _extract_waypoints(data)
                     if not wps:
@@ -4186,6 +4531,7 @@ class SimulationService:
                                     wp,
                                 ),
                                 "sep_m": path_sep_m,
+                                **_boundary_guard_wp_fields(wp, path_guard_contract),
                             }
                         )
                     end_idx = len(combined) - 1
@@ -4253,6 +4599,22 @@ class SimulationService:
                     continue
 
                 combined: list[dict] = []
+                mission_order_sequence: list[dict[str, Any]] = []
+                for raw_pid in path_ids:
+                    pid_value = _coerce_int(raw_pid, None)
+                    if pid_value is None:
+                        continue
+                    mission_order_sequence.append(
+                        {
+                            "path_id": int(pid_value),
+                            **mission_meta_by_path.get(int(pid_value), {}),
+                        }
+                    )
+                guard_contract_by_path = _resolve_boundary_guard_sequence_contracts(
+                    int(aircraft_id),
+                    mission_order_sequence,
+                    flight_by_path,
+                )
                 for pid in path_ids:
                     try:
                         pid_int = int(pid)
@@ -4261,6 +4623,7 @@ class SimulationService:
                     data = flight_by_path.get(pid_int)
                     if not isinstance(data, dict):
                         continue
+                    path_guard_contract = guard_contract_by_path.get(int(pid_int), {})
                     path_sep_m = path_sep_by_id.get(int(pid_int))
                     wps = _extract_waypoints(data)
                     if not wps:
@@ -4345,6 +4708,7 @@ class SimulationService:
                                 wp,
                             ),
                             "sep_m": path_sep_m,
+                            **_boundary_guard_wp_fields(wp, path_guard_contract),
                             }
                         )
                 if len(combined) < 2 and not _is_executable_single_waypoint_path(combined):
@@ -4367,6 +4731,27 @@ class SimulationService:
         else:
             # Fallback: map FlightPath by pathID prefix (1..6)
             combined_by_aircraft: dict[int, list[dict]] = {}
+            fallback_sequence_by_aircraft: dict[int, list[dict[str, Any]]] = {}
+            for raw_pid in flight_by_path:
+                try:
+                    prefix = int(str(raw_pid)[0])
+                except Exception:
+                    continue
+                if 1 <= prefix <= 6:
+                    fallback_sequence_by_aircraft.setdefault(prefix, []).append(
+                        {
+                            "path_id": int(raw_pid),
+                            **mission_meta_by_path.get(int(raw_pid), {}),
+                        }
+                    )
+            fallback_guard_contracts = {
+                int(aid): _resolve_boundary_guard_sequence_contracts(
+                    int(aid),
+                    sequence,
+                    flight_by_path,
+                )
+                for aid, sequence in fallback_sequence_by_aircraft.items()
+            }
             for pid, data in flight_by_path.items():
                 try:
                     prefix = int(str(pid)[0])
@@ -4375,6 +4760,9 @@ class SimulationService:
                 if prefix < 1 or prefix > 6:
                     continue
                 aircraft_id = prefix
+                path_guard_contract = fallback_guard_contracts.get(
+                    int(aircraft_id), {}
+                ).get(int(pid), {})
                 path_sep_m = path_sep_by_id.get(int(pid))
                 wps = _extract_waypoints(data)
                 if not wps:
@@ -4460,6 +4848,7 @@ class SimulationService:
                             wp,
                         ),
                         "sep_m": path_sep_m,
+                        **_boundary_guard_wp_fields(wp, path_guard_contract),
                         }
                     )
             if combined_by_aircraft:
@@ -6142,6 +6531,63 @@ class SimulationService:
                 pass
         return int(current_wp)
 
+    def _boundary_guard_runtime_status(
+        self,
+        simv: SimVehicle,
+        tracking: TrackingState | None = None,
+    ) -> dict[str, Any]:
+        """Return guard-loop state, retaining the saved route while tracking."""
+
+        controller = (
+            tracking.saved_controller
+            if tracking is not None and tracking.stage >= 1
+            else simv.controller
+        )
+        try:
+            target = controller.current_target()
+        except Exception:
+            target = None
+        active = bool(
+            target is not None
+            and getattr(target, "boundary_guard_loop", False)
+            and not getattr(controller, "finished", False)
+        )
+        set_id = (
+            str(getattr(target, "boundary_guard_set_id", "") or "").strip()
+            if active
+            else ""
+        )
+        cycle_count = 0
+        if set_id:
+            counts = getattr(controller, "boundary_guard_cycle_counts", {}) or {}
+            cycle_count = max(0, _coerce_int(counts.get(set_id), 0))
+        return {
+            "boundaryGuardSetID": set_id or None,
+            "boundaryGuardCycleCount": int(cycle_count),
+            "boundaryGuardLoopActive": bool(active),
+            "boundaryGuardSequence": (
+                _coerce_int(getattr(target, "boundary_guard_sequence", None), None)
+                if active
+                else None
+            ),
+            "boundaryGuardSequenceCount": (
+                _coerce_int(
+                    getattr(target, "boundary_guard_sequence_count", None),
+                    None,
+                )
+                if active
+                else None
+            ),
+            "boundaryGuardDurationS": (
+                _coerce_float(
+                    getattr(target, "boundary_guard_duration_s", None),
+                    0.0,
+                )
+                if active
+                else None
+            ),
+        }
+
     def _on_mission_for(self, simv: SimVehicle) -> int:
         if simv.airframe != "uav":
             return 0
@@ -6288,6 +6734,9 @@ class SimulationService:
                 "fuelWarning": int(fuel_warn),
                 "flying": int(flying),
             }
+            agent["unmannedInfo"].update(
+                self._boundary_guard_runtime_status(simv, tracking)
+            )
             if loiter_coord is not None:
                 agent["unmannedInfo"]["loiterCoordinate"] = loiter_coord
             sensor_info: dict[str, Any] = {"filming": int(filming)}
@@ -8053,6 +8502,14 @@ class SimulationService:
         self._roi_focus_state = {}
         if reset_detection_state:
             self._reset_0402_state()
+        preserved_attack_descents: dict[str, dict[str, object]] = {}
+        if not reset_detection_state:
+            preserved_attack_descents = {
+                str(label): dict(state)
+                for label, state in (self._attack_holds or {}).items()
+                if isinstance(state, dict)
+                and str(state.get("phase") or "") == "descending_after_attack"
+            }
         self._attack_holds = {}
 
         uav_db = Path(__file__).resolve().parent / "controllers" / "uav_pid_db.json"
@@ -8111,6 +8568,27 @@ class SimulationService:
                         ),
                         assignment_completion_seconds=wp.get(
                             "assignment_completion_seconds"
+                        ),
+                        next_wp_id=wp.get("next_wp_id"),
+                        boundary_guard_loop=bool(
+                            wp.get("boundary_guard_loop", False)
+                        ),
+                        boundary_guard_loop_version=wp.get(
+                            "boundary_guard_loop_version"
+                        ),
+                        boundary_guard_set_id=wp.get("boundary_guard_set_id"),
+                        boundary_guard_sequence=wp.get("boundary_guard_sequence"),
+                        boundary_guard_sequence_count=wp.get(
+                            "boundary_guard_sequence_count"
+                        ),
+                        boundary_guard_duration_s=wp.get(
+                            "boundary_guard_duration_s"
+                        ),
+                        boundary_guard_cycle_first_wp_id=wp.get(
+                            "boundary_guard_cycle_first_wp_id"
+                        ),
+                        boundary_guard_cycle_last_wp_id=wp.get(
+                            "boundary_guard_cycle_last_wp_id"
                         ),
                     )
                 )
@@ -8176,7 +8654,11 @@ class SimulationService:
                 speed_target=float(speed_target),
                 pos_tol=float(self.pos_tol),
                 name=path.label,
-                ground_clearance=50.0 if path.airframe == "lah" else 60.0,
+                ground_clearance=(
+                    _LAH_MISSION_GROUND_CLEARANCE_M
+                    if path.airframe == "lah"
+                    else 60.0
+                ),
                 allow_hover=allow_hover,
                 hold_on_complete=path.airframe == "uav",
             )
@@ -8206,6 +8688,59 @@ class SimulationService:
             )
 
         self.vehicles = vehicles
+        for label, saved_state in preserved_attack_descents.items():
+            simv = self.vehicles.get(str(label))
+            if simv is None or simv.airframe != "lah":
+                continue
+            restored_state = dict(saved_state)
+            base_altitude_m = _coerce_float(
+                restored_state.get("baseAltitudeM"),
+                float("nan"),
+            )
+            if not math.isfinite(base_altitude_m):
+                continue
+            self._attack_holds[str(label)] = restored_state
+
+            # Post-attack replanning may have sampled the aircraft at the
+            # temporary popup peak and serialized that value into the first
+            # non-attack anchor.  Keep its XY/hold semantics, but rebase its Z
+            # to the armed waypoint's planned low altitude.
+            try:
+                current_target = simv.controller.current_target()
+                target_pos = getattr(current_target, "pos", None)
+                saved_wp = restored_state.get("wp")
+                saved_pos = getattr(saved_wp, "pos", None)
+                target_attack = getattr(current_target, "attack", None)
+                target_attack_id = (
+                    _coerce_int(
+                        (target_attack or {}).get("targetID")
+                        if isinstance(target_attack, dict)
+                        else None,
+                        0,
+                    )
+                    or 0
+                )
+                if (
+                    isinstance(target_pos, (tuple, list))
+                    and len(target_pos) >= 3
+                    and isinstance(saved_pos, (tuple, list))
+                    and len(saved_pos) >= 2
+                    and int(target_attack_id) <= 0
+                    and math.hypot(
+                        float(target_pos[0]) - float(saved_pos[0]),
+                        float(target_pos[1]) - float(saved_pos[1]),
+                    )
+                    <= max(250.0, float(self.pos_tol))
+                    and float(target_pos[2]) > float(base_altitude_m) + 1.0
+                ):
+                    current_target.pos = (
+                        float(target_pos[0]),
+                        float(target_pos[1]),
+                        float(base_altitude_m),
+                    )
+                    restored_state["replanAnchorRebased"] = True
+            except Exception:
+                pass
         for simv in self.vehicles.values():
             self._apply_shinil_mission_profile(simv, force=True)
             self._update_filming_target(simv, 0.0)
@@ -9149,6 +9684,11 @@ class SimulationService:
                 "hover_end": None,
                 "restore_hover": wp.hover_time,
                 "loiter": wp.loiter,
+                "phase": "armed",
+                "baseAltitudeM": float(wp.pos[2]),
+                "peakAltitudeM": float(wp.pos[2]),
+                "climbedM": 0.0,
+                "shotFired": False,
             }
             if wp.loiter is not None:
                 wp.loiter = None
@@ -9200,6 +9740,72 @@ class SimulationService:
             pass
         self._attack_holds.pop(simv.label, None)
 
+    def _begin_attack_descent(
+        self,
+        simv: SimVehicle,
+        wp: WaypointTarget | None,
+        *,
+        reason: str,
+        shot_fired: bool,
+    ) -> None:
+        """Transition an armed attack into its return-to-popup-base phase."""
+
+        self._ensure_attack_hold(simv, wp)
+        state = self._attack_holds.get(simv.label)
+        if state is None:
+            return
+        current_altitude_m = float(simv.vehicle.s.z)
+        base_altitude_m = float(
+            state.get(
+                "baseAltitudeM",
+                float(wp.pos[2]) if wp is not None else current_altitude_m,
+            )
+        )
+        state["phase"] = "descending_after_attack"
+        state["completionReason"] = str(reason)
+        state["shotFired"] = bool(shot_fired or state.get("shotFired"))
+        state["peakAltitudeM"] = max(
+            float(state.get("peakAltitudeM", current_altitude_m)),
+            current_altitude_m,
+        )
+        state["climbedM"] = max(0.0, current_altitude_m - base_altitude_m)
+        self._attack_los_blocks.pop(str(simv.label), None)
+
+    def _step_attack_descent(
+        self,
+        simv: SimVehicle,
+        wp: WaypointTarget | None,
+        dt: float,
+    ) -> bool:
+        """Descend to the planned attack altitude and then release the WP."""
+
+        state = self._attack_holds.get(simv.label)
+        if state is None or state.get("phase") != "descending_after_attack":
+            return False
+        current_altitude_m = float(simv.vehicle.s.z)
+        base_altitude_m = float(
+            state.get(
+                "baseAltitudeM",
+                float(wp.pos[2]) if wp is not None else current_altitude_m,
+            )
+        )
+        if current_altitude_m > base_altitude_m + _ATTACK_LOS_ALTITUDE_TOLERANCE_M:
+            step_m = float(_ATTACK_LOS_DESCENT_RATE_MPS) * max(0.0, float(dt))
+            simv.vehicle.s.z = max(base_altitude_m, current_altitude_m - step_m)
+            state["climbedM"] = max(
+                0.0, float(simv.vehicle.s.z) - base_altitude_m
+            )
+            if (
+                float(simv.vehicle.s.z)
+                > base_altitude_m + _ATTACK_LOS_ALTITUDE_TOLERANCE_M
+            ):
+                return True
+
+        simv.vehicle.s.z = float(base_altitude_m)
+        state["climbedM"] = 0.0
+        self._complete_attack_waypoint(simv, wp)
+        return True
+
     def _attack_target_is_confirmed_destroyed(self, target_id: int) -> bool:
         try:
             target_id = int(target_id)
@@ -9240,6 +9846,19 @@ class SimulationService:
             if not simv.alive:
                 continue
             if simv.airframe != "lah":
+                continue
+            pending_descent = self._attack_holds.get(simv.label)
+            if (
+                isinstance(pending_descent, dict)
+                and pending_descent.get("phase") == "descending_after_attack"
+            ):
+                self._attack_los_blocks.pop(str(simv.label), None)
+                saved_wp = pending_descent.get("wp")
+                self._step_attack_descent(
+                    simv,
+                    saved_wp if isinstance(saved_wp, WaypointTarget) else None,
+                    dt,
+                )
                 continue
             attack_cmd = self._current_attack_command(simv)
             if attack_cmd is None:
@@ -9313,8 +9932,18 @@ class SimulationService:
             wp = attack_cmd.get("wp") if isinstance(attack_cmd.get("wp"), WaypointTarget) else None
             target_id = int(attack_cmd["target_id"])
             self._ensure_attack_hold(simv, wp)
+            hold_state = self._attack_holds.get(simv.label) or {}
+            if hold_state.get("phase") == "descending_after_attack":
+                self._step_attack_descent(simv, wp, dt)
+                continue
             if self._attack_target_is_confirmed_destroyed(target_id):
-                self._complete_attack_waypoint(simv, wp)
+                self._begin_attack_descent(
+                    simv,
+                    wp,
+                    reason="target_already_destroyed",
+                    shot_fired=False,
+                )
+                self._step_attack_descent(simv, wp, dt)
                 continue
 
             try:
@@ -9328,17 +9957,25 @@ class SimulationService:
                 # explicit attack waypoint armed instead of silently skipping it.
                 continue
             if not attack_target.alive:
-                self._complete_attack_waypoint(simv, wp)
+                self._begin_attack_descent(
+                    simv,
+                    wp,
+                    reason="target_destroyed",
+                    shot_fired=False,
+                )
+                self._step_attack_descent(simv, wp, dt)
                 continue
 
-            # An open sightline is the thing that makes the shot possible, so
-            # take it the moment it opens - waiting to touch the waypoint first
-            # only wastes the window. The waypoint still governs where the
-            # aircraft goes and how long it dwells once it gets there.
+            # The explicit attack coordinate is the popup base.  Do not fire
+            # opportunistically on the way in: first reach that ground position,
+            # then climb vertically until SIM's own terrain LOS opens.
+            hold_state = self._attack_holds.get(simv.label) or {}
+            climbing_for_los = hold_state.get("phase") == "climbing_for_los"
+            if wp is not None and not climbing_for_los and not self._at_waypoint(simv, wp):
+                continue
+
             los_open = self._threat_pair_terrain_los(attack_target, simv, s)
             if wp is not None and not los_open:
-                if not self._at_waypoint(simv, wp):
-                    continue
                 self._ensure_attack_hold(simv, wp)
                 state = self._attack_holds.get(simv.label)
                 if state is not None and state.get("hover_end") is None:
@@ -9356,12 +9993,8 @@ class SimulationService:
                     if float(self.sim_time) < float(state.get("hover_end", 0.0)):
                         continue
 
-            # The attack point is planned to clear terrain to the target
-            # (attack_los_altitude solves the minimum altitude and adds an
-            # offset on top).  Holding fire while masked keeps SIM honest:
-            # a shot is only taken from a position that really sees the
-            # target, and a plan that does not is visible instead of silently
-            # scoring a kill through a ridge.
+            # The mission intentionally carries no pop-up altitude.  Climb only
+            # until this simulator's LOS opens; the first open frame fires.
             if not los_open:
                 previous = self._attack_los_blocks.get(str(simv.label)) or {}
                 same_target = int(previous.get("targetID", 0)) == int(target_id)
@@ -9370,29 +10003,40 @@ class SimulationService:
                     if same_target
                     else float(self.sim_time)
                 )
-                # Holding here forever is the worst outcome: the aircraft sits
-                # at a firing point it can never fire from. Climb instead, and
-                # take the shot the moment the ridge stops masking the target.
-                climbed_m = float(previous.get("climbedM", 0.0)) if same_target else 0.0
+                state = self._attack_holds.get(simv.label)
+                if state is None:
+                    continue
+                state["phase"] = "climbing_for_los"
+                base_altitude_m = float(state.get("baseAltitudeM", wp.pos[2] if wp else s.z))
                 step_m = float(_ATTACK_LOS_CLIMB_RATE_MPS) * max(0.0, float(dt))
-                if climbed_m + step_m <= float(_ATTACK_LOS_MAX_CLIMB_M):
-                    try:
-                        simv.vehicle.s.z = float(s.z) + step_m
-                    except Exception:
-                        step_m = 0.0
-                    else:
-                        climbed_m += step_m
-                self._attack_los_blocks[str(simv.label)] = {
-                    "targetID": int(target_id),
-                    "sinceSimTime": blocked_since,
-                    "climbedM": float(climbed_m),
-                    "reason": (
-                        "climbing_for_los"
-                        if climbed_m < float(_ATTACK_LOS_MAX_CLIMB_M)
-                        else "los_blocked_climb_exhausted"
-                    ),
-                }
-                continue
+                current_altitude_m = float(s.z)
+                # A commanded attack has no popup ceiling.  The old 3,500 m
+                # clamp could leave an aircraft parked forever when the ridge
+                # still masked the target at that exact altitude.
+                next_altitude_m = current_altitude_m + step_m
+                simv.vehicle.s.z = float(next_altitude_m)
+                climbed_m = max(0.0, float(next_altitude_m) - base_altitude_m)
+                state["climbedM"] = float(climbed_m)
+                state["peakAltitudeM"] = max(
+                    float(state.get("peakAltitudeM", next_altitude_m)),
+                    float(next_altitude_m),
+                )
+                # At accelerated popup speed, waiting for the next SIM frame to
+                # evaluate the new altitude adds visible dead time.  Recheck
+                # immediately and let this same frame fire when LOS opened.
+                los_open = self._threat_pair_terrain_los(
+                    attack_target, simv, simv.vehicle.s
+                )
+                if not los_open:
+                    self._attack_los_blocks[str(simv.label)] = {
+                        "targetID": int(target_id),
+                        "sinceSimTime": blocked_since,
+                        "climbedM": float(climbed_m),
+                        "baseAltitudeM": float(base_altitude_m),
+                        "currentAltitudeM": float(next_altitude_m),
+                        "reason": "climbing_for_los",
+                    }
+                    continue
             self._attack_los_blocks.pop(str(simv.label), None)
 
             requested_type = int(attack_cmd["weapon_type"])
@@ -9416,11 +10060,24 @@ class SimulationService:
                     weapon_type = int(wtype)
                     break
             if weapon_type is None or slot is None or ammo is None or ammo <= 0:
-                self._clear_attack_hold(simv, wp)
+                self._begin_attack_descent(
+                    simv,
+                    wp,
+                    reason="weapon_unavailable",
+                    shot_fired=False,
+                )
+                self._step_attack_descent(simv, wp, dt)
                 continue
 
             cfg = self._weapon_config_for_type(int(weapon_type))
             if not cfg:
+                self._begin_attack_descent(
+                    simv,
+                    wp,
+                    reason="weapon_config_unavailable",
+                    shot_fired=False,
+                )
+                self._step_attack_descent(simv, wp, dt)
                 continue
             max_range = float(cfg.get("range", 0.0) or 0.0)
             dx = attack_target.x - s.x
@@ -9442,13 +10099,9 @@ class SimulationService:
             speed = float(cfg.get("speed", SIM_PROJECTILE_SPEED_GUN))
             hit_radius = float(cfg.get("hit_radius", SIM_PROJECTILE_HIT_RADIUS_GUN))
             kind = str(cfg.get("kind", "gun"))
-            p_hit, force_hit = self._friendly_attack_probability(
-                simv=simv,
-                target_id=int(attack_target.id),
-                kind=kind,
-                dist=float(dist),
-                max_range=float(effective_max_range),
-            )
+            # A commanded attack is a deterministic mission action: the first
+            # round fired through an open LOS is a guaranteed one-hit kill.
+            p_hit, force_hit = 1.0, True
             self._spawn_projectile(
                 side="friendly",
                 kind=kind,
@@ -9464,9 +10117,31 @@ class SimulationService:
                 p_hit=p_hit,
                 force_hit=force_hit,
             )
+            attack_target.alive = False
+            if attack_target.threat is not None:
+                attack_target.threat.reset()
+            self._forget_threat_pairs_for_target(attack_target)
+            self._handle_target_destroyed(
+                attack_target,
+                _label_to_aircraft_id(str(simv.label)),
+            )
+            self._spawn_effect(
+                side="friendly",
+                kind=kind,
+                x=float(attack_target.x),
+                y=float(attack_target.y),
+                z=float(attack_target.z),
+            )
             self._last_vehicle_fire[simv.label] = float(self.sim_time)
             if slot is not None and ammo is not None:
                 self._set_weapon_count(simv, slot, ammo - 1)
+            self._begin_attack_descent(
+                simv,
+                wp,
+                reason="shot_fired",
+                shot_fired=True,
+            )
+            self._step_attack_descent(simv, wp, dt)
 
     def _reset_threat_assessment_state(self) -> None:
         self._threat_pair_state = {}
@@ -9831,6 +10506,15 @@ class SimulationService:
                         ctrl = simv.controller
                         if (
                             getattr(ctrl, "just_advanced", False)
+                            and getattr(ctrl, "advance_reason", None)
+                            == "boundary_guard_loop"
+                        ):
+                            # Restart filming progression with the first WP of
+                            # the next pass; never carry the tail's camera
+                            # cursor into a new boundary-guard cycle.
+                            self._line_search_state[simv.label] = None
+                        if (
+                            getattr(ctrl, "just_advanced", False)
                             and getattr(ctrl, "advance_reason", None) == "loiter"
                         ):
                             self._pulse_on_mission(simv.label)
@@ -9945,6 +10629,23 @@ class SimulationService:
                 entry["attackLosBlockedTargetID"] = (
                     int(attack_block.get("targetID", 0)) if attack_block else None
                 )
+                attack_hold = self._attack_holds.get(simv.label)
+                entry["attackPopupPhase"] = (
+                    str(attack_hold.get("phase"))
+                    if isinstance(attack_hold, dict)
+                    else None
+                )
+                entry["attackPopupBaseAltitudeM"] = (
+                    float(attack_hold.get("baseAltitudeM"))
+                    if isinstance(attack_hold, dict)
+                    and attack_hold.get("baseAltitudeM") is not None
+                    else None
+                )
+                entry["attackPopupClimbedM"] = (
+                    float(attack_hold.get("climbedM", 0.0))
+                    if isinstance(attack_hold, dict)
+                    else 0.0
+                )
                 plan_deviation_m = _lah_plan_deviation_m(simv)
                 if plan_deviation_m is not None and math.isfinite(plan_deviation_m):
                     plan_tolerance_m = max(10.0, float(self.pos_tol))
@@ -10018,6 +10719,20 @@ class SimulationService:
                 entry["flying"] = flying
                 entry["filming"] = filming_status
                 entry["currentWaypointID"] = int(current_wp) if current_wp is not None else None
+                boundary_guard_status = self._boundary_guard_runtime_status(
+                    simv,
+                    tracking,
+                )
+                entry.update(boundary_guard_status)
+                entry["boundary_guard_set_id"] = boundary_guard_status[
+                    "boundaryGuardSetID"
+                ]
+                entry["boundary_guard_cycle_count"] = boundary_guard_status[
+                    "boundaryGuardCycleCount"
+                ]
+                entry["boundary_guard_loop_active"] = boundary_guard_status[
+                    "boundaryGuardLoopActive"
+                ]
                 try:
                     current_target = simv.controller.current_target()
                 except Exception:

@@ -39,6 +39,7 @@ from modules.mission_planning.MissionPlanner.planning_enhanced.models import (
     SplitPiece,
     SplitRunResult,
 )
+from modules.mission_planning.MissionPlanner import capture_physics
 from modules.mission_planning.MissionPlanner.capture_geometry import (
     capture_aircraft_speed_kmh,
     vertical_sweep_spacing_m,
@@ -84,7 +85,7 @@ class NextCollabLinePlanResult:
 
 LINE_ROUTE_WP_SPACING_M = 2000.0
 LINE_SWEEP_DENSITY_SCALE = 1.2
-LINE_ROUTE_OFFSET_SCALE = 1.0
+LINE_ROUTE_OFFSET_SCALE = 0.25
 NEXT_COLLAB_ENTRY_TPRIME_TARGET_SEP_RATIO = 0.30
 NEXT_COLLAB_ENTRY_TPRIME_RATIO_SCALE = 0.50
 NEXT_COLLAB_LINE_DB_WIDTH_WEIGHT = 0.30
@@ -93,7 +94,7 @@ NEXT_COLLAB_LINE_DB_FOV_WEIGHT = 0.45
 FOV_DB_SEP_SAFETY_FACTOR = 1.7
 LINE_OFFSET_CANDIDATE_SCALES = (0.45, 0.65, 0.85, 1.0)
 LINE_SPLIT_CACHE_VERSION = "next-collab-line-split-v3"
-LINE_PLAN_CACHE_VERSION = "next-collab-line-plan-v8"
+LINE_PLAN_CACHE_VERSION = "next-collab-line-plan-v10"
 LINE_GEOMETRY_CACHE_VERSION = "next-collab-line-geometry-v4"
 LINE_SPLIT_CACHE_DEFAULT_MAX_ENTRIES = 32
 LINE_PLAN_CACHE_DEFAULT_MAX_ENTRIES = 32
@@ -323,6 +324,7 @@ def _line_plan_cache_key(
         "turnRadiusScale": float(turn_radius_scale),
         "runtimeCfg": _stable_cache_payload(runtime_cfg),
         "fovDbRows": _stable_cache_payload(fov_db_rows),
+        "physicsFovSignature": _stable_cache_payload(capture_physics.physics_signature()),
         "planningMode": _stable_cache_payload(planning_mode or {}),
         "branchOwnership": _branch_ownership_cache_signature(planning_mode or {}),
     }
@@ -877,6 +879,7 @@ def _cached_mid_line_overlay_bundle(
             for piece in sorted(split_result.pieces or [], key=lambda row: int(row.piece_index or 0))
         ],
         "fovDbRows": _planner_fov_db_signature(planner),
+        "physicsFovSignature": capture_physics.physics_signature(),
     }
     key = _line_geometry_cache_key("mid_line_overlay_bundle", payload)
     cached = _line_geometry_cache_get(key)
@@ -1063,6 +1066,13 @@ def _route_offset_sep_for_fov(
         default_sep = float(default_sep_m)
     except Exception:
         default_sep = 0.0
+    # 물리 우선: 측정/기존 이격(default)을 그대로 쓰되, 선택 FOV의 GSD 한계
+    # 이격을 넘으면 그 한계로 자른다.  0이면(비활성/기본값 없음) DB 경로로.
+    physics_sep = capture_physics.physics_route_offset_cap_m(
+        float(fov_deg or 0.0), default_sep, runtime_cfg=runtime_cfg
+    )
+    if physics_sep > 0.0:
+        return float(physics_sep)
     min_sep = _fov_db_min_sep_for_fov(planner, float(fov_deg or 0.0), runtime_cfg=runtime_cfg)
     if min_sep > 0.0:
         return float(min_sep)
@@ -1415,6 +1425,70 @@ def _first_float(*values: Any) -> float | None:
         if parsed is not None and math.isfinite(float(parsed)):
             return float(parsed)
     return None
+
+
+_TURN_RADIUS_BAND_LO = 0.85
+_TURN_RADIUS_BAND_HI = 2.25
+
+
+def _reference_turn_radius_for_speed_m(speed_mps: float | None) -> float | None:
+    """Physical turn radius the airframe needs at this speed (reference table)."""
+
+    try:
+        from modules.common.turn_dynamics import interpolate_reference_turn_radius
+    except Exception:
+        return None
+    speed = _to_float(speed_mps)
+    if speed is None or speed <= 0.0:
+        return None
+    try:
+        radius = float(interpolate_reference_turn_radius(float(speed)))
+    except Exception:
+        return None
+    return radius if math.isfinite(radius) and radius > 0.0 else None
+
+
+# Speed provenance values the monitor exports.  Anything not in this set means
+# the speed behind a derived radius was not validated against the aircraft's
+# own motion, so a derived radius is not trusted over the physical reference.
+_TRUSTED_SPEED_SOURCES = {"reported", "track"}
+
+
+def _band_clamp_turn_radius_m(
+    *,
+    estimate_m: float | None,
+    speed_mps: float | None,
+    speed_source: str | None = None,
+) -> Tuple[float | None, str | None]:
+    """Keep a turn-radius estimate within a physical band of the reference.
+
+    Returns (radius, note).  A collapsed estimate (broken speed -> tiny v/omega)
+    would place the branch entry point where the aircraft cannot fly, so the
+    estimate is clamped to [lo, hi] x reference(speed).  With no usable speed
+    the reference is unknown, so the estimate is returned as-is; with no usable
+    estimate but a known speed the reference itself is used (fail conservative).
+
+    A held-over or stale speed makes any v/omega radius derived from it
+    unreliable, so those cases take the reference outright rather than a number
+    that merely looks specific.
+    """
+
+    reference_m = _reference_turn_radius_for_speed_m(speed_mps)
+    estimate = _to_float(estimate_m)
+    if reference_m is None:
+        return (estimate, None)
+    source = str(speed_source).strip().lower() if speed_source else ""
+    if source and source not in _TRUSTED_SPEED_SOURCES:
+        return (float(reference_m), f"reference_for_{source}_speed")
+    if estimate is None or estimate <= 1.0:
+        return (float(reference_m), "reference_fallback")
+    lo = float(reference_m) * _TURN_RADIUS_BAND_LO
+    hi = float(reference_m) * _TURN_RADIUS_BAND_HI
+    if estimate < lo:
+        return (lo, "band_clamped_low")
+    if estimate > hi:
+        return (hi, "band_clamped_high")
+    return (float(estimate), None)
 
 
 def _first_xy_from_aircraft_row(row: Dict[str, Any] | None) -> Tuple[float, float] | None:
@@ -1993,27 +2067,61 @@ def _normalize_aircraft_rows(
         if planner_heading is None:
             planner_heading = 0.0
             heading_source = "zero-fallback"
-        planning_heading = float(planner_heading)
-        if (
-            turn_confidence is not None
-            and turn_confidence >= float(LINE_TURN_HARD_CONFIDENCE)
-            and predicted_planner_heading is not None
-        ):
-            planning_heading = float(predicted_planner_heading)
-
         line_predicted_coord = _normalize_coordinate(entry.get("linePredictedEntryCoordinate"))
         line_predicted_position_xy = (
             coord_to_xy(line_predicted_coord) if line_predicted_coord is not None else None
         )
+        speed_mps = _first_float(entry.get("speedMps"), entry.get("speed_mps"))
+        prediction_lead_s = _first_float(entry.get("linePredictionLeadS"))
+        prediction_age_s = _first_float(entry.get("lineTurnDataAgeS"))
+        prediction_model = str(entry.get("linePredictionModel") or "").strip()
+        prediction_fresh = prediction_age_s is None or float(prediction_age_s) <= 5.0
+        prediction_distance_m: float | None = None
+        if line_predicted_position_xy is not None and current_position_xy is not None:
+            prediction_distance_m = math.hypot(
+                float(line_predicted_position_xy[0]) - float(current_position_xy[0]),
+                float(line_predicted_position_xy[1]) - float(current_position_xy[1]),
+            )
+        prediction_max_distance_m = 1_200.0
+        if speed_mps is not None and speed_mps > 0.0 and prediction_lead_s is not None:
+            prediction_max_distance_m = max(
+                150.0,
+                float(speed_mps) * max(1.0, float(prediction_lead_s)) * 2.5,
+            )
+        prediction_distance_sane = (
+            prediction_distance_m is None
+            or float(prediction_distance_m) <= float(prediction_max_distance_m)
+        )
+        # A straight-flight projection legitimately has zero turn-direction
+        # confidence.  It is still the best estimate of where the aircraft will
+        # be when plan generation + authorization completes.  Trust any fresh,
+        # bounded monitor prediction; retain the old hard-confidence gate only
+        # as compatibility for rows without prediction provenance.
+        use_line_prediction = bool(
+            line_predicted_position_xy is not None
+            and prediction_fresh
+            and prediction_distance_sane
+            and (
+                (
+                    bool(prediction_model)
+                    and prediction_lead_s is not None
+                    and float(prediction_lead_s) > 0.0
+                )
+                or (
+                    turn_confidence is not None
+                    and turn_confidence >= float(LINE_TURN_HARD_CONFIDENCE)
+                )
+            )
+        )
+
+        planning_heading = float(planner_heading)
+        if use_line_prediction and predicted_planner_heading is not None:
+            planning_heading = float(predicted_planner_heading)
+
         planning_position_xy = current_position_xy or position_xy
-        if (
-            turn_confidence is not None
-            and turn_confidence >= float(LINE_TURN_HARD_CONFIDENCE)
-            and line_predicted_position_xy is not None
-        ):
+        if use_line_prediction and line_predicted_position_xy is not None:
             planning_position_xy = line_predicted_position_xy
 
-        speed_mps = _first_float(entry.get("speedMps"), entry.get("speed_mps"))
         trend_turn_rate_dps = _first_float(entry.get("lineTrendTurnRateDps"))
         reported_turn_radius_m = _first_float(
             entry.get("turnRadiusM"),
@@ -2050,6 +2158,21 @@ def _normalize_aircraft_rows(
                 turn_radius_source = "trend"
         elif trend_turn_rate_dps is not None and trend_turn_sign == 0:
             turn_radius_source = "reported_unreliable_trend_direction"
+        # Conservative band clamp against the physical reference radius for the
+        # (corrected) speed.  A collapsed estimate - e.g. a broken telemetry
+        # speed making v/omega ~90 m when the airframe needs ~400 m - would put
+        # the branch entry point somewhere the aircraft cannot reach and the
+        # UAV would miss the first point outright.  Keep the estimate inside
+        # [lo, hi] x reference(v); if it had to be clamped, say so.
+        clamped_radius_m, clamp_note = _band_clamp_turn_radius_m(
+            estimate_m=turn_radius_m,
+            speed_mps=speed_mps,
+            speed_source=entry.get("speedSource"),
+        )
+        if clamped_radius_m is not None:
+            if clamp_note is not None and clamp_note != turn_radius_source:
+                turn_radius_source = f"{turn_radius_source}->{clamp_note}"
+            turn_radius_m = float(clamped_radius_m)
         rows.append(
             {
                 "aircraftID": int(aircraft_id),
@@ -2090,8 +2213,11 @@ def _normalize_aircraft_rows(
                 "turnDirectionConfidence": turn_confidence,
                 "turnTrendSampleCount": _to_int(entry.get("lineTrendSampleCount")),
                 "turnTrendSource": str(entry.get("lineTrendSource") or ""),
-                "predictionLeadS": _first_float(entry.get("linePredictionLeadS")),
-                "turnDataAgeS": _first_float(entry.get("lineTurnDataAgeS")),
+                "predictionLeadS": prediction_lead_s,
+                "turnDataAgeS": prediction_age_s,
+                "predictionModel": prediction_model or None,
+                "predictionUsed": bool(use_line_prediction),
+                "predictionDistanceM": prediction_distance_m,
                 "turnRadiusM": turn_radius_m,
                 "turnRadiusSource": str(turn_radius_source),
                 "idealTurnRadiusM": _first_float(entry.get("idealTurnRadiusM")),
@@ -3297,6 +3423,24 @@ def _next_collab_entry_tprime_db_row(
     if target_m <= 0.0:
         return None
 
+    # 물리 선택 우선.  DB의 T' 목표는 "폭을 덮는 행들의 최대 sep × 비율"이었다.
+    # 물리에서 그 최대 sep에 해당하는 값이 선택 FOV의 GSD 한계 이격이므로,
+    # 같은 비율을 적용해 진입 목표 이격으로 돌려준다.
+    physics_row = capture_physics.physics_line_row(target_m, 0.0, runtime_cfg=runtime_cfg)
+    if isinstance(physics_row, dict) and float(physics_row.get("fov", 0.0) or 0.0) > 0.0:
+        gsd_cap_m = float(
+            (physics_row.get("physics") or {}).get("gsdStandoffCapM", 0.0) or 0.0
+        )
+        if gsd_cap_m <= 0.0:
+            gsd_cap_m = float(physics_row.get("sep", 0.0) or 0.0)
+        target_sep_m = gsd_cap_m * _next_collab_entry_tprime_target_sep_ratio(runtime_cfg)
+        return {
+            "width": float(physics_row.get("width", target_m) or target_m),
+            "sep": float(max(target_sep_m, 0.0)),
+            "fov": float(physics_row.get("fov", 0.0) or 0.0),
+            "vel": float(physics_row.get("vel", 0.0) or 0.0),
+        }
+
     candidates = [
         (float(width_m), float(sep_m), float(fov_deg), float(vel_mps))
         for width_m, sep_m, fov_deg, vel_mps in _planner_fov_db_numeric_rows(planner)
@@ -3530,9 +3674,19 @@ def _next_collab_resolved_db_row(
     # The pool loops below rebind width_m/sep_m; keep the requested sep for
     # the smaller-FOV downstep call at the end.
     request_sep_m = float(sep_m)
-    limit_sep_m = _db_sep_requirement_m(request_sep_m, runtime_cfg)
     if target_m <= 0.0:
         return None
+
+    # 물리 선택 우선: 진입 WP에서 측정한 이격(sep_m)과 요구폭으로 요구공간해상도를
+    # 만족하는 최대 FOV × margin 을 실시간 계산한다.  결과가 None이면(비활성/실패)
+    # 기존 FOV DB 경로로 그대로 진행한다.
+    physics_row = capture_physics.physics_line_row(
+        target_m, request_sep_m, runtime_cfg=runtime_cfg
+    )
+    if isinstance(physics_row, dict) and float(physics_row.get("fov", 0.0) or 0.0) > 0.0:
+        return physics_row
+
+    limit_sep_m = _db_sep_requirement_m(request_sep_m, runtime_cfg)
 
     candidates = [
         (float(width_m), float(sep_m), float(fov_deg), float(vel_mps))
@@ -3807,6 +3961,7 @@ def _cached_resolve_line_entry_tprime_state(
         "entryLineEndpointsXY": _stable_cache_payload(entry_line_endpoints_xy),
         "runtimeCfg": _stable_cache_payload(runtime_cfg or {}),
         "fovDbRows": _planner_fov_db_signature(planner),
+        "physicsFovSignature": capture_physics.physics_signature(),
     }
     key = _line_geometry_cache_key("entry_tprime_state", payload)
     cached = _line_geometry_cache_get(key)
@@ -5276,7 +5431,25 @@ def run_next_collab_line_plan(
                 pieces=len(split_result.pieces),
                 rows=len(expected_rows),
             )
+        successful_piece_indices = {
+            int(row.get("pieceIndex") or 0)
+            for row in expected_rows
+            if isinstance(row, dict) and int(row.get("pieceIndex") or 0) > 0
+        }
+        unresolved_pieces = [
+            piece
+            for piece in sorted(split_result.pieces, key=lambda row: int(row.piece_index or 0))
+            if int(piece.piece_index or 0) not in successful_piece_indices
+        ]
         _ensure(bool(expected_rows), "next-collab line planner produced no path rows.")
+        _ensure(
+            not unresolved_pieces,
+            "next-collab line planner produced a partial path set; "
+            + ", ".join(
+                f"P{int(piece.piece_index or 0)}/UAV{int(piece.assigned_uav or 0)}"
+                for piece in unresolved_pieces
+            ),
+        )
         perf_stage_started = replan_perf.start_timer()
         shared_db_row = _shared_line_db_row_from_expected_rows(expected_rows, runtime_cfg=runtime_cfg)
         replan_perf.add_elapsed(

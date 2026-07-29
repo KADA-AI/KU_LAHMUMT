@@ -308,6 +308,12 @@ class NextCollabMissionReplanCoordinator:
                 line_prediction_lead_s = _coerce_float(
                     getattr(view, "line_prediction_lead_s", None)
                 )
+                speed_source = getattr(view, "speed_source", None)
+                track_speed_mps = _coerce_float(getattr(view, "track_speed_mps", None))
+                reported_speed_mps = _coerce_float(
+                    getattr(view, "reported_speed_mps", None)
+                )
+                line_prediction_model = getattr(view, "line_prediction_model", None)
                 turn_data_age_s = _coerce_float(getattr(view, "age_s", None))
                 if turn_data_age_s is not None and float(turn_data_age_s) > 5.0:
                     line_turn_confidence = 0.0
@@ -411,6 +417,24 @@ class NextCollabMissionReplanCoordinator:
                 entry["linePredictionLeadS"] = max(0.0, float(line_prediction_lead_s))
             if turn_data_age_s is not None:
                 entry["lineTurnDataAgeS"] = max(0.0, float(turn_data_age_s))
+            # Provenance for the planner and for the log: whether the speed used
+            # is the reported one or the track-derived correction, and which
+            # motion model produced the predicted entry point.
+            if speed_source:
+                entry["speedSource"] = str(speed_source)
+            if track_speed_mps is not None:
+                entry["trackSpeedMps"] = float(track_speed_mps)
+            if reported_speed_mps is not None:
+                entry["reportedSpeedMps"] = float(reported_speed_mps)
+            if line_prediction_model:
+                entry["linePredictionModel"] = str(line_prediction_model)
+            if speed_source and str(speed_source) == "track":
+                logs.append(
+                    f"[0803][SPEED] UAV{aircraft_id} telemetry speed rejected as "
+                    f"inconsistent with track motion; using track speed "
+                    f"{float(track_speed_mps):.1f} m/s "
+                    f"(reported {float(reported_speed_mps or 0.0):.1f})."
+                )
             if (
                 line_turn_confidence is not None
                 and float(line_turn_confidence) >= 0.45

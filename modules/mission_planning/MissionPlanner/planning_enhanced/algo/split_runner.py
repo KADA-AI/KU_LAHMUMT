@@ -16,13 +16,17 @@ from modules.mission_planning.planning_modes import (
 
 try:
     from modules.mission_planning.pipelines.ground_maneuver_mode import (
+        TYPE2_SELF_RELIANCE_GUARD_AREA,
         detect_ground_maneuver_profile,
         mission_branch_count as _mission_branch_count,
+        resolve_type2_self_reliance_phase,
     )
     from modules.mission_planning.runtime.state import branch_ownership as _branch_ownership
 except Exception:  # pragma: no cover - defensive optional import
     detect_ground_maneuver_profile = None  # type: ignore
     _mission_branch_count = None  # type: ignore
+    resolve_type2_self_reliance_phase = None  # type: ignore
+    TYPE2_SELF_RELIANCE_GUARD_AREA = "guard_area"  # type: ignore
     _branch_ownership = None  # type: ignore
 
 try:
@@ -215,6 +219,71 @@ def _assign_group_by_takeover_distance(
     return assigned
 
 
+def _width_split_pair_units(group: List[SplitPiece]) -> List[List[int]]:
+    """Group every sequential width stage for one owner as one assignment unit.
+
+    The historical name is retained for callers, but a unit can now contain
+    stage 1..N rather than exactly a two-piece pair.
+    """
+
+    staged: Dict[Tuple[int, int], Dict[int, List[int]]] = {}
+    units: List[List[int]] = []
+    for index, piece in enumerate(group):
+        data = piece.data if isinstance(piece.data, dict) else {}
+        split_count = int(data.get("splitCount") or 0)
+        stage = int(data.get("splitStage") or 0)
+        if bool(data.get("areaSequentialWidthSplit")) and (
+            split_count >= 2 and 1 <= stage <= split_count
+        ):
+            area_key = int(data.get("sourceAreaIndex") or 0)
+            staged.setdefault((area_key, split_count), {}).setdefault(
+                stage, []
+            ).append(index)
+        else:
+            units.append([index])
+    for (_area_key, split_count), stage_map in sorted(staged.items()):
+        position_count = max((len(rows) for rows in stage_map.values()), default=0)
+        for position in range(position_count):
+            unit = [
+                stage_map[stage][position]
+                for stage in range(1, split_count + 1)
+                if position < len(stage_map.get(stage, []))
+            ]
+            if len(unit) == split_count:
+                units.append(unit)
+            else:
+                units.extend([[index] for index in unit])
+    units.sort(key=lambda unit: unit[0])
+    return units
+
+
+def _assign_group_with_width_pairs(
+    group: List[SplitPiece],
+    uav_ids: List[int],
+    takeover_map: Dict[int, Dict[str, float]],
+) -> bool:
+    """쌍 단위(있으면)로 기체를 배정한다.  배정했으면 True."""
+
+    units = _width_split_pair_units(group)
+    if len(units) == len(group):
+        return False  # 쌍 없음 — 기존 경로 그대로
+    representatives = [group[unit[0]] for unit in units]
+    assigned_units = _assign_group_by_takeover_distance(
+        representatives, uav_ids, takeover_map
+    )
+    if assigned_units:
+        for unit_index, unit in enumerate(units):
+            aircraft_id = assigned_units.get(unit_index)
+            for group_index in unit:
+                group[group_index].assigned_uav = aircraft_id
+        return True
+    round_robin = assign_pieces_round_robin(len(units), uav_ids)
+    for unit, aircraft_id in zip(units, round_robin):
+        for group_index in unit:
+            group[group_index].assigned_uav = aircraft_id
+    return True
+
+
 def _mission_entry_point(mission: Dict[str, Any]) -> Optional[Dict[str, float]]:
     if not isinstance(mission, dict):
         return None
@@ -291,17 +360,31 @@ def assign_split_result_by_takeover_distance(
     uav_summary: Dict[int, int] = {}
     for parent_order in sorted(grouped.keys()):
         group = grouped[parent_order]
-        assigned_group = _assign_group_by_takeover_distance(group, uav_ids, takeover_map)
-        if assigned_group:
-            for idx, piece in enumerate(group):
-                aid = assigned_group.get(idx)
-                if aid is None:
-                    continue
-                piece.assigned_uav = int(aid)
-        else:
-            assigned = assign_pieces_round_robin(len(group), uav_ids)
-            for piece, aid in zip(group, assigned):
-                piece.assigned_uav = int(aid)
+        # ``run_split_pipeline`` already assigns sequential width-split pieces
+        # as (stage 1, stage 2) units. Replan callers invoke this public helper
+        # once more after path generation; doing that piece-by-piece used to
+        # tear those units apart and concentrate the tail pieces on one UAV.
+        assigned_width_pairs = _assign_group_with_width_pairs(
+            group,
+            uav_ids,
+            takeover_map,
+        )
+        if not assigned_width_pairs:
+            assigned_group = _assign_group_by_takeover_distance(
+                group,
+                uav_ids,
+                takeover_map,
+            )
+            if assigned_group:
+                for idx, piece in enumerate(group):
+                    aid = assigned_group.get(idx)
+                    if aid is None:
+                        continue
+                    piece.assigned_uav = int(aid)
+            else:
+                assigned = assign_pieces_round_robin(len(group), uav_ids)
+                for piece, aid in zip(group, assigned):
+                    piece.assigned_uav = int(aid)
 
         for piece in group:
             aid = int(piece.assigned_uav or 0)
@@ -639,6 +722,15 @@ def run_split_pipeline(
         mtype = int(mission.get("inputMissionType", 0) or 0)
         detail = mission.get("missionDetail") if isinstance(mission.get("missionDetail"), dict) else {}
         mission_debugs: List[DirectionDebug] = []
+        is_type2_boundary_guard_area = False
+        if resolve_type2_self_reliance_phase is not None:
+            try:
+                is_type2_boundary_guard_area = bool(
+                    resolve_type2_self_reliance_phase(cmpk, mission_id)
+                    == TYPE2_SELF_RELIANCE_GUARD_AREA
+                )
+            except Exception:
+                is_type2_boundary_guard_area = False
 
         if geometry in ("line", "coordinate"):
             debug = DirectionDebug(
@@ -774,6 +866,15 @@ def run_split_pipeline(
         elif geometry == "area" and mtype not in (2, 3, 4, 5, 6):
             piece_mtype = 2
         for piece_idx, sub in enumerate(subs, start=1):
+            if is_type2_boundary_guard_area and isinstance(sub, dict):
+                # Internal proof marker only.  Export replaces this marker with
+                # the public boundaryGuard* contract after UAV ownership and
+                # the final child ordering are known.
+                sub["_type2BoundaryGuardArea"] = True
+                sub["_type2BoundaryGuardPackageID"] = cmpk.get(
+                    "inputMissionPackageID"
+                )
+                sub["_type2BoundaryGuardInputMissionID"] = mission_id
             all_pieces.append(
                 SplitPiece(
                     parent_order=idx,
@@ -821,6 +922,8 @@ def run_split_pipeline(
             if branch_ownership_map and int(parent_order) in branch_orders:
                 # 각자도생: assign each branch piece to its owning UAV(s), sticky.
                 _assign_branch_group(group, surviving_ownership_map or branch_ownership_map)
+                continue
+            if _assign_group_with_width_pairs(group, uav_ids, takeover_map):
                 continue
             assigned_group = _assign_group_by_takeover_distance(group, uav_ids, takeover_map)
             if assigned_group:

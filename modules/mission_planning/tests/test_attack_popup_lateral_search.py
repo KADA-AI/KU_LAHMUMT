@@ -126,10 +126,11 @@ def test_the_nearest_sightline_wins_even_when_it_needs_more_climb(monkeypatch) -
     result = ap._attack_coordinate_at_hide_endpoint(HIDE, TARGET)
 
     assert result is not None
-    assert int(result["altitude"]) == 1200
+    assert int(result["altitude"]) <= int(HIDE["altitude"]) + 100
+    assert result["attack_altitude_control"] == "sim_los_popup"
+    assert result["attack_point_popup_los_certified"] is True
     assert result["attack_point_vertical_popup"] is True
-    assert "attack_point_popup_offset_m" not in result
-    assert _distance_m(HIDE, result) == pytest.approx(0.0, abs=0.5)
+    assert _distance_m(HIDE, result) == pytest.approx(5.0, abs=0.5)
 
 
 def test_a_trivial_saving_does_not_drag_the_aircraft_off_its_cover(monkeypatch) -> None:
@@ -146,9 +147,9 @@ def test_a_trivial_saving_does_not_drag_the_aircraft_off_its_cover(monkeypatch) 
     result = ap._attack_coordinate_at_hide_endpoint(HIDE, TARGET)
 
     assert result is not None
-    assert int(result["altitude"]) == 1200
-    assert "attack_point_popup_offset_m" not in result
-    assert _distance_m(HIDE, result) == pytest.approx(0.0, abs=0.5)
+    assert int(result["altitude"]) < 1195
+    assert result["attack_point_popup_offset_m"] == pytest.approx(5.0, abs=0.5)
+    assert _distance_m(HIDE, result) == pytest.approx(5.0, abs=0.5)
 
 
 def test_altitude_saving_does_not_move_the_attack_away_from_cover(monkeypatch) -> None:
@@ -164,9 +165,9 @@ def test_altitude_saving_does_not_move_the_attack_away_from_cover(monkeypatch) -
     result = ap._attack_coordinate_at_hide_endpoint(HIDE, TARGET)
 
     assert result is not None
-    assert int(result["altitude"]) == 1200
+    assert int(result["altitude"]) < 1000
     assert result["attack_point_vertical_popup"] is True
-    assert "attack_point_popup_offset_m" not in result
+    assert result["attack_point_popup_offset_m"] == pytest.approx(5.0, abs=0.5)
 
 
 def test_an_equal_sightline_keeps_the_aircraft_closest_to_cover(monkeypatch) -> None:
@@ -181,7 +182,7 @@ def test_an_equal_sightline_keeps_the_aircraft_closest_to_cover(monkeypatch) -> 
     result = ap._attack_coordinate_at_hide_endpoint(HIDE, TARGET)
 
     assert result is not None
-    assert _distance_m(HIDE, result) == pytest.approx(0.0, abs=0.5)
+    assert _distance_m(HIDE, result) == pytest.approx(5.0, abs=0.5)
 
 
 def test_the_altitude_floor_is_still_the_hide_altitude(monkeypatch) -> None:
@@ -229,7 +230,8 @@ def test_one_solvable_candidate_among_failures_is_still_used(monkeypatch) -> Non
     result = ap._attack_coordinate_at_hide_endpoint(HIDE, TARGET)
 
     assert result is not None
-    assert int(result["altitude"]) == 980
+    assert int(result["altitude"]) < 980
+    assert result["attack_altitude_control"] == "sim_los_popup"
     assert _distance_m(HIDE, result) == pytest.approx(300.0, abs=0.5)
 
 
@@ -251,9 +253,9 @@ def test_the_default_stays_at_the_hide_column_when_it_is_solvable(monkeypatch) -
     result = ap._attack_coordinate_at_hide_endpoint(HIDE, TARGET)
 
     assert result is not None
-    assert int(result["altitude"]) == 1200
+    assert int(result["altitude"]) < 800
     assert result["attack_point_vertical_popup"] is True
-    assert _distance_m(HIDE, result) == pytest.approx(0.0, abs=0.5)
+    assert _distance_m(HIDE, result) == pytest.approx(5.0, abs=0.5)
 
 
 def test_vertical_only_is_still_available_as_an_override(monkeypatch) -> None:
@@ -263,13 +265,13 @@ def test_vertical_only_is_still_available_as_an_override(monkeypatch) -> None:
     result = ap._attack_coordinate_at_hide_endpoint(HIDE, TARGET)
 
     assert result is not None
-    assert int(result["altitude"]) == 1200
+    assert int(result["altitude"]) < 800
     assert result["attack_point_vertical_popup"] is True
-    assert _distance_m(HIDE, result) == pytest.approx(0.0, abs=0.5)
+    assert _distance_m(HIDE, result) == pytest.approx(5.0, abs=0.5)
 
 
-def test_an_attack_popup_above_the_ordinary_envelope_is_still_emitted(monkeypatch) -> None:
-    """Attack LOS altitude is no longer capped by the ordinary mission ceiling."""
+def test_a_certified_popup_above_the_envelope_is_not_serialized(monkeypatch) -> None:
+    """Even an extreme LOS solution leaves only a low base in the mission."""
 
     _knobs(monkeypatch, attack_popup_vertical_only=1)
     # Derive from the live envelope so raising the ceiling cannot make this
@@ -280,11 +282,11 @@ def test_an_attack_popup_above_the_ordinary_envelope_is_still_emitted(monkeypatc
     result = ap._attack_coordinate_at_hide_endpoint(HIDE, TARGET)
 
     assert result is not None
-    assert result["altitude"] == pytest.approx(over_ceiling)
+    assert result["altitude"] < over_ceiling
+    assert result["attack_altitude_control"] == "sim_los_popup"
 
 
-def test_a_popup_inside_the_envelope_is_accepted(monkeypatch) -> None:
-    """The ceiling must gate only what genuinely exceeds it."""
+def test_an_in_envelope_popup_is_also_replaced_by_the_low_base(monkeypatch) -> None:
 
     _knobs(monkeypatch, attack_popup_vertical_only=1)
     under_ceiling = float(ap.DEFAULT_ENVELOPE.max_altitude_m) - 600.0
@@ -293,7 +295,8 @@ def test_a_popup_inside_the_envelope_is_accepted(monkeypatch) -> None:
     result = ap._attack_coordinate_at_hide_endpoint(HIDE, TARGET)
 
     assert result is not None
-    assert int(result["altitude"]) == int(under_ceiling)
+    assert int(result["altitude"]) < int(under_ceiling)
+    assert result["attack_altitude_control"] == "sim_los_popup"
 
 
 def test_nearest_attack_point_wins_even_when_a_farther_point_needs_less_climb(
@@ -309,8 +312,9 @@ def test_nearest_attack_point_wins_even_when_a_farther_point_needs_less_climb(
     result = ap._attack_coordinate_at_hide_endpoint(HIDE, TARGET)
 
     assert result is not None
-    assert result["altitude"] == 5000
+    assert result["altitude"] < 900
     assert result["attack_point_vertical_popup"] is True
+    assert _distance_m(HIDE, result) == pytest.approx(5.0, abs=0.5)
 
 
 def test_popup_is_approved_when_every_non_target_enemy_stays_masked(monkeypatch) -> None:

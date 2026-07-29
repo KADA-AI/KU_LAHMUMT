@@ -56,7 +56,24 @@
     hoverPopup: null,
     coordinatePopup: null,
     markerHoverActive: false,
-    layerVisibility: { areas: true, corridors: true, uavCommands: true, detectionFootprints: true },
+    layerVisibility: {
+      areas: true,
+      areaProgress: true,
+      optionAssignments: false,
+      corridors: true,
+      paths: true,
+      tracks: true,
+      footprints: true,
+      footprintTrails: true,
+      detectionFootprints: true,
+      uavCommands: true,
+      targets: true,
+    },
+    missionViewMode: "current",
+    selectedInputMissionID: null,
+    currentInputMissionIDs: [],
+    showMissionHistory: false,
+    missionRows: [],
     optionAssignmentSignature: "",
     optionAssignmentRenderKey: "",
     selectedOptionPlanID: null,
@@ -87,6 +104,8 @@
     areas: [
       "mission-areas-fill",
       "mission-areas-line",
+    ],
+    areaProgress: [
       "remaining-areas-fill",
       "remaining-areas-line",
       "coverage-depth-fill",
@@ -149,6 +168,10 @@
       "option-assignment-list",
       "mission-part-count",
       "mission-parts-body",
+      "mission-focus-status",
+      "mission-focus-hint",
+      "mission-view-segments",
+      "show-mission-history",
       "coverage-total",
       "coverage-rows",
       "coverage-chart",
@@ -456,7 +479,7 @@
       if (!app.markerHoverActive) hideMissionPopup();
     });
 
-    app.map.on("click", (event) => showPinnedCoordinate(event.lngLat));
+    app.map.on("click", handleMapClick);
 
     app.map.on("movestart", (event) => {
       if (event.originalEvent) {
@@ -586,8 +609,16 @@
       if (!app.map.getLayer(definition.id)) app.map.addLayer(definition);
     };
 
-    add({ id: "mission-areas-fill", type: "fill", source: SOURCE_IDS.areas, filter: ["==", ["geometry-type"], "Polygon"], paint: { "fill-color": ["case", completedMission, "#668b88", ["coalesce", ["get", "color"], "#d79c37"]], "fill-opacity": ["case", completedMission, 0.11, 0.17] } });
-    add({ id: "mission-areas-line", type: "line", source: SOURCE_IDS.areas, paint: { "line-color": ["case", completedMission, "#8eb1ad", ["coalesce", ["get", "color"], "#e5b24e"]], "line-width": ["case", completedMission, 1.3, 1.6], "line-dasharray": [5, 2] } });
+    add({ id: "mission-areas-fill", type: "fill", source: SOURCE_IDS.areas, filter: ["==", ["geometry-type"], "Polygon"], paint: {
+      "fill-color": ["case", completedMission, "#668b88", ["coalesce", ["get", "color"], "#d79c37"]],
+      "fill-opacity": ["match", ["get", "focusRole"], "selected", 0.2, "context", 0.025, "history", 0.055, ["case", completedMission, 0.08, 0.14]],
+    } });
+    add({ id: "mission-areas-line", type: "line", source: SOURCE_IDS.areas, paint: {
+      "line-color": ["case", completedMission, "#8eb1ad", ["coalesce", ["get", "color"], "#e5b24e"]],
+      "line-width": ["match", ["get", "focusRole"], "selected", 3.0, "context", 1.0, "history", 0.9, ["case", completedMission, 1.2, 1.7]],
+      "line-opacity": ["match", ["get", "focusRole"], "selected", 1.0, "context", 0.38, "history", 0.3, 0.9],
+      "line-dasharray": [5, 2],
+    } });
     add({ id: "remaining-areas-fill", type: "fill", source: SOURCE_IDS.remainingAreas, filter: ["==", ["geometry-type"], "Polygon"], paint: { "fill-color": ["coalesce", ["get", "color"], "#3ee6cf"], "fill-opacity": ["case", ["==", ["get", "isDone"], 1], 0.04, 0.22] } });
     add({ id: "remaining-areas-line", type: "line", source: SOURCE_IDS.remainingAreas, paint: { "line-color": ["coalesce", ["get", "color"], "#3ee6cf"], "line-width": ["case", ["==", ["get", "isDone"], 1], 1.1, 2.4], "line-opacity": ["case", ["==", ["get", "isDone"], 1], 0.22, 0.9], "line-dasharray": [1.6, 0.7] } });
     add({ id: "option-assignments-fill", type: "fill", source: SOURCE_IDS.optionAssignments, filter: ["==", ["geometry-type"], "Polygon"], paint: { "fill-color": ["coalesce", ["get", "color"], "#58c7b5"], "fill-opacity": 0.23 } });
@@ -604,11 +635,22 @@
     } });
     add({ id: "coverage-pass-forward-line", type: "line", source: SOURCE_IDS.coveragePassAttribution, filter: ["==", ["get", "coveragePass"], "forward"], paint: { "line-color": "#48ddff", "line-width": 2, "line-opacity": 0.82 } });
     add({ id: "coverage-pass-reverse-line", type: "line", source: SOURCE_IDS.coveragePassAttribution, filter: ["==", ["get", "coveragePass"], "reverse"], paint: { "line-color": "#ffb34d", "line-width": 2, "line-opacity": 0.82, "line-dasharray": [1.5, 1.2] } });
-    add({ id: "mission-corridors-fill", type: "fill", source: SOURCE_IDS.corridors, filter: ["==", ["geometry-type"], "Polygon"], paint: { "fill-color": ["case", completedMission, "#5f7d84", "#da6654"], "fill-opacity": ["case", completedMission, 0.09, 0.13] } });
-    add({ id: "mission-corridors-line", type: "line", source: SOURCE_IDS.corridors, filter: ["==", ["geometry-type"], "Polygon"], paint: { "line-color": ["case", completedMission, "#83a6ad", "#e77763"], "line-width": 1.3, "line-opacity": ["case", completedMission, 0.72, 0.9] } });
-    add({ id: "mission-input-lines", type: "line", source: SOURCE_IDS.corridors, filter: ["==", ["geometry-type"], "LineString"], paint: { "line-color": ["case", completedMission, "#9ab8bd", "#eb806c"], "line-width": ["case", completedMission, 1.7, 2.2], "line-opacity": ["case", completedMission, 0.75, 0.9] } });
-    add({ id: "mission-paths-casing", type: "line", source: SOURCE_IDS.paths, paint: { "line-color": "#151a17", "line-width": 4.2, "line-opacity": 0.76 } });
-    add({ id: "mission-paths-line", type: "line", source: SOURCE_IDS.paths, paint: { "line-color": ["coalesce", ["get", "color"], "#f0eee1"], "line-width": 2, "line-dasharray": [3, 1.5] } });
+    add({ id: "mission-corridors-fill", type: "fill", source: SOURCE_IDS.corridors, filter: ["==", ["geometry-type"], "Polygon"], paint: {
+      "fill-color": ["case", completedMission, "#5f7d84", "#da6654"],
+      "fill-opacity": ["match", ["get", "focusRole"], "selected", 0.16, "context", 0.018, "history", 0.04, ["case", completedMission, 0.06, 0.1]],
+    } });
+    add({ id: "mission-corridors-line", type: "line", source: SOURCE_IDS.corridors, filter: ["==", ["geometry-type"], "Polygon"], paint: {
+      "line-color": ["case", completedMission, "#83a6ad", "#e77763"],
+      "line-width": ["match", ["get", "focusRole"], "selected", 2.7, "context", 0.9, "history", 0.8, 1.3],
+      "line-opacity": ["match", ["get", "focusRole"], "selected", 1.0, "context", 0.32, "history", 0.28, 0.82],
+    } });
+    add({ id: "mission-input-lines", type: "line", source: SOURCE_IDS.corridors, filter: ["==", ["geometry-type"], "LineString"], paint: {
+      "line-color": ["case", completedMission, "#9ab8bd", "#eb806c"],
+      "line-width": ["match", ["get", "focusRole"], "selected", 3.2, "context", 1.0, "history", 0.9, ["case", completedMission, 1.5, 2.1]],
+      "line-opacity": ["match", ["get", "focusRole"], "selected", 1.0, "context", 0.34, "history", 0.28, 0.88],
+    } });
+    add({ id: "mission-paths-casing", type: "line", source: SOURCE_IDS.paths, paint: { "line-color": "#151a17", "line-width": 4.0, "line-opacity": 0.66 } });
+    add({ id: "mission-paths-line", type: "line", source: SOURCE_IDS.paths, paint: { "line-color": ["coalesce", ["get", "color"], "#f0eee1"], "line-width": 1.9, "line-opacity": 0.9, "line-dasharray": [3, 1.5] } });
     add({ id: "vehicle-tracks-casing", type: "line", source: SOURCE_IDS.tracks, paint: { "line-color": "#141916", "line-width": 4, "line-opacity": 0.52 } });
     add({ id: "vehicle-tracks-line", type: "line", source: SOURCE_IDS.tracks, paint: { "line-color": ["get", "color"], "line-width": 2.1, "line-opacity": 0.95 } });
     add({ id: "vehicle-position-arrow", type: "symbol", source: SOURCE_IDS.tracks, filter: ["==", ["geometry-type"], "Point"], layout: { "icon-image": ["get", "icon"], "icon-rotate": ["get", "heading"], "icon-rotation-alignment": "map", "icon-allow-overlap": true, "icon-ignore-placement": true } });
@@ -638,7 +680,7 @@
   };
 
   const setLayerVisibility = (group, visible) => {
-    if (["areas", "corridors", "uavCommands", "detectionFootprints"].includes(group)) app.layerVisibility[group] = visible;
+    app.layerVisibility[group] = Boolean(visible);
     if (!app.mapLoaded) return;
     for (const layerID of LAYER_GROUPS[group] || []) {
       if (app.map.getLayer(layerID)) app.map.setLayoutProperty(layerID, "visibility", visible ? "visible" : "none");
@@ -656,6 +698,12 @@
       if (visible) syncDiscoveryLabels(app.discoveries, true);
       else clearDiscoveryLabels();
     }
+  };
+
+  const setLayerToggleChecked = (group, checked) => {
+    const input = document.querySelector(`[data-layer-toggle="${group}"]`);
+    if (input) input.checked = Boolean(checked);
+    setLayerVisibility(group, checked);
   };
 
   const setSourceData = (sourceID, data) => {
@@ -735,6 +783,58 @@
   };
 
   const mergeCollections = (...collections) => featureCollection(collections.flatMap((collection) => toArray(collection?.features)));
+
+  const missionIDKey = (value) => {
+    if (value === undefined || value === null || value === "") return "";
+    return String(value);
+  };
+
+  const featureInputMissionID = (feature) => firstDefined(
+    feature?.properties?.inputMissionID,
+    feature?.properties?.inputMissionId,
+    feature?.properties?.inputID,
+  );
+
+  const focusedInputMissionIDs = () => {
+    if (app.missionViewMode === "all") return [];
+    if (app.missionViewMode === "selected") {
+      const selected = missionIDKey(app.selectedInputMissionID);
+      return selected ? [selected] : [];
+    }
+    return app.currentInputMissionIDs.map(missionIDKey).filter(Boolean);
+  };
+
+  const missionFocusRole = (properties = {}) => {
+    if (properties.isHistorical === true || properties.isHistorical === "true") return "history";
+    if (app.missionViewMode === "all") return "normal";
+    const focused = new Set(focusedInputMissionIDs());
+    if (!focused.size) return "normal";
+    return focused.has(missionIDKey(firstDefined(
+      properties.inputMissionID,
+      properties.inputMissionId,
+      properties.inputID,
+    ))) ? "selected" : "context";
+  };
+
+  const applyMissionDisplayScope = (collection, { detail = false } = {}) => {
+    const sourceFeatures = toArray(collection?.features);
+    const historyFiltered = sourceFeatures.filter((feature) => (
+      app.showMissionHistory
+      || !(feature?.properties?.isHistorical === true || feature?.properties?.isHistorical === "true")
+    ));
+    const focused = new Set(focusedInputMissionIDs());
+    const hasMissionIDs = historyFiltered.some((feature) => missionIDKey(featureInputMissionID(feature)));
+    const visible = detail && app.missionViewMode !== "all" && focused.size && hasMissionIDs
+      ? historyFiltered.filter((feature) => focused.has(missionIDKey(featureInputMissionID(feature))))
+      : historyFiltered;
+    return featureCollection(visible.map((feature) => ({
+      ...feature,
+      properties: {
+        ...(feature?.properties || {}),
+        focusRole: missionFocusRole(feature?.properties || {}),
+      },
+    })));
+  };
 
   const partForFeature = (properties = {}, shape = "") => {
     const inputMissionID = firstDefined(properties.inputMissionID, properties.inputMissionId, properties.inputID);
@@ -880,42 +980,74 @@
     ];
   };
 
+  const polygonRingArea = (ring) => {
+    const points = toArray(ring).filter(isCoordinate);
+    let area = 0;
+    for (let index = 1; index < points.length; index += 1) {
+      area += Number(points[index - 1][0]) * Number(points[index][1])
+        - Number(points[index][0]) * Number(points[index - 1][1]);
+    }
+    return Math.abs(area) / 2;
+  };
+
+  const lineCoordinateLength = (coordinates) => {
+    const points = toArray(coordinates).filter(isCoordinate);
+    let length = 0;
+    for (let index = 1; index < points.length; index += 1) {
+      length += Math.hypot(
+        Number(points[index][0]) - Number(points[index - 1][0]),
+        Number(points[index][1]) - Number(points[index - 1][1]),
+      );
+    }
+    return length;
+  };
+
   const missionLabelDescriptors = (areas, inputLines) => {
     const descriptors = [];
     for (const feature of toArray(areas?.features)) {
+      if (app.missionViewMode !== "all" && feature?.properties?.focusRole === "context") continue;
       const polygons = feature?.geometry?.type === "MultiPolygon"
         ? feature.geometry.coordinates
         : feature?.geometry?.type === "Polygon" ? [feature.geometry.coordinates] : [];
-      polygons.forEach((polygon, componentIndex) => {
-        const coordinate = polygonAnchor(polygon?.[0]);
-        if (!coordinate) return;
-        const inputMissionID = firstDefined(feature.properties?.inputMissionID, feature.properties?._index, "area");
-        const historyKey = feature.properties?.isHistorical ? `:history:${feature.properties?.historyPlanID || "-"}` : "";
-        descriptors.push({
-          key: `area:${inputMissionID}:${componentIndex}${historyKey}`,
-          shape: "AREA",
-          coordinate,
-          properties: feature.properties || {},
-          offset: [0, componentIndex * 18],
-        });
+      const largestRing = polygons
+        .map((polygon) => polygon?.[0])
+        .filter((ring) => toArray(ring).length >= 3)
+        .sort((left, right) => polygonRingArea(right) - polygonRingArea(left))[0];
+      const coordinate = polygonAnchor(largestRing);
+      if (!coordinate) continue;
+      const inputMissionID = firstDefined(feature.properties?.inputMissionID, feature.properties?._index, "area");
+      const historyKey = feature.properties?.isHistorical ? `:history:${feature.properties?.historyPlanID || "-"}` : "";
+      descriptors.push({
+        key: `area:${inputMissionID}${historyKey}`,
+        shape: "AREA",
+        coordinate,
+        properties: feature.properties || {},
+        offset: [0, 0],
       });
     }
+
+    const lineDescriptors = new Map();
     for (const feature of toArray(inputLines?.features)) {
+      if (app.missionViewMode !== "all" && feature?.properties?.focusRole === "context") continue;
       const coordinate = lineCoordinateAtFraction(feature?.geometry?.coordinates, 0.5);
       if (!coordinate) continue;
       const inputMissionID = firstDefined(feature.properties?.inputMissionID, feature.properties?._index, "line");
-      const lineIndex = firstDefined(feature.properties?.lineIndex, feature.properties?._index, 0);
       const sequence = numberOrNull(feature.properties?.sequence) ?? 0;
       const historyKey = feature.properties?.isHistorical ? `:history:${feature.properties?.historyPlanID || "-"}` : "";
-      descriptors.push({
-        key: `line:${inputMissionID}:${lineIndex}${historyKey}`,
+      const key = `line:${inputMissionID}${historyKey}`;
+      const candidate = {
+        key,
         shape: "LINE",
         coordinate,
         properties: feature.properties || {},
         offset: [0, sequence % 2 === 0 ? 12 : -12],
-      });
+        length: lineCoordinateLength(feature?.geometry?.coordinates),
+      };
+      const existing = lineDescriptors.get(key);
+      if (!existing || candidate.length > existing.length) lineDescriptors.set(key, candidate);
     }
-    return descriptors;
+    descriptors.push(...lineDescriptors.values());
+    return descriptors.map(({ length: _length, ...descriptor }) => descriptor);
   };
 
   const declutterMissionLabels = (descriptors) => {
@@ -1176,15 +1308,32 @@
     app.hoverPopup?.remove();
   };
 
+  const missionFeatureAtPoint = (point) => {
+    if (!app.mapLoaded) return null;
+    const layers = INTERACTIVE_MISSION_LAYERS.filter((layerID) => app.map.getLayer(layerID));
+    return layers.length
+      ? app.map.queryRenderedFeatures(point, { layers }).find(
+        (entry) => entry?.properties?.inputMissionID !== undefined,
+      ) || null
+      : null;
+  };
+
   const updateMissionHover = (event) => {
     if (!app.mapLoaded || app.markerHoverActive) return;
-    const layers = INTERACTIVE_MISSION_LAYERS.filter((layerID) => app.map.getLayer(layerID));
-    const feature = layers.length
-      ? app.map.queryRenderedFeatures(event.point, { layers }).find((entry) => entry?.properties?.inputMissionID !== undefined)
-      : null;
+    const feature = missionFeatureAtPoint(event.point);
     app.map.getCanvas().style.cursor = feature ? "pointer" : "";
     if (feature) showMissionPopup(feature.properties, event.lngLat);
     else hideMissionPopup();
+  };
+
+  const handleMapClick = (event) => {
+    const feature = missionFeatureAtPoint(event.point);
+    if (feature) {
+      selectInputMission(feature.properties?.inputMissionID, { fit: false });
+      showMissionPopup(feature.properties, event.lngLat);
+      return;
+    }
+    showPinnedCoordinate(event.lngLat);
   };
 
   const syncMissionLabels = (areas, inputLines) => {
@@ -1225,6 +1374,7 @@
         });
         element.addEventListener("click", (event) => {
           event.stopPropagation();
+          selectInputMission(record.properties?.inputMissionID, { fit: false });
           showMissionPopup(record.properties, record.coordinate);
         });
         app.missionLabels.set(descriptor.key, record);
@@ -1242,24 +1392,51 @@
       record.element.dataset.shape = descriptor.shape;
       record.element.dataset.status = descriptor.properties.statusTone || "pending";
       record.element.dataset.quality = descriptor.properties.gsdState || "unknown";
+      record.element.dataset.focus = descriptor.properties.focusRole || "normal";
+      record.element.setAttribute(
+        "aria-pressed",
+        String(descriptor.properties.focusRole === "selected"),
+      );
       record.element.hidden = descriptor.shape === "AREA" ? !app.layerVisibility.areas : !app.layerVisibility.corridors;
     }
   };
 
   const syncMissionMapData = () => {
     if (!app.mapLoaded || !app.missionGeometry) return;
-    const areas = enrichMissionCollection(app.missionGeometry.areas, "AREA");
-    const inputLines = enrichMissionCollection(app.missionGeometry.inputLines, "LINE");
-    const corridors = enrichMissionCollection(app.missionGeometry.corridors, "LINE");
-    const remainingAreas = enrichRemainingAreaCollection(app.missionGeometry.remainingAreas);
-    const coverageDepth = enrichMissionCollection(app.missionGeometry.coverageDepth, "AREA");
+    const areas = applyMissionDisplayScope(
+      enrichMissionCollection(app.missionGeometry.areas, "AREA"),
+    );
+    const inputLines = applyMissionDisplayScope(
+      enrichMissionCollection(app.missionGeometry.inputLines, "LINE"),
+    );
+    const corridors = applyMissionDisplayScope(
+      enrichMissionCollection(app.missionGeometry.corridors, "LINE"),
+    );
+    const remainingAreas = applyMissionDisplayScope(
+      enrichRemainingAreaCollection(app.missionGeometry.remainingAreas),
+      { detail: true },
+    );
+    const coverageDepth = applyMissionDisplayScope(
+      enrichMissionCollection(app.missionGeometry.coverageDepth, "AREA"),
+      { detail: true },
+    );
+    const coveragePassAttribution = applyMissionDisplayScope(
+      app.missionGeometry.coveragePassAttribution,
+      { detail: true },
+    );
+    const paths = applyMissionDisplayScope(app.missionGeometry.paths, { detail: true });
     setSourceData(SOURCE_IDS.areas, areas);
     setSourceData(SOURCE_IDS.remainingAreas, remainingAreas);
     setSourceData(SOURCE_IDS.coverageDepth, coverageDepth);
-    setSourceData(SOURCE_IDS.coveragePassAttribution, app.missionGeometry.coveragePassAttribution);
+    setSourceData(SOURCE_IDS.coveragePassAttribution, coveragePassAttribution);
     setSourceData(SOURCE_IDS.corridors, mergeCollections(inputLines, corridors));
-    setSourceData(SOURCE_IDS.paths, app.missionGeometry.paths);
+    setSourceData(SOURCE_IDS.paths, paths);
+    setSourceData(
+      SOURCE_IDS.optionAssignments,
+      applyMissionDisplayScope(app.optionAssignmentGeojson, { detail: true }),
+    );
     syncMissionLabels(areas, inputLines);
+    syncMissionFocusControls();
   };
 
   const applyMission = (payload) => {
@@ -1746,6 +1923,8 @@
     app.missionParts = new Map(normalizedParts
       .filter((part) => part.inputMissionID !== undefined && part.inputMissionID !== null)
       .map((part) => [String(part.inputMissionID), part]));
+    app.missionRows = [...historyParts, ...parts];
+    syncCurrentMissionSelection(state, normalizedParts);
     syncMissionMapData();
     const coverage = getCoverageValues(state, vehicles, parts);
     const quality = extractQualityMetrics(state, vehicles);
@@ -1758,7 +1937,8 @@
     renderKpis(state, vehicles, coverage);
     renderVehicles(vehicles);
     renderOptionAssignments(state?.optionAssignments);
-    renderMissionParts([...historyParts, ...parts]);
+    renderMissionParts(app.missionRows);
+    syncMissionFocusControls();
     renderCoverage(coverage);
     renderQuality(quality);
     const commands = toArray(state?.uavCommands);
@@ -1896,7 +2076,9 @@
     }
 
     const selected = selectedOptionAssignment(snapshot) || options[0];
-    const renderKey = `${signature}|${selected?.missionPlanID ?? "-"}`;
+    const focusIDs = focusedInputMissionIDs();
+    const focusKey = app.missionViewMode === "all" ? "all" : focusIDs.join(",");
+    const renderKey = `${signature}|${selected?.missionPlanID ?? "-"}|${app.missionViewMode}|${focusKey}`;
     if (renderKey === app.optionAssignmentRenderKey) return;
     app.optionAssignmentRenderKey = renderKey;
 
@@ -1916,18 +2098,43 @@
     }).join("");
 
     app.optionAssignmentGeojson = selected?.geojson?.type ? selected.geojson : EMPTY_FC;
-    setSourceData(SOURCE_IDS.optionAssignments, app.optionAssignmentGeojson);
+    setSourceData(
+      SOURCE_IDS.optionAssignments,
+      applyMissionDisplayScope(app.optionAssignmentGeojson, { detail: true }),
+    );
 
     if (selected?.available === false) {
       els.optionAssignmentList.innerHTML = `<div class="empty-state compact">MissionPlan ${escapeHtml(selected?.missionPlanID ?? "-")} 산출물을 기다리는 중입니다.</div>`;
       return;
     }
-    const aircraftRows = toArray(selected?.aircraft);
+    const focusedSet = new Set(focusIDs);
+    const filterAssignments = app.missionViewMode !== "all" && focusedSet.size > 0;
+    const aircraftRows = toArray(selected?.aircraft).map((aircraft) => {
+      const assignments = toArray(aircraft?.assignments);
+      const visibleAssignments = filterAssignments
+        ? assignments.filter((assignment) => focusedSet.has(missionIDKey(assignment?.inputMissionID)))
+        : assignments;
+      return { ...aircraft, assignments: visibleAssignments };
+    }).filter((aircraft) => !filterAssignments || aircraft.assignments.length);
+
+    if (filterAssignments && !aircraftRows.length) {
+      els.optionAssignmentList.innerHTML = `<div class="empty-state compact">집중 임무 ${focusIDs.map((value) => `M${escapeHtml(value)}`).join(" · ")}에 대한 후보 할당이 없습니다.</div>`;
+      return;
+    }
+
     els.optionAssignmentList.innerHTML = aircraftRows.map((aircraft, index) => {
       const aircraftID = numberOrNull(aircraft?.aircraftID);
       const label = firstDefined(aircraft?.label, aircraftID !== null ? `UAV${aircraftID - 3}` : `UAV${index + 1}`);
       const color = String(firstDefined(aircraft?.color, VEHICLE_COLORS[index % VEHICLE_COLORS.length]));
       const assignments = toArray(aircraft?.assignments);
+      const visibleAreaCount = assignments.reduce(
+        (sum, assignment) => sum + (numberOrNull(assignment?.areaCount) ?? 0),
+        0,
+      );
+      const visibleLineCount = assignments.reduce(
+        (sum, assignment) => sum + (numberOrNull(assignment?.lineCount) ?? 0),
+        0,
+      );
       const assignmentRows = assignments.length
         ? assignments.map((assignment) => `
             <li>
@@ -1941,7 +2148,7 @@
         <article class="assignment-uav-card" data-assignment-aircraft-id="${escapeHtml(aircraftID ?? "")}" style="--assignment-color:${escapeHtml(color)}">
           <header>
             <span class="assignment-uav-name">${escapeHtml(label)}</span>
-            <strong>${escapeHtml(assignmentShapeText(aircraft))}</strong>
+            <strong>${escapeHtml(assignmentShapeText({ areaCount: visibleAreaCount, lineCount: visibleLineCount }))}</strong>
           </header>
           <ul>${assignmentRows}</ul>
         </article>
@@ -1950,6 +2157,11 @@
   };
 
   const focusOptionAssignment = (aircraftID) => {
+    const focusIDs = focusedInputMissionIDs();
+    if (app.missionViewMode !== "all" && focusIDs.length === 1) {
+      focusMissionOnMap(focusIDs[0]);
+      return;
+    }
     const selected = selectedOptionAssignment();
     const aircraft = toArray(selected?.aircraft).find(
       (item) => String(item?.aircraftID) === String(aircraftID),
@@ -2014,13 +2226,155 @@
     };
   };
 
+  const deriveCurrentInputMissionIDs = (state, parts) => {
+    const values = [];
+    const add = (value) => {
+      const key = missionIDKey(value);
+      if (key && !values.includes(key)) values.push(key);
+    };
+    toArray(state?.summary?.currentInputMissionIDs).forEach(add);
+    [...parts]
+      .filter((part) => part.isCurrent && !part.isHistorical)
+      .sort((left, right) => Number(left.sequence || 0) - Number(right.sequence || 0))
+      .forEach((part) => add(part.inputMissionID));
+    for (const vehicle of app.vehicles.values()) add(vehicle.inputID);
+    if (!values.length) {
+      const pending = [...parts]
+        .filter((part) => !part.isDone && !part.isHistorical)
+        .sort((left, right) => Number(left.sequence || 0) - Number(right.sequence || 0))[0];
+      add(pending?.inputMissionID);
+    }
+    return values;
+  };
+
+  const syncCurrentMissionSelection = (state, parts) => {
+    app.currentInputMissionIDs = deriveCurrentInputMissionIDs(state, parts);
+    const selectedKey = missionIDKey(app.selectedInputMissionID);
+    if (selectedKey && !app.missionParts.has(selectedKey)) {
+      app.selectedInputMissionID = null;
+      if (app.missionViewMode === "selected") app.missionViewMode = "current";
+    }
+  };
+
+  const syncMissionFocusControls = () => {
+    const focused = new Set(focusedInputMissionIDs());
+    const selectedKey = missionIDKey(app.selectedInputMissionID);
+    document.querySelectorAll("[data-mission-view]").forEach((button) => {
+      const active = button.dataset.missionView === app.missionViewMode;
+      button.classList.toggle("is-active", active);
+      button.setAttribute("aria-pressed", String(active));
+      if (button.dataset.missionView === "selected") button.disabled = !selectedKey;
+    });
+    if (els.showMissionHistory) els.showMissionHistory.checked = app.showMissionHistory;
+    if (els.missionFocusStatus) {
+      if (app.missionViewMode === "selected") {
+        els.missionFocusStatus.textContent = selectedKey ? `선택 M${selectedKey}` : "선택 없음";
+      } else if (app.missionViewMode === "all") {
+        els.missionFocusStatus.textContent = app.showMissionHistory ? "전체 + 완료 이력" : "전체 현행";
+      } else {
+        const current = app.currentInputMissionIDs;
+        els.missionFocusStatus.textContent = current.length
+          ? `현재 ${current.map((value) => `M${value}`).join(" · ")}`
+          : "현재 임무 대기";
+      }
+    }
+    if (els.missionFocusHint) {
+      els.missionFocusHint.textContent = app.missionViewMode === "all"
+        ? "모든 현행 임무를 같은 무게로 표시합니다."
+        : "진행·촬영심도·계획경로·후보 옵션은 집중 임무만 표시합니다.";
+    }
+    document.querySelectorAll("#mission-parts-body tr[data-input-mission-id]").forEach((row) => {
+      const active = focused.has(missionIDKey(row.dataset.inputMissionId));
+      row.classList.toggle("is-selected", active);
+      row.setAttribute("aria-selected", String(active));
+    });
+  };
+
+  const missionGeometryCoordinates = (geometry) => {
+    const result = [];
+    const visit = (value) => {
+      if (!Array.isArray(value)) return;
+      if (isCoordinate(value)) {
+        result.push([Number(value[0]), Number(value[1])]);
+        return;
+      }
+      value.forEach(visit);
+    };
+    visit(geometry?.coordinates);
+    return result;
+  };
+
+  const focusMissionOnMap = (inputMissionID) => {
+    if (!app.mapLoaded) return;
+    const targetKey = missionIDKey(inputMissionID);
+    if (!targetKey) return;
+    const collections = [
+      app.missionGeometry?.areas,
+      app.missionGeometry?.inputLines,
+      app.missionGeometry?.corridors,
+      app.optionAssignmentGeojson,
+    ];
+    const coordinates = collections.flatMap((collection) => (
+      toArray(collection?.features)
+        .filter((feature) => missionIDKey(featureInputMissionID(feature)) === targetKey)
+        .flatMap((feature) => missionGeometryCoordinates(feature?.geometry))
+    ));
+    if (!coordinates.length) return;
+    const bounds = coordinates.slice(1).reduce(
+      (value, coordinate) => value.extend(coordinate),
+      new window.maplibregl.LngLatBounds(coordinates[0], coordinates[0]),
+    );
+    app.mapInteracted = true;
+    if (app.followID) setFollow("");
+    const mapRect = app.map.getContainer().getBoundingClientRect();
+    const toolbarRect = document.querySelector(".map-toolbar")?.getBoundingClientRect();
+    const topPadding = toolbarRect
+      ? clamp(toolbarRect.bottom - mapRect.top + 18, 86, Math.min(250, mapRect.height * 0.44))
+      : 86;
+    app.map.fitBounds(bounds, {
+      padding: { top: topPadding, right: 76, bottom: 76, left: 76 },
+      duration: 450,
+      maxZoom: 15,
+    });
+  };
+
+  const refreshMissionFocusedViews = () => {
+    app.optionAssignmentRenderKey = "";
+    syncMissionMapData();
+    renderOptionAssignments(app.state?.optionAssignments);
+    renderMissionParts(app.missionRows);
+    syncMissionFocusControls();
+  };
+
+  const setMissionViewMode = (mode) => {
+    const normalized = ["current", "selected", "all"].includes(mode) ? mode : "current";
+    if (normalized === "selected" && !missionIDKey(app.selectedInputMissionID)) return;
+    app.missionViewMode = normalized;
+    refreshMissionFocusedViews();
+  };
+
+  const selectInputMission = (inputMissionID, { fit = true } = {}) => {
+    const key = missionIDKey(inputMissionID);
+    if (!key || !app.missionParts.has(key)) return;
+    app.selectedInputMissionID = key;
+    app.missionViewMode = "selected";
+    refreshMissionFocusedViews();
+    if (fit) focusMissionOnMap(key);
+  };
+
   const renderMissionParts = (parts) => {
-    els.missionPartCount.textContent = `${parts.length}개`;
-    if (!parts.length) {
+    const normalizedParts = parts.map(normalizeMissionPart);
+    const visibleParts = normalizedParts.filter((part) => app.showMissionHistory || !part.isHistorical);
+    const historyCount = normalizedParts.length - visibleParts.length;
+    els.missionPartCount.textContent = app.showMissionHistory
+      ? `${visibleParts.length}개`
+      : `현행 ${visibleParts.length}개${historyCount ? ` · 이력 ${historyCount}` : ""}`;
+    if (!visibleParts.length) {
       els.missionPartsBody.innerHTML = '<tr><td colspan="7" class="table-empty">임무 계획을 기다리는 중입니다.</td></tr>';
       return;
     }
-    els.missionPartsBody.innerHTML = parts.map(normalizeMissionPart).map((part) => {
+    const focused = new Set(focusedInputMissionIDs());
+    els.missionPartsBody.innerHTML = visibleParts.map((part) => {
       const gsdClass = part.gsdSatisfied === true ? "pass" : part.gsdSatisfied === false ? "fail" : "unknown";
       const hasSatisfaction = part.qualitySamples > 0 && part.qualitySatisfaction !== null;
       const satisfactionLabel = hasSatisfaction ? ` ${formatPercent(part.qualitySatisfaction, 1)}` : "";
@@ -2060,8 +2414,12 @@
             </div>
           </div>`
         : formatPercent(part.coverage, 1);
+      const selectable = !part.isHistorical && missionIDKey(part.inputMissionID);
+      const selected = selectable && focused.has(missionIDKey(part.inputMissionID));
       return `
-        <tr class="${part.status.tone === "active" ? "is-current" : ""}${part.isHistorical ? " is-history" : ""}"${part.isHistorical ? ` title="완료 계획 ${escapeHtml(part.historyPlanID || "-")}"` : ""}>
+        <tr class="${part.status.tone === "active" ? "is-current" : ""}${part.isHistorical ? " is-history" : ""}${selected ? " is-selected" : ""}"
+          ${selectable ? `data-input-mission-id="${escapeHtml(part.inputMissionID)}" tabindex="0" aria-selected="${selected}"` : ""}
+          ${part.isHistorical ? `title="완료 계획 ${escapeHtml(part.historyPlanID || "-")}"` : selectable ? `title="입력임무 ${escapeHtml(part.inputMissionID)} 집중 표시"` : ""}>
           <td>${escapeHtml(part.sequence)}</td>
           <td title="${escapeHtml(part.type)}">${escapeHtml(part.type)}</td>
           <td title="${escapeHtml(part.region)}">${escapeHtml(part.region)}</td>
@@ -2590,6 +2948,25 @@
     document.querySelectorAll("[data-layer-toggle]").forEach((input) => {
       input.addEventListener("change", () => setLayerVisibility(input.dataset.layerToggle, input.checked));
     });
+    els.missionViewSegments.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-mission-view]");
+      if (button && !button.disabled) setMissionViewMode(button.dataset.missionView);
+    });
+    els.showMissionHistory.addEventListener("change", () => {
+      app.showMissionHistory = Boolean(els.showMissionHistory.checked);
+      refreshMissionFocusedViews();
+    });
+    els.missionPartsBody.addEventListener("click", (event) => {
+      const row = event.target.closest("[data-input-mission-id]");
+      if (row) selectInputMission(row.dataset.inputMissionId);
+    });
+    els.missionPartsBody.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      const row = event.target.closest("[data-input-mission-id]");
+      if (!row) return;
+      event.preventDefault();
+      selectInputMission(row.dataset.inputMissionId);
+    });
     els.followSegments.addEventListener("click", (event) => {
       const button = event.target.closest("[data-follow-id]");
       if (button) setFollow(button.dataset.followId);
@@ -2599,6 +2976,7 @@
       if (!button) return;
       app.selectedOptionPlanID = button.dataset.optionPlanId;
       app.optionAssignmentRenderKey = "";
+      setLayerToggleChecked("optionAssignments", true);
       renderOptionAssignments(app.state?.optionAssignments);
     });
     els.optionAssignmentList.addEventListener("click", (event) => {

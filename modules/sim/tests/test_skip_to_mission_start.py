@@ -3,10 +3,44 @@ from __future__ import annotations
 import unittest
 
 from modules.sim.runtime.geo import GeoConverter
-from modules.sim.runtime.sim_service import PathDefinition, SimulationService
+from modules.sim.runtime.sim_service import (
+    PathDefinition,
+    SimulationService,
+    _mission_execution_blocked_for_load,
+)
 
 
 class SkipToMissionStartTest(unittest.TestCase):
+    def test_preserved_active_input_ignores_only_its_stale_collab_block(
+        self,
+    ) -> None:
+        blocked = {"executionBlockedUntilNextCollab": True}
+
+        self.assertFalse(
+            _mission_execution_blocked_for_load(
+                blocked,
+                input_mission_id=5,
+                start_input_mission_id=None,
+                preserved_active_input_mission_id=5,
+            )
+        )
+        self.assertTrue(
+            _mission_execution_blocked_for_load(
+                blocked,
+                input_mission_id=6,
+                start_input_mission_id=None,
+                preserved_active_input_mission_id=5,
+            )
+        )
+        self.assertFalse(
+            _mission_execution_blocked_for_load(
+                blocked,
+                input_mission_id=6,
+                start_input_mission_id=6,
+                preserved_active_input_mission_id=5,
+            )
+        )
+
     def _build_service(self) -> SimulationService:
         service = SimulationService()
         service.geo = GeoConverter(127.0, 38.0)

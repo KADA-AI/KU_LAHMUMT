@@ -261,7 +261,10 @@ class ReexecuteLahRolePositionTests(unittest.TestCase):
         ]
         low_altitude = int(100 + d0304.LAH_NON_ATTACK_CLEARANCE_M)
         high_altitude = int(220 + d0304.LAH_NON_ATTACK_CLEARANCE_M)
-        self.assertEqual(altitudes[0], low_altitude)
+        # Start climbing before the terrain step instead of commanding a
+        # last-moment vertical jump at the first high DEM sample.
+        self.assertGreater(altitudes[0], low_altitude)
+        self.assertLess(altitudes[0], high_altitude)
         self.assertEqual(altitudes[-1], high_altitude)
         for waypoint in flight_plan["lahWaypointList"]:
             coordinate = waypoint["coordinate"]

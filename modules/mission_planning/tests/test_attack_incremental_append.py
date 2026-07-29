@@ -130,6 +130,140 @@ def test_two_committed_attacks_select_one_busy_lah_for_third_append() -> None:
     assert committed_row["targetID"] == 10
 
 
+def test_append_hide_certification_evaluates_uav_los_at_hide_altitude(
+    monkeypatch,
+) -> None:
+    hide = {"latitude": 38.0, "longitude": 127.0, "altitude": 527}
+    los_calls: list[dict] = []
+
+    monkeypatch.setattr(
+        attack_pipeline,
+        "_attack_los_resource_dir",
+        lambda: "resource",
+    )
+    monkeypatch.setattr(
+        attack_pipeline,
+        "_hide_point_masked_from_every_enemy",
+        lambda *_args, **_kwargs: 3,
+    )
+
+    def _visible_uav_los(**kwargs):
+        los_calls.append(dict(kwargs))
+        return {"visible": True, "evaluated": True, "reason": "VISIBLE"}
+
+    monkeypatch.setattr(attack_pipeline, "evaluate_regional_los", _visible_uav_los)
+
+    certificate = attack_pipeline._certify_incremental_append_hide_endpoint(
+        hide,
+        {
+            "enemy_contact": {
+                "enemy_targets": [{"coordinate": hide}],
+                "uav_states": [
+                    {
+                        "aircraft_id": 4,
+                        "coordinate": {
+                            "latitude": 38.001,
+                            "longitude": 127.001,
+                            "altitude": 1500,
+                        },
+                    }
+                ],
+            }
+        },
+        emit=lambda _message: None,
+    )
+
+    assert certificate is not None
+    assert certificate["certified"] is True
+    assert certificate["uavLinkCount"] == 1
+    assert len(los_calls) == 1
+    assert los_calls[0]["target_altitude_m"] == 527.0
+
+
+def test_append_relocates_when_inherited_endpoint_loses_uav_los(
+    monkeypatch,
+) -> None:
+    origin = {"latitude": 38.0, "longitude": 127.0, "altitude": 500}
+    midpoint = {"latitude": 38.001, "longitude": 127.001, "altitude": 480}
+    replacement = {"latitude": 38.002, "longitude": 127.002, "altitude": 470}
+    certification_calls: list[dict] = []
+
+    def _certify(coord, *_args, **_kwargs):
+        certification_calls.append(dict(coord))
+        if len(certification_calls) == 1:
+            return None
+        return {
+            "certified": True,
+            "enemyCheckedCount": 3,
+            "uavLinkCount": 1,
+            "requiredUavLinks": 1,
+        }
+
+    monkeypatch.setattr(
+        attack_pipeline,
+        "_certify_incremental_append_hide_endpoint",
+        _certify,
+    )
+    monkeypatch.setattr(
+        attack_pipeline,
+        "_plan_lah_enemy_contact_response",
+        lambda *_args, **_kwargs: {
+            "applied": True,
+            "endpoint": replacement,
+            "routeWaypoints": [origin, midpoint, replacement],
+        },
+    )
+
+    hide, certificate, route = (
+        attack_pipeline._resolve_incremental_append_hide_endpoint(
+            origin,
+            {"aircraft_id": 3, "enemy_contact": {}},
+            {"coordinate": {"latitude": 37.9, "longitude": 126.9, "altitude": 600}},
+            emit=lambda _message: None,
+        )
+    )
+
+    assert hide == replacement
+    assert certificate["certified"] is True
+    assert certificate["relocated"] is True
+    assert route == [origin, midpoint, replacement]
+    assert certification_calls == [origin, replacement]
+
+
+def test_append_keeps_a_degraded_route_when_relocation_is_unavailable(
+    monkeypatch,
+) -> None:
+    origin = {"latitude": 38.0, "longitude": 127.0, "altitude": 500}
+    monkeypatch.setattr(
+        attack_pipeline,
+        "_certify_incremental_append_hide_endpoint",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        attack_pipeline,
+        "_plan_lah_enemy_contact_response",
+        lambda *_args, **_kwargs: None,
+    )
+
+    hide, certificate, route = (
+        attack_pipeline._resolve_incremental_append_hide_endpoint(
+            origin,
+            {"aircraft_id": 3, "enemy_contact": {}},
+            {"coordinate": origin},
+            emit=lambda _message: None,
+        )
+    )
+
+    assert hide == origin
+    assert certificate == {
+        "certified": False,
+        "relocated": False,
+        "degradedDirect": True,
+        "reason": "no_certified_append_hide",
+    }
+    assert route == [origin]
+
+
 def test_append_builder_preserves_two_committed_graphs_and_adds_only_one_attack(
     tmp_path: Path,
     monkeypatch,

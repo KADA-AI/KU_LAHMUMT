@@ -82,6 +82,7 @@ try:
     from modules.mission_planning.MissionPlanner.runtime_settings import (
         fov_db_path,
         get_runtime_area_review_max_segment_m,
+        get_runtime_float,
         get_runtime_str,
         read_fov_db_rows_from_path,
     )
@@ -89,6 +90,7 @@ except Exception:
     from modules.mission_planning.MissionPlanner.runtime_settings import (  # type: ignore
         fov_db_path,
         get_runtime_area_review_max_segment_m,
+        get_runtime_float,
         get_runtime_str,
         read_fov_db_rows_from_path,
     )
@@ -1638,6 +1640,20 @@ class NextAreaPlanningWindow(QMainWindow):
             scale = 1.0
         return max(0.1, min(scale, 5.0))
 
+    def _turn_radius_uncertainty_margin_m(self) -> float:
+        try:
+            margin_m = float(
+                get_runtime_float(
+                    "next_collab_turn_radius_uncertainty_margin_m",
+                    120.0,
+                )
+            )
+        except Exception:
+            margin_m = 120.0
+        if not math.isfinite(margin_m):
+            margin_m = 120.0
+        return max(0.0, min(2_000.0, margin_m))
+
     def _aircraft_turn_speed_mps(self, aircraft_id: int | None) -> float:
         overrides = getattr(self, "_aircraft_speed_overrides", None)
         if aircraft_id is not None and isinstance(overrides, dict):
@@ -1650,6 +1666,15 @@ class NextAreaPlanningWindow(QMainWindow):
         return float(TURN_PREVIEW_SPEED_MPS)
 
     def _default_turn_radius_m(self, aircraft_id: int | None = None) -> float:
+        scale = self._turn_radius_scale_value()
+        reference_radius_m = (
+            _aircraft_turn_radius_m(
+                aircraft_id,
+                self._aircraft_turn_speed_mps(aircraft_id),
+            )
+            * scale
+        )
+        effective_radius_m = float(reference_radius_m)
         overrides = getattr(self, "_aircraft_turn_radius_overrides", None)
         if aircraft_id is not None and isinstance(overrides, dict):
             try:
@@ -1657,13 +1682,13 @@ class NextAreaPlanningWindow(QMainWindow):
             except Exception:
                 observed_radius_m = 0.0
             if math.isfinite(observed_radius_m) and observed_radius_m > 1.0:
-                return min(20_000.0, observed_radius_m * self._turn_radius_scale_value())
-        return (
-            _aircraft_turn_radius_m(
-                aircraft_id,
-                self._aircraft_turn_speed_mps(aircraft_id),
-            )
-            * self._turn_radius_scale_value()
+                effective_radius_m = max(
+                    effective_radius_m,
+                    observed_radius_m * scale,
+                )
+        return min(
+            20_000.0,
+            effective_radius_m + self._turn_radius_uncertainty_margin_m(),
         )
 
     def _bearing_from_points_xy(

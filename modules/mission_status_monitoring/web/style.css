@@ -269,6 +269,7 @@ button {
 }
 
 .layer-control,
+.mission-focus-control,
 .coverage-depth-control,
 .follow-control,
 .interpolation-control {
@@ -285,6 +286,96 @@ button {
 .layer-control {
   width: min(460px, 56vw);
   padding: 7px 9px 8px;
+}
+
+.mission-focus-control {
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  gap: 6px 10px;
+  min-width: 272px;
+  padding: 7px 9px 8px;
+}
+
+.mission-focus-heading {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mission-focus-heading strong {
+  max-width: 188px;
+  overflow: hidden;
+  color: #f3c86f;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mission-view-segments {
+  min-height: 24px;
+}
+
+.mission-view-segments .segment {
+  min-width: 44px;
+  height: 24px;
+  padding: 0 8px;
+}
+
+.mission-view-segments .segment:disabled {
+  color: #737d77;
+  cursor: not-allowed;
+  background: #2f3733;
+  opacity: 0.64;
+}
+
+.history-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #dfe5e1;
+  font-size: 9px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.history-toggle input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+}
+
+.history-toggle span {
+  width: 12px;
+  height: 12px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid #74817a;
+  border-radius: 2px;
+  background: #27302b;
+}
+
+.history-toggle input:checked + span {
+  border-color: #76cbbb;
+  background: #2f8f7e;
+  box-shadow: inset 0 0 0 2px #27302b;
+}
+
+.history-toggle input:focus-visible + span {
+  outline: 2px solid #f5c86f;
+  outline-offset: 2px;
+}
+
+.mission-focus-control small {
+  grid-column: 1 / -1;
+  color: #98a39d;
+  font-size: 8px;
+  line-height: 1.3;
 }
 
 .coverage-depth-control {
@@ -383,6 +474,10 @@ button {
 }
 
 .swatch-area { color: #d8a243; }
+.swatch-area-progress {
+  color: #3ee6cf;
+  background: linear-gradient(90deg, #ff5b68 0 33%, #ffd166 33% 66%, #55d6a5 66%);
+}
 .swatch-assignment {
   color: #37b7a1;
   background: linear-gradient(90deg, #37b7a1 0 33%, #e2a43b 33% 66%, #de6c58 66%);
@@ -635,6 +730,13 @@ button {
   color: #effffb;
   border-color: #48c9b3;
   box-shadow: 0 0 0 2px rgba(54, 184, 163, 0.28), 0 2px 8px rgba(8, 11, 9, 0.45);
+}
+
+.mission-map-label[data-focus="selected"] {
+  color: #ffffff;
+  background: rgba(22, 48, 41, 0.97);
+  border-color: #5fe0c7;
+  box-shadow: 0 0 0 2px rgba(54, 201, 176, 0.34), 0 3px 11px rgba(8, 11, 9, 0.52);
 }
 
 .mission-map-label[data-status="done"] {
@@ -1609,6 +1711,29 @@ h2 {
   box-shadow: inset 3px 0 0 var(--teal);
 }
 
+.mission-table tr[data-input-mission-id] {
+  cursor: pointer;
+}
+
+.mission-table tr[data-input-mission-id]:hover td {
+  background: #edf6f3;
+}
+
+.mission-table tr[data-input-mission-id]:focus-visible {
+  outline: 2px solid #4fb9a5;
+  outline-offset: -2px;
+}
+
+.mission-table tr.is-selected td {
+  background: #e7f5f0;
+}
+
+.mission-table tr.is-selected td:first-child {
+  color: #176f60;
+  font-weight: 900;
+  box-shadow: inset 4px 0 0 #2fb299;
+}
+
 .mission-table tr.is-history td {
   color: #63736f;
   background: #f1f5f3;
@@ -2113,6 +2238,10 @@ h2 {
     max-width: min(460px, calc(100vw - 440px));
   }
 
+  .mission-focus-control {
+    max-width: min(460px, calc(100vw - 440px));
+  }
+
   .vehicle-card {
     grid-template-columns: minmax(78px, 0.75fr) minmax(132px, 1.35fr);
   }
@@ -2165,6 +2294,10 @@ h2 {
   }
 
   .follow-control {
+    max-width: min(470px, 100%);
+  }
+
+  .mission-focus-control {
     max-width: min(470px, 100%);
   }
 }

@@ -2079,11 +2079,61 @@ def _central_done_entry_verified(entry: Any) -> bool:
         return False
 
 
+def _boundary_guard_cycle_vector(entry: Any) -> Optional[Dict[str, int]]:
+    if not isinstance(entry, dict) or not bool(entry.get("boundaryGuardLoop")):
+        return None
+    rows = entry.get("boundaryGuardSetProgress")
+    if not isinstance(rows, list):
+        rows = entry.get("areaOwnershipDetails")
+    vector: Dict[str, int] = {}
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        set_id = str(
+            row.get("boundaryGuardSetID")
+            or row.get("boundary_guard_set_id")
+            or ""
+        ).strip()
+        if not set_id:
+            continue
+        cycle_count = _to_int(
+            row.get(
+                "boundaryGuardCycleCount",
+                row.get("boundary_guard_cycle_count"),
+            )
+        )
+        vector[set_id] = max(
+            int(vector.get(set_id, 0)),
+            max(0, int(cycle_count or 0)),
+        )
+    return vector or None
+
+
 def _central_should_replace_incoming(central_entry: Any, incoming_entry: Any) -> bool:
     if not isinstance(central_entry, dict) or not isinstance(incoming_entry, dict):
         return False
     if _central_ledger_key(central_entry) != _central_ledger_key(incoming_entry):
         return False
+    central_guard_cycles = _boundary_guard_cycle_vector(central_entry)
+    incoming_guard_cycles = _boundary_guard_cycle_vector(incoming_entry)
+    if central_guard_cycles is not None and incoming_guard_cycles is not None:
+        # Contract membership changes are authoritative in the incoming plan.
+        # With the same set namespace, however, a lower counter is necessarily
+        # an older current-cycle snapshot and must not resurrect prior work.
+        if set(central_guard_cycles) != set(incoming_guard_cycles):
+            return False
+        if any(
+            int(incoming_guard_cycles[set_id])
+            < int(central_guard_cycles[set_id])
+            for set_id in central_guard_cycles
+        ):
+            return True
+        if any(
+            int(incoming_guard_cycles[set_id])
+            > int(central_guard_cycles[set_id])
+            for set_id in central_guard_cycles
+        ):
+            return False
     central_depth = coverage_depth_replan_contract(central_entry)
     if not central_depth:
         return False
@@ -2146,6 +2196,27 @@ def _central_should_update(central_entry: Any, incoming_entry: Any) -> bool:
         return True
     if _central_ledger_key(central_entry) != _central_ledger_key(incoming_entry):
         return True
+    central_guard_cycles = _boundary_guard_cycle_vector(central_entry)
+    incoming_guard_cycles = _boundary_guard_cycle_vector(incoming_entry)
+    if incoming_guard_cycles is not None:
+        if central_guard_cycles is None:
+            return True
+        if set(central_guard_cycles) != set(incoming_guard_cycles):
+            return True
+        if any(
+            int(incoming_guard_cycles[set_id])
+            < int(central_guard_cycles[set_id])
+            for set_id in central_guard_cycles
+        ):
+            return False
+        if any(
+            int(incoming_guard_cycles[set_id])
+            > int(central_guard_cycles[set_id])
+            for set_id in central_guard_cycles
+        ):
+            # A higher cycle intentionally grows current-cycle remaining area
+            # and replaces the prior cycle's observations.
+            return True
 
     central_depth = coverage_depth_replan_contract(central_entry)
     incoming_depth = coverage_depth_replan_contract(incoming_entry)

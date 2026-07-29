@@ -2189,6 +2189,15 @@ class MissionStatusService:
         for feature in mission.get("features") or []:
             if not isinstance(feature, dict):
                 continue
+            path_id = _as_int(feature.get("pathId"))
+            path_index = mission.get("pathMissionIndex") or {}
+            path_meta = (
+                path_index.get(path_id)
+                or path_index.get(str(path_id))
+                or {}
+            ) if path_id is not None and isinstance(path_index, dict) else {}
+            if not isinstance(path_meta, dict):
+                path_meta = {}
             path_coords = feature.get("coords") or []
             clean = []
             for point in path_coords if isinstance(path_coords, list) else []:
@@ -2205,7 +2214,9 @@ class MissionStatusService:
                     "properties": {
                         "aircraftID": _as_int(feature.get("aircraftId")),
                         "agent": feature.get("agent"),
-                        "pathID": _as_int(feature.get("pathId")),
+                        "pathID": path_id,
+                        "inputMissionID": _as_int(path_meta.get("inputMissionID")),
+                        "individualMissionID": _as_int(path_meta.get("individualMissionID")),
                         "isDone": bool(feature.get("isDone")),
                     },
                     "geometry": {"type": "LineString", "coordinates": clean},

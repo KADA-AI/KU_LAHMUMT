@@ -135,6 +135,60 @@ def test_mandatory_tactical_results_require_both_status_and_update() -> None:
     assert failures[0]["mode"] == "LAH_RELAY"
 
 
+def test_cached_attack_artifact_fallback_reads_lah_waypoint_list() -> None:
+    """A manned aircraft has no current WP in 0401, so its first LAH path is used."""
+
+    package_id = 800000001
+    mission_id = 900000001
+    path_id = 200000001
+    cache = {
+        "aircraft_entries": {
+            2: {
+                "aircraftID": 2,
+                "individualMissionPackageID": package_id,
+            }
+        },
+        "imp_payloads": {
+            package_id: {
+                "individualMissionList": [
+                    {
+                        "individualMissionID": mission_id,
+                        "pathID": path_id,
+                        "isDone": False,
+                    }
+                ]
+            }
+        },
+        "fp_payloads": {
+            path_id: {
+                "pathID": path_id,
+                "aircraftID": 2,
+                "lahWaypointList": [
+                    {"waypointID": 11001},
+                    {"waypointID": 11002},
+                ],
+            }
+        },
+        "waypoint_ids": {},
+    }
+    messages: list[str] = []
+
+    artifacts = pipeline._resolve_plan_artifacts_cached(
+        source_plan_id=700000001,
+        aircraft_id=2,
+        current_waypoint_id=None,
+        cache=cache,
+        emit=messages.append,
+    )
+
+    assert artifacts is not None
+    assert artifacts.individual_mission_package_id == package_id
+    assert artifacts.individual_mission_id == mission_id
+    assert artifacts.path_id == path_id
+    assert artifacts.current_waypoint_id == 11001
+    assert any("Falling back to first pending mission" in row for row in messages)
+
+
 def test_tactical_wrapper_forwards_role_specific_link_requirements(monkeypatch) -> None:
     calls: list[dict] = []
 
@@ -537,7 +591,16 @@ def test_attacker_no_route_still_generates_the_precomputed_attack(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    live = {"latitude": 37.2, "longitude": 127.2, "altitude": 420}
+    live = {"latitude": 37.2, "longitude": 127.2, "altitude": 1841}
+    popup_base = {
+        "latitude": 37.5,
+        "longitude": 127.5,
+        "altitude": 413,
+        "terrain_altitude_m": 383,
+        "attack_altitude_control": "sim_los_popup",
+        "attack_point_base_clearance_m": 30.0,
+        "attack_point_popup_los_certified": True,
+    }
     monkeypatch.setattr(
         pipeline,
         "_plan_lah_enemy_contact_response",
@@ -609,7 +672,7 @@ def test_attacker_no_route_still_generates_the_precomputed_attack(
         fp_data=fp_data,
         target_mission=target_mission,
         target_index=0,
-        attack_coord={"latitude": 37.5, "longitude": 127.5, "altitude": 700},
+        attack_coord=dict(popup_base),
         ctx={"mission_ids": [77]},
         state={"coordinate": dict(live), "speed": 40.0, "heading": 0.0},
         aircraft_id=2,
@@ -634,6 +697,16 @@ def test_attacker_no_route_still_generates_the_precomputed_attack(
         int((waypoint.get("attack") or {}).get("targetID") or 0) == 88
         for waypoint in attack_payload["lahWaypointList"]
     )
+    attack_waypoint = next(
+        waypoint
+        for waypoint in attack_payload["lahWaypointList"]
+        if int((waypoint.get("attack") or {}).get("targetID") or 0) == 88
+    )
+    assert attack_waypoint["coordinate"]["altitude"] == 413
+    assert result["attack"]["pathID"] == 201
+    assert imp_data["individualMissionList"][0]["individualMissionInfo"][
+        "coordinateList"
+    ][0]["altitude"] == 413
     assert imp_data["individualMissionList"][0]["individualMissionInfo"][
         "individualMissionType"
     ] == 2
@@ -645,8 +718,17 @@ def test_attacker_sequence_no_route_never_drops_the_attack(
 ) -> None:
     """The production sequence builder must degrade to direct attack."""
 
-    live = {"latitude": 37.2, "longitude": 127.2, "altitude": 420}
+    live = {"latitude": 37.2, "longitude": 127.2, "altitude": 1841}
     target = {"latitude": 37.5, "longitude": 127.5, "altitude": 700}
+    popup_base = {
+        "latitude": 37.5,
+        "longitude": 127.5,
+        "altitude": 413,
+        "terrain_altitude_m": 383,
+        "attack_altitude_control": "sim_los_popup",
+        "attack_point_base_clearance_m": 30.0,
+        "attack_point_popup_los_certified": True,
+    }
     monkeypatch.setattr(
         pipeline,
         "_plan_lah_enemy_contact_response",
@@ -717,7 +799,7 @@ def test_attacker_sequence_no_route_never_drops_the_attack(
                 "target_id": 88,
                 "target_type": 1,
                 "coordinate": dict(target),
-                "attack_coord": dict(target),
+                "attack_coord": dict(popup_base),
                 "selected_weapon_type": 2,
             }
         ],
@@ -739,6 +821,29 @@ def test_attacker_sequence_no_route_never_drops_the_attack(
 
     assert result is not None
     assert [item["targetID"] for item in result["attackSequence"]] == [88]
+    assert result["attackSequence"][0]["attackCoordinate"]["altitude"] == 413
+    assert (
+        result["attackSequence"][0]["attackCoordinate"]["attack_altitude_control"]
+        == "sim_los_popup"
+    )
+    attack_payload = next(
+        payload
+        for path, payload in result["_deferredWriteEntries"]
+        if path.parent.name == "FlightPath"
+        and any(
+            int((waypoint.get("attack") or {}).get("targetID") or 0) == 88
+            for waypoint in payload.get("lahWaypointList") or []
+        )
+    )
+    attack_waypoint = next(
+        waypoint
+        for waypoint in attack_payload["lahWaypointList"]
+        if int((waypoint.get("attack") or {}).get("targetID") or 0) == 88
+    )
+    assert attack_waypoint["coordinate"]["altitude"] == 413
+    assert imp_data["individualMissionList"][0]["individualMissionInfo"][
+        "coordinateList"
+    ][0]["altitude"] == 413
     assert not result.get("deferredAttackTargetIDs")
     assert imp_data["individualMissionList"][0]["individualMissionInfo"][
         "individualMissionType"
@@ -925,7 +1030,7 @@ def test_attacker_builder_splits_run_to_cover_from_the_attack(
     assert all(right["eta"] >= left["eta"] for left, right in zip(waypoints, waypoints[1:]))
 
 
-def test_runtime_multi_target_sequence_is_cover_popup_cover_and_ignores_remote_anchor(
+def test_runtime_multi_target_sequence_ends_at_low_popup_base_and_ignores_remote_anchor(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -959,6 +1064,8 @@ def test_runtime_multi_target_sequence_is_cover_popup_cover_and_ignores_remote_a
     hide = dict(plan["endpoint"])
     enemy = {"latitude": 37.02, "longitude": 127.02, "altitude": 600}
     remote_anchor = {"latitude": 38.0, "longitude": 129.0, "altitude": 900}
+    popup_base = pipeline._offset_coordinate_m(hide, 5.0, 0.0)
+    popup_base["altitude"] = hide["altitude"]
     monkeypatch.setattr(
         pipeline,
         "_plan_lah_enemy_contact_response",
@@ -968,11 +1075,12 @@ def test_runtime_multi_target_sequence_is_cover_popup_cover_and_ignores_remote_a
         pipeline,
         "_attack_coordinate_at_hide_endpoint",
         lambda *_args, **_kwargs: {
-            "latitude": hide["latitude"],
-            "longitude": hide["longitude"],
-            "altitude": 700,
+            "latitude": popup_base["latitude"],
+            "longitude": popup_base["longitude"],
+            "altitude": popup_base["altitude"],
             "attack_point_at_hide_endpoint": True,
             "attack_point_vertical_popup": True,
+            "attack_altitude_control": "sim_los_popup",
         },
     )
     monkeypatch.setattr(
@@ -1063,10 +1171,17 @@ def test_runtime_multi_target_sequence_is_cover_popup_cover_and_ignores_remote_a
     assert result is not None
     assert [item["targetID"] for item in result["attackSequence"]] == [88, 89]
     assert len({item["pathID"] for item in result["attackSequence"]}) == 2
-    for sequence in result["attackSequence"]:
-        assert sequence["missionZoneRoute"]["reason"] == "tactical_vertical_popup"
-        assert sequence["attackCoordinate"]["latitude"] == pytest.approx(hide["latitude"])
-        assert sequence["attackCoordinate"]["longitude"] == pytest.approx(hide["longitude"])
+    for sequence_index, sequence in enumerate(result["attackSequence"]):
+        assert sequence["missionZoneRoute"]["reason"] == "tactical_low_level_popup_base"
+        assert sequence["attackCoordinate"]["latitude"] == pytest.approx(
+            popup_base["latitude"]
+        )
+        assert sequence["attackCoordinate"]["longitude"] == pytest.approx(
+            popup_base["longitude"]
+        )
+        assert int(sequence["attackCoordinate"]["altitude"]) == int(
+            hide["altitude"]
+        )
         attack_path_id = int(sequence["pathID"])
         attack_payload = next(
             payload
@@ -1079,14 +1194,19 @@ def test_runtime_multi_target_sequence_is_cover_popup_cover_and_ignores_remote_a
             for index, waypoint in enumerate(waypoints)
             if int(waypoint["attack"]["targetID"]) == int(sequence["targetID"])
         )
-        before, attack, after = waypoints[attack_index - 1 : attack_index + 2]
-        assert before["hovering"]["time"] > 0
-        assert after["hovering"]["time"] > 0
-        assert before["coordinate"]["latitude"] == pytest.approx(hide["latitude"])
-        assert attack["coordinate"]["latitude"] == pytest.approx(hide["latitude"])
-        assert after["coordinate"]["latitude"] == pytest.approx(hide["latitude"])
-        assert int(before["coordinate"]["altitude"]) < int(attack["coordinate"]["altitude"])
-        assert int(after["coordinate"]["altitude"]) == int(before["coordinate"]["altitude"])
+        assert attack_index == len(waypoints) - 1
+        assert int(waypoints[attack_index]["coordinate"]["altitude"]) == int(
+            hide["altitude"]
+        )
+        assert all(
+            int((waypoint.get("attack") or {}).get("targetID") or 0) == 0
+            for waypoint in waypoints[:attack_index]
+        )
+        if sequence_index == 0:
+            assert any(
+                int((waypoint.get("hovering") or {}).get("time") or 0) > 0
+                for waypoint in waypoints[:attack_index]
+            )
     assert all(
         waypoint["coordinate"]["latitude"] != pytest.approx(remote_anchor["latitude"])
         for path, payload in result["_deferredWriteEntries"]

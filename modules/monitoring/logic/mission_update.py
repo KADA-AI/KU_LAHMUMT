@@ -12,6 +12,11 @@ from typing import Any, Iterable
 
 from modules.common import db_paths, next_collab_replan_store
 from modules.common.footprint_corners import normalize_footprint_corner_dicts
+from modules.mission_planning.pipelines.ground_maneuver_mode import (
+    TYPE2_SELF_RELIANCE_OUTBOUND_LINE,
+    TYPE2_SELF_RELIANCE_RETURN_LINE,
+    resolve_type2_self_reliance_phase,
+)
 
 try:
     from modules.common import replan_perf
@@ -97,6 +102,18 @@ def _has_post_attack_boundary_hold(*sources: object) -> bool:
         for key in _POST_ATTACK_BOUNDARY_HOLD_KEYS:
             if _coerce_bool(source.get(key)) is True:
                 return True
+    return False
+
+
+def _mission_execution_blocked_until_next_collab(mission: object) -> bool:
+    if not isinstance(mission, dict):
+        return False
+    for key in (
+        "executionBlockedUntilNextCollab",
+        "ExecutionBlockedUntilNextCollab",
+    ):
+        if key in mission:
+            return _coerce_bool(mission.get(key)) is True
     return False
 
 
@@ -332,6 +349,8 @@ def _select_current_input_id(items: Iterable[object], id_key: str) -> int | None
 def _transition_target_input_id(
     mission_plan_id: int | None,
     valid_input_ids: set[int],
+    *,
+    input_mission_package_id: int | None = None,
 ) -> int | None:
     if mission_plan_id is None:
         return None
@@ -339,6 +358,14 @@ def _transition_target_input_id(
         detail = next_collab_replan_store.load_detail(int(mission_plan_id))
     except Exception:
         detail = None
+    if not isinstance(detail, dict):
+        try:
+            detail = next_collab_replan_store.load_latest_detail_at_or_before(
+                int(mission_plan_id),
+                input_mission_package_id=input_mission_package_id,
+            )
+        except Exception:
+            detail = None
     if not isinstance(detail, dict):
         return None
     target_id = _coerce_int(detail.get("targetInputMissionID"))
@@ -358,6 +385,8 @@ def _select_current_mission_id(
     missions: Iterable[object],
     id_key: str,
     current_input_id: int | None,
+    *,
+    allow_blocked_current_input: bool = False,
 ) -> int | None:
     entries = [item for item in missions if isinstance(item, dict)]
     if current_input_id is not None:
@@ -365,6 +394,10 @@ def _select_current_mission_id(
             item
             for item in entries
             if _mission_related_input_id(item) == int(current_input_id)
+            and (
+                allow_blocked_current_input
+                or not _mission_execution_blocked_until_next_collab(item)
+            )
         ]
         for item in same_input:
             if item.get("isDone"):
@@ -376,7 +409,21 @@ def _select_current_mission_id(
             value = _coerce_int(item.get(id_key))
             if value is not None:
                 return int(value)
-    return _select_next_pending_id(entries, id_key)
+        # The input mission is authoritative until an explicit next-collab
+        # transition changes it.  Never fill a missing current branch with a
+        # mission belonging to a later input: one completed Type-2 branch must
+        # wait while its peers finish the same LINE.
+        return None
+    # Without an authoritative input, retained future missions are still
+    # ineligible until their collaboration barrier is explicitly released.
+    executable_entries = [
+        item
+        for item in entries
+        if not _mission_execution_blocked_until_next_collab(item)
+    ]
+    if not executable_entries:
+        return None
+    return _select_next_pending_id(executable_entries, id_key)
 
 
 def _payload_text(raw: bytes | str) -> str:
@@ -665,6 +712,16 @@ def extract_0401_agent_states(payload: object | None) -> tuple[int | None, list[
                 return parsed
         return None
 
+    def _extract_boundary_guard_value(
+        *containers: object,
+        names: tuple[str, ...],
+    ) -> object | None:
+        for container in containers:
+            value = _value_ci(container, *names)
+            if value is not None:
+                return value
+        return None
+
     def _extract_coordinate(*containers: object) -> dict[str, float] | None:
         for container in containers:
             if not isinstance(container, dict):
@@ -856,6 +913,37 @@ def extract_0401_agent_states(payload: object | None) -> tuple[int | None, list[
                 "flying": flying,
                 "filming": filming,
                 "flight_mode": _extract_flight_mode(unmanned_info, flight_mode_info, item),
+                "boundary_guard_set_id": _extract_boundary_guard_value(
+                    unmanned_info,
+                    flight_mode_info,
+                    item,
+                    names=(
+                        "boundaryGuardSetID",
+                        "boundary_guard_set_id",
+                    ),
+                ),
+                "boundary_guard_cycle_count": _coerce_int(
+                    _extract_boundary_guard_value(
+                        unmanned_info,
+                        flight_mode_info,
+                        item,
+                        names=(
+                            "boundaryGuardCycleCount",
+                            "boundary_guard_cycle_count",
+                        ),
+                    )
+                ),
+                "boundary_guard_loop_active": _coerce_bool(
+                    _extract_boundary_guard_value(
+                        unmanned_info,
+                        flight_mode_info,
+                        item,
+                        names=(
+                            "boundaryGuardLoopActive",
+                            "boundary_guard_loop_active",
+                        ),
+                    )
+                ),
                 "payload_health": _extract_payload_health(unmanned_info, flight_mode_info, item),
                 "coordinate": _extract_coordinate(item, unmanned_info),
                 "velocity": _extract_velocity(item, unmanned_info),
@@ -1217,13 +1305,18 @@ def build_uav_mission_view(
         )
         if value is not None
     }
-    transition_input_id = _transition_target_input_id(mission_plan_id, input_id_values)
+    transition_input_id = _transition_target_input_id(
+        mission_plan_id,
+        input_id_values,
+        input_mission_package_id=input_package_id,
+    )
     current_input_mission_id = (
         int(transition_input_id)
         if transition_input_id is not None
         else _select_current_input_id(input_missions, "inputMissionID")
     )
     input_type_map: dict[int, int] = {}
+    input_region_type_map: dict[int, int] = {}
     input_detail_map: dict[int, dict[str, Any]] = {}
     input_items: list[dict[str, Any]] = []
     for item in input_missions:
@@ -1235,6 +1328,9 @@ def build_uav_mission_view(
         mission_type = _coerce_int(item.get("inputMissionType"))
         if mission_type is not None:
             input_type_map[int(mission_id)] = int(mission_type)
+        region_type = _coerce_int(item.get("regionType"))
+        if region_type is not None:
+            input_region_type_map[int(mission_id)] = int(region_type)
         mission_detail = item.get("missionDetail") or {}
         if not isinstance(mission_detail, dict):
             mission_detail = {}
@@ -1345,9 +1441,24 @@ def build_uav_mission_view(
             {
                 "input_mission_id": mission_id,
                 "input_mission_type": int(mission_type) if mission_type is not None else None,
+                "region_type": int(region_type) if region_type is not None else None,
                 "is_done": bool(item.get("isDone")),
             }
         )
+
+    type2_self_reliance_phase_map: dict[int, str] = {}
+    for input_id in input_id_values:
+        # Only the two LINE members can use line-scan progress.  Resolve them
+        # against the complete input package so an ordinary collaborative LINE
+        # with the same regionType never inherits Type-2 branch semantics.
+        if input_type_map.get(int(input_id)) not in {1, 7}:
+            continue
+        phase = resolve_type2_self_reliance_phase(input_plan, int(input_id))
+        if phase in {
+            TYPE2_SELF_RELIANCE_OUTBOUND_LINE,
+            TYPE2_SELF_RELIANCE_RETURN_LINE,
+        }:
+            type2_self_reliance_phase_map[int(input_id)] = str(phase)
 
     uav_entries: list[dict[str, Any]] = []
     for uav_id in uav_ids:
@@ -1363,6 +1474,8 @@ def build_uav_mission_view(
         boundary_input_id: int | None = None
         for mission in mission_list:
             if not isinstance(mission, dict):
+                continue
+            if _mission_execution_blocked_until_next_collab(mission):
                 continue
             if not _has_post_attack_boundary_hold(mission):
                 continue
@@ -1381,6 +1494,7 @@ def build_uav_mission_view(
             mission_list,
             "individualMissionID",
             current_input_mission_id,
+            allow_blocked_current_input=transition_input_id is not None,
         )
         missions: list[dict[str, Any]] = []
 
@@ -1390,8 +1504,35 @@ def build_uav_mission_view(
             mission_id = _coerce_int(mission.get("individualMissionID"))
             related = mission.get("relatedMission") or {}
             input_id = _coerce_int(related.get("inputMissionID"))
+            explicit_transition_target = bool(
+                transition_input_id is not None
+                and input_id is not None
+                and int(input_id) == int(transition_input_id)
+            )
+            outside_current_input_before_handoff = bool(
+                current_input_mission_id is not None
+                and input_id is not None
+                and int(input_id) != int(current_input_mission_id)
+            )
+            execution_blocked_until_next_collab = bool(
+                (
+                    _mission_execution_blocked_until_next_collab(mission)
+                    and not explicit_transition_target
+                )
+                or outside_current_input_before_handoff
+            )
             input_type = input_type_map.get(int(input_id)) if input_id is not None else None
+            region_type = (
+                input_region_type_map.get(int(input_id))
+                if input_id is not None
+                else None
+            )
             input_detail = input_detail_map.get(int(input_id)) if input_id is not None else None
+            type2_self_reliance_phase = (
+                type2_self_reliance_phase_map.get(int(input_id))
+                if input_id is not None
+                else None
+            )
             path_id = _coerce_int(mission.get("pathID"))
             mission_info = mission.get("individualMissionInfo") or {}
             if not isinstance(mission_info, dict):
@@ -1399,6 +1540,7 @@ def build_uav_mission_view(
             line_list = mission_info.get("lineList") or []
             area_list = mission_info.get("areaList") or []
             coordinate_list = mission_info.get("coordinateList") or []
+            source_coordinate_list = mission_info.get("sourceCoordinateList") or []
             mission_type = _coerce_int(mission_info.get("individualMissionType"))
             pattern_type = _coerce_int(mission_info.get("patternType"))
             sep_m = _coerce_float(
@@ -1422,8 +1564,15 @@ def build_uav_mission_view(
             is_formation_flight = False
             formation_leader_id: int | None = None
             post_attack_boundary_hold = _has_post_attack_boundary_hold(mission)
+            boundary_guard_sources: list[dict[str, Any]] = [
+                source
+                for source in (mission_info, mission)
+                if isinstance(source, dict)
+            ]
             if path_id is not None:
                 path_data = load_db_json("FlightPath", path_id, db_root=db_root)
+                if isinstance(path_data, dict):
+                    boundary_guard_sources.insert(0, path_data)
                 flight_path_timestamp_ms = _coerce_int(
                     _first_present_value(
                         (
@@ -1623,6 +1772,16 @@ def build_uav_mission_view(
                 {
                     "individual_mission_id": mission_id,
                     "input_id": input_id,
+                    "input_mission_type": input_type,
+                    "region_type": region_type,
+                    "type2_self_reliance_phase": type2_self_reliance_phase,
+                    "independent_line_progress": bool(
+                        type2_self_reliance_phase
+                        in {
+                            TYPE2_SELF_RELIANCE_OUTBOUND_LINE,
+                            TYPE2_SELF_RELIANCE_RETURN_LINE,
+                        }
+                    ),
                     "path_id": path_id,
                     "coverage_generation_token": flight_path_timestamp_ms,
                     "flight_path_timestamp_ms": flight_path_timestamp_ms,
@@ -1631,9 +1790,83 @@ def build_uav_mission_view(
                     "eta_seconds": eta_seconds,
                     "waypoints": waypoint_defs,
                     "label": label,
-                    "skip_progress": bool(is_formation_follower),
-                    "skip_pending": bool(is_formation_follower),
+                    "skip_progress": bool(
+                        is_formation_follower
+                        or execution_blocked_until_next_collab
+                        or outside_current_input_before_handoff
+                    ),
+                    "skip_pending": bool(
+                        is_formation_follower
+                        or execution_blocked_until_next_collab
+                        or outside_current_input_before_handoff
+                    ),
+                    "execution_blocked_until_next_collab": bool(
+                        execution_blocked_until_next_collab
+                    ),
                     "post_attack_boundary_hold": bool(post_attack_boundary_hold),
+                    "boundary_guard_loop": bool(
+                        _first_present_value(
+                            tuple(
+                                (source, "boundaryGuardLoop")
+                                for source in boundary_guard_sources
+                            ),
+                            default=False,
+                        )
+                    ),
+                    "boundary_guard_loop_version": _coerce_int(
+                        _first_present_value(
+                            tuple(
+                                (source, "boundaryGuardLoopVersion")
+                                for source in boundary_guard_sources
+                            )
+                        )
+                    ),
+                    "boundary_guard_set_id": _first_present_value(
+                        tuple(
+                            (source, "boundaryGuardSetID")
+                            for source in boundary_guard_sources
+                        )
+                    ),
+                    "boundary_guard_sequence": _coerce_int(
+                        _first_present_value(
+                            tuple(
+                                (source, "boundaryGuardSequence")
+                                for source in boundary_guard_sources
+                            )
+                        )
+                    ),
+                    "boundary_guard_sequence_count": _coerce_int(
+                        _first_present_value(
+                            tuple(
+                                (source, "boundaryGuardSequenceCount")
+                                for source in boundary_guard_sources
+                            )
+                        )
+                    ),
+                    "boundary_guard_duration_s": _coerce_float(
+                        _first_present_value(
+                            tuple(
+                                (source, "boundaryGuardDurationS")
+                                for source in boundary_guard_sources
+                            )
+                        )
+                    ),
+                    "boundary_guard_cycle_first_waypoint_id": _coerce_int(
+                        _first_present_value(
+                            tuple(
+                                (source, "boundaryGuardCycleFirstWaypointID")
+                                for source in boundary_guard_sources
+                            )
+                        )
+                    ),
+                    "boundary_guard_cycle_last_waypoint_id": _coerce_int(
+                        _first_present_value(
+                            tuple(
+                                (source, "boundaryGuardCycleLastWaypointID")
+                                for source in boundary_guard_sources
+                            )
+                        )
+                    ),
                     "is_formation_flight": bool(is_formation_flight),
                     "formation_leader_id": formation_leader_id,
                     "sweep_point_count": int(sweep_point_count),
@@ -1645,6 +1878,11 @@ def build_uav_mission_view(
                     "quality_threshold_m": quality_threshold_m,
                     "sweep_line_coordinate_lists": sweep_line_coordinate_lists,
                     "coordinate_list": list(coordinate_list) if isinstance(coordinate_list, list) else [],
+                    "source_coordinate_list": (
+                        list(source_coordinate_list)
+                        if isinstance(source_coordinate_list, list)
+                        else []
+                    ),
                     "line_list": list(line_list) if isinstance(line_list, list) else [],
                     "area_list": list(area_list) if isinstance(area_list, list) else [],
                     "input_coordinate_list": list((input_detail or {}).get("coordinate_list") or []),

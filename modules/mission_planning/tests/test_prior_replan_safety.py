@@ -81,6 +81,257 @@ def test_selected_prior_waypoint_reservation_covers_anchor_and_path_reassignment
     assert len({wp["waypointID"] for wp in done + resume}) == len(done) + len(resume)
 
 
+def test_type2_prior_resume_speed_is_geometry_based_and_idempotent() -> None:
+    current = {"latitude": 38.0, "longitude": 127.0, "altitude": 1000}
+    carrier = {"latitude": 38.0, "longitude": 127.015, "altitude": 1000}
+    source = {
+        "pathID": 400000001,
+        "waypointList": [
+            {
+                "waypointID": 10,
+                "coordinate": dict(carrier),
+                "speed": 40.0,
+                "filmingProperty": {
+                    "operationMode": 2,
+                    "lineSearch": {
+                        "coordinateList": [
+                            {
+                                "latitude": 38.0,
+                                "longitude": 127.0,
+                                "altitude": 0,
+                            },
+                            {
+                                "latitude": 38.0,
+                                "longitude": 127.6,
+                                "altitude": 0,
+                            },
+                        ],
+                        # Deliberately reproduce a speed already inflated by an
+                        # earlier replan. The first pass must replace it.
+                        "searchSpeed": 5000.0,
+                    },
+                },
+                "isDone": False,
+            }
+        ],
+    }
+
+    def _artifacts(waypoint_id: int) -> PlanMissionArtifacts:
+        return PlanMissionArtifacts(
+            source_plan_id=700000001,
+            aircraft_id=4,
+            individual_mission_package_id=800000001,
+            individual_mission_id=900000001,
+            path_id=400000001,
+            current_waypoint_id=int(waypoint_id),
+            previous_waypoint_id=None,
+        )
+
+    first_ids = iter(range(10_000, 10_010))
+    first_timing: dict = {}
+    _done, first_resume, _removed = _apply_resume_path_trimming(
+        source,
+        artifacts=_artifacts(10),
+        sweep_progress=None,
+        emit=lambda _message: None,
+        current_coord=current,
+        waypoint_allocator=lambda: next(first_ids),
+        timing=first_timing,
+        allow_line_scan_sweep_point_trim=True,
+        preserve_line_carrier_coordinates=True,
+    )
+    assert len(first_resume) == 1
+    first_capture = first_resume[0]
+    first_speed = first_capture["filmingProperty"]["lineSearch"]["searchSpeed"]
+    assert first_capture["coordinate"]["latitude"] == carrier["latitude"]
+    assert first_capture["coordinate"]["longitude"] == carrier["longitude"]
+    assert first_speed < 5000.0
+    assert first_timing["recompute_line_search_speed_from_geometry"]["synchronized"]
+    assert first_timing["scale_line_search_speed"]["skipped"]
+
+    second_ids = iter(range(20_000, 20_010))
+    second_timing: dict = {}
+    _done, second_resume, _removed = _apply_resume_path_trimming(
+        {"pathID": 400000001, "waypointList": first_resume},
+        artifacts=_artifacts(int(first_capture["waypointID"])),
+        sweep_progress=None,
+        emit=lambda _message: None,
+        current_coord=current,
+        waypoint_allocator=lambda: next(second_ids),
+        timing=second_timing,
+        allow_line_scan_sweep_point_trim=True,
+        preserve_line_carrier_coordinates=True,
+    )
+    second_speed = second_resume[0]["filmingProperty"]["lineSearch"]["searchSpeed"]
+
+    assert second_resume[0]["coordinate"]["latitude"] == carrier["latitude"]
+    assert second_resume[0]["coordinate"]["longitude"] == carrier["longitude"]
+    assert second_speed == first_speed
+    assert second_timing["scale_line_search_speed"]["skipped"]
+
+
+def test_exhausted_line_resume_becomes_one_five_second_loiter() -> None:
+    capture_coords = [
+        {"latitude": 37.0, "longitude": 127.0, "altitude": 0},
+        {"latitude": 37.001, "longitude": 127.0, "altitude": 0},
+    ]
+    flight_path = {
+        "waypointList": [
+            {
+                "waypointID": 1,
+                "coordinate": {
+                    "latitude": 37.0005,
+                    "longitude": 127.001,
+                    "altitude": 100,
+                },
+                "speed": 30.0,
+                "nextWaypointID": 2,
+                "waypointPassType": 1,
+                "filmingProperty": {
+                    "operationMode": 2,
+                    "lineSearch": {
+                        "coordinateList": capture_coords,
+                        "searchSpeed": 20.0,
+                    },
+                },
+                "isDone": True,
+            },
+            {
+                "waypointID": 2,
+                "coordinate": {
+                    "latitude": 37.2,
+                    "longitude": 127.2,
+                    "altitude": 100,
+                },
+                "speed": 30.0,
+                "nextWaypointID": 0,
+                "waypointPassType": 1,
+                "filmingProperty": {
+                    "operationMode": 1,
+                    "coordinateOrientation": {
+                        "coordinate": capture_coords[-1],
+                    },
+                },
+                "isDone": False,
+            },
+        ]
+    }
+    allocated_ids = iter(range(2000, 2010))
+    hold_coord = {
+        "latitude": 37.01,
+        "longitude": 127.02,
+        "altitude": 150,
+    }
+
+    _done, resume, _removed = _apply_resume_path_trimming(
+        flight_path,
+        artifacts=PlanMissionArtifacts(
+            source_plan_id=700000001,
+            aircraft_id=6,
+            individual_mission_package_id=800000006,
+            individual_mission_id=900000006,
+            path_id=600000001,
+            current_waypoint_id=2,
+            previous_waypoint_id=1,
+        ),
+        sweep_progress=None,
+        emit=lambda _message: None,
+        current_coord={"latitude": 37.001, "longitude": 127.001, "altitude": 100},
+        completion_hold_coord=hold_coord,
+        waypoint_allocator=lambda: next(allocated_ids),
+    )
+
+    assert len(resume) == 1
+    hold = resume[0]
+    assert hold["coordinate"] == {
+        "latitude": 37.01,
+        "longitude": 127.02,
+        "altitude": 150.0,
+    }
+    assert hold["waypointPassType"] == 2
+    assert hold["nextWaypointID"] == 0
+    assert hold["loiterProperty"] == {
+        "radius": 180,
+        "direction": 1,
+        "time": 5,
+        "speed": 30,
+    }
+    assert hold["filmingProperty"]["operationMode"] == 1
+    assert "lineSearch" not in hold["filmingProperty"]
+    assert hold["noCaptureCompletionLoiter"] is True
+
+
+def test_type2_line_scan_progress_trims_executable_sweep_points() -> None:
+    capture_coords = [
+        {
+            "latitude": 37.0 + index * 0.001,
+            "longitude": 127.0,
+            "altitude": 0,
+        }
+        for index in range(10)
+    ]
+    flight_path = {
+        "waypointList": [
+            {
+                "waypointID": 10,
+                "coordinate": {
+                    "latitude": 37.0,
+                    "longitude": 127.01,
+                    "altitude": 100,
+                },
+                "speed": 30.0,
+                "nextWaypointID": 0,
+                "waypointPassType": 3,
+                "filmingProperty": {
+                    "operationMode": 2,
+                    "lineSearch": {
+                        "coordinateList": capture_coords,
+                        "searchSpeed": 20.0,
+                    },
+                },
+                "isDone": False,
+            }
+        ]
+    }
+    progress_entry = {
+        "path_id": 600000001,
+        "sweep_point_count": 10,
+        "progress_points": 4,
+        "progress_percent": 40,
+        "buffer_points": 4,
+        "progress_source": "line_scan",
+        "line_scan": {
+            "source": "line_scan_progress_monitor",
+            "sweepPointCount": 10,
+            "progressPoints": 4,
+            "progressPercent": 40,
+        },
+    }
+
+    _done, resume, _removed = _apply_resume_path_trimming(
+        flight_path,
+        artifacts=PlanMissionArtifacts(
+            source_plan_id=700000001,
+            aircraft_id=6,
+            individual_mission_package_id=800000006,
+            individual_mission_id=900000006,
+            path_id=600000001,
+            current_waypoint_id=10,
+            previous_waypoint_id=None,
+        ),
+        sweep_progress={600000001: progress_entry},
+        emit=lambda _message: None,
+        current_coord={"latitude": 37.004, "longitude": 127.01, "altitude": 100},
+        waypoint_allocator=iter(range(3000, 3010)).__next__,
+        allow_line_scan_sweep_point_trim=True,
+    )
+
+    remaining_coords = resume[0]["filmingProperty"]["lineSearch"]["coordinateList"]
+    assert len(remaining_coords) == 6
+    assert remaining_coords[0]["latitude"] == capture_coords[4]["latitude"]
+    assert all(not waypoint.get("isDone") for waypoint in resume)
+
+
 def test_prior_pipeline_none_returns_terminal_failure_instead_of_legacy_fallback() -> None:
     messages: list[str] = []
     dummy = SimpleNamespace(

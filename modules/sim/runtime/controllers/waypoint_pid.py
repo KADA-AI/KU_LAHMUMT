@@ -80,6 +80,18 @@ class WaypointTarget:
     area_turn_role: str | None = None
     complete_loiter_after_assignment: bool = False
     assignment_completion_seconds: float | None = None
+    # Type-2 boundary-guard Area missions are emitted as several consecutive
+    # child FlightPaths.  Only the tail of the complete child set links back
+    # to the first filming waypoint; individual children must never self-loop.
+    next_wp_id: int | None = None
+    boundary_guard_loop: bool = False
+    boundary_guard_loop_version: int | None = None
+    boundary_guard_set_id: str | None = None
+    boundary_guard_sequence: int | None = None
+    boundary_guard_sequence_count: int | None = None
+    boundary_guard_duration_s: float | None = None
+    boundary_guard_cycle_first_wp_id: int | None = None
+    boundary_guard_cycle_last_wp_id: int | None = None
 
 
 def _merge_gains(data: dict, fallback: PIDGains) -> PIDGains:
@@ -257,6 +269,49 @@ class WaypointPIDController:
                                 if assignment_completion_seconds is not None
                                 else None
                             ),
+                            next_wp_id=(
+                                int(wp.get("next_wp_id"))
+                                if wp.get("next_wp_id") is not None
+                                else None
+                            ),
+                            boundary_guard_loop=bool(
+                                wp.get("boundary_guard_loop", False)
+                            ),
+                            boundary_guard_loop_version=(
+                                int(wp.get("boundary_guard_loop_version"))
+                                if wp.get("boundary_guard_loop_version") is not None
+                                else None
+                            ),
+                            boundary_guard_set_id=(
+                                str(wp.get("boundary_guard_set_id"))
+                                if wp.get("boundary_guard_set_id") is not None
+                                else None
+                            ),
+                            boundary_guard_sequence=(
+                                int(wp.get("boundary_guard_sequence"))
+                                if wp.get("boundary_guard_sequence") is not None
+                                else None
+                            ),
+                            boundary_guard_sequence_count=(
+                                int(wp.get("boundary_guard_sequence_count"))
+                                if wp.get("boundary_guard_sequence_count") is not None
+                                else None
+                            ),
+                            boundary_guard_duration_s=(
+                                float(wp.get("boundary_guard_duration_s"))
+                                if wp.get("boundary_guard_duration_s") is not None
+                                else None
+                            ),
+                            boundary_guard_cycle_first_wp_id=(
+                                int(wp.get("boundary_guard_cycle_first_wp_id"))
+                                if wp.get("boundary_guard_cycle_first_wp_id") is not None
+                                else None
+                            ),
+                            boundary_guard_cycle_last_wp_id=(
+                                int(wp.get("boundary_guard_cycle_last_wp_id"))
+                                if wp.get("boundary_guard_cycle_last_wp_id") is not None
+                                else None
+                            ),
                         )
                     )
             elif isinstance(wp, (list, tuple)) and len(wp) == 3:
@@ -294,6 +349,57 @@ class WaypointPIDController:
         self._forced_advance_reason: str | None = None
         self._assignment_loiter_idx: int | None = None
         self._assignment_loiter_remaining_s: float | None = None
+        self.boundary_guard_cycle_counts: dict[str, int] = {}
+
+    def _boundary_guard_cycle_successor_index(self) -> int | None:
+        """Return the set-first target for the current set-tail, if any.
+
+        The resolver is deliberately constrained by the durable guard-set
+        contract.  A stray backward ``nextWaypointID`` on an ordinary mission
+        or on an intermediate child can therefore never turn a route into an
+        accidental infinite loop.
+        """
+
+        if not self.targets or not (0 <= int(self.curr_idx) < len(self.targets)):
+            return None
+        target = self.targets[int(self.curr_idx)]
+        if not bool(getattr(target, "boundary_guard_loop", False)):
+            return None
+        try:
+            current_wp_id = int(getattr(target, "wp_id", None))
+            next_wp_id = int(getattr(target, "next_wp_id", None))
+            first_wp_id = int(
+                getattr(target, "boundary_guard_cycle_first_wp_id", None)
+            )
+            last_wp_id = int(
+                getattr(target, "boundary_guard_cycle_last_wp_id", None)
+            )
+        except (TypeError, ValueError):
+            return None
+        if current_wp_id != last_wp_id or next_wp_id != first_wp_id:
+            return None
+        set_id = str(getattr(target, "boundary_guard_set_id", "") or "")
+        if not set_id:
+            return None
+        for idx, candidate in enumerate(self.targets):
+            try:
+                candidate_wp_id = int(getattr(candidate, "wp_id", None))
+            except (TypeError, ValueError):
+                continue
+            if candidate_wp_id != first_wp_id:
+                continue
+            if not bool(getattr(candidate, "boundary_guard_loop", False)):
+                continue
+            if str(getattr(candidate, "boundary_guard_set_id", "") or "") != set_id:
+                continue
+            return int(idx)
+        return None
+
+    def _should_enter_input_block(self) -> bool:
+        return (
+            int(self.curr_idx) in self.block_indices
+            and self._boundary_guard_cycle_successor_index() is None
+        )
 
     def _assignment_loiter_duration_s(self, target: WaypointTarget) -> float | None:
         if not bool(getattr(target, "complete_loiter_after_assignment", False)):
@@ -349,7 +455,7 @@ class WaypointPIDController:
         if remaining > 0.0:
             return False
 
-        if self.curr_idx in self.block_indices:
+        if self._should_enter_input_block():
             self._enter_block(tx, ty, tz, target)
         else:
             self._advance_wp()
@@ -429,7 +535,29 @@ class WaypointPIDController:
     def _advance_wp(self):
         prev_loitering = bool(self.is_loitering)
         prev_hovering = bool(self.is_hovering)
-        self.curr_idx += 1
+        boundary_guard_successor = self._boundary_guard_cycle_successor_index()
+        boundary_guard_target = (
+            self.targets[int(self.curr_idx)]
+            if boundary_guard_successor is not None
+            else None
+        )
+        if boundary_guard_successor is None:
+            self.curr_idx += 1
+        else:
+            self.curr_idx = int(boundary_guard_successor)
+            set_id = str(
+                getattr(boundary_guard_target, "boundary_guard_set_id", "") or ""
+            )
+            # ``isDone`` describes the completed pass that just ended.  A
+            # guard loop starts a new coverage pass, so every target in this
+            # exact owner set must become executable again before the normal
+            # done-target skipper runs.
+            for candidate in self.targets:
+                if not bool(getattr(candidate, "boundary_guard_loop", False)):
+                    continue
+                if str(getattr(candidate, "boundary_guard_set_id", "") or "") != set_id:
+                    continue
+                candidate.is_done = False
         skipped_done = self._skip_done_targets()
         self.yaw_int = 0.0
         self.alt_int = 0.0
@@ -443,6 +571,17 @@ class WaypointPIDController:
         self._closest_wp_idx = self.curr_idx
         self._forced_advance_reason = None
         self.just_advanced = True
+        if boundary_guard_successor is not None:
+            set_id = str(
+                getattr(boundary_guard_target, "boundary_guard_set_id", "") or ""
+            )
+            if set_id:
+                self.boundary_guard_cycle_counts[set_id] = (
+                    int(self.boundary_guard_cycle_counts.get(set_id, 0)) + 1
+                )
+            self.finished = False
+            self.advance_reason = "boundary_guard_loop"
+            return
         if prev_loitering:
             self.advance_reason = "loiter"
         elif prev_hovering:
@@ -927,7 +1066,7 @@ class WaypointPIDController:
             # Continue the altitude correction on the next leg instead.
             altitude_reached = True
         if not self.is_loitering and reached_target and altitude_reached:
-            if not self.blocked and self.curr_idx in self.block_indices:
+            if not self.blocked and self._should_enter_input_block():
                 self._enter_block(tx, ty, tz, target)
             loiter_prop = target.loiter if isinstance(target.loiter, dict) else None
             if loiter_prop is None and int(target.pass_type or 0) == 2:

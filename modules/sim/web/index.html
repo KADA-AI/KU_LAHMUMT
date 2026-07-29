@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Sim Map</title>
     <link rel="stylesheet" href="/vendor/maplibre-gl.css" />
-    <link rel="stylesheet" href="/style.css?v=20260725-lah-role-layout-2" />
+    <link rel="stylesheet" href="/style.css?v=20260729-distance-measure-1" />
   </head>
   <body
     data-tile-url="__TILE_URL__"
@@ -47,6 +47,15 @@
     <div class="toolbar">
       <div class="toolbar-title">SIM MAP</div>
       <div class="toolbar-time" id="sim-time">T+00:00:00</div>
+      <button
+        id="toggle-distance-measurement"
+        class="toggle distance-measurement-toggle"
+        type="button"
+        aria-pressed="false"
+        title="좌클릭으로 점을 추가하고 우클릭으로 완료합니다. 3점부터 도형과 모든 변 길이를 표시합니다."
+      >
+        거리 측정
+      </button>
       <button
         id="auto-mission-flow-toggle"
         class="toggle auto-mission-flow-toggle"
@@ -799,6 +808,6 @@
     </div>
         <div id="status" class="status"></div>
     <script src="/vendor/maplibre-gl.js"></script>
-    <script type="module" src="/app.js?v=20260725-waypoint-toggle-1"></script>
+    <script type="module" src="/app.js?v=20260729-distance-measure-1"></script>
   </body>
 </html>

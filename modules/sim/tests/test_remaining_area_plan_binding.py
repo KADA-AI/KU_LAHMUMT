@@ -45,6 +45,77 @@ def _area_ring(x0: float, y0: float, x1: float, y1: float) -> dict:
 
 
 class RemainingAreaLoaderPlanBindingTest(unittest.TestCase):
+    def test_boundary_guard_uses_live_owner_regions_over_aggregate_union(self) -> None:
+        mission = {
+            "inputMissionID": 5,
+            "missionType": "area",
+            "isDone": False,
+            "boundaryGuardLoop": True,
+            "boundaryGuardDurationS": 600.0,
+            "remainingDetail": {
+                "areaList": [_area_ring(127.0, 38.0, 127.02, 38.01)]
+            },
+            "aircraftIDs": [4, 5],
+            "areaOwnershipDetails": [
+                {
+                    "aircraftID": 4,
+                    "individualMissionID": 900000074,
+                    "boundaryGuardLoop": True,
+                    "boundaryGuardSetID": "guard-aircraft-4",
+                    "boundaryGuardCycleCount": 1,
+                    "boundaryGuardDurationS": 600.0,
+                    "remainingAreaM2": 100.0,
+                    "remainingDetail": {
+                        "areaList": [_area_ring(127.0, 38.0, 127.01, 38.01)]
+                    },
+                },
+                {
+                    "aircraftID": 5,
+                    "individualMissionID": 900000079,
+                    "boundaryGuardLoop": True,
+                    "boundaryGuardSetID": "guard-aircraft-5",
+                    "boundaryGuardCycleCount": 2,
+                    "boundaryGuardDurationS": 600.0,
+                    "remainingAreaM2": 200.0,
+                    "remainingDetail": {
+                        "areaList": [_area_ring(127.01, 38.0, 127.02, 38.01)]
+                    },
+                },
+            ],
+        }
+
+        features = remaining_area_loader._features_from_snapshot(
+            {"missionPlanID": 44, "missions": [mission]}
+        )
+
+        self.assertEqual(len(features), 2)
+        self.assertEqual(
+            {row["properties"]["geometrySource"] for row in features},
+            {"boundaryGuardOwnerRemaining"},
+        )
+        self.assertEqual(
+            {row["properties"]["aircraftID"] for row in features},
+            {4, 5},
+        )
+        self.assertEqual(
+            {row["properties"]["agent"] for row in features},
+            {"UAV1", "UAV2"},
+        )
+        self.assertEqual(
+            {
+                row["properties"]["boundaryGuardSetID"]
+                for row in features
+            },
+            {"guard-aircraft-4", "guard-aircraft-5"},
+        )
+        self.assertEqual(
+            {
+                row["properties"]["boundaryGuardCycleCount"]
+                for row in features
+            },
+            {1, 2},
+        )
+
     def test_owner_only_area_fallback_is_one_shared_logical_feature(self) -> None:
         mission = {
             "inputMissionID": 3,

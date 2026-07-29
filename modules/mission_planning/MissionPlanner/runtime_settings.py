@@ -6,6 +6,7 @@ import json
 import math
 import threading
 from contextlib import contextmanager
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict
 
@@ -91,7 +92,7 @@ DEFAULT_RUNTIME_VALUES: Dict[str, Any] = {
     "capture_scan_max_aircraft_speed_mps": 55.0,
     "capture_scan_preferred_interval_s": 1.0,
     "capture_spacing_scale": 1.0,
-    "capture_area_spacing_scale": 1.0,
+    "capture_area_spacing_scale": 5.0 / 6.0,
     "capture_image_width_px": 1920.0,
     "capture_image_height_px": 1080.0,
     "line_custom_fov_deg": 2.4,
@@ -108,15 +109,47 @@ DEFAULT_RUNTIME_VALUES: Dict[str, Any] = {
     "area_fov_db_smaller_fov_steps": DEFAULT_AREA_FOV_DB_SMALLER_FOV_STEPS,
     "line_density_scale": 1.2,
     "area_density_scale": 1.2,
-    "next_collab_area_density_scale": 2.4,
+    "next_collab_area_density_scale": 1.5,
     "area_search_speed_max_mps": 800.0,
     "line_route_offset_scale": 1.0,
+    # ── 물리 기반 FOV 선택 (capture_physics) ────────────────────────────────
+    # canonicalize가 미등록 키를 버리므로, 설정파일/오버라이드로 조정하려면
+    # 반드시 여기 등록되어야 한다.  기본값은 capture_physics 모듈과 동일.
+    "physics_fov_selection_enabled": True,
+    "physics_capture_fps": 15.0,
+    "physics_lateral_overlap_ratio": 0.5,
+    "physics_fov_margin_ratio": 0.7,
+    # AREA 스윕 전용 마진(일반 margin 대신) — 실비행 급선회·뱅킹에서도 요구
+    # 공간해상도가 유지되도록 area 는 더 보수적으로 내려 잡는다.
+    "physics_area_fov_margin_ratio": 0.6,
+    "physics_fov_min_deg": 1.2,
+    "physics_fov_max_deg": 8.2,
+    "physics_default_boresight_tilt_deg": 14.0,
+    "physics_obj_w_m": 6.0,
+    "physics_obj_h_m": 3.6,
+    "physics_obj_min_px_x": 38.0,
+    "physics_obj_min_px_y": 22.0,
+    "physics_img_w_px": 1920.0,
+    "physics_img_h_px": 1080.0,
+    # 할당 AREA의 스윕 행 폭이 이 값을 넘으면 그 기체 영역을 두 갈래로 쪼개
+    # 순차 수행한다 (fps15·좌우중첩 50%에서 한 행이 덮는 좌우 폭의 보수 하한).
+    # 0 이면 비활성.
+    "area_sequential_split_width_m": 700.0,
+    "area_sequential_split_max_width_m": 900.0,
+    # Type-2 boundary guard is flown as a repeating AREA cycle.  The planner,
+    # simulator and monitoring completion gate all consume this single value.
+    "type2_boundary_guard_duration_s": 600.0,
     "area_route_offset_scale": 1.0,
     "area_first_packet_search_speed_scale": 1.2,
     "area_first_packet_sweep_group_scale": 1.0,
     "uav_wp_interval_m": 2000.0,
     "area_wp_interval_m": 1000.0,
     "lah_wp_interval_m": 3000.0,
+    "lah_max_speed_mps": 72.0,
+    "lah_operational_climb_rate_mps": 5.0,
+    "lah_operational_descent_rate_mps": 5.0,
+    "lah_vertical_transition_enabled": True,
+    "lah_vertical_transition_tolerance_m": 1.0,
     "dubins_turn_radius_m": 500.0,
     "default_search_speed_multiplier": 16.0,
     "uav_climb_rate_mps": 5.0,
@@ -142,7 +175,8 @@ DEFAULT_RUNTIME_VALUES: Dict[str, Any] = {
     "recon_area_review_min_segment_m": 0.0,
     "post_attack_return_first_fov_scale": 0.70,
     "enhanced_auto_fov_from_db": True,
-    "area_dubins_entry_links_enabled": True,
+    # AREA 전환 out-leg 링크 WP 방출 — 사용자 결정으로 기본 꺼짐(점 삭제).
+    "area_dubins_entry_links_enabled": False,
     "recon_area_split_width_m": 600.0,
     "recon_area_fixed_fov_deg": 15.0,
     "recon_sweep_separation_scale": 0.50,
@@ -163,11 +197,14 @@ DEFAULT_RUNTIME_VALUES: Dict[str, Any] = {
     "next_collab_area_path0_trigger_sep_m": 1500.0,
     "next_collab_area_path0_target_sep_ratio": 0.20,
     "next_collab_turn_radius_scale": 1.20,
+    "next_collab_turn_radius_uncertainty_margin_m": 120.0,
     "next_collab_takeover_first_step_ratio": 0.40,
     "next_collab_area_fov_scale": 1.00,
     "next_collab_area_search_speed_scale": 1.30,
     "next_collab_area_gsd_margin_ratio": 0.90,
-    "next_collab_area_scan_completion_speed_scale": 1.10,
+    "next_collab_capture_completion_speed_scale": 1.10,
+    "next_collab_first_capture_activation_delay_s": 1.50,
+    "next_collab_area_first_capture_stale_entry_guard_s": 6.00,
     "next_collab_area_reciprocal_pass_enabled": False,
     "next_collab_area_reciprocal_min_terrain_score": 0.45,
     "next_collab_area_reciprocal_min_relief_m": 100.0,
@@ -238,6 +275,12 @@ DEFAULT_RUNTIME_VALUES: Dict[str, Any] = {
     "lah_rl_area_km": 10.0,
     # Low-terrain detour dial: 0 disables, 1.0 tuned baseline, up to 3.
     "lah_low_terrain_strength": 1.0,
+    # Compact/smooth the terrain-safe LAH vertical profile without ever
+    # lowering a DEM clearance requirement.
+    "lah_altitude_smoothing_enabled": True,
+    "lah_altitude_short_dip_max_depth_m": 30.0,
+    "lah_altitude_short_dip_max_span_m": 1200.0,
+    "lah_altitude_redundant_tolerance_m": 3.0,
 }
 DEFAULT_PRIOR_MISSION_VALUES: Dict[str, Any] = {
     "tracking_loiter_seconds": 300,
@@ -286,6 +329,10 @@ DEFAULT_ATTACK_MISSION_VALUES: Dict[str, Any] = {
     # Terrain-cover hold search radius shared by terminal cover and the
     # type2/3 ladder holds; 0 disables the radius search.
     "lah_cover_search_radius_m": 1500.0,
+    # The final Type-2 hide site searches the complete declared target polygon
+    # and requires a ridge to rise this far above every branch sightline when
+    # such a candidate exists.
+    "lah_destination_cover_min_masking_depth_m": 30.0,
     # Ladder holds (previous-mid / corridor / destination-area) slide onto
     # masking terrain facing the active mission; 0 keeps geometric anchors.
     "lah_ladder_cover_enabled": 1,
@@ -299,6 +346,13 @@ DEFAULT_ATTACK_MISSION_VALUES: Dict[str, Any] = {
     "attack_min_standoff_m": 3000.0,
     "attack_preferred_standoff_m": 9000.0,
     "attack_point_altitude_offset_m": 300.0,
+    # Attack waypoints are low-level popup bases.  The simulator owns the
+    # climb-until-LOS, shot, and descent; mission planning only keeps the
+    # aircraft clear of terrain while it reaches the firing ground position.
+    "attack_low_level_clearance_m": 30.0,
+    # A hide waypoint and an armed attack waypoint must not be byte-for-byte
+    # identical or downstream waypoint followers may collapse the latter.
+    "attack_point_min_horizontal_offset_m": 5.0,
     # Keep attack visibility identical to the shared planning/SIM terrain-LOS
     # contract.  Diverging values here previously produced 3 km+ LAH pop-ups
     # even when SIM already had a clear reciprocal sightline below 1 km.
@@ -341,7 +395,12 @@ PERSISTED_ATTACK_MISSION_KEYS = tuple(DEFAULT_ATTACK_MISSION_VALUES.keys())
 PERSISTED_FLYOVER_KEYS = ("entry_offset", "dubins_prefix", "last_point", "all_wps")
 
 
+@lru_cache(maxsize=1)
 def _project_root() -> Path:
+    # The repository layout cannot change while the process runs, but this used
+    # to walk the parent chain with two filesystem probes per level on every
+    # settings read - and a settings read happens per waypoint on the planning
+    # hot path.  Resolving once removes that walk entirely.
     current = Path(__file__).resolve()
     for parent in current.parents:
         if (parent / "run.py").is_file() and (
@@ -379,9 +438,20 @@ def _ensure_root_settings_file(path: Path) -> None:
         return
 
 
+_ROOT_SETTINGS_SEEDED: set[str] = set()
+
+
 def settings_path() -> Path:
     path = uav_params_path()
-    _ensure_root_settings_file(path)
+    # Seeding the root settings file from a legacy location is a one-time
+    # migration, but it used to re-probe the filesystem on every settings read.
+    # Once the file is known to exist, skip it; clear_runtime_settings_cache()
+    # resets this so a deleted file is still re-seeded.
+    key = str(path)
+    if key not in _ROOT_SETTINGS_SEEDED:
+        _ensure_root_settings_file(path)
+        if path.exists():
+            _ROOT_SETTINGS_SEEDED.add(key)
     return path
 
 
@@ -444,6 +514,13 @@ def _path_sig(path: Path) -> tuple[str, int, int] | None:
 
 def clear_runtime_settings_cache() -> None:
     global _CACHE_SIG, _CACHE_DATA, _FOV_DB_CACHE_SIG, _FOV_DB_MAX_WIDTH, _FOV_DB_ROWS_CACHE_SIG, _FOV_DB_ROWS
+    _ROOT_SETTINGS_SEEDED.clear()
+    try:
+        from modules.common.settings_paths import clear_algo_settings_path_cache
+
+        clear_algo_settings_path_cache()
+    except Exception:
+        pass
     with _CACHE_LOCK:
         _CACHE_SIG = None
         _CACHE_DATA = None
@@ -478,11 +555,42 @@ def set_runtime_fov_db_path(path: str | Path) -> Path:
     return get_runtime_fov_db_path(payload)
 
 
-def load_runtime_settings() -> Dict[str, Any]:
-    override = getattr(_THREAD_LOCAL, "override_payload", None)
-    if isinstance(override, dict):
-        return copy.deepcopy(override)
+_SETTINGS_PIN_DEPTH = 0
+
+
+@contextmanager
+def pin_runtime_settings():
+    """Hold the settings document fixed for the duration of one operation.
+
+    Settings are re-stat'ed on every read so an edit is picked up immediately.
+    That is right for the idle application, but a single replan performs tens of
+    thousands of reads and must not see the document change halfway through
+    anyway - a torn read would mix two configurations into one plan.  Pinning
+    both removes the per-read stat and makes the operation self-consistent.
+
+    Process-wide (worker threads share the pin) and re-entrant.  An explicit
+    ``clear_runtime_settings_cache()`` still forces a reload, so a deliberate
+    settings write is never masked.
+    """
+
+    global _SETTINGS_PIN_DEPTH
+    _refresh_runtime_settings_cache()
+    with _CACHE_LOCK:
+        _SETTINGS_PIN_DEPTH += 1
+    try:
+        yield
+    finally:
+        with _CACHE_LOCK:
+            _SETTINGS_PIN_DEPTH = max(0, _SETTINGS_PIN_DEPTH - 1)
+
+
+def _refresh_runtime_settings_cache() -> None:
+    """Ensure ``_CACHE_DATA`` matches the settings file on disk."""
+
     global _CACHE_SIG, _CACHE_DATA
+    with _CACHE_LOCK:
+        if _SETTINGS_PIN_DEPTH > 0 and isinstance(_CACHE_DATA, dict):
+            return
     path = settings_path()
     try:
         stat = path.stat()
@@ -493,7 +601,7 @@ def load_runtime_settings() -> Dict[str, Any]:
     if sig is not None:
         with _CACHE_LOCK:
             if _CACHE_SIG == sig and isinstance(_CACHE_DATA, dict):
-                return copy.deepcopy(_CACHE_DATA)
+                return
 
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -502,8 +610,36 @@ def load_runtime_settings() -> Dict[str, Any]:
     data = canonicalize_runtime_payload(payload if isinstance(payload, dict) else None)
     with _CACHE_LOCK:
         _CACHE_SIG = sig
-        _CACHE_DATA = copy.deepcopy(data)
-    return data
+        _CACHE_DATA = data
+
+
+def load_runtime_settings() -> Dict[str, Any]:
+    override = getattr(_THREAD_LOCAL, "override_payload", None)
+    if isinstance(override, dict):
+        return copy.deepcopy(override)
+    _refresh_runtime_settings_cache()
+    with _CACHE_LOCK:
+        data = _CACHE_DATA
+        # Callers of the public loader may mutate the document, so they still
+        # get their own copy; the per-key accessors go through _cached_section
+        # and skip this.
+        return copy.deepcopy(data) if isinstance(data, dict) else {}
+
+
+def load_runtime_settings_readonly() -> Dict[str, Any]:
+    """The cached settings document itself - callers MUST NOT mutate it.
+
+    Same content as ``load_runtime_settings`` without the per-call deep copy of
+    the whole document, for hot paths that only read values.
+    """
+
+    override = getattr(_THREAD_LOCAL, "override_payload", None)
+    if isinstance(override, dict):
+        return override
+    _refresh_runtime_settings_cache()
+    with _CACHE_LOCK:
+        data = _CACHE_DATA
+        return data if isinstance(data, dict) else {}
 
 
 def get_runtime_override() -> Dict[str, Any] | None:
@@ -697,6 +833,21 @@ def canonicalize_runtime_payload(payload: Dict[str, Any] | None = None) -> Dict[
                 base["values"]["enhanced_auto_fov_from_db"] = bool(raw_values.get("enhanced_area_auto_fov_from_db"))
             except Exception:
                 pass
+        if "next_collab_capture_completion_speed_scale" not in raw_values:
+            # Migrate either former split key into the one shared LINE/AREA
+            # completion margin. The AREA key existed first, so it wins when
+            # both legacy keys are present.
+            legacy_completion_scale = raw_values.get(
+                "next_collab_area_scan_completion_speed_scale"
+            )
+            if legacy_completion_scale is None:
+                legacy_completion_scale = raw_values.get(
+                    "next_collab_type2_three_branch_search_speed_scale"
+                )
+            if legacy_completion_scale is not None:
+                values["next_collab_capture_completion_speed_scale"] = (
+                    legacy_completion_scale
+                )
 
     values = base["values"]
     global_fov = _as_float(values.get("global_manual_fov_deg"), 2.4)
@@ -782,7 +933,7 @@ def canonicalize_runtime_payload(payload: Dict[str, Any] | None = None) -> Dict[
             10.0,
             _as_float(
                 values.get("next_collab_area_density_scale"),
-                max(_as_float(values.get("area_density_scale"), 1.2), 2.4),
+                max(_as_float(values.get("area_density_scale"), 1.2), 1.5),
             ),
         ),
     )
@@ -794,13 +945,35 @@ def canonicalize_runtime_payload(payload: Dict[str, Any] | None = None) -> Dict[
         0.10,
         min(5.0, _as_float(values.get("next_collab_area_search_speed_scale"), 1.30)),
     )
-    values["next_collab_area_scan_completion_speed_scale"] = max(
+    values["next_collab_capture_completion_speed_scale"] = max(
         1.0,
         min(
             1.5,
             _as_float(
-                values.get("next_collab_area_scan_completion_speed_scale"),
+                values.get("next_collab_capture_completion_speed_scale"),
                 1.10,
+            ),
+        ),
+    )
+    values["next_collab_first_capture_activation_delay_s"] = max(
+        0.0,
+        min(
+            10.0,
+            _as_float(
+                values.get("next_collab_first_capture_activation_delay_s"),
+                1.50,
+            ),
+        ),
+    )
+    values["next_collab_area_first_capture_stale_entry_guard_s"] = max(
+        0.0,
+        min(
+            20.0,
+            _as_float(
+                values.get(
+                    "next_collab_area_first_capture_stale_entry_guard_s"
+                ),
+                6.00,
             ),
         ),
     )
@@ -1007,28 +1180,54 @@ def canonicalize_runtime_payload(payload: Dict[str, Any] | None = None) -> Dict[
     return base
 
 
+def _cached_section(name: str) -> Dict[str, Any]:
+    """Read-only view of one settings section, without copying the payload.
+
+    ``load_runtime_settings`` deep-copies the entire settings document so
+    callers may mutate what they get back.  A single-value lookup does not
+    mutate anything, and on the planning hot path these lookups happen per
+    waypoint - copying ~250 unrelated keys each time dominated the cost.  This
+    returns the cached section itself, so callers must treat it as read-only;
+    every accessor below only reads.
+    """
+
+    override = getattr(_THREAD_LOCAL, "override_payload", None)
+    if isinstance(override, dict):
+        section = override.get(name)
+        return section if isinstance(section, dict) else {}
+    _refresh_runtime_settings_cache()
+    with _CACHE_LOCK:
+        data = _CACHE_DATA
+        section = data.get(name) if isinstance(data, dict) else None
+        return section if isinstance(section, dict) else {}
+
+
 def load_runtime_values(payload: Dict[str, Any] | None = None) -> Dict[str, Any]:
-    data = payload if isinstance(payload, dict) else load_runtime_settings()
-    values = data.get("values") if isinstance(data.get("values"), dict) else {}
-    return values if isinstance(values, dict) else {}
+    if isinstance(payload, dict):
+        values = payload.get("values")
+        return values if isinstance(values, dict) else {}
+    return _cached_section("values")
 
 
 def load_runtime_flyover(payload: Dict[str, Any] | None = None) -> Dict[str, Any]:
-    data = payload if isinstance(payload, dict) else load_runtime_settings()
-    flyover = data.get("flyover") if isinstance(data.get("flyover"), dict) else {}
-    return flyover if isinstance(flyover, dict) else {}
+    if isinstance(payload, dict):
+        flyover = payload.get("flyover")
+        return flyover if isinstance(flyover, dict) else {}
+    return _cached_section("flyover")
 
 
 def load_runtime_prior_values(payload: Dict[str, Any] | None = None) -> Dict[str, Any]:
-    data = payload if isinstance(payload, dict) else load_runtime_settings()
-    prior = data.get("prior_mission") if isinstance(data.get("prior_mission"), dict) else {}
-    return prior if isinstance(prior, dict) else {}
+    if isinstance(payload, dict):
+        prior = payload.get("prior_mission")
+        return prior if isinstance(prior, dict) else {}
+    return _cached_section("prior_mission")
 
 
 def load_runtime_attack_values(payload: Dict[str, Any] | None = None) -> Dict[str, Any]:
-    data = payload if isinstance(payload, dict) else load_runtime_settings()
-    attack = data.get("attack_mission") if isinstance(data.get("attack_mission"), dict) else {}
-    return attack if isinstance(attack, dict) else {}
+    if isinstance(payload, dict):
+        attack = payload.get("attack_mission")
+        return attack if isinstance(attack, dict) else {}
+    return _cached_section("attack_mission")
 
 
 def get_runtime_value(key: str, default: Any, payload: Dict[str, Any] | None = None) -> Any:

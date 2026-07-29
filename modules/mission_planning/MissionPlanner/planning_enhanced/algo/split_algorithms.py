@@ -16,6 +16,28 @@ except Exception:
     cv2 = None  # type: ignore
 
 try:
+    from ...capture_physics import (
+        area_sequential_split_max_width_m as _area_sequential_split_max_width_m,
+        area_sequential_split_width_m as _area_sequential_split_width_m,
+        max_sweep_row_chord_m_llh as _max_sweep_row_chord_m_llh,
+    )
+except Exception:
+    try:
+        from modules.mission_planning.MissionPlanner.capture_physics import (  # type: ignore
+            area_sequential_split_max_width_m as _area_sequential_split_max_width_m,
+            area_sequential_split_width_m as _area_sequential_split_width_m,
+            max_sweep_row_chord_m_llh as _max_sweep_row_chord_m_llh,
+        )
+    except Exception:
+        def _area_sequential_split_max_width_m() -> float:  # type: ignore
+            return 0.0
+
+        def _area_sequential_split_width_m() -> float:  # type: ignore
+            return 0.0
+
+        def _max_sweep_row_chord_m_llh(coords, bearing_deg) -> float:  # type: ignore
+            return 0.0
+try:
     from ...runtime_settings import get_runtime_str
 except Exception:
     try:
@@ -590,16 +612,38 @@ def _split_area_by_axis(
     if len(poly_xy) < 3:
         return [], []
 
-    if isinstance(axis_anchor_pt, dict) and "latitude" in axis_anchor_pt and "longitude" in axis_anchor_pt:
-        cx, cy = _llh2xy(float(axis_anchor_pt["latitude"]), float(axis_anchor_pt["longitude"]), lat0, lon0)
-    else:
-        cx = sum(x for x, _ in poly_xy) / len(poly_xy)
-        cy = sum(y for _, y in poly_xy) / len(poly_xy)
-
     th = math.radians(axis_bearing_deg)
     dx, dy = math.sin(th), math.cos(th)  # axis direction
     nx, ny = -dy, dx  # axis normal
-    C = -(nx * cx + ny * cy)
+    # A line through the vertex-average centre does not bisect an irregular
+    # polygon's area.  Triangles and tapered quadrilaterals then produce a very
+    # short sequential stage.  Locate the cut by cumulative polygon area along
+    # the same axis instead; the entry/exit directions stay unchanged.
+    balanced_bounds = _equal_area_projection_bounds_xy(
+        poly_xy,
+        nx,
+        ny,
+        2,
+    )
+    if len(balanced_bounds) == 3:
+        cut_projection = float(balanced_bounds[1])
+    elif (
+        isinstance(axis_anchor_pt, dict)
+        and "latitude" in axis_anchor_pt
+        and "longitude" in axis_anchor_pt
+    ):
+        cx, cy = _llh2xy(
+            float(axis_anchor_pt["latitude"]),
+            float(axis_anchor_pt["longitude"]),
+            lat0,
+            lon0,
+        )
+        cut_projection = nx * cx + ny * cy
+    else:
+        cx = sum(x for x, _ in poly_xy) / len(poly_xy)
+        cy = sum(y for _, y in poly_xy) / len(poly_xy)
+        cut_projection = nx * cx + ny * cy
+    C = -float(cut_projection)
 
     side_a_xy = _remove_close_points_xy(_clip_poly(poly_xy, nx, ny, C))
     side_b_xy = _remove_close_points_xy(_clip_poly(poly_xy, -nx, -ny, -C))
@@ -632,6 +676,158 @@ def _normal_from_cut_bearing(bearing_deg: float) -> Tuple[float, float]:
     # Cut-line direction -> clipping normal (perpendicular vector)
     th = math.radians(float(bearing_deg))
     return math.cos(th), -math.sin(th)
+
+
+def _annotate_area_outer_owner_pieces(
+    pieces: List[Dict],
+    owner_count: int,
+    bearing_deg: float,
+    *,
+    ref_lat0: float,
+    ref_lon0: float,
+    first_sweep: bool,
+) -> Dict[int, str]:
+    """Mark the low/high edge owners without relying on list ordering."""
+
+    owner_count = max(1, int(owner_count))
+    if owner_count < 2 or len(pieces) != owner_count:
+        return {}
+    nx, ny = _normal_from_cut_bearing(float(bearing_deg))
+    centers: List[Tuple[float, int]] = []
+    for index, item in enumerate(pieces):
+        if not isinstance(item, dict):
+            continue
+        coords = (
+            item.get("rawCoordinateList")
+            or item.get("coordinateList")
+            or []
+        )
+        points_xy = [
+            _llh2xy(
+                float(coord["latitude"]),
+                float(coord["longitude"]),
+                float(ref_lat0),
+                float(ref_lon0),
+            )
+            for coord in coords
+            if isinstance(coord, dict)
+            and "latitude" in coord
+            and "longitude" in coord
+        ]
+        if not points_xy:
+            continue
+        center_x = sum(point[0] for point in points_xy) / len(points_xy)
+        center_y = sum(point[1] for point in points_xy) / len(points_xy)
+        centers.append((nx * center_x + ny * center_y, index))
+    if len(centers) != owner_count:
+        return {}
+
+    low_index = min(centers)[1]
+    high_index = max(centers)[1]
+    outer_side_by_slot: Dict[int, str] = {}
+    for index, item in enumerate(pieces):
+        owner_slot = index + 1
+        item["areaSequentialOwnerSlot"] = int(owner_slot)
+        item["areaSequentialOwnerCount"] = int(owner_count)
+        outer_side = (
+            "min"
+            if index == low_index
+            else "max"
+            if index == high_index
+            else None
+        )
+        if outer_side is None:
+            continue
+        item["areaOuterOwner"] = True
+        item["areaOuterSide"] = str(outer_side)
+        item["areaOuterFirstSweep"] = bool(first_sweep)
+        outer_side_by_slot[int(owner_slot)] = str(outer_side)
+    return outer_side_by_slot
+
+
+def _equal_area_projection_bounds_xy(
+    poly_xy: List[Tuple[float, float]],
+    nx: float,
+    ny: float,
+    part_count: int,
+) -> List[float]:
+    """Projection cuts whose clipped polygon areas are equal.
+
+    Equal projection *width* only balances rectangles.  For tapered or concave
+    mission shapes it can leave a thin end piece with very little filming
+    workload.  This monotonic bisection keeps the requested sweep direction but
+    chooses each internal boundary from cumulative polygon area.
+    """
+
+    if int(part_count) < 1 or len(poly_xy) < 3:
+        return []
+    subject = Polygon(poly_xy)
+    if not subject.is_valid:
+        subject = subject.buffer(0)
+    subject_poly = _largest_polygon(subject)
+    if subject_poly is None or float(subject_poly.area) <= 1e-6:
+        return []
+
+    projections = [float(nx) * float(x) + float(ny) * float(y) for x, y in poly_xy]
+    d_min = min(projections)
+    d_max = max(projections)
+    if d_max - d_min <= 1e-9:
+        return [float(d_min), float(d_max)]
+    if int(part_count) == 1:
+        return [float(d_min), float(d_max)]
+
+    # Tangent to the clipping normal.  The generous extension makes the band
+    # effectively infinite for this local XY polygon.
+    dx, dy = -float(ny), float(nx)
+    min_x, min_y, max_x, max_y = subject_poly.bounds
+    extent = max(
+        10_000.0,
+        math.hypot(float(max_x) - float(min_x), float(max_y) - float(min_y))
+        * 4.0,
+    )
+    low_extent = float(d_min) - extent
+
+    def _area_through(cut: float) -> float:
+        half_plane = Polygon(
+            [
+                (
+                    float(nx) * low_extent + dx * extent,
+                    float(ny) * low_extent + dy * extent,
+                ),
+                (
+                    float(nx) * float(cut) + dx * extent,
+                    float(ny) * float(cut) + dy * extent,
+                ),
+                (
+                    float(nx) * float(cut) - dx * extent,
+                    float(ny) * float(cut) - dy * extent,
+                ),
+                (
+                    float(nx) * low_extent - dx * extent,
+                    float(ny) * low_extent - dy * extent,
+                ),
+            ]
+        )
+        try:
+            return float(subject_poly.intersection(half_plane).area)
+        except Exception:
+            return 0.0
+
+    total_area = float(subject_poly.area)
+    bounds: List[float] = [float(d_min)]
+    for part_index in range(1, int(part_count)):
+        target_area = total_area * float(part_index) / float(part_count)
+        low = float(bounds[-1])
+        high = float(d_max)
+        for _ in range(52):
+            mid = (low + high) * 0.5
+            if _area_through(mid) < target_area:
+                low = mid
+            else:
+                high = mid
+        bounds.append((low + high) * 0.5)
+    bounds.append(float(d_max))
+    return bounds
 
 
 def _divide_search_area_clip_with_bounds(
@@ -725,6 +921,8 @@ def divide_search_area_two_stage(
 ) -> List[Dict]:
     if uav_cnt < 1:
         raise ValueError("uav_cnt must be >= 1")
+    lat0 = float(area_poly[0]["latitude"])
+    lon0 = float(area_poly[0]["longitude"])
 
     entry_side, exit_side = _split_area_by_axis(
         area_poly,
@@ -743,16 +941,33 @@ def divide_search_area_two_stage(
         for r in out:
             r["splitStage"] = 1
             r["splitCount"] = 1
+        _annotate_area_outer_owner_pieces(
+            out,
+            uav_cnt,
+            float(entry_move_bearing_deg),
+            ref_lat0=lat0,
+            ref_lon0=lon0,
+            first_sweep=True,
+        )
         return out
 
     # Master split on entry-side first, then transfer strip widths across boundary axis.
-    lat0, lon0 = area_poly[0]["latitude"], area_poly[0]["longitude"]
     entry_xy = [_llh2xy(p["latitude"], p["longitude"], lat0, lon0) for p in entry_side]
     exit_xy = [_llh2xy(p["latitude"], p["longitude"], lat0, lon0) for p in exit_side]
     n1x, n1y = _normal_from_cut_bearing(float(entry_move_bearing_deg))
     pvals1 = [n1x * x + n1y * y for x, y in entry_xy]
     p1_min, p1_max = min(pvals1), max(pvals1)
-    bounds1 = [p1_min + (p1_max - p1_min) * i / uav_cnt for i in range(uav_cnt + 1)]
+    bounds1 = _equal_area_projection_bounds_xy(
+        entry_xy,
+        n1x,
+        n1y,
+        uav_cnt,
+    )
+    if len(bounds1) != int(uav_cnt) + 1:
+        bounds1 = [
+            p1_min + (p1_max - p1_min) * i / uav_cnt
+            for i in range(uav_cnt + 1)
+        ]
 
     n2x, n2y = _normal_from_cut_bearing(float(exit_move_bearing_deg))
     p2 = [n2x * x + n2y * y for x, y in exit_xy]
@@ -796,9 +1011,24 @@ def divide_search_area_two_stage(
             clamped = [max(e_min, min(e_max, v)) for v in transfer_vals]
             bounds2 = [e_min] + sorted(clamped) + [e_max]
         else:
-            bounds2 = [e_min + (e_max - e_min) * i / uav_cnt for i in range(uav_cnt + 1)]
+            bounds2 = _equal_area_projection_bounds_xy(
+                exit_xy,
+                n2x,
+                n2y,
+                uav_cnt,
+            )
     else:
-        bounds2 = [e_min + (e_max - e_min) * i / uav_cnt for i in range(uav_cnt + 1)]
+        bounds2 = _equal_area_projection_bounds_xy(
+            exit_xy,
+            n2x,
+            n2y,
+            uav_cnt,
+        )
+    if len(bounds2) != int(uav_cnt) + 1:
+        bounds2 = [
+            e_min + (e_max - e_min) * i / uav_cnt
+            for i in range(uav_cnt + 1)
+        ]
 
     # Keep bounds strictly increasing to avoid zero-width strips.
     eps = max(1e-6, (e_max - e_min) * 1e-6)
@@ -821,6 +1051,14 @@ def divide_search_area_two_stage(
         for r in out:
             r["splitStage"] = 1
             r["splitCount"] = 1
+        _annotate_area_outer_owner_pieces(
+            out,
+            uav_cnt,
+            float(entry_move_bearing_deg),
+            ref_lat0=lat0,
+            ref_lon0=lon0,
+            first_sweep=True,
+        )
         return out
 
     try:
@@ -836,6 +1074,14 @@ def divide_search_area_two_stage(
         for r in out:
             r["splitStage"] = 1
             r["splitCount"] = 1
+        _annotate_area_outer_owner_pieces(
+            out,
+            uav_cnt,
+            float(entry_move_bearing_deg),
+            ref_lat0=lat0,
+            ref_lon0=lon0,
+            first_sweep=True,
+        )
         return out
 
     if len(s1) != uav_cnt or len(s2) != uav_cnt:
@@ -843,10 +1089,26 @@ def divide_search_area_two_stage(
         for r in out:
             r["splitStage"] = 1
             r["splitCount"] = 1
+        _annotate_area_outer_owner_pieces(
+            out,
+            uav_cnt,
+            float(entry_move_bearing_deg),
+            ref_lat0=lat0,
+            ref_lon0=lon0,
+            first_sweep=True,
+        )
         return out
 
     s1 = _sort_piece_dicts_by_shared_touch(s1, shared_line, lat0, lon0)
     s2 = _sort_piece_dicts_by_shared_touch(s2, shared_line, lat0, lon0)
+    outer_side_by_slot = _annotate_area_outer_owner_pieces(
+        s1,
+        uav_cnt,
+        float(entry_move_bearing_deg),
+        ref_lat0=lat0,
+        ref_lon0=lon0,
+        first_sweep=True,
+    )
 
     for item in s1:
         item["splitStage"] = 1
@@ -855,9 +1117,17 @@ def divide_search_area_two_stage(
         item["phaseSplitBearing_deg"] = float(entry_move_bearing_deg)
         item["boundaryAxisBearing_deg"] = float(boundary_axis_bearing_deg)
 
-    for item in s2:
+    for owner_slot, item in enumerate(s2, start=1):
         item["splitStage"] = 2
         item["splitCount"] = 2
+        item["areaSequentialOwnerSlot"] = int(owner_slot)
+        item["areaSequentialOwnerCount"] = int(uav_cnt)
+        if int(owner_slot) in outer_side_by_slot:
+            item["areaOuterOwner"] = True
+            item["areaOuterSide"] = str(
+                outer_side_by_slot[int(owner_slot)]
+            )
+            item["areaOuterFirstSweep"] = False
         item["phaseMoveBearing_deg"] = float(exit_move_bearing_deg)
         item["phaseSplitBearing_deg"] = float(exit_move_bearing_deg)
         item["boundaryAxisBearing_deg"] = float(boundary_axis_bearing_deg)
@@ -880,7 +1150,12 @@ def divide_search_area_clip(
     nx, ny = _normal_from_cut_bearing(float(bearing_deg))
     projs = [nx * x + ny * y for x, y in poly_xy]
     d_min, d_max = min(projs), max(projs)
-    bounds = [d_min + (d_max - d_min) * i / uav_cnt for i in range(uav_cnt + 1)]
+    bounds = _equal_area_projection_bounds_xy(poly_xy, nx, ny, uav_cnt)
+    if len(bounds) != int(uav_cnt) + 1:
+        bounds = [
+            d_min + (d_max - d_min) * i / uav_cnt
+            for i in range(uav_cnt + 1)
+        ]
     return _divide_search_area_clip_with_bounds(
         area_poly,
         float(bearing_deg),
@@ -888,6 +1163,195 @@ def divide_search_area_clip(
         ref_lat0=lat0,
         ref_lon0=lon0,
     )
+
+
+def _divide_search_area_uniform_projection(
+    area_poly: List[Dict[str, Any]],
+    part_count: int,
+    bearing_deg: float,
+) -> List[Dict]:
+    """Cut an owner strip into equal physical widths along the sweep axis."""
+
+    part_count = max(1, int(part_count))
+    if len(area_poly) < 3:
+        return []
+    lat0 = float(area_poly[0]["latitude"])
+    lon0 = float(area_poly[0]["longitude"])
+    poly_xy = [
+        _llh2xy(p["latitude"], p["longitude"], lat0, lon0)
+        for p in area_poly
+    ]
+    nx, ny = _normal_from_cut_bearing(float(bearing_deg))
+    projections = [nx * x + ny * y for x, y in poly_xy]
+    if not projections:
+        return []
+    d_min = min(projections)
+    d_max = max(projections)
+    bounds = [
+        d_min + (d_max - d_min) * index / part_count
+        for index in range(part_count + 1)
+    ]
+    return _divide_search_area_clip_with_bounds(
+        area_poly,
+        float(bearing_deg),
+        bounds,
+        ref_lat0=lat0,
+        ref_lon0=lon0,
+    )
+
+
+def _divide_area_by_sequential_width_limit(
+    area_poly: List[Dict],
+    owner_count: int,
+    bearing_deg: float,
+    *,
+    minimum_stage_count: int = 1,
+) -> Tuple[List[Dict], int, float]:
+    """Split each owner's strip into enough sequential stages for the width limit."""
+
+    owner_count = max(1, int(owner_count))
+    minimum_stage_count = max(1, int(minimum_stage_count))
+    base_parts = divide_search_area_clip(area_poly, owner_count, float(bearing_deg))
+    if len(base_parts) != owner_count:
+        return base_parts, 1, 0.0
+
+    # ``divide_search_area_clip`` is ordered from the low to the high side of
+    # the split normal.  Only the two edge owners touch the original AREA
+    # exterior.  Persist that ownership so the camera planner can start each
+    # edge strip at the convex-hull boundary instead of whichever endpoint is
+    # closest to the entry waypoint.
+    for owner_slot, item in enumerate(base_parts, start=1):
+        if not isinstance(item, dict):
+            continue
+        item["areaSequentialOwnerSlot"] = int(owner_slot)
+        item["areaSequentialOwnerCount"] = int(owner_count)
+        outer_side = None
+        if owner_count >= 2:
+            if owner_slot == 1:
+                outer_side = "min"
+            elif owner_slot == owner_count:
+                outer_side = "max"
+        if outer_side is not None:
+            item["areaOuterOwner"] = True
+            item["areaOuterSide"] = str(outer_side)
+            item["areaOuterFirstSweep"] = True
+
+    width_target_m = float(_area_sequential_split_width_m() or 0.0)
+    width_limit_m = float(_area_sequential_split_max_width_m() or 0.0)
+    widest_owner_span_m = max(
+        (
+            _max_sweep_row_chord_m_llh(
+                item.get("coordinateList"),
+                float(bearing_deg),
+            )
+            for item in base_parts
+            if isinstance(item, dict)
+        ),
+        default=0.0,
+    )
+    width_stage_count = (
+        int(math.ceil(widest_owner_span_m / width_limit_m))
+        if width_limit_m > 0.0 and widest_owner_span_m > width_limit_m
+        else 1
+    )
+    stage_count = max(minimum_stage_count, width_stage_count)
+    if stage_count <= 1:
+        return base_parts, 1, float(widest_owner_span_m)
+
+    owner_stage_parts: List[List[Dict]] = []
+    for _attempt in range(16):
+        candidate_by_owner: List[List[Dict]] = []
+        for owner_slot, base_part in enumerate(base_parts, start=1):
+            base_coords = (
+                base_part.get("rawCoordinateList")
+                or base_part.get("coordinateList")
+                or []
+            )
+            owner_parts = _divide_search_area_uniform_projection(
+                base_coords,
+                stage_count,
+                float(bearing_deg),
+            )
+            if len(owner_parts) != stage_count:
+                candidate_by_owner = []
+                break
+            for item in owner_parts:
+                item["areaSequentialOwnerSlot"] = int(owner_slot)
+                item["areaSequentialOwnerCount"] = int(owner_count)
+                if owner_count >= 2 and owner_slot in (1, owner_count):
+                    item["areaOuterOwner"] = True
+                    item["areaOuterSide"] = (
+                        "min" if owner_slot == 1 else "max"
+                    )
+            candidate_by_owner.append(owner_parts)
+        if len(candidate_by_owner) != owner_count:
+            return base_parts, 1, float(widest_owner_span_m)
+        owner_stage_parts = candidate_by_owner
+        if width_limit_m <= 0.0:
+            break
+        widest_stage_span_m = max(
+            (
+                _max_sweep_row_chord_m_llh(
+                    item.get("coordinateList"),
+                    float(bearing_deg),
+                )
+                for owner_parts in candidate_by_owner
+                for item in owner_parts
+                if isinstance(item, dict)
+            ),
+            default=0.0,
+        )
+        if widest_stage_span_m <= width_limit_m + 1.0:
+            break
+        grown_count = int(
+            math.ceil(stage_count * widest_stage_span_m / width_limit_m)
+        )
+        next_stage_count = min(64, max(stage_count + 1, grown_count))
+        if next_stage_count == stage_count:
+            break
+        stage_count = next_stage_count
+
+    if (
+        len(owner_stage_parts) != owner_count
+        or any(len(parts) != stage_count for parts in owner_stage_parts)
+    ):
+        return base_parts, 1, float(widest_owner_span_m)
+
+    # The low edge naturally runs low->high (outside->inside).  The high edge
+    # must run high->low so that its first sequential piece also touches the
+    # original convex hull.  Middle owners retain the canonical ordering.
+    stage_groups: List[List[Dict]] = []
+    for logical_stage_index in range(stage_count):
+        group: List[Dict] = []
+        for owner_index in range(owner_count):
+            owner_slot = owner_index + 1
+            physical_stage_index = int(logical_stage_index)
+            if owner_count >= 2 and owner_slot == owner_count:
+                physical_stage_index = stage_count - logical_stage_index - 1
+            group.append(
+                owner_stage_parts[owner_index][physical_stage_index]
+            )
+        stage_groups.append(group)
+    ordered_parts = [item for group in stage_groups for item in group]
+    for stage_index, group in enumerate(stage_groups, start=1):
+        for item in group:
+            item["splitStage"] = int(stage_index)
+            item["splitCount"] = int(stage_count)
+            item["areaSequentialWidthSplit"] = True
+            item["areaSequentialWidthSpanM"] = round(
+                float(widest_owner_span_m), 1
+            )
+            item["areaSequentialWidthTargetM"] = round(
+                float(width_target_m), 1
+            )
+            item["areaSequentialWidthLimitM"] = round(
+                float(width_limit_m), 1
+            )
+            item["areaOuterFirstSweep"] = bool(
+                item.get("areaOuterOwner")
+                and int(stage_index) == 1
+            )
+    return ordered_parts, int(stage_count), float(widest_owner_span_m)
 
 
 def _centroid_llh(ll: list[dict]) -> dict:
@@ -1193,21 +1657,102 @@ def split_mission_into_subareas(
                     if len(fallback_parts) == 2 * int(area_split_cnt):
                         stage_one = fallback_parts[0::2]
                         stage_two = fallback_parts[1::2]
+                        if int(area_split_cnt) >= 2:
+                            # The highest owner pair is [inner, exterior] in
+                            # canonical low->high order. Put its exterior half
+                            # in stage 1, matching the low edge owner's contract.
+                            stage_one[-1], stage_two[-1] = (
+                                stage_two[-1],
+                                stage_one[-1],
+                            )
+                        outer_side_by_slot = _annotate_area_outer_owner_pieces(
+                            stage_one,
+                            int(area_split_cnt),
+                            float(bearing_entry),
+                            ref_lat0=float(poly[0]["latitude"]),
+                            ref_lon0=float(poly[0]["longitude"]),
+                            first_sweep=True,
+                        )
                         for item in stage_one:
                             item["splitStage"] = 1
                             item["splitCount"] = 2
-                        for item in stage_two:
+                        for owner_slot, item in enumerate(stage_two, start=1):
                             item["splitStage"] = 2
                             item["splitCount"] = 2
+                            item["areaSequentialOwnerSlot"] = int(owner_slot)
+                            item["areaSequentialOwnerCount"] = int(
+                                area_split_cnt
+                            )
+                            if int(owner_slot) in outer_side_by_slot:
+                                item["areaOuterOwner"] = True
+                                item["areaOuterSide"] = str(
+                                    outer_side_by_slot[int(owner_slot)]
+                                )
+                                item["areaOuterFirstSweep"] = False
                         area_parts = stage_one + stage_two
+                # Two fixed stages only satisfy the width contract while the
+                # original owner strip is at most twice the configured limit.
+                sequential_width_limit_m = float(
+                    _area_sequential_split_max_width_m() or 0.0
+                )
+                if sequential_width_limit_m > 0.0:
+                    owner_parts = divide_search_area_clip(
+                        poly,
+                        int(area_split_cnt),
+                        float(bearing_entry),
+                    )
+                    widest_owner_span_m = max(
+                        (
+                            _max_sweep_row_chord_m_llh(
+                                item.get("coordinateList"),
+                                float(bearing_entry),
+                            )
+                            for item in owner_parts
+                            if isinstance(item, dict)
+                        ),
+                        default=0.0,
+                    )
+                    if widest_owner_span_m > 2.0 * sequential_width_limit_m:
+                        expanded_parts, _stage_count, _span_m = (
+                            _divide_area_by_sequential_width_limit(
+                                poly,
+                                int(area_split_cnt),
+                                float(bearing_entry),
+                                minimum_stage_count=2,
+                            )
+                        )
+                        if len(expanded_parts) > len(area_parts):
+                            area_parts = expanded_parts
+                            for item in area_parts:
+                                item["phaseMoveBearing_deg"] = float(
+                                    bearing_entry
+                                )
+                                item["phaseSplitBearing_deg"] = float(
+                                    bearing_entry
+                                )
+                                item["boundaryAxisBearing_deg"] = float(
+                                    bearing_split
+                                )
             elif area_mode == "nadir":
-                area_parts = divide_search_area_clip(poly, area_split_cnt, float(bearing_move))
+                area_parts, _stage_count, _span_m = (
+                    _divide_area_by_sequential_width_limit(
+                        poly,
+                        int(area_split_cnt),
+                        float(bearing_move),
+                    )
+                )
                 for item in area_parts:
                     item["phaseMoveBearing_deg"] = float(bearing_move)
                     item["phaseSplitBearing_deg"] = float(bearing_move)
                     item["boundaryAxisBearing_deg"] = float(bearing_move)
             else:
-                area_parts = divide_search_area_clip(poly, area_split_cnt, float(bearing_entry))
+                area_parts, _stage_count, _span_m = (
+                    _divide_area_by_sequential_width_limit(
+                        poly,
+                        int(area_split_cnt),
+                        float(bearing_entry),
+                    )
+                )
                 for item in area_parts:
                     item["phaseMoveBearing_deg"] = float(bearing_entry)
                     item["phaseSplitBearing_deg"] = float(bearing_entry)
@@ -1221,7 +1766,7 @@ def split_mission_into_subareas(
                     r["branchOwnerCount"] = int(area_split_cnt)
                     if (
                         bool(split_branch_area_into_two)
-                        and len(area_parts) == 2 * int(area_split_cnt)
+                        and len(area_parts) >= 2 * int(area_split_cnt)
                     ):
                         r["branchAreaSequentialSplit"] = True
                         r["branchAreaSequence"] = int(r.get("splitStage", 1) or 1)

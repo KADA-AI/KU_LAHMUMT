@@ -4620,6 +4620,8 @@ class MonitoringVisualizationTab(QWidget):
                     continue
                 if cls._mission_input_id(mission) != int(input_id_int):
                     continue
+                if mission.get("execution_blocked_until_next_collab"):
+                    continue
                 if not allow_done and mission.get("is_done"):
                     continue
                 if not allow_skipped and mission.get("skip_pending"):
@@ -4657,7 +4659,10 @@ class MonitoringVisualizationTab(QWidget):
 
         replacement_id = self._select_mission_id_for_input(missions, current_input_id_int)
         if replacement_id is None:
-            return current_id
+            # A branch that has already finished the current collaborative
+            # input must remain at its terminal hold.  Never substitute (or
+            # preserve) a mission from the following input before 0803.
+            return None
 
         try:
             aircraft_id_int = int(aircraft_id) if aircraft_id is not None else 0

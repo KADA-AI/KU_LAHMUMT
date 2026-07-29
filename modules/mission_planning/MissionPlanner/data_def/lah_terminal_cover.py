@@ -21,7 +21,7 @@ _METRES_PER_LAT_DEG = 111_132.92
 _EFFECTIVE_EARTH_RADIUS_M = 6_371_000.0 * 4.0 / 3.0
 _THREAT_DEFAULT_HEIGHT_M = 5.0
 _RAY_SAMPLE_SPACING_M = 250.0
-_ABSOLUTE_MAX_CANDIDATES = 49
+_ABSOLUTE_MAX_CANDIDATES = 121
 _ABSOLUTE_MAX_THREATS = 5
 _ABSOLUTE_MAX_RAY_SAMPLES = 64
 
@@ -375,7 +375,7 @@ def _candidate_points(
     fallback_xy: tuple[float, float] | None,
     budget: int,
 ) -> list[tuple[float, float]]:
-    """Build a deterministic, spatially distributed set of at most 49 points."""
+    """Build a deterministic, spatially distributed bounded candidate set."""
 
     try:
         from shapely.geometry import Point
@@ -433,18 +433,36 @@ def _candidate_points(
 
     pool = [point for point in _dedupe_xy(grid_points) if point not in selected]
     pool.sort(key=lambda point: (point[1], point[0]))
+    nearest_distance_sq = [
+        (
+            min(
+                (point[0] - current[0]) ** 2
+                + (point[1] - current[1]) ** 2
+                for current in selected
+            )
+            if selected
+            else math.inf
+        )
+        for point in pool
+    ]
     while pool and len(selected) < budget:
         if not selected:
             chosen_index = 0
         else:
             chosen_index = max(
                 range(len(pool)),
-                key=lambda idx: min(
-                    (pool[idx][0] - current[0]) ** 2 + (pool[idx][1] - current[1]) ** 2
-                    for current in selected
-                ),
+                key=nearest_distance_sq.__getitem__,
             )
-        selected.append(pool.pop(chosen_index))
+        chosen = pool.pop(chosen_index)
+        nearest_distance_sq.pop(chosen_index)
+        selected.append(chosen)
+        for index, point in enumerate(pool):
+            distance_sq = (
+                (point[0] - chosen[0]) ** 2
+                + (point[1] - chosen[1]) ** 2
+            )
+            if distance_sq < nearest_distance_sq[index]:
+                nearest_distance_sq[index] = distance_sq
     return selected[:budget]
 
 
@@ -567,6 +585,7 @@ def select_lah_terminal_cover_point(
     max_ray_samples=64,
     max_uav_distance_m=20000.0,
     search_radius_m=0.0,
+    minimum_threat_masking_depth_m=0.0,
 ) -> tuple[dict, dict]:
     """Select a low, covered, UAV-visible terminal point.
 
@@ -827,6 +846,74 @@ def select_lah_terminal_cover_point(
             eligible = clear
             los_preference_available = True
 
+    # Hiding from the tasked branches is the primary tactical requirement.
+    # Among candidates that still satisfy UAV range/LOS when available, retain
+    # the points that mask the greatest number of supplied threat directions;
+    # terrain height and proximity only break ties after that.
+    threat_cover_preference_available = False
+    if threats:
+        comparable_cover = [
+            (index, cover_fractions[index])
+            for index in eligible
+            if cover_fractions[index] is not None
+        ]
+        if comparable_cover:
+            best_cover_fraction = max(float(value) for _index, value in comparable_cover)
+            eligible = [
+                index
+                for index, value in comparable_cover
+                if float(value) >= best_cover_fraction - 1e-9
+            ]
+            threat_cover_preference_available = True
+
+    # A merely negative LOS margin can be a knife-edge mask.  For tactical
+    # target-area holds, callers may require terrain to rise a meaningful
+    # distance above every threat sightline.  Prefer candidates meeting that
+    # depth in all supplied directions; if none do, retain the deepest mask
+    # available instead of silently choosing a barely covered point.
+    threat_masking_depths: list[float | None] = []
+    for margins in threat_margins:
+        comparable = [float(value) for value in margins if value is not None]
+        if not comparable or any(value >= 0.0 for value in comparable):
+            threat_masking_depths.append(None)
+            continue
+        threat_masking_depths.append(min(-value for value in comparable))
+
+    threat_masking_depth_preference_available = False
+    requested_masking_depth_m = _finite_float(minimum_threat_masking_depth_m)
+    requested_masking_depth_m = max(
+        0.0,
+        requested_masking_depth_m
+        if requested_masking_depth_m is not None
+        else 0.0,
+    )
+    if threats and requested_masking_depth_m > 0.0:
+        deep_enough = [
+            index
+            for index in eligible
+            if threat_masking_depths[index] is not None
+            and float(threat_masking_depths[index]) >= requested_masking_depth_m
+        ]
+        if deep_enough:
+            eligible = deep_enough
+            threat_masking_depth_preference_available = True
+        else:
+            comparable_depth = [
+                (index, threat_masking_depths[index])
+                for index in eligible
+                if threat_masking_depths[index] is not None
+            ]
+            if comparable_depth:
+                best_depth = max(
+                    float(value) for _index, value in comparable_depth
+                )
+                eligible = [
+                    index
+                    for index, value in comparable_depth
+                    if float(value) >= best_depth - 1e-9
+                ]
+                threat_masking_depth_preference_available = True
+
     ground_low = min(candidate_ground)
     ground_high = max(candidate_ground)
     ground_span = ground_high - ground_low
@@ -862,6 +949,11 @@ def select_lah_terminal_cover_point(
     selected_index = max(
         eligible,
         key=lambda index: (
+            # Once UAV support and maximum threat masking are satisfied, the
+            # target-area hide site should actually be low ground.  The
+            # composite score (which includes fallback proximity) only breaks
+            # ties between equally low candidates.
+            low_scores[index],
             scores[index],
             -fallback_distances[index],
             -index,
@@ -909,7 +1001,16 @@ def select_lah_terminal_cover_point(
         selectedScore=round(float(scores[selected_index]), 6),
         selectedGroundM=round(float(candidate_ground[selected_index]), 3),
         selectedLowTerrainScore=round(float(low_scores[selected_index]), 6),
+        selectedThreatMaskingDepthM=(
+            round(float(threat_masking_depths[selected_index]), 3)
+            if threat_masking_depths[selected_index] is not None
+            else None
+        ),
         fallbackDistanceM=round(float(fallback_distances[selected_index]), 3),
+        threatCoverPreferenceAvailable=bool(threat_cover_preference_available),
+        threatMaskingDepthPreferenceAvailable=bool(
+            threat_masking_depth_preference_available
+        ),
         uavDistancePreferenceAvailable=bool(distance_preference_available),
         uavLosPreferenceAvailable=bool(los_preference_available),
     )

@@ -573,6 +573,279 @@ const normalizeCurrentWaypointId = (entry) => {
   return Number.isFinite(value) ? Math.trunc(value) : null;
 };
 
+const coerceBoolean = (value, fallback = false) => {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "number") {
+    return value !== 0;
+  }
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+  if (["0", "false", "no", "off", ""].includes(normalized)) {
+    return false;
+  }
+  return fallback;
+};
+
+const readFirstOwnValue = (source, keys) => {
+  if (!source || typeof source !== "object") {
+    return undefined;
+  }
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(source, key)) {
+      return source[key];
+    }
+  }
+  return undefined;
+};
+
+const readBoundaryGuardValue = (entry, keys) => {
+  const nested =
+    entry?.unmannedInfo ??
+    entry?.UnmannedInfo ??
+    null;
+  const direct = readFirstOwnValue(entry, keys);
+  return direct !== undefined ? direct : readFirstOwnValue(nested, keys);
+};
+
+const normalizeBoundaryGuardSetId = (value) => {
+  const normalized = String(value ?? "").trim();
+  return normalized || null;
+};
+
+const mapValueForAgent = (source, agent) => {
+  if (source instanceof Map) {
+    return source.get(agent) ?? null;
+  }
+  if (source && typeof source === "object") {
+    return source[agent] ?? source[String(agent || "").toLowerCase()] ?? null;
+  }
+  return null;
+};
+
+/**
+ * Extract the authoritative boundary-guard loop state from the live SIM frame.
+ * Only active rows with a concrete set ID are retained, so leaving the guard
+ * mission immediately restores the legacy static isDone rendering contract.
+ */
+export const buildBoundaryGuardLiveStateIndex = (state) => {
+  const result = new Map();
+  const vehicles = state?.vehicles && typeof state.vehicles === "object"
+    ? state.vehicles
+    : {};
+  Object.entries(vehicles).forEach(([rawAgent, entry]) => {
+    const agent = String(rawAgent || "").trim().toUpperCase();
+    if (!agent || !entry || typeof entry !== "object") {
+      return;
+    }
+    const active = coerceBoolean(
+      readBoundaryGuardValue(entry, [
+        "boundaryGuardLoopActive",
+        "BoundaryGuardLoopActive",
+        "boundary_guard_loop_active",
+      ]),
+      false,
+    );
+    const setId = normalizeBoundaryGuardSetId(
+      readBoundaryGuardValue(entry, [
+        "boundaryGuardSetID",
+        "BoundaryGuardSetID",
+        "boundary_guard_set_id",
+      ]),
+    );
+    if (!active || !setId) {
+      return;
+    }
+    const cycleCount = Math.max(
+      0,
+      coerceInt(
+        readBoundaryGuardValue(entry, [
+          "boundaryGuardCycleCount",
+          "BoundaryGuardCycleCount",
+          "boundary_guard_cycle_count",
+        ]),
+        0,
+      ),
+    );
+    const sequence = coerceInt(
+      readBoundaryGuardValue(entry, [
+        "boundaryGuardSequence",
+        "BoundaryGuardSequence",
+        "boundary_guard_sequence",
+      ]),
+      null,
+    );
+    const sequenceCount = coerceInt(
+      readBoundaryGuardValue(entry, [
+        "boundaryGuardSequenceCount",
+        "BoundaryGuardSequenceCount",
+        "boundary_guard_sequence_count",
+      ]),
+      null,
+    );
+    result.set(agent, {
+      active: true,
+      setId,
+      cycleCount,
+      sequence: Number.isFinite(sequence) && sequence > 0 ? sequence : null,
+      sequenceCount: Number.isFinite(sequenceCount) && sequenceCount > 0
+        ? sequenceCount
+        : null,
+    });
+  });
+  return result;
+};
+
+const boundaryGuardPathContract = (path) => {
+  const loop = coerceBoolean(
+    path?.boundaryGuardLoop ??
+      path?.BoundaryGuardLoop ??
+      path?.boundary_guard_loop,
+    false,
+  );
+  const setId = normalizeBoundaryGuardSetId(
+    path?.boundaryGuardSetID ??
+      path?.BoundaryGuardSetID ??
+      path?.boundary_guard_set_id,
+  );
+  const sequence = coerceInt(
+    path?.boundaryGuardSequence ??
+      path?.BoundaryGuardSequence ??
+      path?.boundary_guard_sequence,
+    null,
+  );
+  const sequenceCount = coerceInt(
+    path?.boundaryGuardSequenceCount ??
+      path?.BoundaryGuardSequenceCount ??
+      path?.boundary_guard_sequence_count,
+    null,
+  );
+  if (
+    !loop ||
+    !setId ||
+    !Number.isFinite(sequence) ||
+    sequence <= 0 ||
+    !Number.isFinite(sequenceCount) ||
+    sequenceCount <= 0 ||
+    sequence > sequenceCount
+  ) {
+    return null;
+  }
+  return { setId, sequence, sequenceCount };
+};
+
+const resolveBoundaryGuardPathRuntime = (
+  path,
+  currentWaypointsByAgent,
+  boundaryGuardStateByAgent,
+) => {
+  const contract = boundaryGuardPathContract(path);
+  const aircraftId = Number(path?.aircraftID ?? path?.AircraftID);
+  if (!contract || !Number.isFinite(aircraftId)) {
+    return null;
+  }
+  const agent = agentFromAircraftId(aircraftId);
+  const live = mapValueForAgent(boundaryGuardStateByAgent, agent);
+  if (
+    !live ||
+    !coerceBoolean(live.active, false) ||
+    normalizeBoundaryGuardSetId(live.setId) !== contract.setId
+  ) {
+    return null;
+  }
+  const liveSequenceCount = coerceInt(live.sequenceCount, null);
+  // A guard set ID is stable across replans. Reject a frame that still
+  // describes the previous plan's child count instead of applying it to the
+  // newly loaded path set.
+  if (
+    Number.isFinite(liveSequenceCount) &&
+    liveSequenceCount > 0 &&
+    liveSequenceCount !== contract.sequenceCount
+  ) {
+    return null;
+  }
+  const waypointList = waypointListOf(path);
+  const currentWaypointId = normalizeCurrentWaypointId(
+    mapValueForAgent(currentWaypointsByAgent, agent),
+  );
+  const currentWaypointIndex = waypointList.findIndex(
+    (waypoint) =>
+      normalizeCurrentWaypointId(waypoint?.waypointID ?? waypoint?.WaypointID) ===
+      currentWaypointId,
+  );
+  const liveSequence = coerceInt(live.sequence, null);
+  let pathStatus = null;
+  if (currentWaypointIndex >= 0) {
+    pathStatus = "active";
+  } else if (Number.isFinite(liveSequence) && liveSequence > 0) {
+    pathStatus = contract.sequence < liveSequence
+      ? "completed"
+      : contract.sequence === liveSequence
+        ? "active"
+        : "planned";
+  }
+  if (!pathStatus) {
+    return null;
+  }
+  return {
+    agent,
+    contract,
+    live: {
+      ...live,
+      cycleCount: Math.max(0, coerceInt(live.cycleCount, 0)),
+    },
+    pathStatus,
+    currentWaypointId,
+    currentWaypointIndex,
+  };
+};
+
+const buildBoundaryGuardPathRuntimeIndex = (
+  payload,
+  currentWaypointsByAgent,
+  boundaryGuardStateByAgent,
+) => {
+  const result = new Map();
+  const flightPaths = Array.isArray(payload?.flightPaths) ? payload.flightPaths : [];
+  flightPaths.forEach((path) => {
+    const pathId = Number(path?.pathID ?? path?.PathID);
+    if (!Number.isFinite(pathId)) {
+      return;
+    }
+    const runtime = resolveBoundaryGuardPathRuntime(
+      path,
+      currentWaypointsByAgent,
+      boundaryGuardStateByAgent,
+    );
+    if (runtime) {
+      result.set(pathId, runtime);
+    }
+  });
+  return result;
+};
+
+const boundaryGuardWaypointStatus = (runtime, waypointIndex) => {
+  if (!runtime) {
+    return null;
+  }
+  if (runtime.pathStatus !== "active") {
+    return runtime.pathStatus;
+  }
+  if (runtime.currentWaypointIndex < 0) {
+    return "active";
+  }
+  if (waypointIndex < runtime.currentWaypointIndex) {
+    return "completed";
+  }
+  if (waypointIndex === runtime.currentWaypointIndex) {
+    return "active";
+  }
+  return "planned";
+};
+
 const buildPathMetaKey = (feature) => {
   const agent = String(feature?.agent || "");
   const pathId = feature?.pathId ?? feature?.pathID ?? feature?.pathid ?? null;
@@ -643,8 +916,42 @@ const buildPathMissionMap = (payload) => {
   return map;
 };
 
-const buildGeoFeature = (feature, colors, pathMetaMap = null) => {
+export const buildFiniteRouteCoordinates = (feature) => {
   const coords = Array.isArray(feature?.coords) ? feature.coords : [];
+  const closure = feature?.loopClosureCoord;
+  if (
+    !Array.isArray(closure) ||
+    closure.length < 2 ||
+    !Number.isFinite(Number(closure[0])) ||
+    !Number.isFinite(Number(closure[1])) ||
+    !coords.length
+  ) {
+    return coords;
+  }
+  const last = coords[coords.length - 1];
+  if (
+    Array.isArray(last) &&
+    Number(last[0]) === Number(closure[0]) &&
+    Number(last[1]) === Number(closure[1])
+  ) {
+    return coords;
+  }
+  // Return one finite copy for rendering.  Never mutate the waypoint array:
+  // marker/label/current-WP code must still see each real waypoint once.
+  return [...coords, [Number(closure[0]), Number(closure[1])]];
+};
+
+const buildFiniteRouteAltitudes = (feature, routeCoords) => {
+  const alts = Array.isArray(feature?.alts) ? feature.alts : [];
+  if (!Array.isArray(routeCoords) || routeCoords.length <= alts.length) {
+    return alts;
+  }
+  const closureAlt = Number(feature?.loopClosureAlt);
+  return [...alts, Number.isFinite(closureAlt) ? closureAlt : null];
+};
+
+const buildGeoFeature = (feature, colors, pathMetaMap = null) => {
+  const coords = buildFiniteRouteCoordinates(feature);
   const pathMeta =
     pathMetaMap && typeof pathMetaMap.get === "function"
       ? pathMetaMap.get(buildPathMetaKey(feature)) || null
@@ -673,6 +980,8 @@ const buildGeoFeature = (feature, colors, pathMetaMap = null) => {
       altMax: feature.altMax,
       color: colors[feature.agent] || "#e7eddc",
       passSummary: pathMeta?.passSummary || feature.passSummary || null,
+      boundaryGuardLoop: feature.boundaryGuardLoop ? 1 : 0,
+      boundaryGuardSetID: feature.boundaryGuardSetID || null,
     },
   };
 };
@@ -776,10 +1085,21 @@ const buildMissionAreaPolygons = (areaList) => {
  * feature per aircraft.  Legacy single-pass plans without an explicit pass
  * keep the previous (inputMissionID, aircraftID) grouping.
  */
-export const buildAreaFeatures = (payload, colors, selectedAgent) => {
+export const buildAreaFeatures = (
+  payload,
+  colors,
+  selectedAgent,
+  currentWaypointsByAgent = new Map(),
+  boundaryGuardStateByAgent = new Map(),
+) => {
   const plans = Array.isArray(payload?.individualMissionPlans) ? payload.individualMissionPlans : [];
   const pathMissionMap = buildPathMissionMap(payload);
   const sweepSpacingMap = buildSweepSpacingMap(payload);
+  const boundaryGuardRuntimeByPath = buildBoundaryGuardPathRuntimeIndex(
+    payload,
+    currentWaypointsByAgent,
+    boundaryGuardStateByAgent,
+  );
   const hasSelection = Boolean(selectedAgent);
   const ownerGroups = new Map();
   plans.forEach((plan) => {
@@ -802,7 +1122,22 @@ export const buildAreaFeatures = (payload, colors, selectedAgent) => {
         ? parsedInputMissionId
         : null;
       const spacing = inputMissionId !== null ? sweepSpacingMap.get(inputMissionId) : null;
-      const isDone = Boolean(mission?.isDone);
+      const boundaryGuardRuntime = Number.isFinite(pathId)
+        ? boundaryGuardRuntimeByPath.get(pathId) || null
+        : null;
+      const missionStatus = boundaryGuardRuntime?.pathStatus || null;
+      const isDone = missionStatus
+        ? missionStatus === "completed"
+        : Boolean(mission?.isDone);
+      // AREA child missions are consecutive pieces of one owner assignment.
+      // Once a child is complete, keeping its polygon in this owner feature
+      // makes the already-covered strip look active until every sibling is
+      // complete. The active boundary-guard cycle deliberately overrides the
+      // persisted first-pass isDone flags, allowing planned/current children
+      // to reappear immediately after the last-WP -> first-WP wrap.
+      if (isDone) {
+        return;
+      }
       const info = mission?.individualMissionInfo || {};
       const detailPasses = Array.isArray(info?.coveragePassDetails)
         ? info.coveragePassDetails
@@ -842,11 +1177,19 @@ export const buildAreaFeatures = (payload, colors, selectedAgent) => {
           missionIds: new Set(),
           pathIds: new Set(),
           allDone: true,
+          boundaryGuardSetId: null,
+          boundaryGuardCycleCount: null,
+          boundaryGuardStatuses: new Set(),
         });
       }
       const group = ownerGroups.get(ownerKey);
       group.polygons.push(...polygons);
       group.allDone = group.allDone && isDone;
+      if (boundaryGuardRuntime) {
+        group.boundaryGuardSetId = boundaryGuardRuntime.contract.setId;
+        group.boundaryGuardCycleCount = boundaryGuardRuntime.live.cycleCount;
+        group.boundaryGuardStatuses.add(boundaryGuardRuntime.pathStatus);
+      }
       if (!group.spacing && spacing) {
         group.spacing = spacing;
       }
@@ -863,6 +1206,13 @@ export const buildAreaFeatures = (payload, colors, selectedAgent) => {
     const missionIds = Array.from(group.missionIds);
     const pathIds = Array.from(group.pathIds);
     const isDone = group.allDone;
+    const boundaryGuardStatus = group.boundaryGuardStatuses.has("active")
+      ? "active"
+      : group.boundaryGuardStatuses.has("planned")
+        ? "planned"
+        : group.boundaryGuardStatuses.has("completed")
+          ? "completed"
+          : null;
     const fillOpacity = hasSelection
       ? group.agent === selectedAgent
         ? isDone ? AREA_FILL_DONE_ALPHA : AREA_FILL_ALPHA
@@ -914,6 +1264,9 @@ export const buildAreaFeatures = (payload, colors, selectedAgent) => {
         coveragePassStatus: group.coveragePass
           ? isDone ? "completed" : "active"
           : null,
+        boundaryGuardSetID: group.boundaryGuardSetId,
+        boundaryGuardCycleCount: group.boundaryGuardCycleCount,
+        boundaryGuardStatus,
         color: group.baseColor,
         fillOpacity,
         lineOpacity,
@@ -922,17 +1275,23 @@ export const buildAreaFeatures = (payload, colors, selectedAgent) => {
   });
 };
 
-const buildSweepFeatures = (
+export const buildSweepFeatures = (
   payload,
   colors,
   selectedAgent,
   selectedWaypoint,
   currentWaypointsByAgent = new Map(),
+  boundaryGuardStateByAgent = new Map(),
 ) => {
   const flightPaths = Array.isArray(payload?.flightPaths) ? payload.flightPaths : [];
   const pathMissionMap = buildPathMissionMap(payload);
   const sweepSpacingMap = buildSweepSpacingMap(payload);
   const coveragePassIndex = buildAreaCoveragePassIndex(payload, currentWaypointsByAgent);
+  const boundaryGuardRuntimeByPath = buildBoundaryGuardPathRuntimeIndex(
+    payload,
+    currentWaypointsByAgent,
+    boundaryGuardStateByAgent,
+  );
   const hasSelection = Boolean(selectedAgent);
   const hasWaypointSelection = Boolean(selectedWaypoint);
   const features = [];
@@ -949,8 +1308,11 @@ const buildSweepFeatures = (
     const inputMissionId = Number(missionInfo.inputMissionId);
     const spacing = Number.isFinite(inputMissionId) ? sweepSpacingMap.get(inputMissionId) : null;
     const waypointList = waypointListOf(path);
+    const boundaryGuardRuntime = Number.isFinite(pathId)
+      ? boundaryGuardRuntimeByPath.get(pathId) || null
+      : null;
     const passCounts = { 1: 0, 2: 0, 3: 0 };
-    waypointList.forEach((wp) => {
+    waypointList.forEach((wp, waypointIndex) => {
       const waypointId = Number(wp?.waypointID);
       const coveragePass = normalizeAreaCoveragePass(
         wp?.areaCoveragePass ?? wp?.AreaCoveragePass,
@@ -959,9 +1321,14 @@ const buildSweepFeatures = (
         ? coveragePassIndex.get(coveragePassMapKey(pathId, coveragePass)) || null
         : null;
       const isReciprocalCoverage = Boolean(coverageInfo?.reciprocal);
-      const coverageStatus = isReciprocalCoverage
-        ? coverageInfo.status
-        : Boolean(wp?.isDone) ? "completed" : "planned";
+      const guardWaypointStatus = boundaryGuardWaypointStatus(
+        boundaryGuardRuntime,
+        waypointIndex,
+      );
+      const coverageStatus = guardWaypointStatus ||
+        (isReciprocalCoverage
+          ? coverageInfo.status
+          : Boolean(wp?.isDone) ? "completed" : "planned");
       const isDone = coverageStatus === "completed";
       const isCurrentCoverage = coverageStatus === "active";
       const coverageStyle = isReciprocalCoverage
@@ -1048,6 +1415,11 @@ const buildSweepFeatures = (
         coveragePassLabel: coverageStyle?.label || null,
         coveragePassStatus: isReciprocalCoverage ? coverageStatus : null,
         isCurrentCoverage: isCurrentCoverage ? 1 : 0,
+        boundaryGuardSetID: boundaryGuardRuntime?.contract.setId || null,
+        boundaryGuardCycleCount: boundaryGuardRuntime?.live.cycleCount ?? null,
+        boundaryGuardSequence: boundaryGuardRuntime?.contract.sequence ?? null,
+        boundaryGuardSequenceCount: boundaryGuardRuntime?.contract.sequenceCount ?? null,
+        boundaryGuardStatus: guardWaypointStatus,
         altMin: minAlt,
         altMax: maxAlt,
         passType: Number.isFinite(passInfo.passType) ? passInfo.passType : null,
@@ -1517,6 +1889,7 @@ export const initMissionPaths = (map) => {
   let sweepLinesVisible = true;
   let currentWaypointsByAgent = new Map();
   let currentCoverageStateByAgent = new Map();
+  let currentBoundaryGuardStateByAgent = new Map();
   let features = [];
   let areaFeatures = [];
   let sweepFeatures = [];
@@ -2674,6 +3047,8 @@ export const initMissionPaths = (map) => {
       payloadForAreas,
       colors,
       selectedAgent,
+      currentWaypointsByAgent,
+      currentBoundaryGuardStateByAgent,
     );
     source.setData({
       type: "FeatureCollection",
@@ -2692,12 +3067,20 @@ export const initMissionPaths = (map) => {
       selectedAgent,
       selectedWaypoint,
       currentWaypointsByAgent,
+      currentBoundaryGuardStateByAgent,
     );
     const hasSelectedSweep = selectedWaypoint
       ? nextSweepFeatures.some((feature) => Number(feature?.properties?.isSelectedWaypoint) === 1)
       : false;
     sweepFeatures = selectedWaypoint && !hasSelectedSweep
-      ? buildSweepFeatures(payloadForAreas, colors, selectedAgent, null, currentWaypointsByAgent)
+      ? buildSweepFeatures(
+          payloadForAreas,
+          colors,
+          selectedAgent,
+          null,
+          currentWaypointsByAgent,
+          currentBoundaryGuardStateByAgent,
+        )
       : nextSweepFeatures;
     source.setData({
       type: "FeatureCollection",
@@ -2782,9 +3165,11 @@ export const initMissionPaths = (map) => {
       if (!target) {
         return;
       }
+      const routeCoords = buildFiniteRouteCoordinates(feature);
+      const routeAlts = buildFiniteRouteAltitudes(feature, routeCoords);
       const segmentPositions = buildLinePositions(
-        feature.coords,
-        feature.alts,
+        routeCoords,
+        routeAlts,
         getTerrainElevation,
         // LAH and UAV waypoint routes share the same clean, solid connector.
         // Sweep/camera geometry is rendered by separate layers and is unchanged.
@@ -3084,9 +3469,30 @@ export const initMissionPaths = (map) => {
     applyWaypointVisibility();
   };
 
+  const boundaryGuardStateIndexChanged = (next) => {
+    if (next.size !== currentBoundaryGuardStateByAgent.size) {
+      return true;
+    }
+    for (const [agent, value] of next.entries()) {
+      const previous = currentBoundaryGuardStateByAgent.get(agent);
+      if (
+        !previous ||
+        previous.active !== value.active ||
+        previous.setId !== value.setId ||
+        previous.cycleCount !== value.cycleCount ||
+        previous.sequence !== value.sequence ||
+        previous.sequenceCount !== value.sequenceCount
+      ) {
+        return true;
+      }
+    }
+    return false;
+  };
+
   const syncCurrentWaypointsFromState = (state) => {
     const next = {};
     const nextCoverageState = new Map();
+    const nextBoundaryGuardState = buildBoundaryGuardLiveStateIndex(state);
     const vehicles = state?.vehicles || {};
     Object.entries(vehicles).forEach(([agent, entry]) => {
       const normalizedAgent = String(agent || "").toUpperCase();
@@ -3131,7 +3537,18 @@ export const initMissionPaths = (map) => {
       });
     }
     currentCoverageStateByAgent = nextCoverageState;
+    const boundaryGuardStateChanged = boundaryGuardStateIndexChanged(
+      nextBoundaryGuardState,
+    );
+    // Install the guard frame before setCurrentWaypoints refreshes the sources;
+    // both values originate from the same authoritative SIM sample.
+    currentBoundaryGuardStateByAgent = nextBoundaryGuardState;
     const waypointChanged = setCurrentWaypoints(next);
+    if (boundaryGuardStateChanged && !waypointChanged) {
+      updateAreaSource();
+      updateSweepSource();
+      map.triggerRepaint();
+    }
     // A waypoint change already refreshes the legend. Refresh explicitly only
     // when the live pass/turn state changed on its own.
     if (coverageStateChanged && !waypointChanged) {
@@ -3235,7 +3652,8 @@ export const initMissionPaths = (map) => {
         <div style="font-size:11px;color:#333;">Paths ${Number.isFinite(pathCount) ? pathCount : "-"}</div>
         <div style="font-size:11px;color:#333;">Area parts ${Number.isFinite(areaPartCount) ? areaPartCount : "-"}</div>
         <div style="font-size:11px;color:#333;">${formatSweepSpacing(props)}</div>
-        <div style="font-size:11px;color:#333;">Status ${Number(props.isDone) === 1 ? "Done" : "Active"}</div>
+        <div style="font-size:11px;color:#333;">Status ${props.boundaryGuardStatus || (Number(props.isDone) === 1 ? "Done" : "Active")}</div>
+        ${props.boundaryGuardSetID ? `<div style="font-size:11px;color:#333;">Guard cycle ${Number(props.boundaryGuardCycleCount) || 0}</div>` : ""}
       `;
       if (!popup) {
         popup = new maplibregl.Popup({ closeButton: true, closeOnClick: true });
@@ -3276,7 +3694,7 @@ export const initMissionPaths = (map) => {
             <div style="font-size:11px;color:#333;">Input mission ${props.inputMissionId ?? "-"}</div>
             <div style="font-size:11px;color:#333;">${formatSweepSpacing(props)}</div>
             <div style="font-size:11px;color:#333;">${formatAltRange(Number(props.altMin), Number(props.altMax))}</div>
-            <div style="font-size:11px;color:#333;">Status ${props.coveragePassStatus || (Number(props.isDone) === 1 ? "Done" : "Active")}</div>
+            <div style="font-size:11px;color:#333;">Status ${props.boundaryGuardStatus || props.coveragePassStatus || (Number(props.isDone) === 1 ? "Done" : "Active")}</div>
           `;
           if (!popup) {
             popup = new maplibregl.Popup({ closeButton: true, closeOnClick: true });
@@ -3315,7 +3733,7 @@ export const initMissionPaths = (map) => {
         <div style="font-size:11px;color:#333;">Input mission ${props.inputMissionId ?? "-"}</div>
         <div style="font-size:11px;color:#333;">${formatSweepSpacing(props)}</div>
         <div style="font-size:11px;color:#333;">Alt ${Math.round(Number(props.altitude) || 0)} m</div>
-        <div style="font-size:11px;color:#333;">Status ${props.coveragePassStatus || (Number(props.isDone) === 1 ? "Done" : "Active")}</div>
+        <div style="font-size:11px;color:#333;">Status ${props.boundaryGuardStatus || props.coveragePassStatus || (Number(props.isDone) === 1 ? "Done" : "Active")}</div>
       `;
       if (!popup) {
         popup = new maplibregl.Popup({ closeButton: true, closeOnClick: true });

@@ -116,14 +116,8 @@ def test_los_altitude_is_lift_smoothed_for_lah_vertical_rates() -> None:
     d0304._smooth_lah_vertical_altitudes_inplace(waypoints)
 
     altitudes = [int(wp["coordinate"]["altitude"]) for wp in waypoints]
-    climb_rate_mps = (
-        float(d0304.DEFAULT_ENVELOPE.climb_rate_mps)
-        * float(d0304.LAH_VERTICAL_RATE_USE_RATIO)
-    )
-    descent_rate_mps = (
-        float(d0304.DEFAULT_ENVELOPE.descent_rate_mps)
-        * float(d0304.LAH_VERTICAL_RATE_USE_RATIO)
-    )
+    climb_rate_mps = d0304._lah_vertical_rate_mps(1.0)
+    descent_rate_mps = d0304._lah_vertical_rate_mps(-1.0)
     assert altitudes == [
         int(math.ceil(600 - climb_rate_mps * 10)),
         600,

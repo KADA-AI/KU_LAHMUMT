@@ -384,8 +384,20 @@ class PathDeviationReplanCoordinator:
             "alternateWaypointPredictionModel": getattr(view, "alternate_prediction_model", None),
             "triggerCoordinate": dict(view.position_coordinate or {}),
             "triggerVelocity": {
-                "speed": _coerce_float(view.speed_mps),
+                # This field echoes the telemetry the trigger saw, so it stays
+                # the reported value even when the monitor has rejected it as
+                # inconsistent with the track; a reader comparing this against
+                # 0401 must see 0401.  The speed the estimates actually used is
+                # reported alongside rather than substituted in.
+                "speed": _coerce_float(
+                    getattr(view, "reported_speed_mps", None)
+                    if getattr(view, "reported_speed_mps", None) is not None
+                    else view.speed_mps
+                ),
                 "heading": _coerce_float(view.raw_heading_deg),
+                "resolvedSpeedMps": _coerce_float(view.speed_mps),
+                "speedSource": getattr(view, "speed_source", None),
+                "trackSpeedMps": _coerce_float(getattr(view, "track_speed_mps", None)),
             },
             "triggerAttitude": {
                 "roll": _coerce_float(getattr(view, "roll_deg", None)),

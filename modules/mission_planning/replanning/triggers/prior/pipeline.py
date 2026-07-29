@@ -60,6 +60,7 @@ from modules.mission_planning.runtime.state.prior_tracking import (
 from modules.mission_planning.pipelines.mission_path_trim import (
     DEFAULT_SWEEP_SPLIT_LOOKAHEAD_SECONDS,
     count_sweep_points_in_waypoints,
+    is_line_scan_progress_entry,
     load_sweep_progress,
     merge_small_adjacent_line_search_waypoints,
     physical_sweep_cut_points,
@@ -68,12 +69,26 @@ from modules.mission_planning.pipelines.mission_path_trim import (
     realign_line_search_waypoints_to_first_sweep,
     recompute_line_search_speed_from_geometry,
     scale_line_search_speed,
+    sweep_progress_points,
     trim_waypoints_by_sweep_points,
     relink_waypoints,
 )
 from modules.mission_planning.pipelines.line_scan_remaining_adapter import (
     has_line_remaining_geometry,
     load_line_scan_remaining_detail,
+)
+from modules.mission_planning.pipelines.line_search_speed_guard import (
+    clamp_line_search_speed_mps,
+    effective_line_search_transit_m,
+)
+from modules.mission_planning.pipelines.type2_boundary_guard_loop import (
+    clear_boundary_guard_contract,
+    extract_boundary_guard_contract,
+    finalize_boundary_guard_flight_path_sets_in_mission_order,
+    is_boundary_guard_loop,
+    link_boundary_guard_flight_path_sets,
+    resequence_boundary_guard_flight_path_sets,
+    sync_boundary_guard_contract_from_flight_paths,
 )
 from modules.mission_planning.replanning.line_entry_context import (
     build_line_entry_context_map,
@@ -84,6 +99,10 @@ from types import ModuleType
 _EPOCH_2000_MS = 946_684_800_000
 _RTB_FLIGHT_MODE = 5
 _RELEASE_RESUME_FAST_SPEED_MPS = 58.0
+_NO_CAPTURE_COMPLETION_LOITER_SECONDS = 5
+_NO_CAPTURE_COMPLETION_LOITER_RADIUS_M = 180
+_NO_CAPTURE_COMPLETION_LOITER_SPEED_MPS = 30.0
+_NO_CAPTURE_COMPLETION_LOITER_MARKER = "noCaptureCompletionLoiter"
 _PRIOR_POST_REJOIN_OPTION_NAME = "선행임무 후 복귀 재계획"
 _PRIOR_POST_REJOIN_LOG_BASENAME = "log_prior_post_rejoin"
 _ID_ALLOCATOR_MOD: Optional[ModuleType] = None
@@ -1078,6 +1097,7 @@ def run_prior_post_rejoin_pipeline(
                     current_input_id=int(current_input_id),
                     aircraft_id=int(active_aircraft_id),
                     hold_seconds=int(active_done_hold_seconds),
+                    hold_coordinate=post_attack._normalize_coordinate(state.get("coordinate")),
                     now_ms=int(now_ms),
                     emit=_emit,
                     log_prefix="[PRIOR-REJOIN][ACTIVE-DONE]",
@@ -1483,6 +1503,24 @@ def _to_int(value: Any) -> Optional[int]:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _mission_execution_blocked_until_next_collab(mission: Any) -> bool:
+    """Return whether a retained mission is behind the collaboration barrier."""
+
+    if not isinstance(mission, dict):
+        return False
+    value = mission.get(
+        "executionBlockedUntilNextCollab",
+        mission.get("ExecutionBlockedUntilNextCollab"),
+    )
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(int(value))
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    return False
 
 
 def _to_float(value: Any) -> Optional[float]:
@@ -1996,6 +2034,12 @@ def run_prior_mission_pipeline(
                         int(path_id),
                         payload,
                         emit=emit,
+                        reference_coord=_normalize_coordinate_dict(
+                            (
+                                agent_state_map.get(int(aircraft_id))
+                                or {}
+                            ).get("coordinate")
+                        ),
                     )
                 ),
                 # Match attack replanning: one remaining UAV executes two
@@ -2056,13 +2100,26 @@ def run_prior_mission_pipeline(
         if selected_agent_summary.altitude is not None:
             selected_current_coord["altitude"] = selected_agent_summary.altitude
 
+        preserve_selected_type2_line_carrier = bool(
+            preserve_type2_branch
+            and _waypoints_declare_line_capture(
+                list(resume_fp_data.get("waypointList") or [])
+            )
+        )
         done_waypoints, resume_waypoints, removed_wp_id = _apply_resume_path_trimming(
             resume_fp_data,
             artifacts=artifacts,
             sweep_progress=sweep_progress,
             emit=emit,
             current_coord=selected_current_coord,
+            completion_hold_coord=target_coord,
             waypoint_allocator=selected_reservation.next_waypoint,
+            allow_line_scan_sweep_point_trim=bool(
+                preserve_selected_type2_line_carrier
+            ),
+            preserve_line_carrier_coordinates=bool(
+                preserve_selected_type2_line_carrier
+            ),
         )
         selected_reservation_summary = selected_reservation.summary()
         if not resume_waypoints and collaborative_resume is None:
@@ -2357,7 +2414,11 @@ def run_prior_mission_pipeline(
         prior_fp_data["isFormationFlight"] = fp_data.get("isFormationFlight", False)
         prior_fp_data["waypointList"] = [target_wp] if use_single_tracking_wp else [approach_wp, target_wp]
 
-        if collaborative_resume is not None:
+        if collaborative_resume is not None and not any(
+            isinstance(waypoint, dict)
+            and bool(waypoint.get(_NO_CAPTURE_COMPLETION_LOITER_MARKER))
+            for waypoint in resume_waypoints
+        ):
             release_end_coord = _extract_final_uav_coordinate(fp_data)
             release_start_coord = _normalize_coordinate_dict(target_coord)
             if release_end_coord is None and resume_waypoints:
@@ -2384,13 +2445,27 @@ def run_prior_mission_pipeline(
                     )
                     resume_fp_data["waypointList"] = resume_waypoints
 
-        prefix_missions = mission_list[:target_index]
-        suffix_missions = mission_list[target_index + 1 :]
-        rebuilt_list = prefix_missions
+        selected_replacements: List[Dict[str, Any]] = []
         if preserved_done_entry is not None:
-            rebuilt_list.append(preserved_done_entry)
-        rebuilt_list.extend([prior_mission_entry, resume_mission_entry])
-        rebuilt_list.extend(suffix_missions)
+            selected_replacements.append(preserved_done_entry)
+        selected_replacements.extend([prior_mission_entry, resume_mission_entry])
+        if collaborative_resume is not None and input_mission_id is not None:
+            rebuilt_list, removed_execution_ids = _replace_selected_current_input_execution_chain(
+                mission_list,
+                target_index=int(target_index),
+                current_input_id=int(input_mission_id),
+                replacement_missions=selected_replacements,
+            )
+            if len(removed_execution_ids) > 1:
+                emit(
+                    "[PRIOR][COLLAB] Removed stale selected-UAV current-input siblings "
+                    f"(aircraft={aircraft_id}, inputMissionID={int(input_mission_id)}, "
+                    f"missions={removed_execution_ids})."
+                )
+        else:
+            prefix_missions = mission_list[:target_index]
+            suffix_missions = mission_list[target_index + 1 :]
+            rebuilt_list = prefix_missions + selected_replacements + suffix_missions
         mission_list[:] = rebuilt_list
         new_imp_data["individualMissionPackageID"] = new_imp_id
 
@@ -2611,6 +2686,18 @@ def run_prior_mission_pipeline(
         _apply_runtime_flyover_to_flight_path_payload(resume_fp_data)
         _set_flight_path_waypoints_done(resume_fp_data, False)
         sanitize_flight_path_payload_filming_altitudes(resume_fp_data)
+        if _sync_resume_mission_info_with_waypoints(
+            resume_mission_entry,
+            (
+                resume_fp_data.get("waypointList")
+                if isinstance(resume_fp_data.get("waypointList"), list)
+                else []
+            ),
+        ):
+            emit(
+                "[PRIOR] Selected UAV resume missionInfo synced with trimmed "
+                "capture/loiter path."
+            )
         flight_path_payloads.append(resume_fp_data)
         write_entries.append((resume_fp_dest, resume_fp_data))
 
@@ -3257,6 +3344,43 @@ def _apply_resume_capture_buffer(
     return
 
 
+def _waypoints_have_executable_line_capture(
+    waypoints: List[Dict[str, Any]],
+) -> bool:
+    for waypoint in waypoints or []:
+        if not isinstance(waypoint, dict):
+            continue
+        filming = waypoint.get("filmingProperty")
+        if not isinstance(filming, dict):
+            continue
+        line_search = filming.get("lineSearch")
+        if not isinstance(line_search, dict):
+            continue
+        coordinates = line_search.get("coordinateList")
+        if (
+            isinstance(coordinates, list)
+            and len([item for item in coordinates if isinstance(item, dict)]) >= 2
+        ):
+            return True
+    return False
+
+
+def _waypoints_declare_line_capture(
+    waypoints: List[Dict[str, Any]],
+) -> bool:
+    for waypoint in waypoints or []:
+        if not isinstance(waypoint, dict):
+            continue
+        filming = waypoint.get("filmingProperty")
+        if not isinstance(filming, dict):
+            continue
+        if isinstance(filming.get("lineSearch"), dict):
+            return True
+        if _to_int(filming.get("operationMode")) == 2:
+            return True
+    return False
+
+
 def _apply_resume_path_trimming(
     resume_fp_data: Dict[str, Any],
     *,
@@ -3264,12 +3388,17 @@ def _apply_resume_path_trimming(
     sweep_progress: Dict[int, Dict[str, Any]] | None,
     emit: Callable[[str], None],
     current_coord: Optional[Dict[str, Any]] = None,
+    completion_hold_coord: Optional[Dict[str, Any]] = None,
     log_prefix: str = "[PRIOR][UAV]",
     waypoint_allocator: Optional[Callable[[], int]] = None,
     timing: Optional[Dict[str, Any]] = None,
+    allow_line_scan_sweep_point_trim: bool = False,
+    preserve_line_carrier_coordinates: bool = False,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Optional[int]]:
     trim_started_total = time.perf_counter()
     waypoints = list(resume_fp_data.get("waypointList") or [])
+    source_sweep_points = count_sweep_points_in_waypoints(waypoints)
+    source_declares_line_capture = _waypoints_declare_line_capture(waypoints)
     done_waypoints: List[Dict[str, Any]] = []
     resume_waypoints: List[Dict[str, Any]] = []
     removed_wp_id: Optional[int] = None
@@ -3460,10 +3589,21 @@ def _apply_resume_path_trimming(
     if sweep_progress and artifacts.path_id is not None:
         progress_entry = sweep_progress.get(int(artifacts.path_id))
     resume_offset_reference_coord = current_coord if isinstance(current_coord, dict) else None
-    raw_cut_points = physical_sweep_cut_points(
-        progress_entry,
-        default_buffer_seconds=DEFAULT_SWEEP_SPLIT_LOOKAHEAD_SECONDS,
-    )
+    if (
+        allow_line_scan_sweep_point_trim
+        and is_line_scan_progress_entry(progress_entry)
+    ):
+        # A Type2 branch owns one ordered executable sweep.  Its LINE monitor
+        # measures progress on the branch centerline, but ``progressPoints`` is
+        # already scaled to the nested lineSearch point count.  Use that point
+        # count to cut the executable sweep; rebuilding from the two-point
+        # centerline would otherwise erase the branch's filming footprint.
+        raw_cut_points = sweep_progress_points(progress_entry)
+    else:
+        raw_cut_points = physical_sweep_cut_points(
+            progress_entry,
+            default_buffer_seconds=DEFAULT_SWEEP_SPLIT_LOOKAHEAD_SECONDS,
+        )
     cut_points = max(0, int(raw_cut_points) - int(done_sweep_points))
     _record_trim_stage(
         "resolve_sweep_cut_points",
@@ -3480,6 +3620,7 @@ def _apply_resume_path_trimming(
             resume_waypoints,
             cut_points,
             preserve_waypoints=True,
+            preserve_carrier_coordinates=bool(preserve_line_carrier_coordinates),
             reference_coord_for_offset=resume_offset_reference_coord,
         )
         _record_trim_stage(
@@ -3508,6 +3649,7 @@ def _apply_resume_path_trimming(
         resume_waypoints, merged_groups = merge_small_adjacent_line_search_waypoints(
             resume_waypoints,
             max_sweeps=2,
+            preserve_carrier_coordinates=bool(preserve_line_carrier_coordinates),
             reference_coord_for_offset=resume_offset_reference_coord,
         )
         _record_trim_stage(
@@ -3528,6 +3670,52 @@ def _apply_resume_path_trimming(
             skipped=True,
             resumeWaypointCount=0,
         )
+
+    no_capture_loiter_applied = False
+    if (
+        source_declares_line_capture
+        and not _waypoints_have_executable_line_capture(resume_waypoints)
+    ):
+        hold_coord = (
+            _normalize_coordinate_dict(completion_hold_coord)
+            or _normalize_coordinate_dict(current_coord)
+        )
+        if hold_coord is None:
+            for waypoint in reversed(resume_waypoints or waypoints):
+                if not isinstance(waypoint, dict):
+                    continue
+                hold_coord = _normalize_coordinate_dict(waypoint.get("coordinate"))
+                if hold_coord is not None:
+                    break
+        if hold_coord is not None:
+            template_waypoint = next(
+                (
+                    waypoint
+                    for waypoint in reversed(resume_waypoints or waypoints)
+                    if isinstance(waypoint, dict)
+                ),
+                None,
+            )
+            resume_waypoints = [
+                _build_no_capture_completion_loiter_waypoint(
+                    coordinate=hold_coord,
+                    template_waypoint=template_waypoint,
+                )
+            ]
+            no_capture_loiter_applied = True
+            emit(
+                f"{log_prefix} No LINE capture remains; resume path collapsed to "
+                f"{int(_NO_CAPTURE_COMPLETION_LOITER_SECONDS)}s loiter."
+            )
+    _record_trim_stage(
+        "collapse_no_capture_resume",
+        time.perf_counter(),
+        sourceSweepPoints=int(source_sweep_points),
+        remainingSweepPoints=int(count_sweep_points_in_waypoints(resume_waypoints)),
+        sourceDeclaresLineCapture=bool(source_declares_line_capture),
+        applied=bool(no_capture_loiter_applied),
+        resumeWaypointCount=len(resume_waypoints),
+    )
 
     for wp in done_waypoints:
         if isinstance(wp, dict):
@@ -3559,14 +3747,19 @@ def _apply_resume_path_trimming(
             resumeWaypointCount=len(resume_waypoints),
         )
         realign_started = time.perf_counter()
-        reanchored = realign_line_search_waypoints_to_first_sweep(
-            resume_waypoints,
-            reference_coord_for_offset=resume_offset_reference_coord,
+        reanchored = (
+            0
+            if preserve_line_carrier_coordinates
+            else realign_line_search_waypoints_to_first_sweep(
+                resume_waypoints,
+                reference_coord_for_offset=resume_offset_reference_coord,
+            )
         )
         _record_trim_stage(
             "realign_line_search_waypoints_to_first_sweep",
             realign_started,
             reanchoredWaypoints=reanchored,
+            carrierCoordinatesPreserved=bool(preserve_line_carrier_coordinates),
             resumeWaypointCount=len(resume_waypoints),
         )
         if reanchored > 0:
@@ -3575,7 +3768,15 @@ def _apply_resume_path_trimming(
                 f"(waypoints={reanchored})."
             )
         preserve_alt_started = time.perf_counter()
-        altitude_preserved = preserve_first_waypoint_altitude_from_reference(resume_waypoints, current_coord)
+        altitude_reference = (
+            completion_hold_coord
+            if no_capture_loiter_applied and isinstance(completion_hold_coord, dict)
+            else current_coord
+        )
+        altitude_preserved = preserve_first_waypoint_altitude_from_reference(
+            resume_waypoints,
+            altitude_reference,
+        )
         _record_trim_stage(
             "preserve_first_waypoint_altitude",
             preserve_alt_started,
@@ -3584,32 +3785,49 @@ def _apply_resume_path_trimming(
         if altitude_preserved:
             emit(f"{log_prefix} Resume first waypoint altitude preserved from current UAV.")
         search_speed_weight = get_runtime_float("search_speed_weight", 1.1)
+        resume_speed_scale = get_runtime_prior_float("resume_search_speed_scale", 1.3)
+        synchronize_line_search_to_geometry = bool(preserve_line_carrier_coordinates)
+        geometry_speed_scale = float(search_speed_weight)
+        if synchronize_line_search_to_geometry:
+            # Type-2 branch carriers are immutable.  Recalculate the complete
+            # (base + replan margin) value from their remaining sweep geometry
+            # instead of multiplying the speed serialized by the previous
+            # attack/prior/post-attack plan.  This makes repeated replans
+            # idempotent and prevents 1.3x speed accumulation.
+            geometry_speed_scale *= float(resume_speed_scale)
         recompute_started = time.perf_counter()
         recomputed = recompute_line_search_speed_from_geometry(
             resume_waypoints,
             first_reference_coord=current_coord,
-            speed_scale=search_speed_weight,
-            only_increase=True,
+            speed_scale=float(geometry_speed_scale),
+            only_increase=not synchronize_line_search_to_geometry,
+            multiplier_cap_enabled=not synchronize_line_search_to_geometry,
         )
         _record_trim_stage(
             "recompute_line_search_speed_from_geometry",
             recompute_started,
-            weight=float(search_speed_weight),
+            weight=float(geometry_speed_scale),
             recomputedWaypoints=recomputed,
+            synchronized=bool(synchronize_line_search_to_geometry),
         )
         if recomputed > 0:
             emit(
                 f"{log_prefix} Resume searchSpeed geometry recomputed "
-                f"(weight={float(search_speed_weight):.2f}, waypoints={recomputed})."
+                f"(weight={float(geometry_speed_scale):.2f}, waypoints={recomputed}, "
+                f"synchronized={bool(synchronize_line_search_to_geometry)})."
             )
-        resume_speed_scale = get_runtime_prior_float("resume_search_speed_scale", 1.3)
         scale_started = time.perf_counter()
-        scaled = scale_line_search_speed(resume_waypoints, resume_speed_scale)
+        scaled = (
+            0
+            if synchronize_line_search_to_geometry
+            else scale_line_search_speed(resume_waypoints, resume_speed_scale)
+        )
         _record_trim_stage(
             "scale_line_search_speed",
             scale_started,
             factor=float(resume_speed_scale),
             scaledWaypoints=scaled,
+            skipped=bool(synchronize_line_search_to_geometry),
         )
         if scaled > 0:
             emit(
@@ -3733,6 +3951,20 @@ def _clone_follow_up_replan_artifacts(
 
         dest = db_paths.get_db_subpath("FlightPath", f"{int(path_id)}.json")
         cloned_paths.append((dest, fp_copy))
+
+    # Fresh waypoint IDs make every cloned path locally terminal.  A Type-2
+    # boundary guard is the exception: its child tails form one cross-path
+    # cycle.  Rebuild that cycle only after the complete surviving clone set
+    # exists, then synchronize the final IDs back into the cloned IMP rows.
+    cloned_path_payloads = [
+        payload for _dest, payload in cloned_paths if isinstance(payload, dict)
+    ]
+    resequence_boundary_guard_flight_path_sets(cloned_path_payloads)
+    link_boundary_guard_flight_path_sets(cloned_path_payloads, strict=True)
+    sync_boundary_guard_contract_from_flight_paths(
+        cloned_missions,
+        cloned_path_payloads,
+    )
 
     if isinstance(reservation_summaries, list):
         reservation_summaries.append(
@@ -4255,6 +4487,24 @@ def _sync_resume_mission_info_with_waypoints(
 ) -> bool:
     if not isinstance(mission, dict):
         return False
+    completion_loiter = next(
+        (
+            waypoint
+            for waypoint in (waypoints or [])
+            if isinstance(waypoint, dict)
+            and bool(waypoint.get(_NO_CAPTURE_COMPLETION_LOITER_MARKER))
+        ),
+        None,
+    )
+    if isinstance(completion_loiter, dict):
+        coordinate = _normalize_coordinate_dict(completion_loiter.get("coordinate"))
+        if coordinate is None:
+            return False
+        _apply_no_capture_completion_loiter_mission_info(
+            mission,
+            coordinate=coordinate,
+        )
+        return True
     info = mission.get("individualMissionInfo")
     info = deepcopy(info) if isinstance(info, dict) else {}
     mission_type = _to_int(info.get("individualMissionType"))
@@ -5446,6 +5696,7 @@ def _boost_prior_collab_first_sweep_search_speed(
     *,
     emit: Callable[[str], None],
     speed_scale: float | None = None,
+    reference_coord: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     if not isinstance(payload, dict):
         return payload
@@ -5478,7 +5729,43 @@ def _boost_prior_collab_first_sweep_search_speed(
         search_speed = _to_float(line_search.get("searchSpeed"))
         if search_speed is None or search_speed <= 0.0:
             continue
-        boosted_speed = round(float(search_speed) * float(scale), 2)
+        # AREA paths are already synchronized to their generated entry leg.
+        # Re-applying the generic replan margin makes their nested camera sweep
+        # finish before the aircraft reaches the capture carrier.
+        if str(waypoint.get("coverageAcquisitionID") or "").startswith(
+            "areaMission:"
+        ):
+            emit(
+                "[PRIOR][COLLAB] AREA first sweep searchSpeed kept "
+                f"(aircraft={int(aircraft_id)}, pathID={int(path_id)}, "
+                f"waypointID={_to_int(waypoint.get('waypointID'))}, "
+                f"speed={float(search_speed):.2f})."
+            )
+            return payload
+
+        reference_speed, reference_distance_m = (
+            _estimate_prior_collab_first_sweep_search_speed_from_reference(
+                waypoint,
+                reference_coord,
+            )
+        )
+        base_speed = float(search_speed)
+        used_reference_base = False
+        if reference_speed is not None and float(reference_speed) > 0.0:
+            base_speed = float(reference_speed)
+            used_reference_base = True
+        transit_speed_mps = _to_float(waypoint.get("speed")) or 40.0
+        if transit_speed_mps <= 0.0:
+            transit_speed_mps = 40.0
+        boosted_speed = round(
+            clamp_line_search_speed_mps(
+                base_speed * float(scale),
+                cruise_speed_mps=float(transit_speed_mps),
+                speed_scale=float(scale),
+                multiplier_cap_enabled=False,
+            ),
+            2,
+        )
         line_search["searchSpeed"] = float(boosted_speed)
         filming["lineSearch"] = line_search
         waypoint["filmingProperty"] = filming
@@ -5488,17 +5775,126 @@ def _boost_prior_collab_first_sweep_search_speed(
         try:
             from modules.common.eta import annotate_eta_flight_plan
 
-            annotate_eta_flight_plan(payload, waypoint_list_keys=("waypointList",))
+            annotate_eta_flight_plan(
+                payload,
+                default_speed_mps=40.0,
+                waypoint_list_keys=("waypointList",),
+                line_search_timing="incoming",
+            )
         except Exception:
             pass
-        emit(
-            "[PRIOR][COLLAB] First sweep searchSpeed boosted "
-            f"(aircraft={int(aircraft_id)}, pathID={int(path_id)}, "
-            f"waypointID={_to_int(waypoint.get('waypointID'))}, "
-            f"factor={scale:.2f}, old={float(search_speed):.2f}, new={float(boosted_speed):.2f})."
-        )
+        if used_reference_base:
+            emit(
+                "[PRIOR][COLLAB] First sweep searchSpeed synchronized "
+                f"(aircraft={int(aircraft_id)}, pathID={int(path_id)}, "
+                f"waypointID={_to_int(waypoint.get('waypointID'))}, "
+                f"factor={scale:.2f}, old={float(search_speed):.2f}, "
+                f"refBase={base_speed:.2f}, "
+                f"refDist={float(reference_distance_m or 0.0):.1f}m, "
+                f"new={float(boosted_speed):.2f})."
+            )
+        else:
+            emit(
+                "[PRIOR][COLLAB] First sweep searchSpeed boosted "
+                f"(aircraft={int(aircraft_id)}, pathID={int(path_id)}, "
+                f"waypointID={_to_int(waypoint.get('waypointID'))}, "
+                f"factor={scale:.2f}, old={float(search_speed):.2f}, "
+                f"new={float(boosted_speed):.2f})."
+            )
         return payload
     return payload
+
+
+def _estimate_prior_collab_first_sweep_search_speed_from_reference(
+    waypoint: Dict[str, Any],
+    reference_coord: Dict[str, Any] | None,
+) -> tuple[Optional[float], Optional[float]]:
+    """Return the unboosted first-sweep speed for the live incoming leg."""
+
+    reference = _normalize_coordinate_dict(reference_coord)
+    if reference is None or not isinstance(waypoint, dict):
+        return None, None
+    filming = waypoint.get("filmingProperty")
+    if not isinstance(filming, dict):
+        return None, None
+    line_search = filming.get("lineSearch")
+    if not isinstance(line_search, dict):
+        return None, None
+    raw_coords = line_search.get("coordinateList")
+    if not isinstance(raw_coords, list) or len(raw_coords) < 2:
+        return None, None
+    sweep_coords = [
+        coord
+        for coord in (
+            _normalize_coordinate_dict(item)
+            for item in raw_coords
+        )
+        if coord is not None
+    ]
+    if len(sweep_coords) < 2:
+        return None, None
+
+    anchor_coord = _normalize_coordinate_dict(waypoint.get("coordinate"))
+    transit_target = anchor_coord or sweep_coords[0]
+    transit_distance_m = _haversine_distance(
+        float(reference["latitude"]),
+        float(reference["longitude"]),
+        float(transit_target["latitude"]),
+        float(transit_target["longitude"]),
+    )
+    if transit_distance_m <= 1e-6 and anchor_coord is not None:
+        transit_distance_m = _haversine_distance(
+            float(reference["latitude"]),
+            float(reference["longitude"]),
+            float(sweep_coords[0]["latitude"]),
+            float(sweep_coords[0]["longitude"]),
+        )
+    if transit_distance_m <= 1e-6:
+        return None, None
+
+    sweep_distance_m = 0.0
+    for prev_coord, next_coord in zip(sweep_coords, sweep_coords[1:]):
+        sweep_distance_m += _haversine_distance(
+            float(prev_coord["latitude"]),
+            float(prev_coord["longitude"]),
+            float(next_coord["latitude"]),
+            float(next_coord["longitude"]),
+        )
+    if sweep_distance_m <= 1e-6:
+        return None, None
+
+    transit_speed_mps = _to_float(waypoint.get("speed")) or 40.0
+    if transit_speed_mps <= 0.0:
+        transit_speed_mps = 40.0
+    effective_transit_distance_m = effective_line_search_transit_m(
+        transit_distance_m
+    )
+    if effective_transit_distance_m <= 1e-6:
+        return None, None
+    transit_time_s = (
+        float(effective_transit_distance_m) / float(transit_speed_mps)
+    )
+    if transit_time_s <= 1e-6:
+        return None, None
+    search_speed_weight = get_runtime_float("search_speed_weight", 1.1)
+    try:
+        search_speed_weight = max(0.1, float(search_speed_weight))
+    except Exception:
+        search_speed_weight = 1.1
+    estimated_speed = (
+        float(sweep_distance_m)
+        / float(transit_time_s)
+        * float(search_speed_weight)
+    )
+    return (
+        clamp_line_search_speed_mps(
+            estimated_speed,
+            cruise_speed_mps=float(transit_speed_mps),
+            speed_scale=float(search_speed_weight),
+            multiplier_cap_enabled=False,
+        ),
+        float(transit_distance_m),
+    )
 
 
 def _load_imp_package_for_aircraft(
@@ -5570,6 +5966,58 @@ class CollaborativeRemainingImpUpdate:
     payload: Dict[str, Any]
     replacement_count: int
     flight_path_payloads: List[Dict[str, Any]] = field(default_factory=list)
+
+
+def _replace_selected_current_input_execution_chain(
+    mission_list: List[Dict[str, Any]],
+    *,
+    target_index: int,
+    current_input_id: int,
+    replacement_missions: List[Dict[str, Any]],
+) -> Tuple[List[Dict[str, Any]], List[int]]:
+    """Replace every executable sibling of the selected current input.
+
+    Reexecute/remaining LINE planning can emit more than one mission row for the
+    same input mission.  Once a collaborative takeover has redistributed that
+    remaining geometry, retaining any of those old rows on the selected UAV
+    overlays its old strip on top of the newly split strips.
+
+    Historical prior-mission rows (relatedMissionType=2) remain in place.  The
+    exact selected row is always replaced even if its metadata is incomplete.
+    """
+
+    normalized_target_index = max(0, min(int(target_index), len(mission_list)))
+    kept: List[Dict[str, Any]] = []
+    removed_ids: List[int] = []
+    insert_index: Optional[int] = None
+    for idx, mission in enumerate(mission_list):
+        if not isinstance(mission, dict):
+            continue
+        related = mission.get("relatedMission")
+        related = related if isinstance(related, dict) else {}
+        related_type = _to_int(related.get("relatedMissionType"))
+        same_input = _extract_related_input_mission_id(mission) == int(current_input_id)
+        remove_execution_row = bool(
+            int(idx) == int(normalized_target_index)
+            or (same_input and int(related_type or 0) != 2)
+        )
+        if remove_execution_row:
+            if insert_index is None and int(idx) >= int(normalized_target_index):
+                insert_index = len(kept)
+            mission_id = _to_int(mission.get("individualMissionID"))
+            if mission_id is not None and mission_id > 0:
+                removed_ids.append(int(mission_id))
+            continue
+        kept.append(mission)
+
+    if insert_index is None:
+        insert_index = min(int(normalized_target_index), len(kept))
+    rebuilt = (
+        kept[:insert_index]
+        + [deepcopy(mission) for mission in replacement_missions if isinstance(mission, dict)]
+        + kept[insert_index:]
+    )
+    return rebuilt, removed_ids
 
 
 def _build_collaborative_remaining_imp_update_payload(
@@ -5915,6 +6363,20 @@ def _prepare_uav_collaborative_resume_replan(
         if owner_aircraft_id is not None:
             prepared_fp_by_aircraft.setdefault(int(owner_aircraft_id), []).append(path_payload)
         finish_eta_s = max(int(finish_eta_s), int(_estimate_uav_flight_path_final_eta_s(path_payload)))
+    # A post-attack/prior transform may relink each path tail back to zero.
+    # Restore the authoritative Type-2 guard owner-set cycle only after every
+    # transform has finished, and copy the resulting cycle IDs into IMP rows.
+    resequence_boundary_guard_flight_path_sets(prepared_fp_by_path.values())
+    link_boundary_guard_flight_path_sets(prepared_fp_by_path.values(), strict=True)
+    sync_boundary_guard_contract_from_flight_paths(
+        [
+            mission
+            for rows in prepared.replacement_by_aircraft.values()
+            for mission in (rows or [])
+            if isinstance(mission, dict)
+        ],
+        prepared_fp_by_path.values(),
+    )
     _record_collab_stage(
         "flight_path_normalize",
         normalize_started,
@@ -5934,6 +6396,10 @@ def _prepare_uav_collaborative_resume_replan(
             normalized_replacements = list(
                 replacement_mission_transform(int(aircraft_id), normalized_replacements) or []
             )
+        sync_boundary_guard_contract_from_flight_paths(
+            normalized_replacements,
+            prepared_fp_by_aircraft.get(int(aircraft_id), []),
+        )
         if not normalized_replacements:
             continue
         update = _build_collaborative_remaining_imp_update_payload(
@@ -5952,6 +6418,30 @@ def _prepare_uav_collaborative_resume_replan(
             continue
         imp_updates.append(update)
         aircraft_imp_ids[int(aircraft_id)] = int(update.imp_id)
+    prepared_mission_mode = str(getattr(prepared, "mission_mode", "") or "").strip().lower()
+    expected_line_update_aircraft_ids = {
+        int(aircraft_id)
+        for aircraft_id, replacement_missions in prepared.replacement_by_aircraft.items()
+        if any(isinstance(mission, dict) for mission in (replacement_missions or []))
+    }
+    if (
+        prepared_mission_mode == "line"
+        and set(aircraft_imp_ids) != expected_line_update_aircraft_ids
+    ):
+        emit(
+            f"{log_prefix} Collaborative LINE replacement rejected before write: "
+            f"requiredAircraft={sorted(expected_line_update_aircraft_ids)}, "
+            f"preparedAircraft={sorted(aircraft_imp_ids)}. "
+            "Existing non-overlapping LINE assignments are preserved."
+        )
+        _record_collab_stage(
+            "imp_update_build",
+            imp_build_started,
+            aircraftCount=len(aircraft_imp_ids),
+            replacementAircraftCount=len(expected_line_update_aircraft_ids),
+            rejectedPartialLine=True,
+        )
+        return None
     _record_collab_stage(
         "imp_update_build",
         imp_build_started,
@@ -6154,6 +6644,56 @@ def _build_uav_transit_waypoint(
     }
 
 
+def _build_no_capture_completion_loiter_waypoint(
+    *,
+    coordinate: Dict[str, Any],
+    template_waypoint: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Build the one executable waypoint used when no imaging work remains."""
+    normalized_coord = _normalize_coordinate_dict(coordinate)
+    if normalized_coord is None:
+        raise ValueError("completion loiter coordinate is unavailable")
+
+    template = deepcopy(template_waypoint) if isinstance(template_waypoint, dict) else {}
+    waypoint = _build_uav_transit_waypoint(
+        coordinate=normalized_coord,
+        speed_mps=float(_NO_CAPTURE_COMPLETION_LOITER_SPEED_MPS),
+        eta_s=int(_NO_CAPTURE_COMPLETION_LOITER_SECONDS),
+        orientation_coordinate=normalized_coord,
+        waypoint_pass_type=2,
+    )
+    template_filming = (
+        deepcopy(template.get("filmingProperty"))
+        if isinstance(template.get("filmingProperty"), dict)
+        else {}
+    )
+    template_filming.pop("lineSearch", None)
+    template_filming.pop("areaSearch", None)
+    template_filming.pop("autoTracking", None)
+    template_filming.pop("aircraftFixed", None)
+    template_filming["fieldOfView"] = float(
+        _to_float(template_filming.get("fieldOfView"))
+        or get_runtime_effective_fov_deg("global_manual_fov_deg", 5.0)
+    )
+    template_filming["sensorType"] = int(_to_int(template_filming.get("sensorType")) or 1)
+    template_filming["operationMode"] = 1
+    template_filming["coordinateOrientation"] = {
+        "coordinate": deepcopy(normalized_coord)
+    }
+    waypoint["filmingProperty"] = template_filming
+    waypoint["loiterProperty"] = {
+        "radius": int(_NO_CAPTURE_COMPLETION_LOITER_RADIUS_M),
+        "direction": 1,
+        "time": int(_NO_CAPTURE_COMPLETION_LOITER_SECONDS),
+        "speed": int(round(_NO_CAPTURE_COMPLETION_LOITER_SPEED_MPS)),
+    }
+    waypoint["waypointID"] = int(_to_int(template.get("waypointID")) or 0)
+    waypoint["nextWaypointID"] = 0
+    waypoint["isDone"] = False
+    waypoint[_NO_CAPTURE_COMPLETION_LOITER_MARKER] = True
+    return waypoint
+
+
 def _build_uav_release_resume_waypoints(
     *,
     start_coord: Dict[str, Any],
@@ -6274,6 +6814,28 @@ def _apply_release_resume_mission_info(
     info["lineList"] = []
     info["areaList"] = []
     mission_entry["individualMissionInfo"] = info
+
+
+def _apply_no_capture_completion_loiter_mission_info(
+    mission_entry: Dict[str, Any],
+    *,
+    coordinate: Dict[str, Any],
+) -> None:
+    normalized_coord = _normalize_coordinate_dict(coordinate)
+    if normalized_coord is None:
+        return
+    info = deepcopy(mission_entry.get("individualMissionInfo") or {})
+    info["autoZoomIn"] = False
+    info["targetID"] = None
+    info["individualMissionType"] = 7
+    info["patternType"] = 10
+    info["coordinateList"] = [deepcopy(normalized_coord)]
+    info["lineList"] = []
+    info["areaList"] = []
+    info["SPEED"] = float(_NO_CAPTURE_COMPLETION_LOITER_SPEED_MPS)
+    mission_entry["individualMissionInfo"] = info
+    mission_entry["isDone"] = False
+    mission_entry[_NO_CAPTURE_COMPLETION_LOITER_MARKER] = True
 
 
 def _line_remaining_rows_from_detail(detail: Dict[str, Any] | None) -> List[Dict[str, Any]]:
@@ -6422,6 +6984,8 @@ def _build_other_uav_resume_package(
     line_remaining_detail: Optional[Dict[str, Any]] = None,
     log_prefix: str = "[PRIOR][UAV]",
     id_reservation: Optional[ReplanIdReservation] = None,
+    allow_line_scan_sweep_point_trim: bool = False,
+    clear_follow_up_execution_blocks: bool = False,
 ) -> Optional[Dict[str, Any]]:
     package_started_total = time.perf_counter()
     package_timing: Dict[str, Any] = {}
@@ -6543,6 +7107,29 @@ def _build_other_uav_resume_package(
         )
         return None
 
+    target_input_mission_id = _extract_related_input_mission_id(target_mission)
+    target_boundary_guard_contract = extract_boundary_guard_contract(
+        target_mission,
+        target_mission.get("individualMissionInfo"),
+        fp_data,
+    )
+    target_boundary_guard_set_id = (
+        str(target_boundary_guard_contract.get("boundaryGuardSetID") or "").strip()
+        if is_boundary_guard_loop(target_boundary_guard_contract)
+        else ""
+    )
+    preserve_type2_line_carrier = bool(
+        target_input_mission_id is not None
+        and int(target_input_mission_id) > 0
+        and _source_input_mission_is_locked_type2_branch(
+            int(source_plan_id),
+            int(target_input_mission_id),
+        )
+        and _waypoints_declare_line_capture(
+            list(fp_data.get("waypointList") or [])
+        )
+    )
+
     follow_up_missions: List[Dict[str, Any]] = []
     follow_up_paths: List[Tuple[Path, Dict[str, Any]]] = []
     done_input_started = time.perf_counter()
@@ -6557,7 +7144,16 @@ def _build_other_uav_resume_package(
     if clone_follow_up_artifacts and target_index is not None:
         follow_up_rows = mission_list[target_index + 1 :]
         follow_up_preserved = False
-        if preserve_follow_up_artifacts:
+        if preserve_follow_up_artifacts and target_boundary_guard_set_id:
+            # A fresh resume path must cross-link to every still-pending guard
+            # child. Existing child paths cannot be mutated because older plans
+            # still reference them, so this owner set must be cloned as one
+            # fresh artifact graph.
+            emit(
+                f"{log_prefix} Type-2 boundary guard resume forces follow-up cloning "
+                f"(set={target_boundary_guard_set_id})."
+            )
+        elif preserve_follow_up_artifacts:
             preserve_started = time.perf_counter()
             preserved_artifacts = _preserve_follow_up_replan_artifacts(
                 missions=follow_up_rows,
@@ -6616,6 +7212,51 @@ def _build_other_uav_resume_package(
                 preserveMode="cloned",
             )
 
+    blocked_follow_up_execution_count = 0
+    cleared_follow_up_execution_blocks = 0
+    if preserve_type2_line_carrier:
+        for follow_up_mission in follow_up_missions:
+            if not isinstance(follow_up_mission, dict):
+                continue
+            follow_up_input_id = _extract_related_input_mission_id(
+                follow_up_mission
+            )
+            if (
+                follow_up_input_id is None
+                or int(follow_up_input_id) == int(target_input_mission_id)
+            ):
+                follow_up_mission.pop("executionBlockedUntilNextCollab", None)
+                follow_up_mission.pop("ExecutionBlockedUntilNextCollab", None)
+                continue
+            follow_up_mission["executionBlockedUntilNextCollab"] = True
+            follow_up_mission.pop("ExecutionBlockedUntilNextCollab", None)
+            blocked_follow_up_execution_count += 1
+        if blocked_follow_up_execution_count:
+            emit(
+                f"{log_prefix} Type-2 LINE follow-up inputs retained but blocked "
+                "until the next collaborative handoff "
+                f"(aircraft={aircraft_id}, "
+                f"followUps={int(blocked_follow_up_execution_count)})."
+            )
+    elif clear_follow_up_execution_blocks:
+        for follow_up_mission in follow_up_missions:
+            if not isinstance(follow_up_mission, dict):
+                continue
+            had_block = bool(
+                "executionBlockedUntilNextCollab" in follow_up_mission
+                or "ExecutionBlockedUntilNextCollab" in follow_up_mission
+            )
+            follow_up_mission.pop("executionBlockedUntilNextCollab", None)
+            follow_up_mission.pop("ExecutionBlockedUntilNextCollab", None)
+            if had_block:
+                cleared_follow_up_execution_blocks += 1
+        if cleared_follow_up_execution_blocks:
+            emit(
+                f"{log_prefix} Cleared stale collaborative execution blocks "
+                f"(aircraft={aircraft_id}, "
+                f"followUps={int(cleared_follow_up_execution_blocks)})."
+            )
+
     build_resume_started = time.perf_counter()
     resume_mission = deepcopy(target_mission)
     resume_mission["individualMissionID"] = resume_individual_id
@@ -6631,9 +7272,15 @@ def _build_other_uav_resume_package(
         sweep_progress=sweep_progress,
         emit=emit,
         current_coord=current_coord,
+        completion_hold_coord=current_coord,
         log_prefix=log_prefix,
         waypoint_allocator=reservation.next_waypoint,
         timing=trim_timing,
+        allow_line_scan_sweep_point_trim=bool(
+            allow_line_scan_sweep_point_trim
+            or preserve_type2_line_carrier
+        ),
+        preserve_line_carrier_coordinates=bool(preserve_type2_line_carrier),
     )
     _record_package_stage(
         "apply_resume_path_trimming",
@@ -6653,7 +7300,10 @@ def _build_other_uav_resume_package(
         return None
 
     line_remaining_applied = False
-    if has_line_remaining_geometry(line_remaining_detail):
+    if (
+        has_line_remaining_geometry(line_remaining_detail)
+        and not preserve_type2_line_carrier
+    ):
         line_remaining_started = time.perf_counter()
         resume_waypoints, line_remaining_applied = _apply_line_remaining_detail_to_resume_waypoints(
             resume_waypoints,
@@ -6683,8 +7333,14 @@ def _build_other_uav_resume_package(
             "apply_line_remaining_detail",
             time.perf_counter(),
             skipped=True,
+            reusedDirectedType2Line=bool(preserve_type2_line_carrier),
             resumeWaypointCount=len(resume_waypoints),
         )
+        if preserve_type2_line_carrier and has_line_remaining_geometry(line_remaining_detail):
+            emit(
+                f"{log_prefix} Type-2 LINE keeps the trimmed original carrier; "
+                "secondary remaining-geometry rebuild skipped."
+            )
 
     has_done_segment = bool(done_waypoints)
     if not has_done_segment:
@@ -6742,6 +7398,19 @@ def _build_other_uav_resume_package(
                 rebuilt.append(resume_mission)
             else:
                 prefix = deepcopy(mission_list[:target_index])
+                if target_boundary_guard_set_id:
+                    prefix = [
+                        mission
+                        for mission in prefix
+                        if str(
+                            extract_boundary_guard_contract(
+                                mission,
+                                mission.get("individualMissionInfo"),
+                            ).get("boundaryGuardSetID")
+                            or ""
+                        ).strip()
+                        != target_boundary_guard_set_id
+                    ]
                 rebuilt = list(prefix)
                 if preserved_done_mission is not None:
                     rebuilt.append(preserved_done_mission)
@@ -6786,6 +7455,16 @@ def _build_other_uav_resume_package(
     _set_flight_path_waypoints_done(resume_fp_data, False)
     generated_flight_paths: List[Dict[str, Any]] = []
     if done_fp_dest is not None and done_fp_data is not None:
+        if target_boundary_guard_set_id:
+            clear_boundary_guard_contract(
+                done_fp_data,
+                include_individual_mission_info=False,
+            )
+            if preserved_done_mission is not None:
+                clear_boundary_guard_contract(
+                    preserved_done_mission,
+                    include_individual_mission_info=True,
+                )
         _apply_runtime_flyover_to_flight_path_payload(done_fp_data)
         sanitize_flight_path_payload_filming_altitudes(done_fp_data)
         generated_flight_paths.append(done_fp_data)
@@ -6807,6 +7486,40 @@ def _build_other_uav_resume_package(
         sanitize_flight_path_payload_filming_altitudes(payload)
         if isinstance(payload, dict):
             generated_flight_paths.append(payload)
+    if clone_follow_up_artifacts and target_boundary_guard_set_id:
+        guard_missions = [
+            mission
+            for mission in mission_list
+            if isinstance(mission, dict)
+            and str(
+                extract_boundary_guard_contract(
+                    mission,
+                    mission.get("individualMissionInfo"),
+                ).get("boundaryGuardSetID")
+                or ""
+            ).strip()
+            == target_boundary_guard_set_id
+        ]
+        guard_paths = [
+            payload
+            for payload in generated_flight_paths
+            if isinstance(payload, dict)
+            and str(
+                extract_boundary_guard_contract(payload).get("boundaryGuardSetID")
+                or ""
+            ).strip()
+            == target_boundary_guard_set_id
+        ]
+        guard_summary = finalize_boundary_guard_flight_path_sets_in_mission_order(
+            guard_missions,
+            guard_paths,
+            strict=True,
+        )
+        emit(
+            f"{log_prefix} Type-2 boundary guard remaining cycle rebuilt "
+            f"(set={target_boundary_guard_set_id}, children={len(guard_paths)}, "
+            f"summary={guard_summary.get(target_boundary_guard_set_id) or {}})."
+        )
     _record_package_stage(
         "normalize_generated_payloads",
         normalize_started,
@@ -6875,6 +7588,9 @@ def _build_other_uav_resume_package(
         "donePath": str(done_fp_dest) if done_fp_dest is not None else None,
         "resumePath": str(resume_fp_dest),
         "followUpMissionCount": len(follow_up_missions),
+        "clearedFollowUpExecutionBlockCount": int(
+            cleared_follow_up_execution_blocks
+        ),
         "lineRemainingApplied": bool(line_remaining_applied),
         "reservedIds": reservation_summary,
         "timingMs": package_timing,
@@ -7180,7 +7896,11 @@ def _resolve_plan_artifacts(
 
     if current_wp_int is not None:
         for mission in missions:
-            if isinstance(mission, dict) and bool(mission.get("isDone")):
+            if not isinstance(mission, dict):
+                continue
+            if bool(mission.get("isDone")):
+                continue
+            if _mission_execution_blocked_until_next_collab(mission):
                 continue
             path_id = mission.get("pathID")
             individual_mission_id = mission.get("individualMissionID")
@@ -7211,6 +7931,8 @@ def _resolve_plan_artifacts(
         for candidate in missions:
             if not isinstance(candidate, dict) or bool(candidate.get("isDone")):
                 continue
+            if _mission_execution_blocked_until_next_collab(candidate):
+                continue
             candidate_path_id = _to_int(candidate.get("pathID"))
             candidate_mission_id = _to_int(candidate.get("individualMissionID"))
             if candidate_path_id is None or candidate_mission_id is None:
@@ -7224,9 +7946,19 @@ def _resolve_plan_artifacts(
             break
 
         if fallback_mission is None:
-            fallback_label = "first mission"
-            for candidate in missions:
+            has_collaboration_barrier = any(
+                _mission_execution_blocked_until_next_collab(candidate)
+                for candidate in missions
+            )
+            fallback_label = (
+                "last completed mission before collaboration barrier"
+                if has_collaboration_barrier
+                else "last completed mission"
+            )
+            for candidate in reversed(missions):
                 if not isinstance(candidate, dict):
+                    continue
+                if _mission_execution_blocked_until_next_collab(candidate):
                     continue
                 candidate_path_id = _to_int(candidate.get("pathID"))
                 candidate_mission_id = _to_int(candidate.get("individualMissionID"))
@@ -7244,8 +7976,16 @@ def _resolve_plan_artifacts(
             mission_id = int(_to_int(fallback_mission.get("individualMissionID")) or 0)
             path_id = int(fallback_path_id)
             if fallback_waypoints:
-                resolved_current_wp = int(fallback_waypoints[0])
-                previous_wp = None
+                if bool(fallback_mission.get("isDone")):
+                    resolved_current_wp = int(fallback_waypoints[-1])
+                    previous_wp = (
+                        int(fallback_waypoints[-2])
+                        if len(fallback_waypoints) > 1
+                        else None
+                    )
+                else:
+                    resolved_current_wp = int(fallback_waypoints[0])
+                    previous_wp = None
             target_mission = (mission_id, path_id)
             emit(
                 f"[PRIOR] Falling back to {fallback_label} for aircraft "

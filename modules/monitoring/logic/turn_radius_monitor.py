@@ -4,7 +4,7 @@ import json
 import math
 import time
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -53,10 +53,25 @@ ALT_WAYPOINT_ID_BASE = 900000
 WAYPOINT_COORD_OVERRIDE_NEAR_M = 1200.0
 WAYPOINT_COORD_OVERRIDE_MARGIN_M = 1000.0
 _ADAPTIVE_STATE_FILENAME = "path_deviation_adaptive_state.json"
+# Bump when learned quantities change meaning.  v2 = learned against a
+# validated speed (see TrackPoint.speed_source) and adds roll slew / steady
+# bank; v1 state was fitted against unvalidated telemetry speed.
+_ADAPTIVE_STATE_VERSION = 2
 
 
 def _path_deviation_config() -> dict[str, Any]:
     return get_path_deviation_settings()
+
+
+def _cfg_float(cfg: dict[str, Any], key: str, default: float) -> float:
+    """Read a float knob where 0.0 is a legitimate setting.
+
+    ``value or default`` silently rewrites a configured 0 back to the default,
+    which makes a knob look ignored - e.g. a latency of 0 s.
+    """
+
+    parsed = _coerce_float(cfg.get(key))
+    return float(default) if parsed is None else float(parsed)
 
 
 def _project_root() -> Path:
@@ -439,6 +454,17 @@ def _load_adaptive_aircraft_state(aircraft_id: int) -> dict[str, Any]:
         return {}
     if not isinstance(payload, dict):
         return {}
+    # Everything learned before the speed correction existed was fitted against
+    # a telemetry speed that could be wrong by a factor of 3.6, which drove the
+    # attitude-rate EMA hard against its clamp.  Such state is worse than no
+    # state, so a schema older than the current one is discarded rather than
+    # inherited.
+    try:
+        stored_version = int(payload.get("version") or 0)
+    except (TypeError, ValueError):
+        stored_version = 0
+    if stored_version < _ADAPTIVE_STATE_VERSION:
+        return {}
     aircraft_map = payload.get("aircraft")
     if not isinstance(aircraft_map, dict):
         return {}
@@ -459,7 +485,7 @@ def _save_adaptive_aircraft_state(aircraft_id: int, state: dict[str, Any]) -> No
     if not isinstance(aircraft_map, dict):
         aircraft_map = {}
         payload["aircraft"] = aircraft_map
-    payload["version"] = 1
+    payload["version"] = int(_ADAPTIVE_STATE_VERSION)
     payload["updatedAtUnix"] = float(time.time())
     aircraft_map[str(int(aircraft_id))] = dict(state or {})
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -567,6 +593,14 @@ class TrackPoint:
     pitch_deg: float | None
     yaw_deg: float | None
     current_waypoint_id: int | None
+    # Speed provenance.  ``speed_mps`` above is the speed every estimate in
+    # this module actually uses; when the telemetry value disagrees with the
+    # motion of the positions themselves, the track-derived speed replaces it
+    # (a live feed has shipped ~1/3.6 of the true ground speed, which
+    # collapsed every radius and lead-distance estimate downstream).
+    reported_speed_mps: float | None = None
+    track_speed_mps: float | None = None
+    speed_source: str = "reported"
 
 
 @dataclass(frozen=True)
@@ -655,6 +689,12 @@ class AircraftTurnView:
     line_predicted_entry_coordinate: dict[str, float] | None = None
     line_predicted_heading_deg: float | None = None
     line_prediction_lead_s: float | None = None
+    speed_source: str = "reported"
+    track_speed_mps: float | None = None
+    reported_speed_mps: float | None = None
+    adaptive_roll_slew_dps: float | None = None
+    adaptive_steady_bank_deg: float | None = None
+    line_prediction_model: str | None = None
 
 
 def is_path_deviation_turn_warning_view(view: AircraftTurnView | None) -> bool:
@@ -983,6 +1023,35 @@ class AircraftTurnMonitor:
             0,
             _coerce_int(adaptive_state.get("attitudeRateSampleCount")) or 0,
         )
+        # Per-aircraft learned roll response.  The three vehicle classes we fly
+        # against (our sim / external sim / verification sim) share the same
+        # attitude-based turn physics but respond to a bank command at very
+        # different rates, so both numbers are learned online from what the
+        # aircraft actually does and persisted across sessions.
+        self._adaptive_roll_slew_dps = _clamp_float(
+            _coerce_float(adaptive_state.get("rollSlewDps")) or 6.0,
+            1.0,
+            max(5.0, _coerce_float(cfg.get("roll_slew_learn_max_dps")) or 60.0),
+        )
+        self._adaptive_roll_slew_sample_count = max(
+            0,
+            _coerce_int(adaptive_state.get("rollSlewSampleCount")) or 0,
+        )
+        self._adaptive_steady_bank_deg = _clamp_float(
+            _coerce_float(adaptive_state.get("steadyBankDeg")) or 24.0,
+            10.0,
+            45.0,
+        )
+        self._adaptive_steady_bank_sample_count = max(
+            0,
+            _coerce_int(adaptive_state.get("steadyBankSampleCount")) or 0,
+        )
+        # Telemetry-vs-track speed agreement (EMA of reported/track while both
+        # are clearly in forward flight).
+        self._speed_ratio_ema: float | None = None
+        self._speed_ratio_sample_count = 0
+        self._speed_mismatch_latched = False
+        self._last_line_prediction_model: str | None = None
         self._adaptive_last_sample_s: float | None = None
         self._adaptive_attitude_last_sample_s: float | None = None
         self._adaptive_last_save_s = 0.0
@@ -994,6 +1063,105 @@ class AircraftTurnMonitor:
         self._last_turn_rate_source = "position"
         self._last_alternate_prediction_model: str | None = None
         self._last_entry_prediction_model: str | None = None
+
+    def _resolve_speed_mps(
+        self,
+        *,
+        x_m: float,
+        y_m: float,
+        timestamp_s: float,
+        reported_speed_mps: float | None,
+        cfg: dict[str, Any],
+    ) -> tuple[float | None, float | None, str]:
+        """Return (speed to use, track-derived speed, source).
+
+        The prediction geometry lives or dies on speed: radius = v/omega and
+        lead distance = v*t.  Positions are the one input every vehicle class
+        reports truthfully, so the ground speed derived from them is the
+        arbiter - when the telemetry speed disagrees with how fast the
+        positions actually move (sustained, both clearly in forward flight),
+        the track speed replaces it for every estimate in this module.
+        """
+
+        window_s = max(0.5, _coerce_float(cfg.get("track_speed_window_s")) or 2.0)
+        min_dt_s = max(0.2, _coerce_float(cfg.get("track_speed_min_dt_s")) or 0.6)
+        max_valid_mps = max(10.0, _coerce_float(cfg.get("track_speed_max_valid_mps")) or 120.0)
+        low = _coerce_float(cfg.get("track_speed_mismatch_low_ratio")) or 0.7
+        high = _coerce_float(cfg.get("track_speed_mismatch_high_ratio")) or 1.4
+        min_samples = max(1, _coerce_int(cfg.get("track_speed_min_samples")) or 8)
+        min_flight_mps = max(0.5, _coerce_float(cfg.get("track_speed_min_flight_mps")) or 5.0)
+
+        track_speed: float | None = None
+        anchor: TrackPoint | None = None
+        for point in reversed(self._history):
+            dt = float(timestamp_s) - float(point.timestamp_s)
+            if dt > window_s:
+                break
+            if dt >= min_dt_s:
+                anchor = point
+        if anchor is not None:
+            dt = max(1e-3, float(timestamp_s) - float(anchor.timestamp_s))
+            distance_m = math.hypot(x_m - anchor.x_m, y_m - anchor.y_m)
+            candidate = distance_m / dt
+            # A teleport (sim reposition) is not flight; it must neither be
+            # used as a speed nor poison the agreement statistic.
+            if candidate <= max_valid_mps:
+                track_speed = float(candidate)
+
+        reported = _coerce_float(reported_speed_mps)
+        # A position feed that has stopped updating yields a track speed of ~0.
+        # That is a stalled feed, not a hover, and substituting it would drive
+        # radius = v/omega and every lead distance to zero - a far worse failure
+        # than the telemetry error this correction exists to catch.  Such a
+        # sample is unusable as a replacement AND must not move the agreement
+        # statistic, or a freeze would slowly unlatch a real correction.
+        track_usable = track_speed is not None and float(track_speed) > min_flight_mps
+        if (
+            reported is not None
+            and track_usable
+            and reported > min_flight_mps
+        ):
+            ratio = reported / float(track_speed)
+            previous = self._speed_ratio_ema
+            self._speed_ratio_ema = (
+                ratio if previous is None else previous + ((ratio - previous) * 0.15)
+            )
+            self._speed_ratio_sample_count = min(
+                1_000_000, self._speed_ratio_sample_count + 1
+            )
+
+        if reported is None:
+            if track_usable:
+                return track_speed, track_speed, "track"
+            # Nothing usable from either source; keep the last known good speed
+            # rather than reporting a zero that would collapse the geometry.
+            previous_speed = self._history[-1].speed_mps if self._history else None
+            return previous_speed, track_speed, "stale" if previous_speed else "none"
+
+        # Hysteresis: latch the correction once the disagreement is established
+        # and only release it when agreement returns comfortably inside the
+        # band, so a single noisy window cannot flip the whole entry geometry
+        # (and the plan cache key) back and forth sample to sample.
+        if self._speed_ratio_ema is not None and self._speed_ratio_sample_count >= min_samples:
+            ratio_ema = float(self._speed_ratio_ema)
+            if self._speed_mismatch_latched:
+                release_lo = low + ((high - low) * 0.15)
+                release_hi = high - ((high - low) * 0.15)
+                if release_lo <= ratio_ema <= release_hi:
+                    self._speed_mismatch_latched = False
+            elif not (low <= ratio_ema <= high):
+                self._speed_mismatch_latched = True
+
+        if self._speed_mismatch_latched:
+            if track_usable:
+                return track_speed, track_speed, "track"
+            # Correction is warranted but this sample cannot supply it: reuse
+            # the last corrected speed instead of falling back to the value we
+            # already know is wrong.
+            previous_speed = self._history[-1].speed_mps if self._history else None
+            if previous_speed is not None and float(previous_speed) > min_flight_mps:
+                return previous_speed, track_speed, "track_hold"
+        return reported, track_speed, "reported"
 
     def update(
         self,
@@ -1020,6 +1188,15 @@ class AircraftTurnMonitor:
         if prev is not None and timestamp_s <= prev.timestamp_s:
             timestamp_s = prev.timestamp_s + 0.05
 
+        cfg = _path_deviation_config()
+        resolved_speed_mps, track_speed_mps, speed_source = self._resolve_speed_mps(
+            x_m=x_m,
+            y_m=y_m,
+            timestamp_s=timestamp_s,
+            reported_speed_mps=speed_mps,
+            cfg=cfg,
+        )
+
         course_heading_deg = raw_heading_deg if raw_heading_deg is not None else yaw_deg
         heading_rad = self._select_heading_rad(
             prev=prev,
@@ -1034,13 +1211,16 @@ class AircraftTurnMonitor:
             x_m=x_m,
             y_m=y_m,
             altitude_m=altitude_m,
-            speed_mps=speed_mps,
+            speed_mps=resolved_speed_mps,
             raw_heading_deg=course_heading_deg,
             heading_rad=heading_rad,
             roll_deg=roll_deg,
             pitch_deg=pitch_deg,
             yaw_deg=yaw_deg,
             current_waypoint_id=int(current_waypoint_id) if current_waypoint_id else None,
+            reported_speed_mps=_coerce_float(speed_mps),
+            track_speed_mps=track_speed_mps,
+            speed_source=str(speed_source),
         )
         self._history.append(point)
         self._trim_history(timestamp_s)
@@ -1195,6 +1375,125 @@ class AircraftTurnMonitor:
         self._adaptive_attitude_last_sample_s = float(latest.timestamp_s)
         self._save_adaptive_radius_state_if_due(cfg)
 
+    def _speed_is_trustworthy(self, latest: TrackPoint, cfg: dict[str, Any]) -> bool:
+        """Whether this sample's speed is good enough to learn from.
+
+        Everything learned here is fitted against speed, so learning while the
+        speed is unvalidated (still warming the agreement statistic) or merely
+        held over from an earlier sample bakes the error into state that then
+        outlives the session.
+        """
+
+        if latest.speed_mps is None or float(latest.speed_mps) <= 0.0:
+            return False
+        if str(latest.speed_source) in {"stale", "track_hold", "none"}:
+            return False
+        min_samples = max(1, _coerce_int(cfg.get("track_speed_min_samples")) or 8)
+        # 'track' is only chosen after the statistic is established, so it is
+        # trustworthy by construction; 'reported' needs the same evidence
+        # before we accept it as validated rather than merely unchallenged.
+        if str(latest.speed_source) == "reported":
+            return self._speed_ratio_sample_count >= min_samples
+        return True
+
+    def _maybe_update_roll_dynamics_learning(
+        self,
+        *,
+        cfg: dict[str, Any],
+        latest: TrackPoint,
+        observed_nav_rate_dps: float | None,
+    ) -> None:
+        """Learn how THIS airframe rolls: slew into a bank, and the bank it holds.
+
+        The projection quality is bounded by these two numbers.  The field
+        vehicle rolls at ~3 deg/s where the default model assumed 40, so a
+        hard-coded profile is wrong for at least one of the vehicle classes at
+        any given time; measuring is the only version that fits all three.
+        """
+
+        if not self._speed_is_trustworthy(latest, cfg):
+            return
+        transition_min_dps = max(
+            0.1, _coerce_float(cfg.get("roll_slew_learn_min_dps")) or 0.8
+        )
+        alpha = _clamp_float(
+            _coerce_float(cfg.get("roll_dynamics_learn_ema_alpha")) or 0.05, 0.01, 1.0
+        )
+        slew_cap_dps = max(
+            5.0, _coerce_float(cfg.get("roll_slew_learn_max_dps")) or 60.0
+        )
+        roll = _coerce_float(latest.roll_deg)
+        roll_rate = _coerce_float(self._last_roll_rate_dps)
+        # Only a genuine roll-in/roll-out teaches the slew.  A micro-correction
+        # while holding a bank is not a transition, and sampling it drags the
+        # learned slew below what the airframe can actually do - which then
+        # makes the projection lag every real turn entry.
+        is_transition = (
+            roll_rate is not None
+            and abs(roll_rate) >= transition_min_dps
+            and (roll is None or abs(float(roll)) < 60.0)
+            and (roll is None or roll_rate * float(roll) >= 0.0 or abs(float(roll)) > 2.0)
+        )
+        if is_transition:
+            observed_slew = _clamp_float(abs(roll_rate), 1.0, slew_cap_dps)
+            self._adaptive_roll_slew_dps = _clamp_float(
+                self._adaptive_roll_slew_dps
+                + ((observed_slew - self._adaptive_roll_slew_dps) * alpha),
+                1.0,
+                slew_cap_dps,
+            )
+            self._adaptive_roll_slew_sample_count = min(
+                1_000_000, self._adaptive_roll_slew_sample_count + 1
+            )
+        observed = _coerce_float(observed_nav_rate_dps)
+        established_min_dps = max(
+            0.5, _coerce_float(cfg.get("steady_bank_learn_min_rate_dps")) or 2.5
+        )
+        if (
+            roll is not None
+            and 5.0 <= abs(roll) <= 60.0
+            and observed is not None
+            and abs(observed) >= established_min_dps
+            and (roll_rate is None or abs(roll_rate) < transition_min_dps)
+        ):
+            self._adaptive_steady_bank_deg = _clamp_float(
+                self._adaptive_steady_bank_deg
+                + ((abs(roll) - self._adaptive_steady_bank_deg) * alpha),
+                10.0,
+                45.0,
+            )
+            self._adaptive_steady_bank_sample_count = min(
+                1_000_000, self._adaptive_steady_bank_sample_count + 1
+            )
+
+    def _learned_roll_slew_dps(self, cfg: dict[str, Any]) -> float:
+        warmup = max(1, _coerce_int(cfg.get("roll_dynamics_learn_warmup_samples")) or 6)
+        default_slew = max(
+            1.0, _coerce_float(cfg.get("roll_slew_default_dps")) or 6.0
+        )
+        if self._adaptive_roll_slew_sample_count < warmup:
+            blend = _clamp_float(
+                float(self._adaptive_roll_slew_sample_count) / float(warmup), 0.0, 1.0
+            )
+            return float(
+                default_slew + ((self._adaptive_roll_slew_dps - default_slew) * blend)
+            )
+        return float(self._adaptive_roll_slew_dps)
+
+    def _learned_steady_bank_deg(self, cfg: dict[str, Any]) -> float:
+        warmup = max(1, _coerce_int(cfg.get("roll_dynamics_learn_warmup_samples")) or 6)
+        default_bank = _clamp_float(
+            _coerce_float(cfg.get("steady_bank_default_deg")) or 24.0, 10.0, 45.0
+        )
+        if self._adaptive_steady_bank_sample_count < warmup:
+            blend = _clamp_float(
+                float(self._adaptive_steady_bank_sample_count) / float(warmup), 0.0, 1.0
+            )
+            return float(
+                default_bank + ((self._adaptive_steady_bank_deg - default_bank) * blend)
+            )
+        return float(self._adaptive_steady_bank_deg)
+
     def _maybe_update_adaptive_radius(
         self,
         *,
@@ -1275,6 +1574,10 @@ class AircraftTurnMonitor:
                     "lastSpeedMps": self._adaptive_last_speed_mps,
                     "attitudeRateScale": float(self._adaptive_attitude_rate_scale),
                     "attitudeRateSampleCount": int(self._adaptive_attitude_rate_sample_count),
+                    "rollSlewDps": float(self._adaptive_roll_slew_dps),
+                    "rollSlewSampleCount": int(self._adaptive_roll_slew_sample_count),
+                    "steadyBankDeg": float(self._adaptive_steady_bank_deg),
+                    "steadyBankSampleCount": int(self._adaptive_steady_bank_sample_count),
                     "updatedAtUnix": float(time.time()),
                 },
             )
@@ -1794,25 +2097,211 @@ class AircraftTurnMonitor:
             source=str(source),
         )
 
-    def _project_recent_line_turn_trend(
-        self,
-        latest: TrackPoint,
-        trend: RecentLineTurnTrend | None,
-    ) -> tuple[dict[str, float] | None, float | None, float | None]:
-        if trend is None or self._ref_lat_deg is None or self._ref_lon_deg is None:
-            return None, None, None
-        cfg = _path_deviation_config()
-        lead_s = max(
+    def _line_prediction_lead_s(self, cfg: dict[str, Any]) -> float:
+        """Seconds ahead the entry point is projected.
+
+        The prediction has to describe where the aircraft will be when the new
+        plan is ACTIVATED, not when the trend was captured, so the pipeline
+        latency between the two is added to the nominal lead.  Both terms are
+        clamped so a mis-set knob cannot run the projection out to absurdity.
+        """
+
+        base_lead_s = max(
             0.0,
             min(
                 8.0,
                 float(cfg.get("next_mission_entry_lead_time_s", NEXT_MISSION_ENTRY_LEAD_TIME_S)),
             ),
         )
+        latency_s = max(
+            0.0,
+            min(6.0, _cfg_float(cfg, "next_collab_entry_pipeline_latency_s", 2.5)),
+        )
+        return float(min(12.0, base_lead_s + latency_s))
+
+    def _project_recent_line_turn_trend(
+        self,
+        latest: TrackPoint,
+        trend: RecentLineTurnTrend | None,
+    ) -> tuple[dict[str, float] | None, float | None, float | None]:
+        if trend is None or self._ref_lat_deg is None or self._ref_lon_deg is None:
+            self._last_line_prediction_model = None
+            return None, None, None
+        cfg = _path_deviation_config()
+        lead_s = self._line_prediction_lead_s(cfg)
         if lead_s <= 0.0 or latest.speed_mps is None or float(latest.speed_mps) <= 0.0:
+            self._last_line_prediction_model = None
             return None, None, None
         speed_mps = float(latest.speed_mps)
         heading_rad = float(trend.heading_rad)
+        heading_deg = _math_rad_to_heading_deg(heading_rad)
+
+        projected_x_m: float
+        projected_y_m: float
+        projected_heading_rad: float
+        model = "constant-rate-arc"
+
+        # Attitude-first projection.  The measured roll is the causal state -
+        # it leads the heading change - so when it is trustworthy the future
+        # path is integrated through the roll transition (rolling in/out of the
+        # bank at the airframe's learned slew) rather than assumed to already be
+        # at a constant turn rate.  That transition is exactly the part the old
+        # closed-form arc dropped, and it is where the entry point was landing
+        # short on the reversal turns.
+        roll_deg = _coerce_float(latest.roll_deg)
+        pitch_deg = _coerce_float(latest.pitch_deg) or 0.0
+        roll_rate_dps = _coerce_float(self._last_roll_rate_dps)
+        confidence_min = _cfg_float(cfg, "line_projection_attitude_confidence_min", 0.45)
+        # Roll LEADS heading.  A bank that is already established, or one being
+        # rolled in decisively, is direct evidence of the turn about to happen -
+        # evidence the heading history cannot contain yet.  Gating the attitude
+        # model behind the heading-trend confidence therefore blinded it exactly
+        # at turn onset, which is when the entry point is being placed.
+        roll_evidence_bank_deg = max(
+            0.5, _cfg_float(cfg, "line_projection_roll_evidence_bank_deg", 6.0)
+        )
+        roll_evidence_rate_dps = max(
+            0.1, _cfg_float(cfg, "line_projection_roll_evidence_rate_dps", 1.5)
+        )
+        roll_evidence = roll_deg is not None and (
+            abs(float(roll_deg)) >= roll_evidence_bank_deg
+            or (roll_rate_dps is not None and abs(float(roll_rate_dps)) >= roll_evidence_rate_dps)
+        )
+        use_attitude = (
+            _coerce_bool(cfg.get("line_projection_attitude_enabled"), True)
+            and roll_deg is not None
+            and abs(float(roll_deg)) <= 85.0
+            and (float(trend.confidence) >= confidence_min or roll_evidence)
+        )
+        prediction = None
+        if use_attitude:
+            performance = self._turn_performance(cfg, include_adaptive=True)
+            learned_slew = self._learned_roll_slew_dps(cfg)
+            performance = replace(
+                performance,
+                roll_rate_limit_dps=max(1.0, float(learned_slew)),
+                # The reference radius table is a NOMINAL cruise turn, and as a
+                # ceiling it caps the turn rate below what the measured bank is
+                # already producing (450 m at 40 m/s implies ~20 deg of bank, so
+                # a real 24 deg turn got clipped and the projection under-turned).
+                # Physical limits - bank limit and max yaw rate - still apply.
+                use_reference_radius=False,
+            )
+            # Aim for the sign-resolved steady bank so the roll-out/roll-in of
+            # the turn is modelled; a zero trend sign means the aircraft is
+            # rolling back to wings level.  When the heading trend has no sign
+            # yet, the roll itself supplies it - that is the whole point of
+            # reading attitude at onset.
+            steady_bank_deg = self._learned_steady_bank_deg(cfg)
+            resolved_sign = int(trend.turn_sign)
+            # math-frame sign is opposite the roll sign (a right/positive bank
+            # turns clockwise, which decreases the math-frame angle).
+            roll_sign = 0
+            if roll_deg is not None and abs(float(roll_deg)) >= roll_evidence_bank_deg:
+                roll_sign = -1 if float(roll_deg) > 0.0 else 1
+            elif (
+                roll_rate_dps is not None
+                and abs(float(roll_rate_dps)) >= roll_evidence_rate_dps
+            ):
+                roll_sign = -1 if float(roll_rate_dps) > 0.0 else 1
+            direction_ambiguous = False
+            reversal = False
+            if resolved_sign == 0:
+                resolved_sign = roll_sign
+            elif roll_sign != 0 and roll_sign != resolved_sign:
+                # The bank disagrees with the heading trend.  The trend is a fit
+                # over seconds of history, so at a reversal it still describes
+                # the turn the aircraft has already left; the bank describes the
+                # one it is entering.  Following the stale direction would drive
+                # the entry point the wrong way for the whole lead, so the roll
+                # wins whenever it is unambiguous.
+                reversal_bank_deg = max(
+                    roll_evidence_bank_deg,
+                    _cfg_float(cfg, "line_projection_reversal_bank_deg", 10.0),
+                )
+                if roll_deg is not None and abs(float(roll_deg)) >= reversal_bank_deg:
+                    resolved_sign = roll_sign
+                    reversal = True
+                else:
+                    # Neither source is decisive enough to steer a multi-second
+                    # projection, so defer to the closed form below.
+                    direction_ambiguous = True
+
+            if not direction_ambiguous:
+                learned_target_deg = (
+                    float(resolved_sign) * -1.0 * steady_bank_deg
+                    if resolved_sign != 0
+                    else 0.0
+                )
+                # The learned steady bank describes where a roll-IN is heading.
+                # An aircraft already holding a bank is not heading anywhere -
+                # it is holding what it has - so pushing it toward a learned
+                # average would bank it further and over-turn the projection.
+                # Only an active transition gets the learned target; a settled
+                # turn holds its own measured bank.
+                transition_rate_dps = max(
+                    0.1, _cfg_float(cfg, "roll_slew_learn_min_dps", 0.8)
+                )
+                rolling_in = (
+                    roll_rate_dps is not None
+                    and abs(float(roll_rate_dps)) >= transition_rate_dps
+                    and abs(float(learned_target_deg) - float(roll_deg)) > 1.0
+                )
+                target_roll_deg = (
+                    learned_target_deg if rolling_in else float(roll_deg)
+                )
+                # Once the bank is established, the measured roll rate is
+                # residual noise from the roll-in that just ended.  Feeding it
+                # onward makes the model keep banking past the steady value and
+                # over-turn, so the transition input is dropped on arrival.
+                settled_deg = max(
+                    0.1, _cfg_float(cfg, "line_projection_bank_settled_deg", 2.5)
+                )
+                if abs(float(target_roll_deg) - float(roll_deg)) <= settled_deg:
+                    roll_rate_dps = None
+                # heading convention: nav heading (0=N, clockwise) is what
+                # predict_turn_motion integrates; the trend heading is stored as
+                # a math-frame rad, so hand the model the nav heading in degrees.
+                source_lat_deg, source_lon_deg = _local_m_to_latlon(
+                    latest.x_m, latest.y_m, self._ref_lat_deg, self._ref_lon_deg
+                )
+                source_coord: dict[str, float] = {
+                    "latitude": float(source_lat_deg),
+                    "longitude": float(source_lon_deg),
+                }
+                if latest.altitude_m is not None:
+                    source_coord["altitude"] = float(latest.altitude_m)
+                prediction = predict_turn_motion(
+                    source_coord,
+                    speed_mps,
+                    heading_deg,
+                    float(roll_deg),
+                    pitch_deg,
+                    lead_s,
+                    roll_rate_dps=roll_rate_dps,
+                    target_roll_deg=target_roll_deg,
+                    performance=performance,
+                )
+                if prediction is not None:
+                    model = str(prediction.model)
+                    if reversal:
+                        # Surface that the roll overruled a stale trend, so a
+                        # surprising entry point is explainable from the log.
+                        model = f"{model}+roll-reversal"
+        if prediction is not None:
+            coordinate = dict(prediction.coordinate)
+            if latest.altitude_m is not None and "altitude" not in coordinate:
+                coordinate["altitude"] = float(latest.altitude_m)
+            self._last_line_prediction_model = model
+            return (
+                coordinate,
+                float(prediction.heading_deg),
+                float(lead_s),
+            )
+
+        # Fallback: the closed-form constant-turn-rate arc, still driven by the
+        # (now speed-corrected) trend.  Used when attitude is unavailable or
+        # low-confidence.
         omega_rad_s = math.radians(float(trend.turn_rate_dps))
         if trend.turn_sign != 0 and abs(omega_rad_s) >= math.radians(0.2):
             projected_heading_rad = heading_rad + (omega_rad_s * lead_s)
@@ -1827,6 +2316,7 @@ class AircraftTurnMonitor:
                 * (-math.cos(projected_heading_rad) + math.cos(heading_rad))
             )
         else:
+            model = "constant-velocity"
             projected_heading_rad = heading_rad
             projected_x_m = float(latest.x_m) + (math.cos(heading_rad) * speed_mps * lead_s)
             projected_y_m = float(latest.y_m) + (math.sin(heading_rad) * speed_mps * lead_s)
@@ -1836,12 +2326,13 @@ class AircraftTurnMonitor:
             self._ref_lat_deg,
             self._ref_lon_deg,
         )
-        coordinate: dict[str, float] = {
+        coordinate = {
             "latitude": float(lat_deg),
             "longitude": float(lon_deg),
         }
         if latest.altitude_m is not None:
             coordinate["altitude"] = float(latest.altitude_m)
+        self._last_line_prediction_model = model
         return (
             coordinate,
             float(_math_rad_to_heading_deg(projected_heading_rad)),
@@ -1968,6 +2459,11 @@ class AircraftTurnMonitor:
         self._last_roll_rate_dps, self._last_target_roll_deg = self._estimate_roll_dynamics(
             latest,
             cfg,
+        )
+        self._maybe_update_roll_dynamics_learning(
+            cfg=cfg,
+            latest=latest,
+            observed_nav_rate_dps=observed_nav_rate_dps,
         )
 
         attitude_weight = _coerce_float(cfg.get("attitude_turn_rate_blend"))
@@ -2643,6 +3139,12 @@ class AircraftTurnMonitor:
                 if line_prediction_lead_s is not None
                 else None
             ),
+            speed_source=str(latest.speed_source),
+            track_speed_mps=latest.track_speed_mps,
+            reported_speed_mps=latest.reported_speed_mps,
+            adaptive_roll_slew_dps=self._learned_roll_slew_dps(cfg),
+            adaptive_steady_bank_deg=self._learned_steady_bank_deg(cfg),
+            line_prediction_model=self._last_line_prediction_model,
         )
 
 

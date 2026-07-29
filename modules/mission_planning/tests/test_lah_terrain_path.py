@@ -7,7 +7,11 @@ from modules.mission_planning.MissionPlanner.data_def.lah_terrain_path import (
     LAH_LOW_TERRAIN_MAX_LENGTH_RATIO,
     LAH_TERRAIN_MAX_WAYPOINT_SPACING_M,
     LAH_TERRAIN_MAX_OUTPUT_WAYPOINTS,
+    LAH_VERTICAL_RATE_USE_RATIO,
     build_lah_terrain_following_path,
+)
+from modules.mission_planning.MissionPlanner.dynamics.lah_op_envlp import (
+    DEFAULT_ENVELOPE,
 )
 
 
@@ -29,6 +33,29 @@ def _terrain_provider(coords):
         fraction = (float(longitude) - START_LON) / (END_LON - START_LON)
         values.append(_terrain_for_fraction(fraction))
     return values
+
+
+def _assert_vertical_profile_is_smooth(
+    path,
+    *,
+    cruise_speed_mps: float = 40.0,
+) -> None:
+    for left, right in zip(path, path[1:]):
+        distance_m = float(right["cum_m"]) - float(left["cum_m"])
+        altitude_delta_m = float(right["altitude"]) - float(left["altitude"])
+        rate_mps = (
+            float(DEFAULT_ENVELOPE.climb_rate_mps)
+            if altitude_delta_m >= 0.0
+            else float(DEFAULT_ENVELOPE.descent_rate_mps)
+        )
+        allowed_delta_m = (
+            rate_mps
+            * LAH_VERTICAL_RATE_USE_RATIO
+            * distance_m
+            / cruise_speed_mps
+        )
+        # Output altitude is rounded up to an integer metre at each waypoint.
+        assert abs(altitude_delta_m) <= allowed_delta_m + 2.0
 
 
 def test_profile_waypoints_clear_every_dense_dem_sample() -> None:
@@ -163,9 +190,10 @@ def test_low_terrain_option_detours_through_nearby_valley() -> None:
 
     assert all(math.isclose(float(point["latitude"]), start[0]) for point in direct_path)
     assert max(float(point["latitude"]) for point in valley_path) >= 37.004
-    assert min(int(point["altitude"]) for point in valley_path) == int(
-        80 + LAH_LOW_LEVEL_CLEARANCE_M
+    assert min(int(point["altitude"]) for point in valley_path) < min(
+        int(point["altitude"]) for point in direct_path
     )
+    _assert_vertical_profile_is_smooth(valley_path)
     assert math.isclose(float(valley_path[0]["latitude"]), start[0], abs_tol=1e-7)
     assert math.isclose(float(valley_path[0]["longitude"]), start[1], abs_tol=1e-7)
     assert math.isclose(float(valley_path[-1]["latitude"]), end[0], abs_tol=1e-7)
@@ -175,6 +203,59 @@ def test_low_terrain_option_detours_through_nearby_valley() -> None:
     assert float(valley_path[-1]["cum_m"]) < (
         float(direct_path[-1]["cum_m"]) * LAH_LOW_TERRAIN_MAX_LENGTH_RATIO
     )
+
+
+def test_short_shallow_dem_dip_is_flattened_and_its_waypoint_is_removed() -> None:
+    start_lon = 127.0
+    end_lon = 127.006
+
+    def shallow_valley_provider(coords):
+        values = []
+        for _latitude, longitude in coords:
+            fraction = (float(longitude) - start_lon) / (end_lon - start_lon)
+            values.append(25.0 if fraction <= 0.05 or fraction >= 0.95 else 5.0)
+        return values
+
+    path = build_lah_terrain_following_path(
+        [(37.0, start_lon), (37.0, end_lon)],
+        terrain_provider=shallow_valley_provider,
+        sample_spacing_m=10.0,
+        max_waypoint_spacing_m=1000.0,
+        max_profile_excess_m=5.0,
+        cruise_speed_mps=40.0,
+    )
+
+    assert len(path) == 2
+    assert [int(point["altitude"]) for point in path] == [100, 100]
+
+
+def test_required_ridge_is_kept_with_rate_limited_climb_and_descent() -> None:
+    start_lon = 127.0
+    end_lon = 127.024
+
+    def ridge_provider(coords):
+        values = []
+        for _latitude, longitude in coords:
+            fraction = (float(longitude) - start_lon) / (end_lon - start_lon)
+            values.append(225.0 if abs(fraction - 0.5) < 0.025 else 25.0)
+        return values
+
+    path = build_lah_terrain_following_path(
+        [(37.0, start_lon), (37.0, end_lon)],
+        terrain_provider=ridge_provider,
+        sample_spacing_m=10.0,
+        max_waypoint_spacing_m=500.0,
+        max_profile_excess_m=10.0,
+        cruise_speed_mps=40.0,
+    )
+
+    assert len(path) > 2
+    assert max(int(point["altitude"]) for point in path) >= 300
+    assert max(
+        float(right["cum_m"]) - float(left["cum_m"])
+        for left, right in zip(path, path[1:])
+    ) <= 500.0 + 1e-6
+    _assert_vertical_profile_is_smooth(path)
 
 
 def test_requested_narrow_corridor_is_not_expanded() -> None:

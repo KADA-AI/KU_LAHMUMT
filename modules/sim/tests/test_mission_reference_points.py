@@ -5,6 +5,7 @@ from pathlib import Path
 
 from modules.sim.mission.mission_loader import load_flight_paths
 from modules.sim.mission.mission_plan_loader import build_mission_plan_payload
+from modules.sim.mission.mission_validator import validate_mission_plan_result
 
 
 def _write_json(path: Path, payload: object) -> None:
@@ -67,3 +68,42 @@ def test_folder_loader_exposes_latest_reference_point_lists(tmp_path: Path) -> N
     assert result["takeOverInfoList"][0]["aircraftID"] == 4
     assert len(result["handOverInfoList"]) == 1
     assert len(result["rtbCoordinateList"]) == 1
+
+
+def test_direct_input_plan_uses_the_mission_plan_package_identity(
+    tmp_path: Path,
+) -> None:
+    _write_json(
+        tmp_path / "MissionPlan" / "700000001.json",
+        {
+            "missionPlanID": 700000001,
+            "inputMissionPackageID": 3,
+            "aircraftList": [],
+        },
+    )
+    source_path = tmp_path / "InputMissionPlan" / "3.json"
+    _write_json(
+        source_path,
+        {
+            "inputMissionPackageID": 4,
+            "inputMissionPackageType": 2,
+            "inputMissionList": [],
+        },
+    )
+
+    result = build_mission_plan_payload(700000001, db_root=tmp_path)
+
+    assert result["ok"] is True
+    assert result["inputMissionPackageID"] == 3
+    assert result["inputMissionPackageSourceID"] == 4
+    assert result["inputMissionPackageIDNormalized"] is True
+    assert result["inputMissionPlans"][0]["inputMissionPackageID"] == 3
+    assert json.loads(source_path.read_text(encoding="utf-8"))[
+        "inputMissionPackageID"
+    ] == 4
+
+    validation = validate_mission_plan_result(result)
+    assert not any(
+        issue.get("code") == "input_package_missing_or_mismatch"
+        for issue in validation["issues"]
+    )

@@ -13,7 +13,9 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 from modules.common import agent_status_snapshot, db_paths, mission_area_replan_store
+from modules.common.turn_dynamics import predict_turn_motion
 from modules.monitoring.logic.replan_runtime_settings import (
+    get_path_deviation_settings,
     get_post_attack_rejoin_settings,
     get_replan_toggle,
     get_target_detection_settings,
@@ -32,6 +34,9 @@ from modules.mission_planning.runtime.validation.attack_continuity import (
     compare_post_attack_pairs,
 )
 from modules.mission_planning.engine.mission_generation.id_allocation.allocator import reserve_mission_plan_ids
+from modules.mission_planning.engine.mission_generation.artifacts_0301_0302_0303_0304.d0304 import (
+    enforce_lah_kinematic_feasibility_inplace,
+)
 from modules.mission_planning.pipelines.mission_path_trim import (
     DEFAULT_SWEEP_SPLIT_LOOKAHEAD_SECONDS,
     count_sweep_points_in_waypoints,
@@ -54,6 +59,7 @@ from modules.mission_planning.pipelines.line_search_speed_guard import (
     effective_line_search_transit_m,
 )
 from modules.mission_planning.pipelines.ground_maneuver_mode import (
+    TYPE2_SELF_RELIANCE_GUARD_AREA,
     TYPE2_SELF_RELIANCE_OUTBOUND_LINE,
     TYPE2_SELF_RELIANCE_RETURN_LINE,
     resolve_type2_self_reliance_phase,
@@ -72,6 +78,7 @@ from modules.mission_planning.replanning.triggers.prior.pipeline import (
     _RELEASE_RESUME_FAST_SPEED_MPS,
     _build_uav_transit_waypoint,
     _build_uav_release_resume_waypoints,
+    _build_no_capture_completion_loiter_waypoint,
     _build_other_uav_resume_package,
     _clone_follow_up_replan_artifacts,
     _build_remaining_input_mission_for_collaborative_replan,
@@ -86,6 +93,7 @@ from modules.mission_planning.replanning.triggers.prior.pipeline import (
     _skip_replan_follow_up_reason,
     _source_input_mission_is_locked_type2_branch,
     _sync_resume_mission_info_with_waypoints,
+    _apply_no_capture_completion_loiter_mission_info,
     _write_collaborative_remaining_imp_update,
 )
 from modules.mission_planning.runtime.state.attack_tracking import (
@@ -132,7 +140,7 @@ _DEFAULT_ACTIVE_PROGRESS_SKIP_PERCENT = 70
 # 인데 잔여 87s로 판정되어 재분할이 생략되고 영역이 done 처리됨).
 _DEFAULT_LOW_PROGRESS_ETA_GUARD_PERCENT = 25
 _POST_ATTACK_SHORT_RETURN_DEFAULT_M = 2000.0
-_POST_ATTACK_COMPLETE_HOLD_SECONDS = 15
+_POST_ATTACK_COMPLETE_HOLD_SECONDS = 5
 _POST_ATTACK_COMPLETE_HOLD_RADIUS_M = 180
 _POST_ATTACK_COMPLETE_HOLD_SPEED_MPS = 30.0
 _FORMATION_FLIGHT_INPUT_MISSION_TYPE = 7
@@ -174,6 +182,20 @@ def _requires_type2_individual_suffix_refresh(
     )
 
 
+def _allow_active_suffix_latest_plan_fallback(
+    *,
+    force_type2_individual_suffix_refresh: bool,
+) -> bool:
+    """Whether a missing exact progress row may use another plan option.
+
+    A locked Type-2 branch is immutable plan-owned work.  A numerically newer
+    option can be unselected and can already say that the input is complete;
+    using it would delete the current plan's still-executable suffix.
+    """
+
+    return not bool(force_type2_individual_suffix_refresh)
+
+
 def _source_type2_self_reliance_phase(
     *,
     source_plan_id: Optional[int],
@@ -209,10 +231,37 @@ def _include_active_completion_boundary_hold(
     preserve_current_mission: bool,
     pending_area_pass_reassignment: bool,
 ) -> bool:
+    # An executable current capture suffix and a completion hold are mutually
+    # exclusive.  ``preserve_current_mission`` means the coverage signal still
+    # reports work even though its carrier path is marked done; that mission
+    # must resume directly instead of being placed behind a synthetic loiter.
     return bool(
         _active_progress_is_complete(progress_percent)
-        or preserve_current_mission
         or pending_area_pass_reassignment
+    )
+
+
+def _should_preserve_active_current_mission(
+    *,
+    path_all_done: bool,
+    completed_by_on_mission: bool,
+    progress_percent: Any,
+    remaining_snapshot_completed: bool,
+) -> bool:
+    """Resolve a stale carrier-done/current-capture conflict.
+
+    The remaining-geometry snapshot is authoritative when it explicitly says
+    that the input is complete.  In that case a lagging coverage percentage
+    must not revive the completed LINE mission behind a completion loiter.
+    """
+
+    normalized_progress = _to_int(progress_percent)
+    return bool(
+        path_all_done
+        and not completed_by_on_mission
+        and normalized_progress is not None
+        and int(normalized_progress) < 100
+        and not remaining_snapshot_completed
     )
 
 
@@ -220,10 +269,15 @@ def _block_post_attack_followups_until_next_collab(
     *,
     current_mission_completed: bool,
     pending_area_pass_reassignment: bool,
+    type2_branch_group: bool = False,
 ) -> bool:
     """Keep the next input mission non-executable until collaboration handoff."""
 
-    return bool(current_mission_completed or pending_area_pass_reassignment)
+    return bool(
+        current_mission_completed
+        or pending_area_pass_reassignment
+        or type2_branch_group
+    )
 
 
 def _mark_post_attack_followups_execution_blocked(
@@ -240,10 +294,38 @@ def _mark_post_attack_followups_execution_blocked(
         input_id = _extract_related_input_mission_id(mission)
         if input_id is None or int(input_id) == int(current_input_id):
             mission.pop("executionBlockedUntilNextCollab", None)
+            mission.pop("ExecutionBlockedUntilNextCollab", None)
             continue
         mission["executionBlockedUntilNextCollab"] = True
+        mission.pop("ExecutionBlockedUntilNextCollab", None)
         blocked += 1
     return int(blocked)
+
+
+def _clear_post_attack_followups_execution_blocked(
+    missions: List[Dict[str, Any]],
+) -> int:
+    """Make every retained follow-up executable at an explicit rejoin handoff.
+
+    Follow-up cloning intentionally preserves unknown mission metadata.  That
+    includes an older ``executionBlockedUntilNextCollab`` marker, so merely
+    choosing the non-blocking branch is not enough: the stale marker must be
+    removed explicitly from the newly emitted package.
+    """
+
+    cleared = 0
+    for mission in missions:
+        if not isinstance(mission, dict):
+            continue
+        had_block = bool(
+            "executionBlockedUntilNextCollab" in mission
+            or "ExecutionBlockedUntilNextCollab" in mission
+        )
+        mission.pop("executionBlockedUntilNextCollab", None)
+        mission.pop("ExecutionBlockedUntilNextCollab", None)
+        if had_block:
+            cleared += 1
+    return int(cleared)
 
 
 def _post_attack_reserved_ids_summary(
@@ -388,6 +470,11 @@ def _write_or_defer_post_attack_json_batch(
 ) -> None:
     for path, payload in entries:
         if Path(path).parent.name == "FlightPath" and isinstance(payload, dict):
+            enforce_lah_kinematic_feasibility_inplace(
+                payload,
+                preserve_existing_timing=True,
+                allocate_waypoint_ids=None,
+            )
             normalize_flight_path_waypoint_altitudes_inplace(payload)
             normalize_flight_path_waypoint_speeds_inplace(payload)
     if run_cache is None:
@@ -414,6 +501,11 @@ def _validate_generated_post_attack_artifact_payloads(
 
     path_rows = [row for row in flight_paths if isinstance(row, dict)]
     for payload in path_rows:
+        enforce_lah_kinematic_feasibility_inplace(
+            payload,
+            preserve_existing_timing=True,
+            allocate_waypoint_ids=None,
+        )
         normalize_flight_path_waypoint_altitudes_inplace(payload)
         normalize_flight_path_waypoint_speeds_inplace(payload)
     return validate_generated_artifact_payloads(
@@ -845,6 +937,7 @@ def run_post_attack_rejoin_pipeline(
     cleared_aircraft_ids: Set[int] = set()
     pending_clear_aircraft_ids: Set[int] = set()
     rebound_aircraft_ids: Set[int] = set(matched_rebound_aircraft_ids)
+    continuing_attack_imp_replacements: Dict[int, Tuple[int, int]] = {}
     group_summaries: List[Dict[str, Any]] = []
 
     assignments_by_input: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
@@ -975,6 +1068,25 @@ def run_post_attack_rejoin_pipeline(
                         int(aircraft_id),
                         int(lah_update["individualMissionPackageID"]),
                     ):
+                        if bool(lah_update.get("continuityRepackaged")):
+                            source_imp_id = _to_int(
+                                lah_update.get("sourceIndividualMissionPackageID")
+                            )
+                            replacement_imp_id = _to_int(
+                                lah_update.get("individualMissionPackageID")
+                            )
+                            if (
+                                source_imp_id is not None
+                                and source_imp_id > 0
+                                and replacement_imp_id is not None
+                                and replacement_imp_id > 0
+                            ):
+                                continuing_attack_imp_replacements[
+                                    int(aircraft_id)
+                                ] = (
+                                    int(source_imp_id),
+                                    int(replacement_imp_id),
+                                )
                         updated_aircraft_ids.add(int(aircraft_id))
                         generated_imp_ids.add(int(lah_update["individualMissionPackageID"]))
                         generated_path_ids.update(
@@ -1206,6 +1318,14 @@ def run_post_attack_rejoin_pipeline(
                 current_input_id=int(current_input_id),
                 run_cache=run_cache,
             )
+            type2_branch_group_barrier = bool(
+                self_reliance_phase
+                in {
+                    TYPE2_SELF_RELIANCE_OUTBOUND_LINE,
+                    TYPE2_SELF_RELIANCE_GUARD_AREA,
+                    TYPE2_SELF_RELIANCE_RETURN_LINE,
+                }
+            )
             if pending_area_pass_reassignment:
                 _emit(
                     "[POSTATTACK][ACTIVE-DONE] pending Area OUT/RETURN work detected; "
@@ -1223,7 +1343,15 @@ def run_post_attack_rejoin_pipeline(
                     str(skip_reason or "") == "remaining_snapshot_completed"
                 ),
                 pending_area_pass_reassignment=bool(pending_area_pass_reassignment),
+                type2_branch_group=bool(type2_branch_group_barrier),
             )
+            if type2_branch_group_barrier:
+                _emit(
+                    "[POSTATTACK][TYPE2-BRANCH-BARRIER] current branch owners remain "
+                    "on the shared input; future inputs stay blocked until the "
+                    "next collaborative handoff "
+                    f"(inputMissionID={current_input_id})."
+                )
             for aircraft_id in sorted(active_suffix_candidate_ids):
                 if force_type2_individual_suffix_refresh:
                     # Exact sweep/LINE progress is applied by
@@ -1278,17 +1406,19 @@ def run_post_attack_rejoin_pipeline(
                         f"(aircraft={aircraft_id}, "
                         f"progress={progress_percent if progress_percent is not None else 'n/a'}%)."
                     )
-                preserve_current_active_mission = bool(
-                    path_all_done
-                    and not completed_by_on_mission
-                    and progress_percent is not None
-                    and int(progress_percent) < 100
+                preserve_current_active_mission = _should_preserve_active_current_mission(
+                    path_all_done=bool(path_all_done),
+                    completed_by_on_mission=bool(completed_by_on_mission),
+                    progress_percent=progress_percent,
+                    remaining_snapshot_completed=(
+                        str(skip_reason or "") == "remaining_snapshot_completed"
+                    ),
                 )
                 if preserve_current_active_mission:
                     _emit(
                         "[POSTATTACK][ACTIVE-DONE] active path waypoints already done; "
                         "coverage progress is below 100%, so current imaging mission will be "
-                        "kept after the post-attack boundary marker "
+                        "kept directly without a post-attack boundary loiter "
                         f"(aircraft={aircraft_id}, progress={int(progress_percent)}%)."
                     )
                 elif path_all_done and progress_percent is None:
@@ -1302,17 +1432,26 @@ def run_post_attack_rejoin_pipeline(
                     current_input_id=int(current_input_id),
                     aircraft_id=int(aircraft_id),
                     hold_seconds=int(active_done_hold_seconds),
+                    hold_coordinate=_normalize_coordinate(state.get("coordinate")),
                     now_ms=int(now_ms),
                     emit=_emit,
                     log_prefix="[POSTATTACK][ACTIVE-DONE]",
                     run_cache=run_cache,
                     preserve_current_mission=bool(preserve_current_active_mission),
-                    include_completion_boundary_hold=_include_active_completion_boundary_hold(
-                        progress_percent,
-                        preserve_current_mission=bool(preserve_current_active_mission),
-                        pending_area_pass_reassignment=bool(
-                            pending_area_pass_reassignment
-                        ),
+                    include_completion_boundary_hold=bool(
+                        _include_active_completion_boundary_hold(
+                            progress_percent,
+                            preserve_current_mission=bool(
+                                preserve_current_active_mission
+                            ),
+                            pending_area_pass_reassignment=bool(
+                                pending_area_pass_reassignment
+                            ),
+                        )
+                        or (
+                            hold_group_until_next_collab
+                            and not preserve_current_active_mission
+                        )
                     ),
                     block_follow_up_until_reassignment=bool(
                         hold_group_until_next_collab
@@ -1385,17 +1524,37 @@ def run_post_attack_rejoin_pipeline(
                         input_mission_id=int(current_input_id),
                         aircraft_ids=[int(aircraft_id)],
                         source_detail={},
-                        allow_latest_plan_fallback=True,
+                        # A locked Type-2 branch belongs to this exact source
+                        # plan.  A newer, unselected option may already report
+                        # the same input as complete; treating that row as the
+                        # current branch used to discard the whole suffix.
+                        allow_latest_plan_fallback=(
+                            _allow_active_suffix_latest_plan_fallback(
+                                force_type2_individual_suffix_refresh=bool(
+                                    force_type2_individual_suffix_refresh
+                                )
+                            )
+                        ),
                         run_cache=run_cache,
                     )
                     line_remaining_completed = False
                     if has_line_remaining_geometry(line_remaining_detail):
-                        _emit(
-                            "[POSTATTACK][ACTIVE-SUFFIX] applying row-level LINE remaining "
-                            f"(aircraft={aircraft_id}, fragments="
-                            f"{line_remaining_detail.get('lineRemainingFragmentCount')}, "
-                            f"fallback={bool(line_remaining_detail.get('lineScanSourcePlanFallback'))})."
-                        )
+                        if force_type2_individual_suffix_refresh:
+                            _emit(
+                                "[POSTATTACK][ACTIVE-SUFFIX] Type2 LINE centerline progress "
+                                "will trim the ordered executable sweep without replacing its "
+                                "filming geometry "
+                                f"(aircraft={aircraft_id}, fragments="
+                                f"{line_remaining_detail.get('lineRemainingFragmentCount')}, "
+                                f"fallback={bool(line_remaining_detail.get('lineScanSourcePlanFallback'))})."
+                            )
+                        else:
+                            _emit(
+                                "[POSTATTACK][ACTIVE-SUFFIX] applying row-level LINE remaining "
+                                f"(aircraft={aircraft_id}, fragments="
+                                f"{line_remaining_detail.get('lineRemainingFragmentCount')}, "
+                                f"fallback={bool(line_remaining_detail.get('lineScanSourcePlanFallback'))})."
+                            )
                     else:
                         line_remaining_completed = bool(
                             isinstance(line_remaining_detail, dict)
@@ -1438,17 +1597,27 @@ def run_post_attack_rejoin_pipeline(
                             current_input_id=int(current_input_id),
                             aircraft_id=int(aircraft_id),
                             hold_seconds=int(active_done_hold_seconds),
+                            hold_coordinate=_normalize_coordinate(state.get("coordinate")),
                             now_ms=int(now_ms),
                             emit=_emit,
                             log_prefix="[POSTATTACK][ACTIVE-SUFFIX]",
                             run_cache=run_cache,
                             preserve_current_mission=False,
-                            include_completion_boundary_hold=False,
-                            block_follow_up_until_reassignment=False,
+                            include_completion_boundary_hold=bool(
+                                hold_group_until_next_collab
+                            ),
+                            block_follow_up_until_reassignment=bool(
+                                hold_group_until_next_collab
+                            ),
                         )
                         if isinstance(update, dict):
                             update["completedCurrentMissionDroppedByLineProgress"] = True
                     else:
+                        resume_line_remaining_detail = (
+                            None
+                            if force_type2_individual_suffix_refresh
+                            else line_remaining_detail
+                        )
                         update = _build_other_uav_resume_package(
                             source_plan_id=int(current_plan_id),
                             aircraft_id=int(aircraft_id),
@@ -1461,8 +1630,15 @@ def run_post_attack_rejoin_pipeline(
                             drop_prefix_missions=True,
                             allow_first_mission_fallback=skip_reason != "active_group_progress_high",
                             include_done_reference_mission=False,
-                            line_remaining_detail=line_remaining_detail,
+                            line_remaining_detail=resume_line_remaining_detail,
                             log_prefix="[POSTATTACK][ACTIVE-SUFFIX]",
+                            allow_line_scan_sweep_point_trim=bool(
+                                force_type2_individual_suffix_refresh
+                            ),
+                            clear_follow_up_execution_blocks=bool(
+                                force_type2_individual_suffix_refresh
+                                and not hold_group_until_next_collab
+                            ),
                         )
                     if not isinstance(update, dict):
                         active_path_resume_failed_aircraft_ids.add(int(aircraft_id))
@@ -1659,6 +1835,75 @@ def run_post_attack_rejoin_pipeline(
         )
         if collab is None:
             _collect_returning_lah_updates()
+            return_only_fallback = _apply_collab_unavailable_return_only_fallback(
+                attack_plan_id=int(current_plan_id),
+                current_input_id=int(current_input_id),
+                group_assignments=[dict(item) for item in group_assignments],
+                agent_state_map=agent_state_map,
+                new_plan_data=new_plan_data,
+                now_ms=int(now_ms),
+                emit=_emit,
+                run_cache=run_cache,
+                reservation_summaries=id_reservation_summaries,
+            )
+            fallback_updates = [
+                dict(item)
+                for item in (
+                    return_only_fallback.get("tracking_release_updates") or []
+                )
+                if isinstance(item, dict)
+            ]
+            fallback_released_ids = {
+                int(aid)
+                for aid in (
+                    return_only_fallback.get("released_aircraft_ids") or []
+                )
+                if _to_int(aid) is not None and int(aid) > 0
+            }
+            fallback_failed_ids = {
+                int(aid)
+                for aid in (
+                    return_only_fallback.get("failed_aircraft_ids") or []
+                )
+                if _to_int(aid) is not None and int(aid) > 0
+            }
+            if fallback_updates:
+                evaluation["tracking_release_updates"] = fallback_updates
+            if fallback_failed_ids:
+                evaluation["tracking_release_failed_aircraft_ids"] = sorted(
+                    fallback_failed_ids
+                )
+            if fallback_released_ids:
+                updated_aircraft_ids.update(fallback_released_ids)
+                pending_clear_aircraft_ids.update(fallback_released_ids)
+                generated_imp_ids.update(
+                    int(imp_id)
+                    for imp_id in (
+                        return_only_fallback.get("generated_imp_ids") or []
+                    )
+                    if _to_int(imp_id) is not None and int(imp_id) > 0
+                )
+                generated_path_ids.update(
+                    int(path_id)
+                    for path_id in (
+                        return_only_fallback.get("generated_path_ids") or []
+                    )
+                    if _to_int(path_id) is not None and int(path_id) > 0
+                )
+                evaluation["replan_needed"] = False
+                evaluation["skip_reason"] = (
+                    "collaborative_replan_unavailable_return_only"
+                )
+                evaluation["tracking_assignment_retained"] = bool(
+                    fallback_failed_ids
+                )
+                _emit(
+                    "Collaborative replan unavailable; returning tracking UAVs "
+                    "replaced with safe return-only packages "
+                    f"(released={sorted(fallback_released_ids)}, "
+                    f"failed={sorted(fallback_failed_ids)})."
+                )
+                continue
             evaluation["replan_needed"] = False
             evaluation["skip_reason"] = "collaborative_replan_unavailable"
             evaluation["tracking_assignment_retained"] = True
@@ -1717,11 +1962,44 @@ def run_post_attack_rejoin_pipeline(
         candidate_attack_rows, candidate_attack_scan_errors = collect_lah_attack_rows(
             new_plan_data
         )
-        live_attack_invariant = compare_post_attack_pairs(
-            source_attack_rows,
+        normalized_source_attack_rows: List[Dict[str, Any]] = []
+        for source_row in source_attack_rows:
+            normalized_row = dict(source_row)
+            aircraft_id = _to_int(normalized_row.get("aircraftID"))
+            source_imp_id = _to_int(
+                normalized_row.get("individualMissionPackageID")
+            )
+            replacement = (
+                continuing_attack_imp_replacements.get(int(aircraft_id))
+                if aircraft_id is not None
+                else None
+            )
+            if (
+                replacement is not None
+                and source_imp_id is not None
+                and int(source_imp_id) == int(replacement[0])
+            ):
+                # Only the package shell changes. Surviving mission/path/WP
+                # identities must remain exact across the target-specific prune.
+                normalized_row["individualMissionPackageID"] = int(
+                    replacement[1]
+                )
+            normalized_source_attack_rows.append(normalized_row)
+        live_attack_invariant = _compare_post_attack_live_attacks(
+            normalized_source_attack_rows,
             candidate_attack_rows,
-            closed_target_ids={int(target_id)},
+            target_id=int(target_id),
         )
+        live_attack_invariant["continuingAttackImpReplacements"] = {
+            str(aircraft_id): {
+                "source": int(source_imp_id),
+                "replacement": int(replacement_imp_id),
+            }
+            for aircraft_id, (
+                source_imp_id,
+                replacement_imp_id,
+            ) in sorted(continuing_attack_imp_replacements.items())
+        }
         live_attack_invariant["sourceScanErrors"] = list(source_attack_scan_errors)
         live_attack_invariant["candidateScanErrors"] = list(candidate_attack_scan_errors)
         if source_attack_scan_errors or candidate_attack_scan_errors:
@@ -1737,6 +2015,7 @@ def run_post_attack_rejoin_pipeline(
                 f"actual={live_attack_invariant.get('actual')}, "
                 f"missing={live_attack_invariant.get('missing')}, "
                 f"unexpected={live_attack_invariant.get('unexpected')}, "
+                f"staleClosed={live_attack_invariant.get('staleClosed')}, "
                 f"errors={(source_attack_scan_errors + candidate_attack_scan_errors)[:3]})."
             )
             # Generated IMP/FlightPath files are harmless orphan artifacts.  Do
@@ -2259,6 +2538,241 @@ def _remaining_lah_live_attack_target_ids(
     }
 
 
+def _build_continuing_attack_prune_update(
+    *,
+    imp_data: Dict[str, Any],
+    mission_list: List[Dict[str, Any]],
+    removed_attack_indices: set[int],
+    current_idx: Optional[int],
+    current_wp: Optional[int],
+    current_state: Dict[str, Any],
+    current_artifacts: Any,
+    closed_target_ids: set[int],
+    remaining_live_attack_target_ids: set[int],
+    aircraft_id: int,
+    now_ms: int,
+    emit: LogCallback,
+    log_prefix: str,
+    run_cache: Optional[_PostAttackRunCache],
+) -> Optional[Dict[str, Any]]:
+    """Remove a closed queued attack without resetting surviving attack IDs.
+
+    The package shell gets a fresh ID, while every surviving mission/path/WP
+    identity remains unchanged.  If the closed attack is the currently flown
+    mission, clone only that path with its firing command blanked so the
+    already-planned descent/cover suffix can still execute.
+    """
+
+    normalized_removed = {
+        int(index)
+        for index in removed_attack_indices
+        if 0 <= int(index) < len(mission_list)
+    }
+    if not normalized_removed:
+        return None
+    current_removed = (
+        current_idx is not None and int(current_idx) in normalized_removed
+    )
+    current_safety_resume: Optional[
+        Tuple[Dict[str, Any], Dict[str, Any], List[Dict[str, Any]]]
+    ] = None
+    if current_removed and current_idx is not None:
+        from modules.mission_planning.replanning.triggers.attack.pipeline import (
+            _split_done_resume_lah_path,
+        )
+
+        current_source_mission = mission_list[int(current_idx)]
+        current_source_path_id = _to_int(current_source_mission.get("pathID"))
+        current_source_path = _load_path_payload(
+            current_source_path_id,
+            run_cache=run_cache,
+            copy_result=True,
+        )
+        if not isinstance(current_source_path, dict):
+            emit(
+                f"{log_prefix} current closed-attack path unavailable; "
+                f"cannot preserve its safety suffix (aircraft={aircraft_id}, "
+                f"path={current_source_path_id})."
+            )
+            return None
+        current_resume_waypoints = _extract_lah_waypoint_list(
+            current_source_path
+        )
+        current_coord = (
+            _normalize_coordinate((current_state or {}).get("coordinate"))
+            or _normalize_coordinate(
+                ((current_state or {}).get("mannedInfo") or {}).get(
+                    "coordinate"
+                )
+            )
+        )
+        current_is_regain_cover = _current_waypoint_is_planned_regain_cover(
+            current_resume_waypoints,
+            current_wp,
+        )
+        _, current_resume_waypoints, _removed_wp_id = (
+            _split_done_resume_lah_path(
+                current_source_path,
+                artifacts=current_artifacts,
+                current_coord=current_coord,
+                emit=emit,
+                force_nonempty_resume=False,
+                exclude_current_from_resume=not current_is_regain_cover,
+                resume_trim_anchor_coord=None,
+            )
+        )
+        if current_resume_waypoints:
+            current_safety_resume = (
+                current_source_mission,
+                current_source_path,
+                current_resume_waypoints,
+            )
+
+    safety_waypoint_count = (
+        len(current_safety_resume[2])
+        if current_safety_resume is not None
+        else 0
+    )
+    reservation = ReplanIdReservation.reserve(
+        imp_count=1,
+        individual_count=1 if current_safety_resume is not None else 0,
+        path_count_by_aircraft=(
+            {int(aircraft_id): 1}
+            if current_safety_resume is not None
+            else {}
+        ),
+        waypoint_count=int(safety_waypoint_count),
+    )
+    new_imp_id = int(reservation.next_imp())
+    new_imp_data = _copy_post_attack_imp_shell(imp_data)
+    new_imp_data["individualMissionPackageID"] = int(new_imp_id)
+    new_imp_data["timestamp"] = int(now_ms)
+
+    replacement_missions: List[Dict[str, Any]] = []
+    generated_paths: List[Dict[str, Any]] = []
+    generated_path_ids: List[int] = []
+    removed_mission_ids: List[int] = []
+    for mission_index, source_mission in enumerate(mission_list):
+        if not isinstance(source_mission, dict):
+            continue
+        if int(mission_index) not in normalized_removed:
+            replacement_missions.append(deepcopy(source_mission))
+            continue
+
+        mission_id = _to_int(source_mission.get("individualMissionID"))
+        if mission_id is not None:
+            removed_mission_ids.append(int(mission_id))
+        if not current_removed or int(mission_index) != int(current_idx):
+            continue
+
+        if current_safety_resume is None:
+            continue
+        from modules.mission_planning.replanning.triggers.attack.pipeline import (
+            _lah_waypoints_to_coordinate_list,
+        )
+
+        _current_source_mission, source_path, resume_waypoints = (
+            current_safety_resume
+        )
+        source_path_id = _to_int(source_mission.get("pathID"))
+        new_individual_id = int(reservation.next_individual())
+        new_path_id = int(reservation.next_path(int(aircraft_id)))
+        safety_mission = deepcopy(source_mission)
+        safety_mission["individualMissionID"] = int(new_individual_id)
+        safety_mission["pathID"] = int(new_path_id)
+        safety_mission["isDone"] = False
+        safety_mission["postAttackResume"] = True
+        safety_mission["postAttackSourceTargetID"] = min(closed_target_ids)
+        safety_info = (
+            deepcopy(safety_mission.get("individualMissionInfo"))
+            if isinstance(safety_mission.get("individualMissionInfo"), dict)
+            else {}
+        )
+        safety_info["targetID"] = None
+        safety_info["coordinateList"] = _lah_waypoints_to_coordinate_list(
+            resume_waypoints
+        )
+        safety_mission["individualMissionInfo"] = safety_info
+        replacement_missions.append(safety_mission)
+        safety_path = _build_lah_path_payload_from_waypoints(
+            template_path=source_path,
+            aircraft_id=int(aircraft_id),
+            path_id=int(new_path_id),
+            individual_mission_id=int(new_individual_id),
+            waypoints=resume_waypoints,
+            now_ms=int(now_ms),
+            waypoint_id_provider=reservation.next_waypoint,
+        )
+        cleared = _clear_waypoint_attacks_for_targets(
+            [safety_path],
+            closed_target_ids,
+        )
+        generated_paths.append(safety_path)
+        generated_path_ids.append(int(new_path_id))
+        emit(
+            f"{log_prefix} retained current closed-attack safety suffix without "
+            f"a firing command (aircraft={aircraft_id}, oldPath={source_path_id}, "
+            f"newPath={new_path_id}, clearedWaypoints={cleared})."
+        )
+
+    if not replacement_missions:
+        return None
+    new_imp_data["individualMissionList"] = replacement_missions
+    _validate_generated_post_attack_artifact_payloads(
+        individual_mission_plans=[new_imp_data],
+        flight_paths=generated_paths,
+        scope=f"postAttackContinuingAttackPrune:{new_imp_id}",
+        allow_existing_db_artifacts=True,
+        log=emit,
+    )
+    write_entries: List[Tuple[Path, Dict[str, Any]]] = [
+        (
+            db_paths.get_db_subpath(
+                "IndividualMissionPlan",
+                f"{int(new_imp_id)}.json",
+            ),
+            new_imp_data,
+        )
+    ]
+    write_entries.extend(
+        (
+            db_paths.get_db_subpath("FlightPath", f"{int(path_id)}.json"),
+            payload,
+        )
+        for path_id, payload in zip(generated_path_ids, generated_paths)
+    )
+    _write_or_defer_post_attack_json_batch(write_entries, run_cache=run_cache)
+
+    reservation_event = _post_attack_reservation_event(
+        scope="postAttackContinuingAttackPrune",
+        aircraft_id=int(aircraft_id),
+        imp_ids=[int(new_imp_id)],
+        path_ids_by_aircraft={
+            int(aircraft_id): [int(value) for value in generated_path_ids]
+        },
+    )
+    emit(
+        f"{log_prefix} removed closed attack mission(s) while preserving "
+        f"surviving attack mission/path/WP identities (aircraft={aircraft_id}, "
+        f"removedMissions={sorted(removed_mission_ids)}, "
+        f"remainingTargets={sorted(remaining_live_attack_target_ids)}, "
+        f"imp={new_imp_id})."
+    )
+    return {
+        "aircraft_id": int(aircraft_id),
+        "sourceIndividualMissionPackageID": int(
+            _to_int(imp_data.get("individualMissionPackageID")) or 0
+        ),
+        "individualMissionPackageID": int(new_imp_id),
+        "continuityRepackaged": True,
+        "continuingAttack": True,
+        "remainingAttackTargetIDs": sorted(remaining_live_attack_target_ids),
+        "generatedPathIDs": sorted(generated_path_ids),
+        "reservedIds": reservation_event.get("reservedIds", {}),
+        "reservationSummaries": [reservation_event],
+    }
+
+
 def _lah_attack_target_mission_indices(
     mission_list: List[Dict[str, Any]],
     *,
@@ -2274,6 +2788,13 @@ def _lah_attack_target_mission_indices(
     out the engagements that must survive it: finishing one target must never
     cancel another aircraft's attack on a different target, which otherwise
     leaves that target tracked forever and never shot.
+
+    ``current_input_id`` is retained for API compatibility and diagnostics, but
+    it is not an ownership key for an attack target.  In particular, an
+    incremental LAH attack is inserted behind an already committed attack and
+    deliberately keeps that branch's ``relatedMission`` metadata, while its
+    tracking UAV can be returning to a different input mission.  A destroyed
+    target is global, so its target ID is the authoritative close key.
     """
 
     retained: set[int] = set()
@@ -2307,10 +2828,7 @@ def _lah_attack_target_mission_indices(
             if mission_type in {2, 9} or bool(mission.get("lahCoverIngress")):
                 indices.append(int(idx))
             continue
-        if (
-            _extract_related_input_mission_id(mission) == int(current_input_id)
-            and int(mission_target_id) == int(target_id)
-        ):
+        if int(mission_target_id) == int(target_id):
             indices.append(int(idx))
     return indices
 
@@ -2540,6 +3058,11 @@ def _build_lah_path_payload_from_waypoints(
     payload["lahWaypointList"] = copied
     if "waypointList" in template:
         payload["waypointList"] = deepcopy(copied)
+    enforce_lah_kinematic_feasibility_inplace(
+        payload,
+        preserve_existing_timing=True,
+        allocate_waypoint_ids=None,
+    )
     sanitize_flight_path_payload_filming_altitudes(payload)
     normalize_flight_path_waypoint_altitudes_inplace(payload)
     normalize_flight_path_waypoint_speeds_inplace(payload)
@@ -2554,7 +3077,17 @@ def _find_returning_manned_attack_aircraft_ids(
     plan_data: Dict[str, Any],
     run_cache: Optional[_PostAttackRunCache] = None,
 ) -> List[int]:
+    """Find every LAH package that still declares an already-closed target.
+
+    The tracking assignment's input mission and the LAH attack branch's related
+    input mission are not guaranteed to match.  Sequential/incremental attacks
+    intentionally preserve their committed LAH graph, so matching on
+    ``current_input_id`` used to miss the shooter and its supporting LAHs.  The
+    target's destroyed state is global and is therefore the safe authority.
+    """
+
     matched_ids: List[int] = []
+    destroyed_target_ids = _known_destroyed_target_ids(int(target_id))
     for entry in plan_data.get("aircraftList") or []:
         aircraft_id = _to_int((entry or {}).get("aircraftID"))
         if aircraft_id is None or aircraft_id <= 0 or aircraft_id > 3:
@@ -2571,8 +3104,9 @@ def _find_returning_manned_attack_aircraft_ids(
             continue
         has_target_attack = any(
             isinstance(mission, dict)
-            and _extract_related_input_mission_id(mission) == int(current_input_id)
-            and _mission_target_id(mission) == int(target_id)
+            and not bool(mission.get("isDone"))
+            and not _is_post_attack_resume_mission(mission)
+            and _mission_target_id(mission) in destroyed_target_ids
             for mission in mission_list
         )
         if has_target_attack:
@@ -2744,15 +3278,11 @@ def _rebase_post_attack_cover_timing(payload: Dict[str, Any]) -> None:
     if not isinstance(waypoints, list) or len(waypoints) < 2:
         return
     try:
-        from modules.common.ecf import apply_leg_fuel_inplace
-        from modules.common.eta import annotate_eta_flight_plan
-
-        annotate_eta_flight_plan(
+        enforce_lah_kinematic_feasibility_inplace(
             payload,
-            default_speed_mps=40.0,
-            waypoint_list_keys=("lahWaypointList",),
+            preserve_existing_timing=False,
+            allocate_waypoint_ids=None,
         )
-        apply_leg_fuel_inplace(waypoints)
     except Exception:
         return
     if isinstance(payload.get("waypointList"), list):
@@ -3045,6 +3575,55 @@ def _prepend_post_attack_lah_follow_up_connector(
     return int(len(prefix))
 
 
+def _known_destroyed_target_ids(
+    destroyed_target_id: Optional[int] = None,
+) -> set[int]:
+    from modules.mission_planning.replanning.triggers.attack.pipeline import (
+        _load_target_entries,
+    )
+
+    entries, error = _load_target_entries()
+    killed = _to_int(destroyed_target_id)
+    destroyed_ids = {
+        int(value)
+        for value in (
+            _to_int((entry or {}).get("target_id"))
+            for entry in (entries or [])
+            if isinstance(entry, dict) and bool(entry.get("is_destroyed"))
+        )
+        if value is not None
+    }
+    if killed is not None:
+        destroyed_ids.add(int(killed))
+    return destroyed_ids
+
+
+def _compare_post_attack_live_attacks(
+    source_rows: Iterable[Dict[str, Any]],
+    candidate_rows: Iterable[Dict[str, Any]],
+    *,
+    target_id: int,
+) -> Dict[str, Any]:
+    """Validate continuity against the same complete closed-target set.
+
+    Candidate generation removes every attack whose target is already confirmed
+    destroyed.  Checking continuity against only the target in the current
+    close event therefore misclassifies an older destroyed target as a deleted
+    live attack, rejects the valid return plan, and leaves that close request
+    eligible for repeated queue retries.
+    """
+
+    closed_target_ids = _known_destroyed_target_ids(int(target_id))
+    closed_target_ids.add(int(target_id))
+    result = compare_post_attack_pairs(
+        source_rows,
+        candidate_rows,
+        closed_target_ids=closed_target_ids,
+    )
+    result["closedTargetIDs"] = sorted(int(value) for value in closed_target_ids)
+    return result
+
+
 def _remaining_enemy_coordinates(destroyed_target_id: Optional[int]) -> List[Dict[str, Any]]:
     """Live contacts still on the board after this kill."""
 
@@ -3056,20 +3635,9 @@ def _remaining_enemy_coordinates(destroyed_target_id: Optional[int]) -> List[Dic
     entries, error = _load_target_entries()
     if error or not entries:
         return []
-    killed = _to_int(destroyed_target_id)
     # targetInfo is keyed by target+watcher, so one target has a row per
-    # observer.  A kill reported by any one of them settles it for all.
-    destroyed_ids = {
-        int(value)
-        for value in (
-            _to_int((entry or {}).get("target_id"))
-            for entry in entries
-            if isinstance(entry, dict) and bool(entry.get("is_destroyed"))
-        )
-        if value is not None
-    }
-    if killed is not None:
-        destroyed_ids.add(int(killed))
+    # observer. A kill reported by any one of them settles it for all.
+    destroyed_ids = _known_destroyed_target_ids(destroyed_target_id)
     seen: set[tuple[float, float]] = set()
     out: List[Dict[str, Any]] = []
     for entry in entries:
@@ -3205,6 +3773,108 @@ def _preserved_regain_cover_waypoint(
             continue
         return waypoint, coord
     return None, None
+
+
+def _planned_attack_popup_base_for_post_attack(
+    *,
+    current_coord: Optional[Dict[str, Any]],
+    mission_list: List[Dict[str, Any]],
+    attack_mission_indices: Iterable[int],
+    run_cache: Optional[_PostAttackRunCache],
+) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    """Replace a transient SIM popup altitude with the serialized low base.
+
+    A target-destroyed event is emitted at the firing altitude, before SIM has
+    necessarily descended to the armed waypoint.  Using that live altitude as
+    a replan connector anchor serializes the temporary popup into the next
+    mission and sends the aircraft back up after it has started descending.
+    """
+
+    from modules.mission_planning.replanning.triggers.attack.pipeline import (
+        _extract_lah_waypoint_coordinate,
+        _haversine_distance_m,
+        _normalize_altitude_value,
+        _normalize_coordinate,
+    )
+
+    live = _normalize_coordinate(current_coord)
+    live_altitude_m = _normalize_altitude_value((live or {}).get("altitude"))
+    if live is None or live_altitude_m is None:
+        return current_coord, None
+
+    best: Optional[Tuple[float, Dict[str, Any], int, int, int]] = None
+    for mission_index in attack_mission_indices or []:
+        try:
+            mission = mission_list[int(mission_index)]
+        except (IndexError, TypeError, ValueError):
+            continue
+        if not isinstance(mission, dict):
+            continue
+        path_id = _to_int(mission.get("pathID"))
+        source_path = _load_path_payload(
+            path_id,
+            run_cache=run_cache,
+            copy_result=False,
+        )
+        if not isinstance(source_path, dict):
+            continue
+        for waypoint in _extract_lah_waypoint_list(source_path):
+            attack = (
+                waypoint.get("attack")
+                if isinstance(waypoint.get("attack"), dict)
+                else {}
+            )
+            target_id = _to_int(attack.get("targetID"))
+            if target_id is None or int(target_id) <= 0:
+                continue
+            base = _extract_lah_waypoint_coordinate(waypoint)
+            base_altitude_m = _normalize_altitude_value((base or {}).get("altitude"))
+            separation_m = (
+                _haversine_distance_m(live, base)
+                if base is not None
+                else None
+            )
+            if (
+                base is None
+                or base_altitude_m is None
+                or separation_m is None
+                or not math.isfinite(float(separation_m))
+            ):
+                continue
+            candidate = (
+                float(separation_m),
+                dict(base),
+                int(path_id or 0),
+                int(_to_int(waypoint.get("waypointID")) or 0),
+                int(target_id),
+            )
+            if best is None or candidate[0] < best[0]:
+                best = candidate
+
+    # Popup motion is vertical at the armed point.  A generous bound absorbs
+    # waypoint-arrival tolerance without rebasing an aircraft that has already
+    # departed on a genuinely different leg.
+    max_separation_m = 250.0
+    if best is None or float(best[0]) > max_separation_m:
+        return current_coord, None
+    separation_m, base, path_id, waypoint_id, target_id = best
+    base_altitude_m = _normalize_altitude_value(base.get("altitude"))
+    if (
+        base_altitude_m is None
+        or int(live_altitude_m) <= int(base_altitude_m) + 1
+    ):
+        return current_coord, None
+
+    rebased = dict(live)
+    rebased["altitude"] = int(base_altitude_m)
+    return rebased, {
+        "liveAltitudeM": int(live_altitude_m),
+        "baseAltitudeM": int(base_altitude_m),
+        "horizontalSeparationM": float(separation_m),
+        "pathID": int(path_id),
+        "waypointID": int(waypoint_id),
+        "targetID": int(target_id),
+    }
 
 
 def _state_at_post_attack_cover(
@@ -3352,6 +4022,26 @@ def _build_post_attack_lah_resume_update(
         exclude_all_target_missions=bool(exclude_all_target_missions),
         retained_target_ids=retained_target_ids,
     )
+    if not exclude_all_target_missions:
+        destroyed_target_ids = _known_destroyed_target_ids(int(target_id))
+        retained_ids = {
+            int(value)
+            for value in (retained_target_ids or [])
+            if _to_int(value) is not None and int(_to_int(value)) > 0
+        }
+        attack_target_indices = sorted(
+            {
+                *attack_target_indices,
+                *(
+                    int(index)
+                    for index, mission in enumerate(mission_list)
+                    if isinstance(mission, dict)
+                    and not _is_post_attack_resume_mission(mission)
+                    and _mission_target_id(mission) in destroyed_target_ids
+                    and _mission_target_id(mission) not in retained_ids
+                ),
+            }
+        )
     attack_target_indices = _preserve_legacy_lah_target_bound_resumes(
         mission_list,
         attack_target_indices,
@@ -3416,24 +4106,53 @@ def _build_post_attack_lah_resume_update(
             f"{log_prefix} target-specific close keeps sequential attack(s) "
             f"on aircraft {aircraft_id}: {sorted(remaining_live_attack_target_ids)}."
         )
-        return {
-            "aircraft_id": int(aircraft_id),
-            "preserveExistingPackage": True,
-            "continuingAttack": True,
-            "remainingAttackTargetIDs": sorted(remaining_live_attack_target_ids),
-            "generatedPathIDs": [],
-            "reservationSummaries": [],
-        }
+        return _build_continuing_attack_prune_update(
+            imp_data=imp_data,
+            mission_list=mission_list,
+            removed_attack_indices=removed_attack_indices,
+            current_idx=current_idx,
+            current_wp=current_wp,
+            current_state=current_state,
+            current_artifacts=artifacts,
+            closed_target_ids=removed_target_ids,
+            remaining_live_attack_target_ids=remaining_live_attack_target_ids,
+            aircraft_id=int(aircraft_id),
+            now_ms=int(now_ms),
+            emit=emit,
+            log_prefix=log_prefix,
+            run_cache=run_cache,
+        )
 
     current_coord = (
         _normalize_coordinate((current_state or {}).get("coordinate"))
         or _normalize_coordinate(((current_state or {}).get("mannedInfo") or {}).get("coordinate"))
         or _normalize_coordinate(((current_state or {}).get("unmannedInfo") or {}).get("coordinate"))
     )
+    current_coord, popup_base_rebase = _planned_attack_popup_base_for_post_attack(
+        current_coord=current_coord,
+        mission_list=mission_list,
+        attack_mission_indices=attack_target_indices,
+        run_cache=run_cache,
+    )
+    effective_current_state = current_state or {}
+    if popup_base_rebase is not None and current_coord is not None:
+        effective_current_state = _state_at_post_attack_cover(
+            current_state or {},
+            current_coord,
+        )
+        emit(
+            f"{log_prefix} replaced transient SIM popup altitude with planned "
+            f"attack base (aircraft={aircraft_id}, "
+            f"live={popup_base_rebase.get('liveAltitudeM')}m, "
+            f"base={popup_base_rebase.get('baseAltitudeM')}m, "
+            f"target={popup_base_rebase.get('targetID')}, "
+            f"path={popup_base_rebase.get('pathID')}, "
+            f"horizontal={float(popup_base_rebase.get('horizontalSeparationM') or 0.0):.1f}m)."
+        )
     split_trim_anchor = (
         _predict_lah_followup_anchor(
             current_coord,
-            current_state or {},
+            effective_current_state,
             enable_prediction=True,
         )
         if current_coord is not None
@@ -3653,7 +4372,7 @@ def _build_post_attack_lah_resume_update(
         else:
             cover_plan, cover_enemies, cover_hold_s = _post_attack_cover_prelude(
                 aircraft_id=int(aircraft_id),
-                current_state=current_state or {},
+                current_state=effective_current_state,
                 destroyed_target_id=int(target_id),
                 emit=emit,
                 log_prefix=log_prefix,
@@ -3877,7 +4596,11 @@ def _build_post_attack_lah_resume_update(
     # waypoint carried over from an earlier engagement can still name the target
     # that has just been serviced. Scrub by waypoint too, or the manned aircraft
     # resumes carrying a live attack on a target that is already gone.
-    finished_target_ids = {int(target_id)} if int(target_id) > 0 else set()
+    # A delayed close can arrive after another target in the same sequential
+    # LAH package has already been destroyed.  Scrub the complete closed set so
+    # the final continuity guard cannot reject an otherwise valid return plan
+    # because of an older stale firing command.
+    finished_target_ids = _known_destroyed_target_ids(int(target_id))
     finished_target_ids -= {
         int(value) for value in (retained_target_ids or []) if _to_int(value)
     }
@@ -4673,10 +5396,11 @@ def _prepare_post_attack_collaborative_update(
         path_id: int,
         payload: Dict[str, Any],
     ) -> Dict[str, Any]:
-        transformed = _drop_post_attack_collab_leading_prefix_waypoints(
+        transformed = _apply_post_attack_collab_entry_policy(
             int(aircraft_id),
             int(path_id),
             payload,
+            returning_aircraft_ids=returning_aircraft_ids,
             emit=emit,
         )
         transformed = _boost_post_attack_collab_first_sweep_search_speed(
@@ -4685,6 +5409,9 @@ def _prepare_post_attack_collaborative_update(
             transformed,
             emit=emit,
             reference_coord=(predicted_agent_state_map.get(int(aircraft_id)) or {}).get("coordinate"),
+            preserve_generated_speed=(
+                int(aircraft_id) in returning_aircraft_ids
+            ),
         )
         if int(aircraft_id) in returning_aircraft_ids:
             transformed = _scale_post_attack_returning_first_sweep_fov(
@@ -4877,6 +5604,56 @@ def _drop_post_attack_collab_leading_prefix_waypoints(
     return payload
 
 
+def _apply_post_attack_collab_entry_policy(
+    aircraft_id: int,
+    path_id: int,
+    payload: Dict[str, Any],
+    *,
+    returning_aircraft_ids: Iterable[int],
+    emit: LogCallback,
+) -> Dict[str, Any]:
+    """Keep the assigned-area ingress only for UAVs rejoining from another task.
+
+    ``lineSearch`` is executed on the incoming leg of its carrier waypoint.  An
+    active UAV may continue by consuming the generated entry prefix, but a UAV
+    returning from tracking/attack can still be far outside its newly assigned
+    area.  Removing that UAV's non-filming entry waypoint would therefore start
+    the first sweep on the remote transit leg.
+    """
+
+    normalized_returning_ids = {
+        int(aid)
+        for aid in returning_aircraft_ids
+        if _to_int(aid) is not None and int(aid) > 0
+    }
+    if int(aircraft_id) not in normalized_returning_ids:
+        return _drop_post_attack_collab_leading_prefix_waypoints(
+            int(aircraft_id),
+            int(path_id),
+            payload,
+            emit=emit,
+        )
+
+    waypoints = payload.get("waypointList") if isinstance(payload, dict) else None
+    filtered = (
+        [item for item in waypoints if isinstance(item, dict)]
+        if isinstance(waypoints, list)
+        else []
+    )
+    if (
+        len(filtered) >= 2
+        and _is_post_attack_collab_entry_prefix_waypoint(filtered[0])
+        and _is_post_attack_collab_sweep_waypoint(filtered[1])
+    ):
+        emit(
+            "[POSTATTACK][COLLAB] Returning UAV assigned-area entry waypoint retained "
+            f"(aircraft={int(aircraft_id)}, pathID={int(path_id)}, "
+            f"entryWaypointID={_to_int(filtered[0].get('waypointID'))}, "
+            f"firstCaptureWaypointID={_to_int(filtered[1].get('waypointID'))})."
+        )
+    return payload
+
+
 def _is_post_attack_collab_entry_prefix_waypoint(waypoint: Dict[str, Any]) -> bool:
     if not isinstance(waypoint, dict):
         return False
@@ -4991,6 +5768,7 @@ def _boost_post_attack_collab_first_sweep_search_speed(
     emit: LogCallback,
     speed_scale: float | None = None,
     reference_coord: Dict[str, Any] | None = None,
+    preserve_generated_speed: bool = False,
 ) -> Dict[str, Any]:
     if not isinstance(payload, dict):
         return payload
@@ -5023,6 +5801,14 @@ def _boost_post_attack_collab_first_sweep_search_speed(
         search_speed = _to_float(line_search.get("searchSpeed"))
         if search_speed is None or search_speed <= 0.0:
             continue
+        if bool(preserve_generated_speed):
+            emit(
+                "[POSTATTACK][COLLAB] Returning UAV first sweep searchSpeed kept "
+                f"(aircraft={int(aircraft_id)}, pathID={int(path_id)}, "
+                f"waypointID={_to_int(waypoint.get('waypointID'))}, "
+                f"speed={float(search_speed):.2f}, source=assigned-entry-leg)."
+            )
+            return payload
         # AREA capture waypoints carry this stable public marker.  Their speed
         # is already synchronized to the actual incoming flight leg by the
         # next-collab builder (with only its small completion margin).  Applying
@@ -5435,10 +6221,11 @@ def _prepare_post_attack_line_phased_rejoin(
         _apply_runtime_flyover_to_flight_path_payload(path_payload)
         owner_aircraft_id = path_owner_by_id.get(int(path_id))
         if owner_aircraft_id is not None:
-            path_payload = _drop_post_attack_collab_leading_prefix_waypoints(
+            path_payload = _apply_post_attack_collab_entry_policy(
                 int(owner_aircraft_id),
                 int(path_id),
                 path_payload,
+                returning_aircraft_ids=returning_aircraft_ids,
                 emit=emit,
             )
             path_payload = _boost_post_attack_collab_first_sweep_search_speed(
@@ -5447,6 +6234,9 @@ def _prepare_post_attack_line_phased_rejoin(
                 path_payload,
                 emit=emit,
                 reference_coord=future_entry_map.get(int(owner_aircraft_id)),
+                preserve_generated_speed=(
+                    int(owner_aircraft_id) in returning_aircraft_ids
+                ),
             )
         path_payload = _reset_post_attack_replacement_path_state(path_payload)
         sanitize_flight_path_payload_filming_altitudes(path_payload)
@@ -5934,26 +6724,66 @@ def _sweep_progress_entry_is_authoritative(entry: Any) -> bool:
     )
 
 
+def _line_scan_progress_entry_is_current(entry: Any) -> bool:
+    """Return whether a line-scan sample belongs to the executing mission.
+
+    A missing current marker fails closed.  In particular, a pending resume
+    path can already be a physically trimmed suffix while its cached progress
+    still describes the path that preceded it.  Treating that cache as live
+    would trim the same photographed prefix twice.
+    """
+
+    if not isinstance(entry, dict) or not is_line_scan_progress_entry(entry):
+        return True
+    nested = entry.get("line_scan")
+    sources = [nested, entry] if isinstance(nested, dict) else [entry]
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        for key in ("isCurrent", "is_current"):
+            if key not in source:
+                continue
+            value = source.get(key)
+            if isinstance(value, bool):
+                return bool(value)
+            if isinstance(value, (int, float)):
+                return bool(int(value))
+            normalized = str(value or "").strip().lower()
+            if normalized in {"1", "true", "yes", "y", "on"}:
+                return True
+            if normalized in {"0", "false", "no", "n", "off"}:
+                return False
+    return False
+
+
 def _trim_waypoints_for_exact_sweep_progress(
     waypoint_list: List[Dict[str, Any]],
     progress_entry: Dict[str, Any],
     *,
     reference_coord: Optional[Dict[str, Any]],
+    allow_line_scan_sweep_point_trim: bool = False,
+    preserve_carrier_coordinates: bool = False,
 ) -> Tuple[List[Dict[str, Any]], int]:
     """Cut photographed points while never returning an empty remaining branch."""
 
     original = [deepcopy(item) for item in waypoint_list if isinstance(item, dict)]
     if not original:
         return [], 0
-    cut_points = max(
-        0,
-        int(
-            physical_sweep_cut_points(
-                progress_entry,
-                default_buffer_seconds=0.0,
-            )
-        ),
-    )
+    if (
+        allow_line_scan_sweep_point_trim
+        and is_line_scan_progress_entry(progress_entry)
+    ):
+        cut_points = max(0, int(sweep_progress_points(progress_entry)))
+    else:
+        cut_points = max(
+            0,
+            int(
+                physical_sweep_cut_points(
+                    progress_entry,
+                    default_buffer_seconds=0.0,
+                )
+            ),
+        )
     if cut_points <= 0 and not is_line_scan_progress_entry(progress_entry):
         cut_points = max(0, int(sweep_progress_points(progress_entry)))
     trimmed, removed_points = trim_waypoints_by_sweep_points(
@@ -5961,6 +6791,7 @@ def _trim_waypoints_for_exact_sweep_progress(
         int(cut_points),
         preserve_waypoints=True,
         reference_coord_for_offset=reference_coord,
+        preserve_carrier_coordinates=bool(preserve_carrier_coordinates),
     )
     # A contradictory sample must fail closed: retaining some geometry is safer
     # than deleting the active LINE and advancing into the next input mission.
@@ -7221,6 +8052,317 @@ def _first_waypoint_flight_coordinate(waypoints: List[Dict[str, Any]]) -> Option
     return None
 
 
+def _line_search_coordinates(waypoint: Dict[str, Any]) -> List[Dict[str, Any]]:
+    filming = (
+        waypoint.get("filmingProperty")
+        if isinstance(waypoint, dict)
+        and isinstance(waypoint.get("filmingProperty"), dict)
+        else {}
+    )
+    line_search = (
+        filming.get("lineSearch")
+        if isinstance(filming.get("lineSearch"), dict)
+        else {}
+    )
+    return [
+        coord
+        for coord in (
+            _normalize_coordinate(item)
+            for item in (line_search.get("coordinateList") or [])
+        )
+        if coord is not None
+    ]
+
+
+def _restore_type2_line_carriers_from_original(
+    resume_waypoints: List[Dict[str, Any]],
+    original_path_payload: Optional[Dict[str, Any]],
+    *,
+    original_current_waypoint_id: Optional[int],
+) -> int:
+    """Restore a tracking UAV's directed LINE carrier from its source path.
+
+    Older attack packages moved carrier waypoints onto ground-sweep points.
+    The nested sweep suffix remained correct, so match each remaining sweep
+    group to the source group by its terminal sensor coordinate and copy only
+    the source *flight* coordinate.  All matches must be unambiguous and
+    monotonic; otherwise leave the package untouched.
+    """
+
+    if not isinstance(original_path_payload, dict):
+        return 0
+    original_waypoints = [
+        item
+        for item in (original_path_payload.get("waypointList") or [])
+        if isinstance(item, dict)
+    ]
+    if not original_waypoints:
+        return 0
+
+    start_index = 0
+    current_waypoint_id = _to_int(original_current_waypoint_id)
+    if current_waypoint_id is not None:
+        matched_index = next(
+            (
+                index
+                for index, waypoint in enumerate(original_waypoints)
+                if _to_int(waypoint.get("waypointID")) == int(current_waypoint_id)
+            ),
+            None,
+        )
+        if matched_index is not None:
+            start_index = int(matched_index)
+
+    original_capture_rows: List[Tuple[int, Dict[str, Any], List[Dict[str, Any]]]] = []
+    for index, waypoint in enumerate(original_waypoints[start_index:], start=start_index):
+        sweep_coords = _line_search_coordinates(waypoint)
+        carrier_coord = _normalize_coordinate(waypoint.get("coordinate"))
+        if len(sweep_coords) >= 2 and carrier_coord is not None:
+            original_capture_rows.append((int(index), carrier_coord, sweep_coords))
+
+    resume_capture_rows: List[Tuple[int, List[Dict[str, Any]]]] = []
+    for index, waypoint in enumerate(resume_waypoints or []):
+        if not isinstance(waypoint, dict):
+            continue
+        sweep_coords = _line_search_coordinates(waypoint)
+        if len(sweep_coords) >= 2:
+            resume_capture_rows.append((int(index), sweep_coords))
+
+    if (
+        not resume_capture_rows
+        or not original_capture_rows
+        or len(resume_capture_rows) > len(original_capture_rows)
+    ):
+        return 0
+
+    selected: List[Tuple[int, Dict[str, Any]]] = []
+    candidate_start = 0
+    for resume_index, resume_sweep in resume_capture_rows:
+        best: Optional[Tuple[float, int, Dict[str, Any]]] = None
+        resume_first = resume_sweep[0]
+        resume_last = resume_sweep[-1]
+        for candidate_index in range(candidate_start, len(original_capture_rows)):
+            _source_index, source_carrier, source_sweep = original_capture_rows[candidate_index]
+            terminal_distance_m = _haversine_m(
+                float(resume_last["latitude"]),
+                float(resume_last["longitude"]),
+                float(source_sweep[-1]["latitude"]),
+                float(source_sweep[-1]["longitude"]),
+            )
+            first_distance_m = min(
+                _haversine_m(
+                    float(resume_first["latitude"]),
+                    float(resume_first["longitude"]),
+                    float(source_coord["latitude"]),
+                    float(source_coord["longitude"]),
+                )
+                for source_coord in source_sweep
+            )
+            score = float(terminal_distance_m) + (0.05 * float(first_distance_m))
+            if best is None or score < best[0]:
+                best = (score, int(candidate_index), source_carrier)
+        if best is None or float(best[0]) > 250.0:
+            return 0
+        selected.append((int(resume_index), dict(best[2])))
+        candidate_start = int(best[1]) + 1
+
+    for resume_index, source_carrier in selected:
+        resume_waypoints[int(resume_index)]["coordinate"] = deepcopy(source_carrier)
+        resume_waypoints[int(resume_index)]["isDone"] = False
+    return len(selected)
+
+
+def _post_attack_type2_return_lookahead_s() -> float:
+    try:
+        settings = get_path_deviation_settings()
+    except Exception:
+        settings = {}
+    base_lead_s = _to_float((settings or {}).get("next_mission_entry_lead_time_s"))
+    if base_lead_s is None:
+        base_lead_s = get_runtime_attack_float("replan_start_trim_lookahead_s", 8.0)
+    latency_s = _to_float((settings or {}).get("next_collab_entry_pipeline_latency_s"))
+    if latency_s is None:
+        latency_s = 2.5
+    return float(
+        min(
+            12.0,
+            max(0.0, min(8.0, float(base_lead_s)))
+            + max(0.0, min(6.0, float(latency_s))),
+        )
+    )
+
+
+def _predict_post_attack_type2_return_coordinate(
+    current_coord: Dict[str, Any],
+    current_state: Dict[str, Any],
+) -> Tuple[Dict[str, Any], float, str]:
+    """Predict the tracker pose at plan activation, including current bank."""
+
+    current = _normalize_coordinate(current_coord) or dict(current_coord)
+    lookahead_s = _post_attack_type2_return_lookahead_s()
+    max_distance_m = max(
+        0.0,
+        get_runtime_attack_float("replan_start_trim_max_lookahead_m", 600.0),
+    )
+    state = current_state if isinstance(current_state, dict) else {}
+
+    line_prediction = _normalize_coordinate(state.get("linePredictedEntryCoordinate"))
+    line_prediction_lead_s = _to_float(state.get("linePredictionLeadS"))
+    line_prediction_age_s = _to_float(state.get("lineTurnDataAgeS"))
+    predicted = None
+    model = "current"
+    if (
+        line_prediction is not None
+        and line_prediction_lead_s is not None
+        and 0.0 < float(line_prediction_lead_s) <= 12.0
+        and line_prediction_age_s is not None
+        and 0.0 <= float(line_prediction_age_s) <= 5.0
+    ):
+        predicted = dict(line_prediction)
+        lookahead_s = float(line_prediction_lead_s)
+        model = str(state.get("linePredictionModel") or "recent-line-turn")
+
+    velocity = state.get("velocity") if isinstance(state.get("velocity"), dict) else {}
+    heading_deg = _to_float(
+        state.get("headingDeg")
+        if state.get("headingDeg") is not None
+        else state.get("heading")
+    )
+    if heading_deg is None:
+        heading_deg = _to_float(velocity.get("heading"))
+    speed_value = _to_float(
+        state.get("speedMps")
+        if state.get("speedMps") is not None
+        else state.get("speed")
+    )
+    if speed_value is None:
+        speed_value = _to_float(velocity.get("speed"))
+    speed_mps = _to_mps(speed_value)
+
+    if predicted is None and heading_deg is not None and speed_mps is not None:
+        attitude = state.get("attitude") if isinstance(state.get("attitude"), dict) else {}
+        roll_deg = _to_float(
+            attitude.get("roll") if attitude.get("roll") is not None else state.get("roll")
+        )
+        pitch_deg = _to_float(
+            attitude.get("pitch") if attitude.get("pitch") is not None else state.get("pitch")
+        )
+        roll_rate_dps = _to_float(
+            state.get("rollRateDps")
+            if state.get("rollRateDps") is not None
+            else attitude.get("rollRateDps")
+        )
+        if roll_deg is not None and pitch_deg is not None:
+            motion = predict_turn_motion(
+                current,
+                float(speed_mps),
+                float(heading_deg),
+                float(roll_deg),
+                float(pitch_deg),
+                float(lookahead_s),
+                roll_rate_dps=roll_rate_dps,
+            )
+            if motion is not None:
+                predicted = _normalize_coordinate(motion.coordinate)
+                model = str(motion.model)
+        if predicted is None:
+            predicted = _predict_post_attack_position_linear(
+                current,
+                float(heading_deg),
+                float(speed_mps),
+                lookahead_s=float(lookahead_s),
+            )
+            model = "constant-heading"
+
+    if predicted is None:
+        predicted = dict(current)
+    prediction_distance_m = _haversine_m(
+        float(current["latitude"]),
+        float(current["longitude"]),
+        float(predicted["latitude"]),
+        float(predicted["longitude"]),
+    )
+    if (
+        max_distance_m > 0.0
+        and float(prediction_distance_m) > float(max_distance_m)
+    ):
+        predicted = _interpolate_post_attack_coordinate(
+            current,
+            predicted,
+            float(max_distance_m) / float(prediction_distance_m),
+        )
+        model = f"{model}-clamped"
+    if current.get("altitude") is not None:
+        predicted["altitude"] = current.get("altitude")
+    return dict(predicted), float(lookahead_s), str(model)
+
+
+def _resolve_imaging_entry_flight_coordinate(
+    waypoints: List[Dict[str, Any]],
+) -> Tuple[Optional[Dict[str, Any]], Optional[int], bool, float]:
+    """Resolve a flight-safe entry for the first remaining capture.
+
+    A generated LINE carrier waypoint can retain the attack/replan anchor while
+    its nested sweep starts kilometres away.  In that case, route the aircraft
+    above the first sweep point at the carrier's flight altitude.  Existing
+    non-filming entry prefixes and carrier coordinates already near the sweep
+    remain untouched.
+    """
+
+    first_path_coord = _first_waypoint_flight_coordinate(waypoints)
+    for waypoint_index, waypoint in enumerate(waypoints or []):
+        if not isinstance(waypoint, dict):
+            continue
+        filming = (
+            waypoint.get("filmingProperty")
+            if isinstance(waypoint.get("filmingProperty"), dict)
+            else {}
+        )
+        line_search = (
+            filming.get("lineSearch")
+            if isinstance(filming.get("lineSearch"), dict)
+            else {}
+        )
+        sweep_coords = [
+            coord
+            for coord in (
+                _normalize_coordinate(item)
+                for item in (line_search.get("coordinateList") or [])
+            )
+            if coord is not None
+        ]
+        if len(sweep_coords) < 2:
+            continue
+
+        # A planner-produced non-filming prefix is already the authoritative
+        # assigned-area ingress.
+        if waypoint_index > 0 and first_path_coord is not None:
+            return dict(first_path_coord), int(waypoint_index), False, 0.0
+
+        carrier_coord = _normalize_coordinate(waypoint.get("coordinate"))
+        if carrier_coord is None:
+            carrier_coord = first_path_coord
+        first_sweep_coord = sweep_coords[0]
+        if carrier_coord is None:
+            return dict(first_sweep_coord), int(waypoint_index), True, 0.0
+        distance_m = _haversine_m(
+            float(carrier_coord["latitude"]),
+            float(carrier_coord["longitude"]),
+            float(first_sweep_coord["latitude"]),
+            float(first_sweep_coord["longitude"]),
+        )
+        if float(distance_m) <= float(_short_return_merge_distance_m()):
+            return dict(carrier_coord), int(waypoint_index), False, float(distance_m)
+
+        entry_coord = dict(first_sweep_coord)
+        flight_altitude = _to_float(carrier_coord.get("altitude"))
+        if flight_altitude is not None:
+            entry_coord["altitude"] = int(round(float(flight_altitude)))
+        return entry_coord, int(waypoint_index), True, float(distance_m)
+
+    return first_path_coord, None, False, 0.0
+
+
 def _first_follow_up_reuses_boundary_point(
     follow_up_paths: List[Tuple[Path, Dict[str, Any]]],
     boundary_coord: Dict[str, Any],
@@ -7515,6 +8657,70 @@ def _mission_has_post_attack_imaging_geometry(
     return count_sweep_points_in_waypoints(list(waypoint_list or [])) > 0
 
 
+def _waypoints_have_executable_post_attack_capture(
+    waypoint_list: List[Dict[str, Any]],
+) -> bool:
+    """Return whether the executable path still contains actual capture work."""
+    for waypoint in waypoint_list or []:
+        if not isinstance(waypoint, dict):
+            continue
+        filming = waypoint.get("filmingProperty")
+        if not isinstance(filming, dict):
+            continue
+        line_search = filming.get("lineSearch")
+        if isinstance(line_search, dict):
+            coordinates = line_search.get("coordinateList")
+            if (
+                isinstance(coordinates, list)
+                and len([item for item in coordinates if isinstance(item, dict)]) >= 2
+            ):
+                return True
+        area_search = filming.get("areaSearch")
+        if isinstance(area_search, dict) and bool(area_search):
+            return True
+        operation_mode = _to_int(filming.get("operationMode"))
+        if operation_mode == 4 and isinstance(filming.get("aircraftFixed"), dict):
+            # Direct nadir region routes intentionally film without lineSearch.
+            return True
+        if operation_mode == 5:
+            return True
+    return False
+
+
+def _waypoints_have_executable_line_capture(
+    waypoint_list: List[Dict[str, Any]],
+) -> bool:
+    """Return whether the path can resume a LINE capture without a boundary mission."""
+    return any(
+        isinstance(waypoint, dict)
+        and len(_line_search_coordinates(waypoint)) >= 2
+        for waypoint in waypoint_list or []
+    )
+
+
+def _can_resume_line_directly_after_attack(
+    mission: Optional[Dict[str, Any]],
+    waypoint_list: List[Dict[str, Any]],
+    *,
+    current_input_id: int,
+    block_follow_up_until_reassignment: bool,
+) -> bool:
+    """Allow every executable LINE, not only a Type2 branch, to skip the extra IM."""
+    if not isinstance(mission, dict):
+        return False
+    info = mission.get("individualMissionInfo")
+    info = info if isinstance(info, dict) else {}
+    if _to_int(info.get("individualMissionType")) != 6:
+        return False
+    mission_input_id = _extract_related_input_mission_id(mission)
+    if (
+        block_follow_up_until_reassignment
+        and mission_input_id != int(current_input_id)
+    ):
+        return False
+    return _waypoints_have_executable_line_capture(waypoint_list)
+
+
 def _short_return_merge_distance_m() -> float:
     try:
         from modules.mission_planning.MissionPlanner.runtime_settings import get_runtime_float
@@ -7564,6 +8770,7 @@ def _build_post_attack_active_done_followup_update(
     current_input_id: int,
     aircraft_id: int,
     hold_seconds: int,
+    hold_coordinate: Optional[Dict[str, Any]] = None,
     now_ms: int,
     emit: LogCallback,
     log_prefix: str,
@@ -7632,27 +8839,22 @@ def _build_post_attack_active_done_followup_update(
             f"(aircraft={aircraft_id}, pathID={source_path_id})."
         )
         return None
-    area_internal_point_used = False
+    current_hold_point_used = False
     if point_only_active_done:
-        area_coord = _input_area_internal_hold_coordinate(
-            source_plan_id=int(source_plan_id),
-            current_input_id=int(current_input_id),
-            altitude_sources=[final_flight_coord, marker_wp.get("coordinate")],
-            run_cache=run_cache,
-        )
-        if area_coord is not None:
-            final_flight_coord = deepcopy(area_coord)
-            area_internal_point_used = True
+        current_hold_coord = _normalize_coordinate(hold_coordinate)
+        if current_hold_coord is not None:
+            final_flight_coord = deepcopy(current_hold_coord)
+            current_hold_point_used = True
             emit(
-                f"{log_prefix} active point-only hold moved inside current area "
+                f"{log_prefix} active point-only path collapsed at current position "
                 f"(aircraft={aircraft_id}, inputMissionID={current_input_id})."
             )
     final_orientation_coord = (
         deepcopy(final_flight_coord)
-        if area_internal_point_used
+        if current_hold_point_used
         else (_final_filming_orientation_coordinate(waypoints) or deepcopy(final_flight_coord))
     )
-    hold_seconds = int(_POST_ATTACK_COMPLETE_HOLD_SECONDS)
+    hold_seconds = max(1, int(hold_seconds or _POST_ATTACK_COMPLETE_HOLD_SECONDS))
 
     reservation_summaries: List[Dict[str, Any]] = []
 
@@ -7735,6 +8937,17 @@ def _build_post_attack_active_done_followup_update(
             f"(aircraft={aircraft_id}, inputMissionID={current_input_id}, "
             f"blockedFollowUps={int(blocked_follow_up_count)})."
         )
+    else:
+        cleared_follow_up_count = _clear_post_attack_followups_execution_blocked(
+            follow_up_missions,
+        )
+        if cleared_follow_up_count:
+            emit(
+                f"{log_prefix} stale collaborative execution blocks cleared at "
+                "the executable post-attack handoff "
+                f"(aircraft={aircraft_id}, clearedFollowUps="
+                f"{int(cleared_follow_up_count)})."
+            )
 
     if not include_completion_boundary_hold and not preserve_current_mission:
         imp_reservation = ReplanIdReservation.reserve(imp_count=1)
@@ -7808,7 +9021,6 @@ def _build_post_attack_active_done_followup_update(
         preserve_current_mission
         and not include_completion_boundary_hold
         and follow_up_missions
-        and _first_follow_up_reuses_boundary_point(follow_up_paths, final_flight_coord)
     ):
         imp_reservation = ReplanIdReservation.reserve(imp_count=1)
         new_imp_id = int(imp_reservation.next_imp())
@@ -7850,7 +9062,7 @@ def _build_post_attack_active_done_followup_update(
         )
 
         emit(
-            f"{log_prefix} redundant boundary loiter skipped; preserved first follow-up point "
+            f"{log_prefix} completion loiter omitted before executable preserved capture "
             f"(aircraft={aircraft_id}, inputMissionID={current_input_id}, "
             f"imp={imp_dest.name}, firstPath={min(generated_path_ids) if generated_path_ids else None}, "
             f"followUps={len(follow_up_missions)})."
@@ -7870,7 +9082,7 @@ def _build_post_attack_active_done_followup_update(
             "followUpMissionCount": len(follow_up_missions),
             "preservedCurrentMission": bool(preserve_current_mission),
             "holdSkipped": True,
-            "holdSkipReason": "first_follow_up_reuses_boundary_point",
+            "holdSkipReason": "preserved_current_capture_resumes_directly",
             "finalCoordinate": deepcopy(final_flight_coord),
             "orientationCoordinate": deepcopy(final_orientation_coord),
             "reservedIds": direct_reservation.get("reservedIds", {}),
@@ -7918,6 +9130,7 @@ def _build_post_attack_active_done_followup_update(
     filming.pop("lineSearch", None)
     filming.pop("areaSearch", None)
     filming.pop("autoTracking", None)
+    filming.pop("aircraftFixed", None)
     coord_orientation = filming.get("coordinateOrientation")
     coord_orientation = deepcopy(coord_orientation) if isinstance(coord_orientation, dict) else {}
     coord_orientation["coordinate"] = deepcopy(final_orientation_coord)
@@ -8136,7 +9349,7 @@ def _build_post_attack_tracking_return_only_update(
     if type2_branch_line:
         emit(
             f"{log_prefix} Type2 branch LINE suffix will use exact individual progress "
-            f"without blocking its following AREA/LINE missions "
+            f"while following AREA/LINE inputs remain behind the collaboration barrier "
             f"(aircraft={aircraft_id}, inputMissionID={current_input_id}, "
             f"phase={self_reliance_phase})."
         )
@@ -8217,9 +9430,12 @@ def _build_post_attack_tracking_return_only_update(
         )
         if isinstance(item, dict)
     ]
-    resume_has_imaging_geometry = _mission_has_post_attack_imaging_geometry(
-        resume_mission,
-        resume_waypoints,
+    resume_has_imaging_geometry = bool(
+        _mission_has_post_attack_imaging_geometry(
+            resume_mission,
+            resume_waypoints,
+        )
+        and _waypoints_have_executable_post_attack_capture(resume_waypoints)
     )
     resume_path_id = _to_int(assignment.get("resume_path_id"))
     sweep_progress = (
@@ -8232,6 +9448,17 @@ def _build_post_attack_tracking_return_only_update(
         if resume_path_id is not None
         else None
     )
+    if (
+        type2_branch_line
+        and is_line_scan_progress_entry(resume_progress_entry)
+        and not _line_scan_progress_entry_is_current(resume_progress_entry)
+    ):
+        emit(
+            f"{log_prefix} ignored non-current resume-path LINE progress; "
+            f"the pending path is already a trimmed suffix "
+            f"(aircraft={aircraft_id}, pathID={resume_path_id})."
+        )
+        resume_progress_entry = None
     progress_is_authoritative = _sweep_progress_entry_is_authoritative(
         resume_progress_entry
     )
@@ -8244,6 +9471,8 @@ def _build_post_attack_tracking_return_only_update(
                 resume_waypoints,
                 resume_progress_entry,
                 reference_coord=current_coord,
+                allow_line_scan_sweep_point_trim=bool(type2_branch_line),
+                preserve_carrier_coordinates=bool(type2_branch_line),
             )
         )
         emit(
@@ -8252,12 +9481,29 @@ def _build_post_attack_tracking_return_only_update(
             f"removedSweepPoints={removed_sweep_points}, "
             f"remainingSweepPoints={count_sweep_points_in_waypoints(resume_waypoints)})."
         )
+    restored_type2_carrier_count = 0
+    if type2_branch_line and resume_waypoints:
+        restored_type2_carrier_count = _restore_type2_line_carriers_from_original(
+            resume_waypoints,
+            original_path_payload,
+            original_current_waypoint_id=_to_int(
+                assignment.get("original_current_waypoint_id")
+            ),
+        )
+        if restored_type2_carrier_count > 0:
+            emit(
+                f"{log_prefix} restored directed LINE carrier from pre-attack path "
+                f"(aircraft={aircraft_id}, sourcePathID={assignment.get('original_path_id')}, "
+                f"carrierWaypoints={restored_type2_carrier_count})."
+            )
     carrier_resume_path_done = bool(
         resume_path_payload
         and resume_waypoints
         and _first_not_done_waypoint_index(resume_waypoints) is None
     )
-    if progress_is_authoritative and resume_has_imaging_geometry:
+    if not resume_has_imaging_geometry:
+        resume_path_done = True
+    elif progress_is_authoritative:
         resume_path_done = not progress_has_remaining
     else:
         resume_path_done = bool(carrier_resume_path_done)
@@ -8268,12 +9514,34 @@ def _build_post_attack_tracking_return_only_update(
         and not resume_mission_done
         and resume_has_imaging_geometry
     )
-    # A LINE-search waypoint carries two different coordinate domains:
-    # ``waypoint.coordinate`` is the aircraft flight position, while
-    # ``lineSearch.coordinateList`` contains the camera's ground sweep points.
-    # The return leg must target the former; using the first sweep point here
-    # can send the aircraft far away from the route before imaging resumes.
-    first_resume_coord = _first_waypoint_flight_coordinate(resume_waypoints)
+    # Prefer the carrier's flight coordinate, but repair a stale attack/replan
+    # carrier anchor that is kilometres away from its nested ground sweep.
+    if type2_branch_line:
+        first_resume_coord = _first_waypoint_flight_coordinate(resume_waypoints)
+        first_resume_capture_index = next(
+            (
+                index
+                for index, waypoint in enumerate(resume_waypoints)
+                if len(_line_search_coordinates(waypoint)) >= 2
+            ),
+            None,
+        )
+        corrected_resume_entry = False
+        resume_entry_offset_m = 0.0
+    else:
+        (
+            first_resume_coord,
+            first_resume_capture_index,
+            corrected_resume_entry,
+            resume_entry_offset_m,
+        ) = _resolve_imaging_entry_flight_coordinate(resume_waypoints)
+    if corrected_resume_entry:
+        emit(
+            f"{log_prefix} stale LINE carrier anchor replaced by assigned-area entry "
+            f"(aircraft={aircraft_id}, pathID={resume_path_id}, "
+            f"captureWaypointIndex={first_resume_capture_index}, "
+            f"offset={float(resume_entry_offset_m):.1f}m)."
+        )
     resume_branch_has_remaining_imaging = bool(
         resume_index is not None
         and isinstance(resume_mission, dict)
@@ -8308,16 +9576,46 @@ def _build_post_attack_tracking_return_only_update(
             f"until the next collaborative mission handoff "
             f"(aircraft={aircraft_id}, inputMissionID={current_input_id})."
         )
+    first_follow_up_mission = None
     first_follow_up_path_payload = None
-    if follow_up_source_missions and not block_follow_up_until_reassignment:
-        first_follow_up_mission = follow_up_source_missions[0]
+    if follow_up_source_missions and (
+        resume_branch_has_remaining_imaging
+        or not block_follow_up_until_reassignment
+    ):
+        first_follow_up_mission = next(
+            (
+                mission
+                for mission in follow_up_source_missions
+                if isinstance(mission, dict)
+                and _skip_replan_follow_up_reason(
+                    mission,
+                    excluded_input_ids=set(),
+                )
+                is None
+            ),
+            None,
+        )
         if isinstance(first_follow_up_mission, dict):
             first_follow_up_path_payload = _load_path_payload(
                 first_follow_up_mission.get("pathID"),
                 run_cache=run_cache,
             )
+    first_follow_up_waypoints = (
+        first_follow_up_path_payload.get("waypointList")
+        if isinstance(first_follow_up_path_payload, dict)
+        and isinstance(first_follow_up_path_payload.get("waypointList"), list)
+        else []
+    )
+    direct_line_resume = _can_resume_line_directly_after_attack(
+        first_follow_up_mission,
+        first_follow_up_waypoints,
+        current_input_id=int(current_input_id),
+        block_follow_up_until_reassignment=bool(
+            block_follow_up_until_reassignment
+        ),
+    )
     first_follow_up_coord = _first_waypoint_flight_coordinate(
-        (first_follow_up_path_payload or {}).get("waypointList") or []
+        first_follow_up_waypoints
     )
     use_follow_up_return_target = bool(
         not block_follow_up_until_reassignment
@@ -8338,35 +9636,58 @@ def _build_post_attack_tracking_return_only_update(
         and not use_follow_up_return_target
         and not follow_up_source_has_missions
     )
-    area_internal_return_coord = None
-    if point_only_return:
-        area_internal_return_coord = _input_area_internal_hold_coordinate(
-            source_plan_id=int(attack_plan_id),
-            current_input_id=int(current_input_id),
-            altitude_sources=[template_final_coord, current_coord],
-            run_cache=run_cache,
+    type2_activation_coord = None
+    type2_activation_lookahead_s = 0.0
+    type2_activation_model = None
+    if type2_branch_line and resume_branch_has_remaining_imaging:
+        (
+            type2_activation_coord,
+            type2_activation_lookahead_s,
+            type2_activation_model,
+        ) = _predict_post_attack_type2_return_coordinate(
+            current_coord,
+            current_state,
+        )
+        emit(
+            f"{log_prefix} return activation pose predicted before directed LINE resume "
+            f"(aircraft={aircraft_id}, lookahead={type2_activation_lookahead_s:.1f}s, "
+            f"model={type2_activation_model})."
         )
     final_coord = (
-        first_resume_coord
+        current_coord
+        if point_only_return
+        else type2_activation_coord
+        if (
+            type2_branch_line
+            and resume_branch_has_remaining_imaging
+            and type2_activation_coord is not None
+        )
+        else first_resume_coord
         if resume_branch_has_remaining_imaging and first_resume_coord is not None
         else first_follow_up_coord
         if use_follow_up_return_target and first_follow_up_coord is not None
-        else area_internal_return_coord
-        if area_internal_return_coord is not None
         else (
             template_final_coord
         )
     )
-    if area_internal_return_coord is not None:
+    if point_only_return:
         emit(
-            f"{log_prefix} point-only return target moved inside current area "
+            f"{log_prefix} no capture remains; return route collapsed to current-position "
+            f"{int(_POST_ATTACK_COMPLETE_HOLD_SECONDS)}s loiter "
             f"(aircraft={aircraft_id}, inputMissionID={current_input_id})."
         )
     if resume_branch_has_remaining_imaging:
-        emit(
-            f"{log_prefix} resume imaging branch preserved after return-only boundary "
-            f"(aircraft={aircraft_id}, resumeIndex={resume_index})."
-        )
+        if direct_line_resume:
+            emit(
+                f"{log_prefix} resume LINE imaging branch will start directly; "
+                "redundant return-only boundary omitted "
+                f"(aircraft={aircraft_id}, resumeIndex={resume_index})."
+            )
+        else:
+            emit(
+                f"{log_prefix} resume imaging branch preserved after return-only boundary "
+                f"(aircraft={aircraft_id}, resumeIndex={resume_index})."
+            )
     if use_follow_up_return_target:
         emit(
             f"{log_prefix} resume branch already done; return target moved to first follow-up path "
@@ -8378,20 +9699,38 @@ def _build_post_attack_tracking_return_only_update(
         emit(f"{log_prefix} final coordinate unavailable for aircraft {aircraft_id}.")
         return None
 
-    return_waypoints, return_speed_mps = _build_uav_release_resume_waypoints(
-        start_coord=current_coord,
-        end_coord=final_coord,
-        release_eta_s=0,
-        target_finish_eta_s=0,
-        default_speed_mps=_RELEASE_RESUME_FAST_SPEED_MPS,
-        min_speed_mps=_RELEASE_RESUME_FAST_SPEED_MPS,
-        max_speed_mps=_RELEASE_RESUME_FAST_SPEED_MPS,
-        force_speed_mps=_RELEASE_RESUME_FAST_SPEED_MPS,
-        # Assign after the follow-up prepass so this return path and every
-        # cloned follow-up share one global ID reservation/lock acquisition.
-        assign_waypoint_ids=False,
+    if point_only_return:
+        return_waypoints = [
+            _build_no_capture_completion_loiter_waypoint(
+                coordinate=current_coord,
+                template_waypoint=(
+                    resume_waypoints[-1]
+                    if resume_waypoints and isinstance(resume_waypoints[-1], dict)
+                    else None
+                ),
+            )
+        ]
+        return_speed_mps = float(_POST_ATTACK_COMPLETE_HOLD_SPEED_MPS)
+    else:
+        return_waypoints, return_speed_mps = _build_uav_release_resume_waypoints(
+            start_coord=current_coord,
+            end_coord=final_coord,
+            release_eta_s=0,
+            target_finish_eta_s=0,
+            default_speed_mps=_RELEASE_RESUME_FAST_SPEED_MPS,
+            min_speed_mps=_RELEASE_RESUME_FAST_SPEED_MPS,
+            max_speed_mps=_RELEASE_RESUME_FAST_SPEED_MPS,
+            force_speed_mps=_RELEASE_RESUME_FAST_SPEED_MPS,
+            # Assign after the follow-up prepass so this return path and every
+            # cloned follow-up share one global ID reservation/lock acquisition.
+            assign_waypoint_ids=False,
+        )
+    emit_return_boundary = not bool(direct_line_resume)
+    raw_return_waypoint_count = (
+        sum(1 for item in return_waypoints if isinstance(item, dict))
+        if emit_return_boundary
+        else 0
     )
-    raw_return_waypoint_count = sum(1 for item in return_waypoints if isinstance(item, dict))
 
     clone_count = _post_attack_follow_up_clone_count(follow_up_source_missions)
     follow_up_waypoint_count = 0
@@ -8425,26 +9764,33 @@ def _build_post_attack_tracking_return_only_update(
         follow_up_waypoint_count = 0
 
     reservation_summaries: List[Dict[str, Any]] = []
+    return_artifact_count = 1 if emit_return_boundary else 0
     id_reservation = ReplanIdReservation.reserve(
         imp_count=1,
-        individual_count=int(clone_count) + 1,
-        path_count_by_aircraft={int(aircraft_id): int(clone_count) + 1},
+        individual_count=int(clone_count) + int(return_artifact_count),
+        path_count_by_aircraft={
+            int(aircraft_id): int(clone_count) + int(return_artifact_count)
+        },
         waypoint_count=int(raw_return_waypoint_count) + int(follow_up_waypoint_count),
     )
     # Assign before short-path collapse.  The discarded midpoint therefore
     # consumes exactly the same ID as before, preserving every emitted ID.
-    if return_waypoints:
+    if emit_return_boundary and return_waypoints:
         reassign_unique_waypoint_ids_inplace(
             return_waypoints,
             waypoint_id_provider=id_reservation.next_waypoint,
         )
-    return_waypoints, return_path_collapsed = _collapse_short_return_waypoints(
-        return_waypoints,
-        aircraft_id=int(aircraft_id),
-        emit=emit,
-        log_prefix=log_prefix,
-    )
-    if not return_waypoints:
+    if emit_return_boundary:
+        return_waypoints, return_path_collapsed = _collapse_short_return_waypoints(
+            return_waypoints,
+            aircraft_id=int(aircraft_id),
+            emit=emit,
+            log_prefix=log_prefix,
+        )
+    else:
+        return_waypoints = []
+        return_path_collapsed = False
+    if emit_return_boundary and not return_waypoints:
         anchor_wp = _build_uav_transit_waypoint(
             coordinate=final_coord,
             speed_mps=float(_RELEASE_RESUME_FAST_SPEED_MPS),
@@ -8456,66 +9802,80 @@ def _build_post_attack_tracking_return_only_update(
         return_speed_mps = float(_RELEASE_RESUME_FAST_SPEED_MPS)
         return_path_collapsed = False
 
-    # A tracking UAV's return-only branch is the same collaborative completion
-    # boundary as the non-tracking UAV holds produced above.  Always emit the
-    # same executable terminal-loiter contract; leaving a collapsed short
-    # return as passType=3 + empty loiter makes this aircraft the only member
-    # whose completion still depends on physically crossing its marker.
-    completion_boundary_hold = True
-    _apply_post_attack_terminal_hold(
-        return_waypoints,
-        hold_seconds=int(_POST_ATTACK_COMPLETE_HOLD_SECONDS),
-        orientation_coordinate=final_coord,
+    # A completion loiter is the complete no-capture fallback, not the terminal
+    # point of a connector to an immediately executable future mission.  The
+    # latter must flow through the connector and enter that mission directly.
+    completion_boundary_hold = bool(
+        emit_return_boundary and point_only_return
     )
+    if completion_boundary_hold:
+        _apply_post_attack_terminal_hold(
+            return_waypoints,
+            hold_seconds=int(_POST_ATTACK_COMPLETE_HOLD_SECONDS),
+            orientation_coordinate=final_coord,
+        )
 
-    new_individual_id = int(id_reservation.next_individual())
-    new_path_id = int(id_reservation.next_path(int(aircraft_id)))
+    new_individual_id: Optional[int] = None
+    new_path_id: Optional[int] = None
+    return_mission: Optional[Dict[str, Any]] = None
+    return_path_payload: Optional[Dict[str, Any]] = None
+    if emit_return_boundary:
+        new_individual_id = int(id_reservation.next_individual())
+        new_path_id = int(id_reservation.next_path(int(aircraft_id)))
 
-    return_mission = _sanitize_post_attack_mission_entry(
-        deepcopy(template_mission),
-        current_input_id=int(current_input_id),
-    )
-    return_mission.pop("executionBlockedUntilNextCollab", None)
-    return_mission["individualMissionID"] = int(new_individual_id)
-    return_mission["pathID"] = int(new_path_id)
-    return_mission["isDone"] = False
-    return_info = return_mission.get("individualMissionInfo")
-    return_info = deepcopy(return_info if isinstance(return_info, dict) else {})
-    return_info["individualMissionType"] = 7
-    return_info["patternType"] = 10
-    return_info["targetID"] = None
-    return_info["lineList"] = []
-    return_info["areaList"] = []
-    return_info["SPEED"] = float(return_speed_mps)
-    return_mission["individualMissionInfo"] = return_info
-    _apply_release_resume_mission_info(
-        return_mission,
-        start_coord=current_coord,
-        end_coord=final_coord,
-    )
-    if return_path_collapsed:
+        return_mission = _sanitize_post_attack_mission_entry(
+            deepcopy(template_mission),
+            current_input_id=int(current_input_id),
+        )
+        return_mission.pop("executionBlockedUntilNextCollab", None)
+        return_mission["individualMissionID"] = int(new_individual_id)
+        return_mission["pathID"] = int(new_path_id)
+        return_mission["isDone"] = False
         return_info = return_mission.get("individualMissionInfo")
         return_info = deepcopy(return_info if isinstance(return_info, dict) else {})
-        return_info["coordinateList"] = [deepcopy(final_coord)]
+        return_info["individualMissionType"] = 7
+        return_info["patternType"] = 10
+        return_info["targetID"] = None
         return_info["lineList"] = []
         return_info["areaList"] = []
+        return_info["SPEED"] = float(return_speed_mps)
         return_mission["individualMissionInfo"] = return_info
+        if point_only_return:
+            _apply_no_capture_completion_loiter_mission_info(
+                return_mission,
+                coordinate=final_coord,
+            )
+        else:
+            _apply_release_resume_mission_info(
+                return_mission,
+                start_coord=current_coord,
+                end_coord=final_coord,
+            )
+        if return_path_collapsed:
+            return_info = return_mission.get("individualMissionInfo")
+            return_info = deepcopy(return_info if isinstance(return_info, dict) else {})
+            return_info["coordinateList"] = [deepcopy(final_coord)]
+            return_info["lineList"] = []
+            return_info["areaList"] = []
+            return_mission["individualMissionInfo"] = return_info
 
-    return_path_payload = deepcopy(template_path_payload)
-    return_path_payload["pathID"] = int(new_path_id)
-    return_path_payload["timestamp"] = int(now_ms)
-    return_path_payload["Source"] = return_path_payload.get("Source") or "MMR"
-    return_path_payload["aircraftID"] = int(aircraft_id)
-    return_path_payload["individualMissionID"] = int(new_individual_id)
-    return_path_payload["waypointList"] = [deepcopy(item) for item in return_waypoints if isinstance(item, dict)]
-    _apply_runtime_flyover_to_flight_path_payload(return_path_payload)
-    sanitize_flight_path_payload_filming_altitudes(return_path_payload)
-    if completion_boundary_hold:
-        return_mission["postAttackBoundaryHold"] = True
-        return_path_payload["postAttackBoundaryHold"] = True
-        for waypoint in return_path_payload.get("waypointList") or []:
-            if isinstance(waypoint, dict):
-                waypoint["postAttackBoundaryHold"] = True
+        return_path_payload = deepcopy(template_path_payload)
+        return_path_payload["pathID"] = int(new_path_id)
+        return_path_payload["timestamp"] = int(now_ms)
+        return_path_payload["Source"] = return_path_payload.get("Source") or "MMR"
+        return_path_payload["aircraftID"] = int(aircraft_id)
+        return_path_payload["individualMissionID"] = int(new_individual_id)
+        return_path_payload["waypointList"] = [
+            deepcopy(item) for item in return_waypoints if isinstance(item, dict)
+        ]
+        _apply_runtime_flyover_to_flight_path_payload(return_path_payload)
+        sanitize_flight_path_payload_filming_altitudes(return_path_payload)
+        if completion_boundary_hold:
+            return_mission["postAttackBoundaryHold"] = True
+            return_path_payload["postAttackBoundaryHold"] = True
+            for waypoint in return_path_payload.get("waypointList") or []:
+                if isinstance(waypoint, dict):
+                    waypoint["postAttackBoundaryHold"] = True
     cloned_artifacts = _clone_follow_up_replan_artifacts(
         missions=follow_up_source_missions,
         aircraft_id=int(aircraft_id),
@@ -8538,8 +9898,7 @@ def _build_post_attack_tracking_return_only_update(
     if (
         type2_branch_line
         and resume_branch_has_remaining_imaging
-        and progress_has_remaining
-        and isinstance(resume_progress_entry, dict)
+        and (progress_has_remaining or preserve_type2_without_progress)
     ):
         cloned_resume_mission = next(
             (
@@ -8571,13 +9930,77 @@ def _build_post_attack_tracking_return_only_update(
             else []
         )
         if isinstance(cloned_resume_mission, dict) and cloned_resume_waypoints:
-            trimmed_clone_waypoints, removed_clone_sweep_points = (
-                _trim_waypoints_for_exact_sweep_progress(
-                    cloned_resume_waypoints,
-                    resume_progress_entry,
-                    reference_coord=current_coord,
+            if isinstance(resume_progress_entry, dict) and progress_has_remaining:
+                trimmed_clone_waypoints, removed_clone_sweep_points = (
+                    _trim_waypoints_for_exact_sweep_progress(
+                        cloned_resume_waypoints,
+                        resume_progress_entry,
+                        reference_coord=current_coord,
+                        allow_line_scan_sweep_point_trim=True,
+                        preserve_carrier_coordinates=True,
+                    )
                 )
+            else:
+                trimmed_clone_waypoints = [
+                    deepcopy(item)
+                    for item in cloned_resume_waypoints
+                    if isinstance(item, dict)
+                ]
+                removed_clone_sweep_points = 0
+            restored_clone_carrier_count = (
+                _restore_type2_line_carriers_from_original(
+                    trimmed_clone_waypoints,
+                    original_path_payload,
+                    original_current_waypoint_id=_to_int(
+                        assignment.get("original_current_waypoint_id")
+                    ),
+                )
+                if type2_branch_line
+                else 0
             )
+            if restored_clone_carrier_count > 0:
+                emit(
+                    f"{log_prefix} cloned LINE carrier restored from pre-attack path "
+                    f"(aircraft={aircraft_id}, newPathID={cloned_resume_path_id}, "
+                    f"carrierWaypoints={restored_clone_carrier_count})."
+                )
+            if type2_branch_line:
+                cloned_entry_coord = _first_waypoint_flight_coordinate(
+                    trimmed_clone_waypoints
+                )
+                cloned_capture_index = next(
+                    (
+                        index
+                        for index, waypoint in enumerate(trimmed_clone_waypoints)
+                        if len(_line_search_coordinates(waypoint)) >= 2
+                    ),
+                    None,
+                )
+                corrected_cloned_entry = False
+                cloned_entry_offset_m = 0.0
+            else:
+                (
+                    cloned_entry_coord,
+                    cloned_capture_index,
+                    corrected_cloned_entry,
+                    cloned_entry_offset_m,
+                ) = _resolve_imaging_entry_flight_coordinate(
+                    trimmed_clone_waypoints
+                )
+            if (
+                corrected_cloned_entry
+                and cloned_entry_coord is not None
+                and cloned_capture_index is not None
+                and 0 <= int(cloned_capture_index) < len(trimmed_clone_waypoints)
+            ):
+                trimmed_clone_waypoints[int(cloned_capture_index)][
+                    "coordinate"
+                ] = deepcopy(cloned_entry_coord)
+                emit(
+                    f"{log_prefix} cloned LINE carrier moved to assigned-area entry "
+                    f"(aircraft={aircraft_id}, newPathID={cloned_resume_path_id}, "
+                    f"offset={float(cloned_entry_offset_m):.1f}m)."
+                )
             cloned_resume_path["waypointList"] = trimmed_clone_waypoints
             _sync_resume_mission_info_with_waypoints(
                 cloned_resume_mission,
@@ -8598,36 +10021,62 @@ def _build_post_attack_tracking_return_only_update(
             f"{log_prefix} retained future mission artifacts "
             f"(aircraft={aircraft_id}, blockedFollowUps={int(blocked_follow_up_count)})."
         )
+    else:
+        cleared_follow_up_count = _clear_post_attack_followups_execution_blocked(
+            follow_up_missions,
+        )
+        if cleared_follow_up_count:
+            emit(
+                f"{log_prefix} stale collaborative execution blocks cleared at "
+                "the executable post-attack handoff "
+                f"(aircraft={aircraft_id}, clearedFollowUps="
+                f"{int(cleared_follow_up_count)})."
+            )
 
     new_imp_data = _copy_post_attack_imp_shell(imp_data)
     new_imp_id = int(id_reservation.next_imp())
     new_imp_data["individualMissionPackageID"] = int(new_imp_id)
     new_imp_data["timestamp"] = int(now_ms)
-    new_imp_data["individualMissionList"] = [return_mission] + [
+    return_mission_prefix = (
+        [deepcopy(return_mission)] if isinstance(return_mission, dict) else []
+    )
+    new_imp_data["individualMissionList"] = return_mission_prefix + [
         deepcopy(mission) for mission in follow_up_missions
     ]
     new_imp_data.pop("deferredIndividualMissionList", None)
 
     imp_dest = db_paths.get_db_subpath("IndividualMissionPlan", f"{int(new_imp_id)}.json")
-    path_dest = db_paths.get_db_subpath("FlightPath", f"{int(new_path_id)}.json")
     imp_dest.parent.mkdir(parents=True, exist_ok=True)
-    path_dest.parent.mkdir(parents=True, exist_ok=True)
-    sanitize_flight_path_payload_filming_altitudes(return_path_payload)
-    generated_flight_paths = [return_path_payload] + [
+    path_dest: Optional[Path] = None
+    if new_path_id is not None and isinstance(return_path_payload, dict):
+        path_dest = db_paths.get_db_subpath("FlightPath", f"{int(new_path_id)}.json")
+        path_dest.parent.mkdir(parents=True, exist_ok=True)
+        sanitize_flight_path_payload_filming_altitudes(return_path_payload)
+    generated_flight_paths = (
+        [return_path_payload] if isinstance(return_path_payload, dict) else []
+    ) + [
         payload for _dest, payload in follow_up_paths if isinstance(payload, dict)
     ]
     _validate_generated_post_attack_artifact_payloads(
         individual_mission_plans=[new_imp_data],
         flight_paths=generated_flight_paths,
-        scope=f"postAttackTrackingReturnOnly:{new_imp_id}",
+        scope=(
+            f"postAttackTrackingDirectLineResume:{new_imp_id}"
+            if direct_line_resume
+            else f"postAttackTrackingReturnOnly:{new_imp_id}"
+        ),
         allow_existing_db_artifacts=True,
         log=emit,
     )
-    generated_path_ids: Set[int] = {int(new_path_id)}
-    write_entries: List[Tuple[Path, Dict[str, Any]]] = [
-        (imp_dest, new_imp_data),
-        (path_dest, return_path_payload),
-    ]
+    generated_path_ids: Set[int] = set()
+    write_entries: List[Tuple[Path, Dict[str, Any]]] = [(imp_dest, new_imp_data)]
+    if (
+        path_dest is not None
+        and new_path_id is not None
+        and isinstance(return_path_payload, dict)
+    ):
+        write_entries.append((path_dest, return_path_payload))
+        generated_path_ids.add(int(new_path_id))
     for dest, payload in follow_up_paths:
         dest.parent.mkdir(parents=True, exist_ok=True)
         _apply_runtime_flyover_to_flight_path_payload(payload)
@@ -8641,35 +10090,139 @@ def _build_post_attack_tracking_return_only_update(
         run_cache=run_cache,
     )
 
-    emit(
-        f"{log_prefix} tracking branch replaced with return-only package "
-        f"(aircraft={aircraft_id}, imp={imp_dest.name}, path={path_dest.name}, "
-        f"hold={int(_POST_ATTACK_COMPLETE_HOLD_SECONDS) if completion_boundary_hold else 0}s, "
-        f"followUps={len(follow_up_missions)}, "
-        f"speed={float(return_speed_mps):.1f})."
-    )
+    if direct_line_resume:
+        emit(
+            f"{log_prefix} tracking branch resumed directly with LINE capture package "
+            f"(aircraft={aircraft_id}, imp={imp_dest.name}, "
+            f"followUps={len(follow_up_missions)})."
+        )
+    else:
+        emit(
+            f"{log_prefix} tracking branch replaced with return-only package "
+            f"(aircraft={aircraft_id}, imp={imp_dest.name}, path={path_dest.name if path_dest else None}, "
+            f"hold={int(_POST_ATTACK_COMPLETE_HOLD_SECONDS) if completion_boundary_hold else 0}s, "
+            f"followUps={len(follow_up_missions)}, "
+            f"speed={float(return_speed_mps):.1f})."
+        )
     direct_reservation = _post_attack_reservation_event(
-        scope="postAttackTrackingReturnOnly",
+        scope=(
+            "postAttackTrackingDirectLineResume"
+            if direct_line_resume
+            else "postAttackTrackingReturnOnly"
+        ),
         aircraft_id=int(aircraft_id),
         imp_ids=[int(new_imp_id)],
-        individual_ids=[int(new_individual_id)],
-        path_ids_by_aircraft={int(aircraft_id): [int(new_path_id)]},
+        individual_ids=(
+            [int(new_individual_id)] if new_individual_id is not None else None
+        ),
+        path_ids_by_aircraft=(
+            {int(aircraft_id): [int(new_path_id)]}
+            if new_path_id is not None
+            else None
+        ),
     )
     reservation_summaries.insert(0, direct_reservation)
+    return_mission_summary = (
+        {
+            "individualMissionID": int(new_individual_id),
+            "pathID": int(new_path_id),
+            "finalCoordinate": dict(final_coord),
+        }
+        if new_individual_id is not None and new_path_id is not None
+        else None
+    )
     return {
         "aircraft_id": int(aircraft_id),
         "individualMissionPackageID": int(new_imp_id),
         "generatedPathIDs": sorted(int(pid) for pid in generated_path_ids if int(pid) > 0),
-        "returnMission": {
-            "individualMissionID": int(new_individual_id),
-            "pathID": int(new_path_id),
-            "finalCoordinate": dict(final_coord),
-        },
+        "returnMission": return_mission_summary,
+        "directLineResume": bool(direct_line_resume),
+        "returnMissionOmitted": bool(direct_line_resume),
+        "returnMissionOmitReason": (
+            "direct_live_line_follow_up" if direct_line_resume else None
+        ),
         "followUpMissionCount": len(follow_up_missions),
         "completionBoundaryHold": bool(completion_boundary_hold),
         "followUpsBlockedUntilNextCollab": bool(block_follow_up_until_reassignment),
         "reservedIds": direct_reservation.get("reservedIds", {}),
         "reservationSummaries": reservation_summaries,
+    }
+
+
+def _apply_collab_unavailable_return_only_fallback(
+    *,
+    attack_plan_id: int,
+    current_input_id: int,
+    group_assignments: List[Dict[str, Any]],
+    agent_state_map: Dict[int, Dict[str, Any]],
+    new_plan_data: Dict[str, Any],
+    now_ms: int,
+    emit: LogCallback,
+    run_cache: Optional[_PostAttackRunCache],
+    reservation_summaries: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Release returning trackers when collaborative redistribution cannot build."""
+
+    tracking_release_updates: List[Dict[str, Any]] = []
+    failed_aircraft_ids: Set[int] = set()
+    released_aircraft_ids: Set[int] = set()
+    generated_imp_ids: Set[int] = set()
+    generated_path_ids: Set[int] = set()
+
+    for assignment in group_assignments:
+        aircraft_id = _to_int(assignment.get("aircraft_id"))
+        if aircraft_id is None or aircraft_id <= 0:
+            continue
+        tracking_release = _build_post_attack_tracking_return_only_update(
+            attack_plan_id=int(attack_plan_id),
+            current_input_id=int(current_input_id),
+            assignment=assignment,
+            current_state=agent_state_map.get(int(aircraft_id)) or {},
+            hold_seconds=int(_POST_ATTACK_COMPLETE_HOLD_SECONDS),
+            now_ms=int(now_ms),
+            emit=emit,
+            log_prefix="[POSTATTACK][COLLAB-FALLBACK]",
+            run_cache=run_cache,
+            # The collaboration boundary is unresolved. Keep later inputs in
+            # the package for continuity, but do not let this UAV start them.
+            block_follow_up_until_reassignment=True,
+        )
+        if not isinstance(tracking_release, dict):
+            failed_aircraft_ids.add(int(aircraft_id))
+            continue
+        new_imp_id = _to_int(
+            tracking_release.get("individualMissionPackageID")
+        )
+        if new_imp_id is None or new_imp_id <= 0:
+            failed_aircraft_ids.add(int(aircraft_id))
+            continue
+        if not _update_plan_aircraft_entry(
+            new_plan_data,
+            int(aircraft_id),
+            int(new_imp_id),
+        ):
+            failed_aircraft_ids.add(int(aircraft_id))
+            continue
+
+        released_aircraft_ids.add(int(aircraft_id))
+        generated_imp_ids.add(int(new_imp_id))
+        generated_path_ids.update(
+            int(path_id)
+            for path_id in (tracking_release.get("generatedPathIDs") or [])
+            if _to_int(path_id) is not None and int(path_id) > 0
+        )
+        tracking_release_updates.append(dict(tracking_release))
+        _extend_reservation_summaries(
+            reservation_summaries,
+            tracking_release.get("reservationSummaries"),
+        )
+
+    return {
+        "tracking_release_updates": tracking_release_updates,
+        "released_aircraft_ids": sorted(released_aircraft_ids),
+        "failed_aircraft_ids": sorted(failed_aircraft_ids),
+        "generated_imp_ids": sorted(generated_imp_ids),
+        "generated_path_ids": sorted(generated_path_ids),
     }
 
 
@@ -8684,7 +10237,7 @@ def _apply_post_attack_terminal_hold(
     terminal = waypoints[-1]
     if not isinstance(terminal, dict):
         return
-    hold_seconds = int(_POST_ATTACK_COMPLETE_HOLD_SECONDS)
+    hold_seconds = max(1, int(hold_seconds or _POST_ATTACK_COMPLETE_HOLD_SECONDS))
     terminal["waypointPassType"] = 2
     terminal["eta"] = max(int(_to_float(terminal.get("eta")) or 0), int(hold_seconds))
     terminal["nextWaypointID"] = 0
@@ -8704,6 +10257,7 @@ def _apply_post_attack_terminal_hold(
     filming.pop("lineSearch", None)
     filming.pop("areaSearch", None)
     filming.pop("autoTracking", None)
+    filming.pop("aircraftFixed", None)
     coord_orientation = filming.get("coordinateOrientation")
     coord_orientation = deepcopy(coord_orientation) if isinstance(coord_orientation, dict) else {}
     coord_orientation["coordinate"] = deepcopy(orientation_coordinate)
@@ -9337,6 +10891,15 @@ def _index_agent_states(
         }
         if velocity:
             state_row["velocity"] = deepcopy(velocity)
+        attitude = (
+            entry.get("attitude")
+            if isinstance(entry.get("attitude"), dict)
+            else unmanned.get("attitude")
+            if isinstance(unmanned.get("attitude"), dict)
+            else None
+        )
+        if isinstance(attitude, dict):
+            state_row["attitude"] = deepcopy(attitude)
         if heading is not None:
             state_row["headingDeg"] = float(heading) % 360.0
         if speed is not None and speed > 0.0:
@@ -9359,6 +10922,22 @@ def _index_agent_states(
                 value = unmanned_velocity.get(key)
             if value is not None:
                 state_row[key] = value
+        for key in (
+            "linePredictedEntryCoordinate",
+            "lineTrendHeadingDeg",
+            "lineTrendTurnRateDps",
+            "lineTrendTurnSign",
+            "lineTurnDirectionConfidence",
+            "linePredictedHeadingDeg",
+            "linePredictionLeadS",
+            "linePredictionModel",
+            "lineTurnDataAgeS",
+            "lineTrendSampleCount",
+            "lineTrendSource",
+        ):
+            value = entry.get(key)
+            if value is not None:
+                state_row[key] = deepcopy(value)
         index[int(aircraft_id)] = state_row
     return index
 

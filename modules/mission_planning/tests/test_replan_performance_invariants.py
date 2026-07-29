@@ -13,6 +13,12 @@ from modules.mission_planning.replanning.triggers.prior.pipeline import (
     _build_uav_release_resume_waypoints,
     _clone_follow_up_replan_artifacts,
 )
+from modules.mission_planning.pipelines.type2_boundary_guard_loop import (
+    annotate_boundary_guard_set,
+    apply_boundary_guard_contract,
+    extract_boundary_guard_contract,
+    validate_boundary_guard_flight_path_sets,
+)
 from modules.mission_planning.runtime.replan_transaction import (
     _mark_written_flight_paths,
 )
@@ -90,6 +96,102 @@ class ReplanPerformanceInvariantTests(unittest.TestCase):
         self.assertTrue(all(not wp["isDone"] for wp in cloned["waypointList"]))
         self.assertEqual(source["waypointList"][0]["waypointID"], 11)
         self.assertTrue(source["waypointList"][0]["isDone"])
+
+    def test_follow_up_clone_relinks_type2_guard_after_waypoint_reassignment(self) -> None:
+        source_paths = [
+            {
+                "pathID": 400000001,
+                "aircraftID": 4,
+                "individualMissionID": 900000001,
+                "waypointList": [
+                    {"waypointID": 11, "nextWaypointID": 12, "isDone": False},
+                    {"waypointID": 12, "nextWaypointID": 0, "isDone": False},
+                ],
+            },
+            {
+                "pathID": 400000002,
+                "aircraftID": 4,
+                "individualMissionID": 900000002,
+                "waypointList": [
+                    {"waypointID": 13, "nextWaypointID": 14, "isDone": False},
+                    {"waypointID": 14, "nextWaypointID": 0, "isDone": False},
+                ],
+            },
+        ]
+        annotate_boundary_guard_set(
+            source_paths,
+            set_id="type2-boundary:3:5:aircraft-4",
+            duration_s=600,
+        )
+        missions = []
+        for mission_id, path in zip((900000001, 900000002), source_paths):
+            mission = {
+                "individualMissionID": mission_id,
+                "pathID": path["pathID"],
+                "isDone": False,
+                "relatedMission": {"inputMissionID": 5},
+                "individualMissionInfo": {},
+            }
+            apply_boundary_guard_contract(
+                mission,
+                extract_boundary_guard_contract(path),
+                include_individual_mission_info=True,
+            )
+            missions.append(mission)
+
+        source_by_path = {int(path["pathID"]): path for path in source_paths}
+        mission_ids = iter((900000101, 900000102))
+        path_ids = iter((400000101, 400000102))
+        waypoint_ids = iter((201, 202, 203, 204))
+
+        def _read_path(path: Path, **_kwargs):
+            return deepcopy(source_by_path[int(Path(path).stem)])
+
+        with patch(
+            "modules.mission_planning.replanning.triggers.prior.pipeline.read_json_cached",
+            side_effect=_read_path,
+        ), patch(
+            "modules.mission_planning.replanning.triggers.prior.pipeline.db_paths.get_db_subpath",
+            side_effect=lambda kind, filename=None: Path("C:/replan-test") / kind / (filename or ""),
+        ):
+            result = _clone_follow_up_replan_artifacts(
+                missions=missions,
+                aircraft_id=4,
+                now_ms=123,
+                emit=lambda _message: None,
+                log_prefix="[POSTATTACK][TEST]",
+                individual_id_provider=lambda: next(mission_ids),
+                path_id_provider=lambda _aircraft_id: next(path_ids),
+                waypoint_id_provider=lambda: next(waypoint_ids),
+            )
+
+        self.assertIsNotNone(result)
+        cloned_missions, cloned_path_entries = result or ([], [])
+        cloned_paths = [payload for _dest, payload in cloned_path_entries]
+        validate_boundary_guard_flight_path_sets(cloned_paths)
+        self.assertEqual(
+            [path["waypointList"][-1]["nextWaypointID"] for path in cloned_paths],
+            [203, 201],
+        )
+        self.assertEqual(
+            {path["boundaryGuardCycleFirstWaypointID"] for path in cloned_paths},
+            {201},
+        )
+        self.assertEqual(
+            {path["boundaryGuardCycleLastWaypointID"] for path in cloned_paths},
+            {204},
+        )
+        self.assertEqual(
+            {mission["boundaryGuardCycleFirstWaypointID"] for mission in cloned_missions},
+            {201},
+        )
+        self.assertEqual(
+            {
+                mission["individualMissionInfo"]["boundaryGuardCycleLastWaypointID"]
+                for mission in cloned_missions
+            },
+            {204},
+        )
 
     def test_flight_path_write_marker_uses_payload_high_water(self) -> None:
         entries = [

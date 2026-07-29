@@ -37,13 +37,18 @@ class LAHOperationalEnvelope:
     """
 
     # ⓐ 속도·기동 한계
-    max_speed_kmh: float = 265.0
-    cruise_speed_kmh: tuple[float, float] = (240.0, 260.0)
+    max_speed_kmh: float = 260.0
+    cruise_speed_kmh: tuple[float, float] = (148.0, 240.0)
     min_speed_kmh: float = 0.0
     climb_rate_mps: float = 8.9
     descent_rate_mps: float = 7.0
+    operational_climb_rate_mps: float = 5.0
+    operational_descent_rate_mps: float = 5.0
     max_turn_rate_dps: float = 20.0
+    operational_turn_rate_dps: float = 5.0
     pitch_roll_limit_deg: float = 30.0
+    operational_pitch_limit_deg: float = 15.0
+    operational_roll_limit_deg: float = 30.0
 
     # ⓑ 고도·통신 한계
     # Firing from concealment needs whatever altitude clears the ridge between

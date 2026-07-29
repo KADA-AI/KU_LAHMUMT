@@ -13,12 +13,23 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
-from modules.common.turn_dynamics import interpolate_reference_turn_radius
+from modules.common.turn_dynamics import (
+    REFERENCE_TURN_RADIUS_TABLE_MPS,
+    interpolate_reference_turn_radius,
+)
 from modules.mission_planning.pipelines.handover_terminal import (
     CONTROL_TRANSFER_FOV_DEG,
     control_transfer_route_coordinates,
     is_control_transfer_direct_mission,
     mission_requests_handover_terminal,
+)
+from modules.mission_planning.pipelines.type2_boundary_guard_loop import (
+    BOUNDARY_GUARD_CONTRACT_KEYS,
+    apply_boundary_guard_contract,
+    extract_boundary_guard_contract,
+    is_boundary_guard_loop,
+    link_boundary_guard_flight_path_sets,
+    sync_boundary_guard_contract_from_flight_paths,
 )
 
 _CANONICAL_NAME = "modules.mission_planning.engine.mission_generation.artifacts_0301_0302_0303_0304.d0303"
@@ -159,6 +170,13 @@ except ImportError:
         from DB import select_best_config as _select_best_config  # type: ignore
     except ImportError:
         _select_best_config = None
+try:
+    from modules.mission_planning.MissionPlanner import capture_physics as _capture_physics
+except Exception:
+    try:
+        import capture_physics as _capture_physics  # type: ignore
+    except Exception:
+        _capture_physics = None
 from modules.mission_planning.MissionPlanner.UAV_missionPlanning import UAVMissionPlanner
 from modules.mission_planning.MissionPlanner.data_def import route_planner_algorithms as route_algos
 from modules.mission_planning.MissionPlanner.data_def.coord_transform import llh_to_xy, xy_to_llh
@@ -570,6 +588,18 @@ def _route_offset_sep_for_fov(fov_deg: float, default_sep_m: float) -> float:
         default_sep = float(default_sep_m)
     except Exception:
         default_sep = 0.0
+    # 물리 우선: 측정/기존 이격을 그대로 쓰되 선택 FOV의 GSD 한계로만 자른다.
+    if _capture_physics is not None:
+        try:
+            physics_sep = _capture_physics.physics_route_offset_cap_m(
+                float(fov_deg or 0.0),
+                default_sep,
+                runtime_cfg=_runtime_settings_payload(),
+            )
+        except Exception:
+            physics_sep = 0.0
+        if physics_sep > 0.0:
+            return float(physics_sep)
     min_sep = _fov_db_min_sep_for_fov(float(fov_deg or 0.0))
     if min_sep > 0.0:
         return float(min_sep)
@@ -768,7 +798,9 @@ AREA_SWEEP_ROUTE_WP_SPACING_M = 1000.0
 LINE_SWEEP_DENSITY_SCALE = 1.2
 # 1.5x denser area sweep than the previous baseline (spacing ~= 2/3).
 AREA_SWEEP_DENSITY_SCALE = 1.2
-LINE_ROUTE_OFFSET_SCALE = 1.0
+# 런타임 기본값(runtime_settings.line_route_offset_scale)과 같은 0.25.
+# 1.0이면 SEP 전체가 이격이 되어 첫 진입 WP가 스윕선에서 1 km 밖에 찍힌다.
+LINE_ROUTE_OFFSET_SCALE = 0.25
 FOV_DB_SEP_SAFETY_FACTOR = 1.7
 FOV_DB_QUALITY_SEP_MARGIN_M = 1.0
 AREA_POINT_ANCHOR_LEAD_IN_M = 1000.0
@@ -784,7 +816,10 @@ LOITER_DIRECTION = 1
 LOITER_TIME_S = 30
 LOITER_SPEED_MPS = 30
 DUBINS_TURN_RADIUS_M = 500.0
-AREA_DUBINS_ENTRY_LINKS_ENABLED = True
+# AREA 전환 out-leg 링크 WP(이전 영역 끝의 진출 접점) 방출 여부.  사용자 결정
+# (2026-07-28)으로 기본 비활성 — 유용성이 없어 점 자체를 없앤다.  로직은 보존:
+# 켜면 초기계획·다음협업 둘 다 같은 링크를 다시 방출한다.
+AREA_DUBINS_ENTRY_LINKS_ENABLED = False
 SWEEP_MERGE_MODE = "all"
 _PROJECT_ROOT = Path(__file__).resolve().parents[5]
 _FOV_DB_PATH = _PROJECT_ROOT / "resource" / "db" / "fov_db.csv"
@@ -798,6 +833,18 @@ _SWEEP_DEBUG_LOCK = threading.Lock()
 def _select_corridor_db_config(width: float, min_sep_m: float = 0.0) -> dict | None:
     if not USE_DB_FOR_CORRIDOR:
         return None
+    # 물리 선택 우선 (DB-free): 요구폭 + 이격 힌트로 실시간 계산.
+    if _capture_physics is not None:
+        try:
+            physics_row = _capture_physics.physics_line_row(
+                float(width),
+                float(min_sep_m or 0.0),
+                runtime_cfg=_runtime_settings_payload(),
+            )
+        except Exception:
+            physics_row = None
+        if isinstance(physics_row, dict) and float(physics_row.get("fov", 0.0) or 0.0) > 0.0:
+            return physics_row
     cfg = _select_balanced_fov_db_row(float(width), min_sep_m=float(min_sep_m or 0.0))
     if cfg is not None:
         return cfg
@@ -894,6 +941,32 @@ def _select_area_db_config(poly_llh: list[tuple[float, float]], bearing_deg: flo
     if max_segment_m > 0.0:
         width_ref_m = min(width_ref_m, max_segment_m)
     width_ref_m = max(float(width_ref_m), 1.0)
+    # 물리 선택 우선 (DB-free): 행 최대 현(스윕 방향)을 기하로 전달하고,
+    # area 전용 마진(physics_area_fov_margin_ratio)이 적용된다.
+    # "sep" 키를 넣지 않아 mission_sep_m 은 기존 값이 유지된다.
+    if _capture_physics is not None:
+        try:
+            lat0, lon0 = poly_llh[0]
+            poly_xy = [llh_to_xy(lat, lon, lat0, lon0) for lat, lon in poly_llh]
+            row_chord_m = float(
+                _capture_physics.max_sweep_row_chord_m_xy(poly_xy, bearing_deg) or 0.0
+            )
+        except Exception:
+            row_chord_m = 0.0
+        try:
+            physics_fov = _capture_physics.physics_area_fov_deg(
+                row_length_m=row_chord_m,
+                runtime_cfg=_runtime_settings_payload(),
+            )
+        except Exception:
+            physics_fov = None
+        if physics_fov is not None and float(physics_fov) > 0.0:
+            return {
+                "config": {"fov": float(physics_fov), "source": "capture_physics"},
+                "span_m": float(span_m),
+                "width_ref_m": float(width_ref_m),
+                "max_segment_m": float(max_segment_m),
+            }
     cfg = _select_balanced_fov_db_row(
         width_ref_m,
         smaller_fov_steps=_runtime_area_fov_db_smaller_fov_steps(),
@@ -953,6 +1026,8 @@ def _plan_route_points(
 def _resample_polyline_xy(
     points_xy: list[tuple[float, float]],
     spacing_m: float,
+    *,
+    segment_lengths_m: list[float] | None = None,
 ) -> list[tuple[float, float]]:
     if len(points_xy) <= 1:
         return list(points_xy)
@@ -961,18 +1036,31 @@ def _resample_polyline_xy(
     except Exception:
         spacing = 500.0
 
+    supplied_lengths = (
+        list(segment_lengths_m)
+        if isinstance(segment_lengths_m, list) and len(segment_lengths_m) == len(points_xy) - 1
+        else None
+    )
     seg_lengths: list[float] = []
     cumulative: list[float] = [0.0]
     total = 0.0
     for idx in range(len(points_xy) - 1):
         x0, y0 = points_xy[idx]
         x1, y1 = points_xy[idx + 1]
-        seg_len = math.hypot(float(x1) - float(x0), float(y1) - float(y0))
+        if supplied_lengths is not None:
+            try:
+                seg_len = max(float(supplied_lengths[idx]), 0.0)
+            except Exception:
+                seg_len = math.hypot(float(x1) - float(x0), float(y1) - float(y0))
+        else:
+            seg_len = math.hypot(float(x1) - float(x0), float(y1) - float(y0))
         seg_lengths.append(seg_len)
         total += seg_len
         cumulative.append(total)
 
-    if total <= spacing * 1.25:
+    # uav_wp_interval_m is a maximum route-WP interval, not a loose target.
+    # The former 25% tolerance left a 1,800 m flight leg unsplit at 1,500 m.
+    if total <= spacing + 1e-6:
         return [points_xy[0], points_xy[-1]]
 
     targets: list[float] = [0.0]
@@ -1010,6 +1098,44 @@ def _resample_polyline_xy(
     if deduped[-1] != points_xy[-1]:
         deduped.append(points_xy[-1])
     return deduped
+
+
+def _resample_route_coordinates(
+    coordinates: list[dict],
+    spacing_m: float,
+) -> list[dict]:
+    """Resample a final aircraft route by the configured maximum WP interval."""
+
+    valid = [
+        coord for coord in (coordinates or [])
+        if isinstance(coord, dict) and "latitude" in coord and "longitude" in coord
+    ]
+    if len(valid) <= 1:
+        return [dict(coord) for coord in valid]
+    lat0 = float(valid[0]["latitude"])
+    lon0 = float(valid[0]["longitude"])
+    points_xy = [
+        llh_to_xy(float(coord["latitude"]), float(coord["longitude"]), lat0, lon0)
+        for coord in valid
+    ]
+    segment_lengths_m = [
+        _dist_between_coords(valid[pos - 1], valid[pos])
+        for pos in range(1, len(valid))
+    ]
+    try:
+        safe_spacing_m = max(float(spacing_m) - 1.0, 1.0)
+    except Exception:
+        safe_spacing_m = max(float(SWEEP_ROUTE_WP_SPACING_M) - 1.0, 1.0)
+    samples_xy = _resample_polyline_xy(
+        points_xy,
+        safe_spacing_m,
+        segment_lengths_m=segment_lengths_m,
+    )
+    result: list[dict] = []
+    for x_m, y_m in samples_xy:
+        lat, lon = xy_to_llh(float(x_m), float(y_m), lat0, lon0)
+        result.append({"latitude": float(lat), "longitude": float(lon)})
+    return result
 
 
 def _sweep_spacing_m(
@@ -1389,6 +1515,15 @@ def set_flyover_options(
 
 
 def _turn_radius_m_for_speed(speed_mps: float) -> float:
+    # The link is flown at the mission speed in effect at that moment, so the
+    # radius must follow that speed; the fixed dubins_turn_radius_m setting is
+    # only a fallback for when no usable speed is known.
+    try:
+        spd = float(speed_mps)
+    except Exception:
+        spd = 0.0
+    if spd > 1.0:
+        return float(interpolate_reference_turn_radius(spd))
     try:
         fixed_radius = float(DUBINS_TURN_RADIUS_M)
     except Exception:
@@ -1400,11 +1535,26 @@ def _turn_radius_m_for_speed(speed_mps: float) -> float:
             pass
     if fixed_radius > 0.0:
         return fixed_radius
+    return float(interpolate_reference_turn_radius(40.0))
+
+
+def _speed_mps_for_turn_radius(radius_m: float) -> float:
+    """Inverse of the reference turn-radius table: slowest table speed whose
+    radius still covers the requested one (used to slow transition links)."""
+    rows = sorted((float(r), float(v)) for v, r in REFERENCE_TURN_RADIUS_TABLE_MPS)
     try:
-        spd = float(speed_mps)
+        radius = float(radius_m)
     except Exception:
-        spd = 40.0
-    return float(interpolate_reference_turn_radius(spd))
+        return rows[-1][1]
+    if radius <= rows[0][0]:
+        return max(12.0, rows[0][1] * radius / rows[0][0])
+    if radius >= rows[-1][0]:
+        (r0, v0), (r1, v1) = rows[-2], rows[-1]
+        return v1 + (radius - r1) * (v1 - v0) / max(1.0, r1 - r0)
+    for (r0, v0), (r1, v1) in zip(rows[:-1], rows[1:]):
+        if r0 <= radius <= r1:
+            return v0 + (radius - r0) * (v1 - v0) / max(1.0, r1 - r0)
+    return rows[-1][1]
 
 
 def _dubins_link_available() -> bool:
@@ -1493,12 +1643,16 @@ def _make_area_link_wp(
         ("eta", 0),
         ("ecf", 0.0),
         ("nextWaypointID", 0),
-        ("waypointPassType", PASS_FLYBY),
+        # 이전 영역에서 다음 영역으로 나가는 진출점(out leg)은 실제로 통과해야
+        # 하는 선회 접점이다 — FLYBY면 컨트롤러가 잘라먹고 다음 영역으로 미끄러
+        # 진다.  링크 WP는 패킷별 flyover 정규화 이후에 덧붙으므로 여기 값이
+        # 최종값이다.
+        ("waypointPassType", PASS_FLYOVER),
         ("filmingProperty", filming),
     ])
 
 
-def _build_area_dubins_entry_wps(
+def compute_area_transition_link(
     *,
     prev_start_coord: dict,
     prev_end_coord: dict,
@@ -1507,19 +1661,25 @@ def _build_area_dubins_entry_wps(
     turn_radius_m: float,
     cruise_speed_mps: float,
     altitude_fn: Callable[[float, float], int],
-    target_coord: dict | None = None,
-    target_fov: float | None = None,
     min_link_gap_m: float | None = None,
-) -> list[OrderedDict]:
+) -> tuple[list[dict], float]:
+    """Turn-link coordinates joining the end of one area pass to the next.
+
+    Returns ``(coordinates, link_speed_mps)``.  This is the shared geometry:
+    the initial-plan builder and the next-collab replacement builder both go
+    through it so an area handover flies the same way whichever produced it.
+    """
+
+    empty: tuple[list[dict], float] = ([], float(cruise_speed_mps))
     if _compute_turn_link is None or _DubinsPoint2D is None:
-        return []
+        return empty
     if not (
         isinstance(prev_start_coord, dict)
         and isinstance(prev_end_coord, dict)
         and isinstance(next_first_coord, dict)
         and isinstance(next_second_coord, dict)
     ):
-        return []
+        return empty
 
     origin_lat = float(prev_end_coord.get("latitude", 0.0))
     origin_lon = float(prev_end_coord.get("longitude", 0.0))
@@ -1542,23 +1702,50 @@ def _build_area_dubins_entry_wps(
         origin_lon,
     )
     if math.hypot(prev_start_x, prev_start_y) < 1.0:
-        return []
+        return empty
     if math.hypot(next_second_x - next_first_x, next_second_y - next_first_y) < 1.0:
-        return []
+        return empty
 
-    try:
-        result = _compute_turn_link(
-            prev_start=_DubinsPoint2D(prev_start_x, prev_start_y),
-            prev_end=_DubinsPoint2D(0.0, 0.0),
-            next_start=_DubinsPoint2D(next_first_x, next_first_y),
-            next_end=_DubinsPoint2D(next_second_x, next_second_y),
-            radius_m=max(1.0, float(turn_radius_m)),
-            sample_step_m=10.0,
-            allow_ccc=True,
-            path_policy="all_shortest",
-        )
-    except Exception:
-        return []
+    # Keep the link to its two CSC tangent points only.  When the reversal is
+    # tighter than the speed-based radius allows (adjacent-lane turnarounds),
+    # shrink the radius until the arc-straight-arc solution stays compact and
+    # slow the link waypoints to the speed that matches the reduced radius,
+    # instead of emitting a sampled multi-waypoint loop.
+    max_link_arc_deg = 115.0
+    min_link_radius_m = 150.0
+    link_radius_m = max(1.0, float(turn_radius_m))
+    result = None
+    for _ in range(6):
+        try:
+            candidate = _compute_turn_link(
+                prev_start=_DubinsPoint2D(prev_start_x, prev_start_y),
+                prev_end=_DubinsPoint2D(0.0, 0.0),
+                next_start=_DubinsPoint2D(next_first_x, next_first_y),
+                next_end=_DubinsPoint2D(next_second_x, next_second_y),
+                radius_m=link_radius_m,
+                sample_step_m=10.0,
+                allow_ccc=False,
+                path_policy="csc_shortest",
+            )
+        except Exception:
+            candidate = None
+        if candidate is not None:
+            result = candidate
+            seg1_m, _seg2_m, seg3_m = candidate.dubins_segment_lengths_m
+            arc1_deg = math.degrees(seg1_m / link_radius_m)
+            arc3_deg = math.degrees(seg3_m / link_radius_m)
+            if max(arc1_deg, arc3_deg) <= max_link_arc_deg:
+                break
+        if link_radius_m <= min_link_radius_m:
+            break
+        link_radius_m = max(min_link_radius_m, link_radius_m * 0.75)
+    if result is None:
+        return empty
+    link_speed_mps = (
+        float(cruise_speed_mps)
+        if link_radius_m >= float(turn_radius_m) - 1e-6
+        else _speed_mps_for_turn_radius(link_radius_m)
+    )
 
     try:
         effective_min_gap_m = float(min_link_gap_m) if min_link_gap_m is not None else (float(turn_radius_m) * 0.25)
@@ -1576,23 +1763,52 @@ def _build_area_dubins_entry_wps(
             continue
         candidates.append((coord, d_prev, d_next))
 
-    prefix: list[OrderedDict] = []
+    coords: list[dict] = []
     previous_coord = prev_end_coord
     for coord, d_prev, d_next in candidates:
         if d_prev + 1e-6 < effective_min_gap_m or d_next + 1e-6 < effective_min_gap_m:
             continue
         if _dist_between_coords(previous_coord, coord) <= 1.0:
             continue
-        if prefix and _dist_between_coords(prefix[-1].get("coordinate") or {}, coord) <= 1.0:
+        if coords and _dist_between_coords(coords[-1], coord) <= 1.0:
             continue
-        prefix.append(_make_area_link_wp(
+        coords.append(coord)
+        previous_coord = coord
+    return coords, float(link_speed_mps)
+
+
+def _build_area_dubins_entry_wps(
+    *,
+    prev_start_coord: dict,
+    prev_end_coord: dict,
+    next_first_coord: dict,
+    next_second_coord: dict,
+    turn_radius_m: float,
+    cruise_speed_mps: float,
+    altitude_fn: Callable[[float, float], int],
+    target_coord: dict | None = None,
+    target_fov: float | None = None,
+    min_link_gap_m: float | None = None,
+) -> list[OrderedDict]:
+    coords, link_speed_mps = compute_area_transition_link(
+        prev_start_coord=prev_start_coord,
+        prev_end_coord=prev_end_coord,
+        next_first_coord=next_first_coord,
+        next_second_coord=next_second_coord,
+        turn_radius_m=turn_radius_m,
+        cruise_speed_mps=cruise_speed_mps,
+        altitude_fn=altitude_fn,
+        min_link_gap_m=min_link_gap_m,
+    )
+    return [
+        _make_area_link_wp(
             coord,
-            cruise_speed_mps,
+            link_speed_mps,
             target_coord=target_coord,
             fov=target_fov,
-        ))
-        previous_coord = coord
-    return prefix
+        )
+        for coord in coords
+    ]
 
 
 def _safe_float_or_none(value) -> float | None:
@@ -2111,16 +2327,10 @@ def _record_mission_plan_timing(
 
 
 def _max_linesearch_coords_per_waypoint() -> int:
-    raw = os.environ.get("MISSION_PLAN_MAX_LINESEARCH_COORDS_PER_WAYPOINT")
-    if raw is None:
-        try:
-            raw = _get_runtime_value("max_linesearch_coords_per_waypoint", MAX_LINESEARCH_COORDS_PER_WAYPOINT)
-        except Exception:
-            raw = MAX_LINESEARCH_COORDS_PER_WAYPOINT
-    try:
-        value = int(float(raw))
-    except Exception:
-        value = int(MAX_LINESEARCH_COORDS_PER_WAYPOINT)
+    value = _runtime_int_setting(
+        "max_linesearch_coords_per_waypoint",
+        MAX_LINESEARCH_COORDS_PER_WAYPOINT,
+    )
     return max(value, 0)
 
 
@@ -5509,6 +5719,8 @@ def _wp_effective_end_coord(wp: dict) -> dict:
 def _orient_sweep_items(
     sweep_items: list[dict],
     reference_coord: dict | None,
+    *,
+    force_reverse_order: bool | None = None,
 ) -> list[dict]:
     if len(sweep_items) <= 1:
         return sweep_items
@@ -5518,6 +5730,9 @@ def _orient_sweep_items(
         copied = dict(item)
         copied["coords"] = list(item.get("coords") or [])
         items.append(copied)
+
+    if force_reverse_order is True:
+        items.reverse()
 
     if reference_coord and "latitude" in reference_coord and "longitude" in reference_coord:
         def _best_item_start_dist(item: dict) -> float:
@@ -5530,7 +5745,11 @@ def _orient_sweep_items(
             anchor = item.get("coord") or _coord_midpoint(coords) or {}
             return _dist_between_coords(reference_coord, anchor)
 
-        if _best_item_start_dist(items[-1]) + 1e-6 < _best_item_start_dist(items[0]):
+        if (
+            force_reverse_order is None
+            and _best_item_start_dist(items[-1]) + 1e-6
+            < _best_item_start_dist(items[0])
+        ):
             items.reverse()
 
         prev_target = reference_coord
@@ -5545,6 +5764,71 @@ def _orient_sweep_items(
                 item["coords"] = coords
 
     return items
+
+
+def _orient_area_sweep_endpoints_from_outer_side(
+    sweep_items: list[dict],
+    *,
+    outer_side: object,
+    sweep_bearing_deg: object,
+) -> list[dict]:
+    """Keep row order but make the first camera endpoint face the AREA exterior.
+
+    Vertical AREA sweeps run along the same projection axis used to cut owner
+    strips.  Reversing every row together preserves the existing serpentine
+    pattern and all route/stage hand-over decisions while choosing the convex
+    hull edge as the first filming coordinate.
+    """
+
+    side = str(outer_side or "").strip().lower()
+    if side not in {"min", "max"} or not sweep_items:
+        return sweep_items
+    try:
+        bearing_rad = math.radians(float(sweep_bearing_deg))
+    except Exception:
+        return sweep_items
+    axis_x = math.sin(bearing_rad)
+    axis_y = math.cos(bearing_rad)
+
+    first_coords: list[dict] = []
+    for item in sweep_items:
+        coords = item.get("coords") or []
+        if len(coords) >= 2:
+            first_coords = coords
+            break
+    if len(first_coords) < 2:
+        return sweep_items
+    start_coord = first_coords[0]
+    end_coord = first_coords[-1]
+    try:
+        start_xy = llh_to_xy(
+            float(start_coord["latitude"]),
+            float(start_coord["longitude"]),
+            float(start_coord["latitude"]),
+            float(start_coord["longitude"]),
+        )
+        end_xy = llh_to_xy(
+            float(end_coord["latitude"]),
+            float(end_coord["longitude"]),
+            float(start_coord["latitude"]),
+            float(start_coord["longitude"]),
+        )
+    except Exception:
+        return sweep_items
+    start_projection = axis_x * start_xy[0] + axis_y * start_xy[1]
+    end_projection = axis_x * end_xy[0] + axis_y * end_xy[1]
+    should_reverse = bool(
+        (side == "min" and start_projection > end_projection + 1e-6)
+        or (side == "max" and start_projection < end_projection - 1e-6)
+    )
+    if not should_reverse:
+        return sweep_items
+    for item in sweep_items:
+        coords = list(item.get("coords") or [])
+        if len(coords) >= 2:
+            coords.reverse()
+            item["coords"] = coords
+    return sweep_items
 
 
 def _apply_oriented_sweep_items_to_wps(
@@ -5656,13 +5940,6 @@ def _split_record_groups_by_spacing(
 
     out: list[list[int]] = []
     group_anchor = anchor_coord if isinstance(anchor_coord, dict) else None
-    if merge_short_tail:
-        for record in records:
-            if isinstance(record, dict):
-                record.pop("_short_tail_merged", None)
-                record.pop("_short_tail_gap_m", None)
-                record.pop("_short_tail_prev_pos", None)
-                record.pop("_short_tail_first_pos", None)
     for group in groups:
         if len(group) <= 1:
             out.append(group)
@@ -5708,19 +5985,27 @@ def _split_record_groups_by_spacing(
             tail_gap_m = _dist_between_coords(prev_anchor, tail_anchor)
             if tail_gap_m + 1e-6 >= max_spacing_m:
                 break
+            # Merging removes prev_anchor from the emitted route.  Only do it
+            # when the new preceding-anchor -> tail leg still respects the
+            # configured maximum WP interval.  Previously a 1,449 m short tail
+            # removed the 3,000 m anchor and exposed a 2,953 m route leg.
+            if len(out) >= 3:
+                preceding_anchor = (
+                    records[out[-3][-1]].get("coord")
+                    or records[out[-3][-1]]["wp"].get("coordinate")
+                    or {}
+                )
+            else:
+                preceding_anchor = anchor_coord if isinstance(anchor_coord, dict) else {}
+            if not (isinstance(preceding_anchor, dict) and preceding_anchor):
+                break
+            if _dist_between_coords(preceding_anchor, tail_anchor) > max_spacing_m + 1e-6:
+                break
             if coord_cap > 0 and (_group_coord_count(out[-2]) + _group_coord_count(out[-1])) > coord_cap:
                 break
             prev_group = out[-2]
             tail_group = out[-1]
             merged_group = prev_group + tail_group
-            try:
-                rep_record = records[merged_group[-1]]
-                rep_record["_short_tail_merged"] = True
-                rep_record["_short_tail_gap_m"] = float(tail_gap_m)
-                rep_record["_short_tail_prev_pos"] = int(prev_group[-1])
-                rep_record["_short_tail_first_pos"] = int(tail_group[0])
-            except Exception:
-                pass
             out[-1] = merged_group
             out.pop(-2)
     return out
@@ -7547,7 +7832,20 @@ def _append_area_transition_links_inplace(
     ):
         return 0
 
-    target_coord = _wp_effective_start_coord(next_wps[0])
+    # During the transition the camera must stay fixed on the last captured
+    # point of the finished area so there is no observation gap on the link;
+    # fall back to the next mission's first capture point only when the
+    # previous packet has no scan coordinates at all.
+    target_coord = None
+    for prev_wp in reversed(prev_wps):
+        prev_fp = prev_wp.get("filmingProperty") or {}
+        prev_ls = prev_fp.get("lineSearch") or {}
+        prev_scan_coords = prev_ls.get("coordinateList") or []
+        if prev_scan_coords and isinstance(prev_scan_coords[-1], dict):
+            target_coord = dict(prev_scan_coords[-1])
+            break
+    if target_coord is None:
+        target_coord = _wp_effective_start_coord(next_wps[0])
     next_fp = next_wps[0].get("filmingProperty") or {}
     try:
         target_fov = float(next_fp.get("fieldOfView", POINT_FOV_DEG) or POINT_FOV_DEG)
@@ -7582,6 +7880,10 @@ def _append_area_transition_links_inplace(
 
     for link_wp in link_wps:
         link_wp.setdefault("isDone", False)
+        # 링크는 패킷별 마커 정리(flyover 옵션 패스) 이후에 덧붙으므로, 남겨두면
+        # 내부 마커가 0303 출력까지 새어 나간다.
+        link_wp.pop("_area_dubins_link", None)
+        link_wp.pop("_flyover_dubins_prefix", None)
     prev_wps.extend(link_wps)
     _recompute_eta_ecf_inplace(prev_wps, default_speed_mps=cruise_speed_mps)
     return len(link_wps)
@@ -7616,6 +7918,7 @@ def _build_flight_plans_impl(
     cruise_speed: float = 30.0,
     turn_step_deg: float = 45.0,
     ref0203: dict | None = None,
+    _physics_line_rebuild_pass: int = 0,
 ) -> list[dict]:
     with _SWEEP_DEBUG_LOCK:
         _SWEEP_DEBUG_CACHE.clear()
@@ -7918,6 +8221,7 @@ def _build_flight_plans_impl(
                 "pathID": miss["pathID"],
                 "aircraftID": aid,
                 "wplist": [],
+                "_mission_info": info,
                 "isFormationFlight": True,
                 "formationInfo": formation_info,
                 "_formation_key": formation_key,
@@ -7947,7 +8251,10 @@ def _build_flight_plans_impl(
         # Keep the original center line and do not turn its width into a
         # filming/search sweep.
         if control_transfer_direct:
-            route_coords = control_transfer_route_coordinates(miss)
+            route_coords = _resample_route_coordinates(
+                control_transfer_route_coordinates(miss),
+                _line_route_wp_spacing_m(),
+            )
             for route_idx, coord in enumerate(route_coords):
                 lat = float(coord.get("latitude", 0.0))
                 lon = float(coord.get("longitude", 0.0))
@@ -7999,6 +8306,7 @@ def _build_flight_plans_impl(
                     "pathID": miss["pathID"],
                     "aircraftID": aid,
                     "wplist": donut_wplist,
+                    "_mission_info": info,
                     "_donut_patrol": True,
                     "_mission_alt_offset_m": float(mission_alt_offset_m),
                     "_mission_ground_ref_m": _get_mission_ground_ref_m(),
@@ -8549,20 +8857,37 @@ def _build_flight_plans_impl(
                         return list(cached_pair)
                     return _materialize_dem_coords(list(_oriented_sweep_points(sw_idx, sw)))
 
-                if use_centerline:
-                    base_xy: list[tuple[float, float]] = []
-                    proj_fwd = getattr(planner, "_proj_fwd", None)
-                    if proj_fwd is not None:
-                        for lat, lon in base:
-                            x, y = proj_fwd(lon, lat)
-                            base_xy.append((x, y))
-                    else:
-                        lat0, lon0 = base[0]
-                        base_xy = [llh_to_xy(lat, lon, lat0, lon0) for lat, lon in base]
+                try:
+                    line_route_offset_scale = max(
+                        float(_runtime_float_setting("line_route_offset_scale", LINE_ROUTE_OFFSET_SCALE)),
+                        0.0,
+                    )
+                except Exception:
+                    line_route_offset_scale = 1.0
+                sampled_route_by_sweep_index: dict[int, tuple[float, float]] = {}
 
-                    sweep_mid_xy: list[tuple[float, float]] = []
-                    for sw in planner.sweeps:
-                        sweep_mid_xy.append(((sw[0][0] + sw[1][0]) / 2, (sw[0][1] + sw[1][1]) / 2))
+                if use_centerline:
+                    # Resample the actual offset aircraft route, not the source
+                    # corridor centerline.  On bends, equal centerline progress
+                    # does not imply equal aircraft-route progress.
+                    route_anchor_xy: list[tuple[float, float]] = [
+                        _line_wp_xy_from_sweep(
+                            sw,
+                            offset_m=float(_mission_route_offset_sep_ref_m()) * float(line_route_offset_scale),
+                        )
+                        for sw in planner.sweeps
+                    ]
+                    route_anchor_coords: list[dict] = []
+                    for route_x, route_y in route_anchor_xy:
+                        route_lon, route_lat = planner._proj_back(route_x, route_y)
+                        route_anchor_coords.append({
+                            "latitude": float(route_lat),
+                            "longitude": float(route_lon),
+                        })
+                    route_segment_lengths_m = [
+                        _dist_between_coords(route_anchor_coords[pos - 1], route_anchor_coords[pos])
+                        for pos in range(1, len(route_anchor_coords))
+                    ]
 
                     def _select_sweep_indices(
                         points_xy: list[tuple[float, float]],
@@ -8594,10 +8919,27 @@ def _build_flight_plans_impl(
                             start_idx = best_idx + 1
                         return selected
 
-                    sampled_base_xy = _resample_polyline_xy(base_xy, runtime_line_route_spacing_m)
-                    sweep_indices = _select_sweep_indices(sampled_base_xy, sweep_mid_xy)
+                    sampled_route_xy = _resample_polyline_xy(
+                        route_anchor_xy,
+                        # Output coordinates are rounded to 6 decimals (about
+                        # 0.1 m).  Keep a 1 m numerical reserve so that rounding
+                        # cannot turn a nominal 1,500 m leg into 1,500.05 m.
+                        max(float(runtime_line_route_spacing_m) - 1.0, 1.0),
+                        segment_lengths_m=route_segment_lengths_m,
+                    )
+                    sweep_indices = _select_sweep_indices(sampled_route_xy, route_anchor_xy)
                     if not sweep_indices:
                         sweep_indices = list(range(len(planner.sweeps)))
+                    # Keep the resampled aircraft-route points themselves.
+                    # sweep_indices select which camera sweep chunk
+                    # belongs to each flight leg; they must not move the route
+                    # WP itself to a nearby sweep midpoint (which can push an
+                    # otherwise 1,500 m leg over the configured maximum).
+                    if len(sweep_indices) == len(sampled_route_xy):
+                        sampled_route_by_sweep_index = {
+                            int(sw_idx): (float(sample_xy[0]), float(sample_xy[1]))
+                            for sw_idx, sample_xy in zip(sweep_indices, sampled_route_xy)
+                        }
                     anchor_list = planner.offset_wps
 
                     merged_coords: list[dict] = []
@@ -8648,23 +8990,17 @@ def _build_flight_plans_impl(
 
                 last_anchor_xy: tuple[float, float] | None = None
                 last_first_xy: tuple[float, float] | None = None
-                try:
-                    line_route_offset_scale = max(
-                        float(_runtime_float_setting("line_route_offset_scale", LINE_ROUTE_OFFSET_SCALE)),
-                        0.0,
-                    )
-                except Exception:
-                    line_route_offset_scale = 1.0
                 for idx in sweep_indices:
                     if idx >= len(planner.sweeps) or idx >= len(anchor_list):
                         continue
                     sw = planner.sweeps[idx]
                     anchor_xy = anchor_list[idx]
                     if use_centerline:
-                        anchor_xy = _line_wp_xy_from_sweep(
+                        sweep_anchor_xy = _line_wp_xy_from_sweep(
                             sw,
                             offset_m=float(_mission_route_offset_sep_ref_m()) * float(line_route_offset_scale),
                         )
+                        anchor_xy = sampled_route_by_sweep_index.get(int(idx), sweep_anchor_xy)
 
                     s_xy, e_xy = sw
                     if idx % 2:
@@ -8847,6 +9183,10 @@ def _build_flight_plans_impl(
                 "pathID": miss["pathID"],
                 "aircraftID": aid,
                 "wplist": wplist,
+                # 단일 프로세스 0302→0303 경로에서는 최종 GSD FOV를
+                # 원본 individualMissionInfo에 즉시 되돌린다. 기체별
+                # 워커 경로는 부모 프로세스의 별도 pathID 동기화가 담당한다.
+                "_mission_info": info,
                 "_mission_sep_m": float(mission_sep_m),
                 "_mission_route_offset_sep_m": float(_mission_route_offset_sep_ref_m()),
                 "_mission_route_offset_fov_ref_deg": float(
@@ -8861,6 +9201,10 @@ def _build_flight_plans_impl(
                 "_entry_anchor": entry_anchor,
                 "_skip_area_entry_prefix": bool(skip_area_entry_prefix),
             }
+            boundary_guard_contract = extract_boundary_guard_contract(miss, info)
+            if is_boundary_guard_loop(boundary_guard_contract):
+                apply_boundary_guard_contract(packet, boundary_guard_contract)
+                packet["_source_mission"] = miss
             if isinstance(miss.get("prevPoint"), dict):
                 packet["_prev_point"] = deepcopy(miss.get("prevPoint"))
             if formation_info:
@@ -8871,6 +9215,18 @@ def _build_flight_plans_impl(
                 packet["_is_area"] = True
                 packet["_area_sweep_mode"] = str(area_sweep_mode or "parallel")
                 packet["_area_bearing_deg"] = float(bearing)
+                packet["_area_sequential_stage"] = int(
+                    miss.get("splitStage", 0) or 0
+                )
+                packet["_area_sequential_count"] = int(
+                    miss.get("splitCount", 0) or 0
+                )
+                packet["_area_outer_first_sweep"] = bool(
+                    miss.get("areaOuterFirstSweep")
+                )
+                packet["_area_outer_side"] = str(
+                    miss.get("areaOuterSide") or ""
+                ).strip().lower()
                 if mission_pattern_type == 3:
                     packet["_area_nadir"] = True
             if full_sweep_coords:
@@ -9064,15 +9420,41 @@ def _build_flight_plans_impl(
                     "sweep_idx": wp.get("_sweepIdx"),
                 })
 
+            # For consecutive AREA stages, orient from the preceding camera
+            # sweep's actual exit.  The route-offset WP can lie on the opposite
+            # side of the strip and used to make two adjacent stages fly in the
+            # same direction instead of out/turn/back.
             reference_coord = prev_tail_coord
-            if is_area_pkt and isinstance(prev_last_wp_coord, dict):
-                reference_coord = prev_last_wp_coord
             if not isinstance(reference_coord, dict):
                 reference_coord = pkt.get("_prev_point") if isinstance(pkt.get("_prev_point"), dict) else None
             if not isinstance(reference_coord, dict):
                 reference_coord = entry_anchor if isinstance(entry_anchor, dict) else None
 
-            sweep_items = _orient_sweep_items(sweep_items, reference_coord)
+            area_outer_first = bool(
+                is_area_pkt
+                and pkt.get("_area_outer_first_sweep")
+                and str(pkt.get("_area_outer_side") or "").strip().lower()
+                in {"min", "max"}
+            )
+            area_outer_side = str(
+                pkt.get("_area_outer_side") or ""
+            ).strip().lower()
+            force_reverse_order: bool | None = None
+            if area_outer_first and area_sweep_mode == "parallel":
+                # Parallel mode progresses across the owner-strip projection,
+                # so its exterior preference is a row-order preference.
+                force_reverse_order = area_outer_side == "max"
+            sweep_items = _orient_sweep_items(
+                sweep_items,
+                reference_coord,
+                force_reverse_order=force_reverse_order,
+            )
+            if area_outer_first and area_sweep_mode == "vertical":
+                sweep_items = _orient_area_sweep_endpoints_from_outer_side(
+                    sweep_items,
+                    outer_side=area_outer_side,
+                    sweep_bearing_deg=pkt.get("_area_bearing_deg"),
+                )
             if uav_plan_mode == "dub_path" and is_area_pkt:
                 area_bearing_deg = pkt.get("_area_bearing_deg")
                 area_sep_offset_m = _packet_route_offset_sep_m(pkt) * float(AREA_ROUTE_OFFSET_SCALE)
@@ -9231,39 +9613,6 @@ def _build_flight_plans_impl(
                     if not isinstance(coord, dict) or "latitude" not in coord or "longitude" not in coord:
                         return None
                     return _copy_coord_dict(coord)
-
-                def _group_start_anchor_coord(group: list[int], start_idx: int | None) -> dict | None:
-                    if start_idx is not None:
-                        try:
-                            start_sweep = int(start_idx)
-                        except Exception:
-                            start_sweep = None
-                        if start_sweep is not None:
-                            try:
-                                if int(first_item.get("sweep_idx")) == start_sweep:
-                                    first_anchor = _record_anchor_coord(first_item)
-                                    if first_anchor is not None:
-                                        return first_anchor
-                            except Exception:
-                                pass
-                            for pos in group:
-                                try:
-                                    record = records[pos]
-                                except Exception:
-                                    continue
-                                try:
-                                    if int(record.get("sweep_idx")) == start_sweep:
-                                        anchor = _record_anchor_coord(record)
-                                        if anchor is not None:
-                                            return anchor
-                                except Exception:
-                                    continue
-                    if group:
-                        try:
-                            return _record_anchor_coord(records[group[0]])
-                        except Exception:
-                            return None
-                    return None
 
                 folded_first_sweep_coords = None
                 if first_sweep_idx is not None:
@@ -9455,7 +9804,6 @@ def _build_flight_plans_impl(
                     rep_pos = group[-1]
                     rep = records[rep_pos]
                     rep_fp = rep["fp"]
-                    short_tail_merged = bool(rep.get("_short_tail_merged")) and g_idx == len(groups) - 1
                     merged_coords: list[dict] = []
                     merged_spans: list[float] = []
                     used_segment_coords = False
@@ -9468,9 +9816,6 @@ def _build_flight_plans_impl(
                         and not fold_close_takeover_first_sweep_into_next_group
                     ):
                         start_sweep_idx = int(start_sweep_idx) + int(sweep_step)
-                    group_anchor_coord = None
-                    if g_idx > 0 or not fold_close_takeover_first_sweep_into_next_group:
-                        group_anchor_coord = _group_start_anchor_coord(group, start_sweep_idx)
                     segment_coords = _segment_full_coords(start_sweep_idx, rep.get("sweep_idx"))
                     if segment_coords:
                         merged_coords.extend(segment_coords)
@@ -9524,20 +9869,15 @@ def _build_flight_plans_impl(
                     rep_fp["fieldOfView"] = rep["fov"]
                     rep_fp["sensorType"] = SENSOR_EO_IR
                     rep_fp["operationMode"] = OPMODE_LINE
-                    if group_anchor_coord is not None and not short_tail_merged:
-                        # Keep the visible/transit WP at the start of the merged
-                        # LINE segment; the kept representative is otherwise the
-                        # last sweep in the group.
-                        rep["wp"]["coordinate"] = OrderedDict(_copy_coord_dict(group_anchor_coord))
-                        rep["coord"] = _copy_coord_dict(group_anchor_coord)
-                    elif short_tail_merged:
-                        # Terminal short-tail merge must keep the real tail endpoint.
-                        # Example: 1-2 == spacing and 2-3 < spacing should leave
-                        # one 1-3 leg, not a final WP anchored back at 1-2.
-                        rep_coord = _record_anchor_coord(rep)
-                        if rep_coord is not None:
-                            rep["wp"]["coordinate"] = OrderedDict(_copy_coord_dict(rep_coord))
-                            rep["coord"] = _copy_coord_dict(rep_coord)
+                    # lineSearch on this WP is flown on the incoming route leg,
+                    # so the visible flight WP belongs at the END of the packed
+                    # sweep chunk.  Placing it at the chunk start duplicated the
+                    # entry WP; the duplicate-entry cleanup then deleted the only
+                    # 1,500 m anchor and produced a single 4.4 km leg.
+                    rep_coord = _record_anchor_coord(rep)
+                    if rep_coord is not None:
+                        rep["wp"]["coordinate"] = OrderedDict(_copy_coord_dict(rep_coord))
+                        rep["coord"] = _copy_coord_dict(rep_coord)
                     interpolated_coords = _interpolate_line_coords(
                         merged_coords,
                         _sweep_line_interp_points(),
@@ -9684,11 +10024,11 @@ def _build_flight_plans_impl(
                         bearing_deg=pkt.get("_area_bearing_deg"),
                         offset_m=_packet_route_offset_sep_m(pkt) * float(AREA_ROUTE_OFFSET_SCALE),
                         reference_coord=(
-                            prev_last_wp_coord
-                            if isinstance(prev_last_wp_coord, dict)
+                            prev_tail_coord
+                            if isinstance(prev_tail_coord, dict)
                             else (
-                                prev_tail_coord
-                                if isinstance(prev_tail_coord, dict)
+                                prev_last_wp_coord
+                                if isinstance(prev_last_wp_coord, dict)
                                 else (
                                     pkt.get("_prev_point")
                                     if isinstance(pkt.get("_prev_point"), dict)
@@ -9711,7 +10051,9 @@ def _build_flight_plans_impl(
                 area_sep_offset_m = _packet_route_offset_sep_m(pkt) * float(AREA_ROUTE_OFFSET_SCALE)
             except Exception:
                 area_sep_offset_m = 0.0
-            area_reference_coord = pkt.get("_prev_point") if isinstance(pkt.get("_prev_point"), dict) else None
+            area_reference_coord = prev_tail_coord if isinstance(prev_tail_coord, dict) else None
+            if not isinstance(area_reference_coord, dict):
+                area_reference_coord = pkt.get("_prev_point") if isinstance(pkt.get("_prev_point"), dict) else None
             if not isinstance(area_reference_coord, dict):
                 area_reference_coord = prev_last_wp_coord if isinstance(prev_last_wp_coord, dict) else None
             if not isinstance(area_reference_coord, dict):
@@ -9789,6 +10131,10 @@ def _build_flight_plans_impl(
         pkt.pop("_area_nadir", None)
         pkt.pop("_area_sweep_mode", None)
         pkt.pop("_area_bearing_deg", None)
+        pkt.pop("_area_sequential_stage", None)
+        pkt.pop("_area_sequential_count", None)
+        pkt.pop("_area_outer_first_sweep", None)
+        pkt.pop("_area_outer_side", None)
         pkt.pop("_mission_sep_m", None)
         pkt.pop("_mission_route_offset_sep_m", None)
         pkt.pop("_mission_route_offset_fov_ref_deg", None)
@@ -10223,6 +10569,104 @@ def _build_flight_plans_impl(
     for pkt in packets:
         _normalize_output_waypoints_inplace(pkt.get("wplist") or [])
 
+    # 경로·고도·촬영점 지형고가 모두 확정된 시점에서 실제 WP↔촬영점 기하로
+    # 요구공간해상도를 전수 검증하고, 최악 지점이 허용 풋프린트를 넘으면 그
+    # 임무의 FOV를 만족값으로 내린다.  초기계획은 스윕 행이 길어 행 끝단까지의
+    # 슬랜트가 진입 이격보다 훨씬 커질 수 있는데, 선택 단계에서는 그 기하를
+    # 알 수 없으므로 여기서 실측 기하로 바로잡는다(재계획 경로와 동일 계약).
+    if _capture_physics is not None:
+        gsd_certify_started = time.perf_counter()
+        clamped_paths: list[tuple[int, float, float, float]] = []
+        unreachable_paths: list[int] = []
+        line_rebuild_paths: list[tuple[int, float, float, float]] = []
+        for pkt in packets:
+            wps = pkt.get("wplist") or []
+            if not wps:
+                continue
+            mission_info = (
+                pkt.get("_mission_info")
+                if isinstance(pkt.get("_mission_info"), dict)
+                else None
+            )
+            try:
+                summary = _capture_physics.certify_waypoint_gsd_inplace(
+                    wps,
+                    mission_info,
+                    runtime_cfg=runtime_payload,
+                )
+            except Exception:
+                continue
+            if summary.get("clamped"):
+                clamped_paths.append(
+                    (
+                        int(pkt.get("pathID") or 0),
+                        float(summary.get("fovBeforeDeg") or 0.0),
+                        float(summary.get("fovAfterDeg") or 0.0),
+                        float(summary.get("worstSlantM") or 0.0),
+                    )
+                )
+            if summary.get("unreachable"):
+                unreachable_paths.append(int(pkt.get("pathID") or 0))
+            if (
+                summary.get("clamped")
+                and summary.get("geometryMode") == "corridor_moving_leg"
+                and int(_physics_line_rebuild_pass) <= 0
+                and isinstance(mission_info, dict)
+            ):
+                before_fov = float(summary.get("fovBeforeDeg") or 0.0)
+                after_fov = float(summary.get("fovAfterDeg") or 0.0)
+                if 0.0 < after_fov < before_fov - 1e-6:
+                    capture_speed_mps = _capture_mission_cruise_speed_mps(after_fov)
+                    if capture_speed_mps is not None and capture_speed_mps > 0.0:
+                        mission_info["SPEED"] = round(float(capture_speed_mps) * 3.6, 3)
+                    final_spacing_m = _sweep_spacing_m(
+                        separation_m=float(mission_info.get("SEP", ALT_M) or ALT_M),
+                        fov_deg=after_fov,
+                        spacing_scale=runtime_line_spacing_scale,
+                    )
+                    line_rebuild_paths.append(
+                        (
+                            int(pkt.get("pathID") or 0),
+                            before_fov,
+                            after_fov,
+                            float(final_spacing_m),
+                        )
+                    )
+        for path_id, before, after, worst in clamped_paths:
+            print(
+                f"[GSD] path {path_id}: FOV {before:.2f}° -> {after:.2f}° "
+                f"(최악 슬랜트 {worst:,.0f} m 에서 요구공간해상도 충족)"
+            )
+        if unreachable_paths:
+            print(
+                "[GSD] 카메라 최소 FOV로도 요구공간해상도를 만족할 수 없는 경로: "
+                f"{sorted(set(unreachable_paths))} (스윕 행이 너무 길거나 이격이 과대)"
+            )
+        _record_dense_linesearch_metrics(
+            gsdCertifyMs=(time.perf_counter() - gsd_certify_started) * 1000.0,
+            gsdCertifyClampedPaths=len(clamped_paths),
+            gsdCertifyUnreachablePaths=len(unreachable_paths),
+            gsdCertifyLineRebuildPaths=len(line_rebuild_paths),
+        )
+        if line_rebuild_paths:
+            for path_id, before, after, spacing in line_rebuild_paths:
+                print(
+                    f"[GSD] LINE path {path_id}: 최종 FOV {before:.2f}° -> {after:.2f}°, "
+                    f"스윕 간격 {spacing:.2f} m 기준으로 경로 재생성"
+                )
+            # 아직 waypoint ID/global block을 소비하기 전이다. 확정 FOV·속도를
+            # mission_info에 반영한 뒤 LINE planner를 한 번 다시 돌리면
+            # search-line 공간 간격과 카메라 진행속도도 같은 FOV 법칙을 따른다.
+            reset_mission_plan_timings()
+            return _build_flight_plans_impl(
+                missions,
+                wp_alloc=wp_alloc,
+                cruise_speed=cruise_speed,
+                turn_step_deg=turn_step_deg,
+                ref0203=ref0203,
+                _physics_line_rebuild_pass=1,
+            )
+
     # Area transition links, line merging, interpolation, and single-WP output
     # normalization can all change the final geometry after the earlier speed
     # pass. Refresh ETA/ECF once from the completed geometry without recalculating
@@ -10258,6 +10702,11 @@ def _build_flight_plans_impl(
             wps[idx]["nextWaypointID"] = wps[idx + 1]["waypointID"]
         wps[-1]["nextWaypointID"] = 0
 
+    # Waypoint IDs exist only now. Link one UAV's complete Type-2 boundary
+    # child set as a cycle; do not alter physical waypoint ETA values.
+    link_boundary_guard_flight_path_sets(packets, strict=True)
+    sync_boundary_guard_contract_from_flight_paths(missions, packets)
+
     # ────────────────────────── 4) 최종 조립 ─────────────────────────
     json_ready_started = time.perf_counter()
     result = []
@@ -10265,6 +10714,8 @@ def _build_flight_plans_impl(
         pkt.pop("_is_area", None)
         pkt.pop("_area_sweep_mode", None)
         pkt.pop("_area_bearing_deg", None)
+        pkt.pop("_area_outer_first_sweep", None)
+        pkt.pop("_area_outer_side", None)
         pkt.pop("_mission_sep_m", None)
         pkt.pop("_mission_route_offset_sep_m", None)
         pkt.pop("_mission_route_offset_fov_ref_deg", None)
@@ -10274,8 +10725,10 @@ def _build_flight_plans_impl(
         pkt.pop("_mission_search_speed_weight", None)
         pkt.pop("_mission_alt_offset_m", None)
         pkt.pop("_mission_ground_ref_m", None)
+        pkt.pop("_mission_info", None)
         pkt.pop("_entry_anchor", None)
         pkt.pop("_donut_patrol", None)
+        pkt.pop("_source_mission", None)
         formation_info = pkt.get("formationInfo")
         items = [
             ("timestamp", now_ms),
@@ -10286,6 +10739,9 @@ def _build_flight_plans_impl(
         ]
         if formation_info:
             items.append(("formationInfo", formation_info))
+        for key in BOUNDARY_GUARD_CONTRACT_KEYS:
+            if key in pkt:
+                items.append((key, pkt.get(key)))
         items.append(("waypointList", pkt["wplist"]))
         result.append(OrderedDict(items))
     _record_dense_linesearch_metrics(

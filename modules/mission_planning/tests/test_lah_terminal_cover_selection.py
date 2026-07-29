@@ -219,6 +219,7 @@ def test_selects_concealed_uav_visible_point_instead_of_area_centre() -> None:
         max_candidates=49,
         max_threats=5,
         max_ray_samples=64,
+        minimum_threat_masking_depth_m=30.0,
     )
 
     selected_east_m, _selected_north_m = _xy(selected)
@@ -226,6 +227,8 @@ def test_selects_concealed_uav_visible_point_instead_of_area_centre() -> None:
     assert _inside_area(selected, area_list)
     assert diagnostics["fallbackUsed"] is False
     assert diagnostics["coverFraction"] >= 2.0 / 3.0
+    assert diagnostics["selectedThreatMaskingDepthM"] >= 30.0
+    assert diagnostics["threatMaskingDepthPreferenceAvailable"] is True
     assert diagnostics["uavLosClear"] is True
     assert diagnostics["uavLosMarginM"] >= 0.0
     assert diagnostics["uavDistanceFeasible"] is True
@@ -344,6 +347,68 @@ def test_all_area_candidates_far_from_uav_remain_inside_area() -> None:
     assert _inside_area(selected, area_list)
     assert diagnostics["uavDistanceM"] > 20_000.0
     assert diagnostics["uavDistanceFeasible"] is False
+
+
+def test_shared_terminal_cover_uses_one_horizontal_site_for_all_lah(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cover_point = _coordinate(-200.0, 0.0, 0.0)
+    area_list = [_rectangle(-1_000.0, -800.0, 1_000.0, 800.0)]
+    info = {
+        "individualMissionType": 9,
+        "patternType": 12,
+        "autoZoomIn": False,
+        "coordinateList": [dict(cover_point)],
+        "targetID": None,
+        "_lahTerminalCoverEnabled": True,
+        "_lahSharedTerminalCoverPoint": True,
+        "_lahConstraintAreaList": area_list,
+        "_lahTerminalCoverThreatCoordinateList": [
+            _coordinate(1_500.0, north_m, 0.0)
+            for north_m in (-400.0, 0.0, 400.0)
+        ],
+        "_lahTerminalCoverFallbackCoordinate": dict(cover_point),
+    }
+    missions = [
+        {
+            "aircraftID": aircraft_id,
+            "pathID": aircraft_id * 100_000_000 + 1,
+            "individualMissionInfo": dict(info),
+        }
+        for aircraft_id in (1, 2, 3)
+    ]
+    selector_calls: list[object] = []
+
+    def _unexpected_reselection(*args, **kwargs):
+        selector_calls.append((args, kwargs))
+        return _coordinate(500.0, 500.0, 0.0), {"reason": "unexpected"}
+
+    monkeypatch.setattr(
+        d0304_module,
+        "select_lah_terminal_cover_point",
+        _unexpected_reselection,
+    )
+    packets = d0304_module.build_lah_flight_plans_fixed(missions)
+    d0304_module.apply_uav_eta_follow_speed_plan(
+        packets,
+        [],
+        lah_missions=missions,
+    )
+
+    terminal_sites = {
+        (
+            round(float(packet["lahWaypointList"][-1]["coordinate"]["latitude"]), 6),
+            round(float(packet["lahWaypointList"][-1]["coordinate"]["longitude"]), 6),
+        )
+        for packet in packets
+    }
+    assert terminal_sites == {
+        (
+            round(float(cover_point["latitude"]), 6),
+            round(float(cover_point["longitude"]), 6),
+        )
+    }
+    assert selector_calls == []
 
 
 def test_selection_is_deterministic_and_respects_candidate_and_dem_sample_caps() -> None:

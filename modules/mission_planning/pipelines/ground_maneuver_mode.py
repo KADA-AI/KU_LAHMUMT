@@ -626,6 +626,25 @@ def _cover_hold_search_radius_m() -> float:
     return value if math.isfinite(value) and value > 0.0 else 0.0
 
 
+def _destination_cover_min_masking_depth_m() -> float:
+    """Minimum terrain rise above every branch sightline."""
+
+    try:
+        from modules.mission_planning.MissionPlanner.runtime_settings import (
+            get_runtime_attack_float,
+        )
+
+        value = float(
+            get_runtime_attack_float(
+                "lah_destination_cover_min_masking_depth_m",
+                30.0,
+            )
+        )
+    except Exception:
+        return 30.0
+    return value if math.isfinite(value) and value > 0.0 else 0.0
+
+
 def _equirect_distance_m(a: Dict[str, Any], b: Dict[str, Any]) -> float:
     mid = math.radians((float(a["latitude"]) + float(b["latitude"])) * 0.5)
     dx = (float(b["longitude"]) - float(a["longitude"])) * 111_132.92 * math.cos(mid)
@@ -674,6 +693,62 @@ def _mission_threat_coordinates(
             chosen.add(index)
             threats.append(dict(coords[index]))
     return threats[: max(1, int(maximum))]
+
+
+def _branch_phase_threat_coordinates(
+    missions: List[Dict[str, Any]],
+    *,
+    package_type: int,
+) -> List[Dict[str, Any]]:
+    """One representative threat direction for each self-reliance branch.
+
+    The destination-area hold protects the manned package from the complete
+    three-leg branch task, not from the later ACP convergence line.  Collapse
+    each branch's guard-line, guard-area, and return-line geometry into one
+    equally weighted representative so every branch influences the single
+    shared hide site.
+    """
+
+    profile = detect_ground_maneuver_profile(
+        missions,
+        package_type=int(package_type),
+    )
+    if not isinstance(profile, dict):
+        return []
+    branch_count = _to_int(profile.get("branchCount")) or 0
+    missions_by_order = profile.get("missionsByOrder")
+    orders = profile.get("branchOrders")
+    if branch_count <= 0 or not isinstance(missions_by_order, dict):
+        return []
+    if not isinstance(orders, list) or not orders:
+        return []
+
+    representatives_by_branch: List[List[Dict[str, Any]]] = [
+        [] for _ in range(branch_count)
+    ]
+    for raw_order in orders:
+        order = _to_int(raw_order)
+        if order is None:
+            continue
+        entry = missions_by_order.get(order) or missions_by_order.get(str(order))
+        branches = entry.get("branches") if isinstance(entry, dict) else None
+        if not isinstance(branches, list) or len(branches) != branch_count:
+            return []
+        for branch_index, branch in enumerate(branches):
+            if not isinstance(branch, dict):
+                continue
+            representative = _centroid_coordinate(
+                _normalize_coord_list(branch.get("coordinateList"))
+            )
+            if representative is not None:
+                representatives_by_branch[branch_index].append(representative)
+
+    threats: List[Dict[str, Any]] = []
+    for representatives in representatives_by_branch:
+        threat = _centroid_coordinate(representatives)
+        if threat is not None:
+            threats.append(threat)
+    return threats
 
 
 def _line_corridor_area_rows(
@@ -806,6 +881,12 @@ def _cover_hold_cache_key(
     threats: List[Dict[str, Any]],
     constraints: List[Dict[str, Any]],
     radius_m: float,
+    *,
+    cover_contract: bool,
+    shared_cover: bool,
+    selector_max_candidates: int,
+    minimum_threat_masking_depth_m: float,
+    search_full_constraint_area: bool,
 ) -> tuple:
     def _coord_key(coord: object) -> tuple:
         if not isinstance(coord, dict):
@@ -829,6 +910,11 @@ def _cover_hold_cache_key(
             for row in constraints
         ),
         round(float(radius_m), 1),
+        bool(cover_contract),
+        bool(shared_cover),
+        int(selector_max_candidates),
+        round(float(minimum_threat_masking_depth_m), 1),
+        bool(search_full_constraint_area),
     )
 
 
@@ -838,6 +924,12 @@ def _lah_cover_hold_info(
     *,
     area_rows: Optional[List[Dict[str, Any]]] = None,
     cover_contract: bool = False,
+    threat_coordinates: Optional[List[Dict[str, Any]]] = None,
+    shared_cover: bool = False,
+    selector_max_candidates: int = 25,
+    minimum_threat_masking_depth_m: float = 0.0,
+    selector_search_radius_m: Optional[float] = None,
+    search_full_constraint_area: bool = False,
 ) -> Dict[str, Any]:
     """Hold on masking terrain near ``anchor``, backing away from the mission.
 
@@ -850,20 +942,54 @@ def _lah_cover_hold_info(
     if not isinstance(anchor, dict):
         return _lah_point_info(anchor or {})
     base = _lah_point_info(anchor)
-    if not _cover_hold_enabled():
-        return base
     constraints = [row for row in (area_rows or []) if isinstance(row, dict)]
+    threats = (
+        _normalize_coord_list(threat_coordinates)
+        if isinstance(threat_coordinates, list)
+        else _mission_threat_coordinates(threat_mission)
+    )
+
+    def _with_cover_contract(info: Dict[str, Any]) -> Dict[str, Any]:
+        if not cover_contract:
+            return info
+        contracted = deepcopy(info)
+        contracted["_lahTerminalCoverEnabled"] = True
+        if shared_cover:
+            contracted["_lahSharedTerminalCoverPoint"] = True
+        contracted["_lahConstraintAreaList"] = deepcopy(constraints)
+        contracted["_lahTerminalCoverThreatCoordinateList"] = [
+            dict(threat) for threat in threats
+        ]
+        contracted["_lahTerminalCoverFallbackCoordinate"] = dict(anchor)
+        return contracted
+
+    if not _cover_hold_enabled():
+        return _with_cover_contract(base)
     if not constraints:
         # No declared geometry to stay inside: keep the geometric anchor.
-        return base
-    threats = _mission_threat_coordinates(threat_mission)
+        return _with_cover_contract(base)
     if not threats:
-        return base
-    radius_m = _cover_hold_search_radius_m()
-    if radius_m <= 0.0:
-        return base
+        return _with_cover_contract(base)
+    requested_radius_m = _to_float(selector_search_radius_m)
+    radius_m = (
+        _cover_hold_search_radius_m()
+        if requested_radius_m is None
+        else max(0.0, float(requested_radius_m))
+    )
+    if radius_m <= 0.0 and not search_full_constraint_area:
+        return _with_cover_contract(base)
 
-    cache_key = _cover_hold_cache_key(anchor, threats, constraints, radius_m)
+    cache_key = _cover_hold_cache_key(
+        anchor,
+        threats,
+        constraints,
+        radius_m,
+        cover_contract=cover_contract,
+        shared_cover=shared_cover,
+        selector_max_candidates=selector_max_candidates,
+        minimum_threat_masking_depth_m=minimum_threat_masking_depth_m,
+        search_full_constraint_area=search_full_constraint_area,
+    )
     with _COVER_HOLD_CACHE_LOCK:
         cached = _COVER_HOLD_CACHE.get(cache_key)
         if cached is not None:
@@ -879,21 +1005,24 @@ def _lah_cover_hold_info(
             constraints,
             dict(anchor),
             threat_coordinates=[dict(threat) for threat in threats],
-            max_candidates=25,
+            max_candidates=int(selector_max_candidates),
             max_ray_samples=48,
             search_radius_m=radius_m,
+            minimum_threat_masking_depth_m=float(
+                minimum_threat_masking_depth_m
+            ),
         )
     except Exception:
-        return base
+        return _with_cover_contract(base)
     coord = _normalize_coordinate(selected)
     if coord is None:
-        return base
+        return _with_cover_contract(base)
 
     # The selector clips its search disk to the supplied geometry, but the hold
     # leaving the declared corridor/region is exactly the failure this feature
     # must never produce - so verify it here rather than trusting the clip.
     if not _point_in_area_rows(coord, constraints):
-        return base
+        return _with_cover_contract(base)
 
     # A ridge's back slope may sit slightly toward the mission; that is fine.
     # Sliding well past the anchor toward the mission is not - the aircraft
@@ -910,16 +1039,7 @@ def _lah_cover_hold_info(
     except Exception:
         coord = dict(anchor)
 
-    info = _lah_point_info(coord)
-    if cover_contract:
-        # 목표지역 holds keep the terminal-cover contract keys so the d0304 pass
-        # can re-refine the point against UAV ETA LOS inside the same AREA.
-        # LINE-corridor holds deliberately opt out: their containment is a
-        # synthesized band, not operator-declared AREA geometry.
-        info["_lahTerminalCoverEnabled"] = True
-        info["_lahConstraintAreaList"] = deepcopy(constraints)
-        info["_lahTerminalCoverThreatCoordinateList"] = [dict(t) for t in threats]
-        info["_lahTerminalCoverFallbackCoordinate"] = dict(anchor)
+    info = _with_cover_contract(_lah_point_info(coord))
 
     with _COVER_HOLD_CACHE_LOCK:
         _COVER_HOLD_CACHE[cache_key] = deepcopy(info)
@@ -1056,6 +1176,55 @@ def resolve_ground_maneuver_lah_anchors(
     }
 
 
+def _shared_destination_area_hold_info(
+    missions: List[Dict[str, Any]],
+    anchors: Dict[str, Any],
+    *,
+    package_type: int,
+) -> Dict[str, Any]:
+    """Select and memoize the one target-area hide site used until egress."""
+
+    cached = anchors.get("_sharedDestinationAreaHoldInfo")
+    if isinstance(cached, dict):
+        return deepcopy(cached)
+
+    destination_inside = anchors.get("destinationInside")
+    constraints = _destination_area_rows(missions)
+    threats = _branch_phase_threat_coordinates(
+        missions,
+        package_type=int(package_type),
+    )
+    if not threats:
+        # Malformed/legacy branch feeds still get one shared point.  Use the
+        # first guard task as the threat source, never the later ACP path.
+        first_guard = next(
+            (
+                mission
+                for mission in missions
+                if (_to_int(mission.get("regionType")) or 0) == REGION_GUARD
+            ),
+            None,
+        )
+        threats = _mission_threat_coordinates(first_guard)
+
+    info = _lah_cover_hold_info(
+        destination_inside,
+        None,
+        area_rows=constraints,
+        cover_contract=True,
+        threat_coordinates=threats,
+        shared_cover=True,
+        selector_max_candidates=121,
+        minimum_threat_masking_depth_m=(
+            _destination_cover_min_masking_depth_m()
+        ),
+        selector_search_radius_m=0.0,
+        search_full_constraint_area=True,
+    )
+    anchors["_sharedDestinationAreaHoldInfo"] = deepcopy(info)
+    return info
+
+
 def ground_maneuver_lah_info_for_index(
     missions: List[Dict[str, Any]],
     anchors: Dict[str, Any],
@@ -1144,6 +1313,15 @@ def ground_maneuver_lah_info_for_index(
         # region while the guard lines were being flown.
         destination_inside = anchors.get("destinationInside")
         if destination_inside:
+            if trails_maneuver_legs:
+                return (
+                    _shared_destination_area_hold_info(
+                        missions,
+                        anchors,
+                        package_type=int(package_type),
+                    ),
+                    "destination_area_hold",
+                )
             return (
                 _lah_cover_hold_info(
                     destination_inside,
@@ -1168,11 +1346,10 @@ def ground_maneuver_lah_info_for_index(
         destination_inside = anchors.get("destinationInside")
         if destination_inside:
             return (
-                _lah_cover_hold_info(
-                    destination_inside,
-                    mission,
-                    area_rows=_destination_area_rows(missions),
-                    cover_contract=True,
+                _shared_destination_area_hold_info(
+                    missions,
+                    anchors,
+                    package_type=int(package_type),
                 ),
                 "destination_area_hold",
             )

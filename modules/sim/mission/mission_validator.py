@@ -61,6 +61,141 @@ def _waypoints(path_data: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
+def _boundary_guard_cross_path_targets(
+    flight_paths: list[Any],
+) -> dict[int, int]:
+    """Return the one declared cross-path tail target allowed per guard path.
+
+    A normal FlightPath must remain self-contained.  Type-2 boundary guard
+    output is the sole exception: all child paths owned by one UAV form a
+    versioned, ordered set and each child tail points to the next child (the
+    final tail points back to the set's first waypoint).  Malformed or partial
+    contracts deliberately produce no exception, so the normal validator
+    warning remains visible.
+    """
+
+    groups: dict[tuple[int, str], list[dict[str, Any]]] = {}
+    for raw in flight_paths:
+        data = (
+            raw.get("data")
+            if isinstance(raw, dict) and isinstance(raw.get("data"), dict)
+            else raw
+        )
+        if not isinstance(data, dict):
+            continue
+        if _get_ci(data, "boundaryGuardLoop", "boundary_guard_loop") is not True:
+            continue
+        set_id = str(
+            _get_ci(data, "boundaryGuardSetID", "boundary_guard_set_id") or ""
+        ).strip()
+        path_id = _as_int(_get_ci(data, "pathID", "PathID"))
+        aircraft_id = _as_int(_get_ci(data, "aircraftID", "AircraftID"))
+        sequence = _as_int(
+            _get_ci(data, "boundaryGuardSequence", "boundary_guard_sequence")
+        )
+        sequence_count = _as_int(
+            _get_ci(
+                data,
+                "boundaryGuardSequenceCount",
+                "boundary_guard_sequence_count",
+            )
+        )
+        loop_version = _as_int(
+            _get_ci(
+                data,
+                "boundaryGuardLoopVersion",
+                "boundary_guard_loop_version",
+            )
+        )
+        first_declared = _as_int(
+            _get_ci(
+                data,
+                "boundaryGuardCycleFirstWaypointID",
+                "boundary_guard_cycle_first_wp_id",
+            )
+        )
+        last_declared = _as_int(
+            _get_ci(
+                data,
+                "boundaryGuardCycleLastWaypointID",
+                "boundary_guard_cycle_last_wp_id",
+            )
+        )
+        ids = [
+            int(waypoint_id)
+            for waypoint in _waypoints(data)
+            if (
+                waypoint_id := _as_int(
+                    _get_ci(waypoint, "waypointID", "WaypointID")
+                )
+            )
+            is not None
+            and int(waypoint_id) > 0
+        ]
+        if (
+            not set_id
+            or path_id is None
+            or path_id <= 0
+            or aircraft_id is None
+            or aircraft_id <= 0
+            or sequence is None
+            or sequence <= 0
+            or sequence_count is None
+            or sequence_count <= 0
+            or loop_version != 1
+            or first_declared is None
+            or last_declared is None
+            or not ids
+            or len(ids) != len(set(ids))
+        ):
+            continue
+        groups.setdefault((int(aircraft_id), set_id), []).append(
+            {
+                "path_id": int(path_id),
+                "sequence": int(sequence),
+                "sequence_count": int(sequence_count),
+                "first_declared": int(first_declared),
+                "last_declared": int(last_declared),
+                "waypoint_ids": ids,
+            }
+        )
+
+    allowed: dict[int, int] = {}
+    for rows in groups.values():
+        declared_counts = {int(row["sequence_count"]) for row in rows}
+        if len(declared_counts) != 1:
+            continue
+        declared_count = next(iter(declared_counts))
+        if declared_count != len(rows):
+            continue
+        sequences = [int(row["sequence"]) for row in rows]
+        if sorted(sequences) != list(range(1, declared_count + 1)):
+            continue
+        rows.sort(key=lambda row: int(row["sequence"]))
+        waypoint_ids = [
+            int(waypoint_id)
+            for row in rows
+            for waypoint_id in row["waypoint_ids"]
+        ]
+        if len(waypoint_ids) != len(set(waypoint_ids)):
+            continue
+        cycle_first = int(rows[0]["waypoint_ids"][0])
+        cycle_last = int(rows[-1]["waypoint_ids"][-1])
+        if any(
+            int(row["first_declared"]) != cycle_first
+            or int(row["last_declared"]) != cycle_last
+            for row in rows
+        ):
+            continue
+        for index, row in enumerate(rows):
+            allowed[int(row["path_id"])] = (
+                int(rows[index + 1]["waypoint_ids"][0])
+                if index + 1 < len(rows)
+                else cycle_first
+            )
+    return allowed
+
+
 class _IssueCollector:
     def __init__(self) -> None:
         self.issues: list[dict[str, Any]] = []
@@ -318,6 +453,7 @@ def _validate_input_plans(col: _IssueCollector, input_plans: list[Any]) -> set[i
 def _validate_flight_paths(col: _IssueCollector, flight_paths: list[Any]) -> tuple[dict[int, dict[str, Any]], dict[int, int]]:
     by_path: dict[int, dict[str, Any]] = {}
     aircraft_by_path: dict[int, int] = {}
+    boundary_guard_tail_targets = _boundary_guard_cross_path_targets(flight_paths)
     for idx, raw in enumerate(flight_paths):
         path = f"flightPaths[{idx}]"
         data = raw.get("data") if isinstance(raw, dict) and isinstance(raw.get("data"), dict) else raw
@@ -388,7 +524,15 @@ def _validate_flight_paths(col: _IssueCollector, flight_paths: list[Any]) -> tup
                     for item in wps
                     if isinstance(item, dict)
                 }
-                if next_wp not in all_ids:
+                boundary_guard_tail_target = (
+                    boundary_guard_tail_targets.get(int(path_id))
+                    if path_id is not None and widx == len(wps) - 1
+                    else None
+                )
+                if (
+                    next_wp not in all_ids
+                    and next_wp != boundary_guard_tail_target
+                ):
                     col.add("warn", "next_waypoint_missing", f"{wpath}.nextWaypointID", "nextWaypointID does not exist in the same path.", actual=next_wp)
             col.require_uint(wp, "waypointPassType", wpath, required=False, max_value=3)
             col.require_bool(wp, "isDone", wpath, required=False)

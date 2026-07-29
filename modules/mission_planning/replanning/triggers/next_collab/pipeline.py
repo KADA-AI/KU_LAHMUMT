@@ -50,7 +50,11 @@ from modules.mission_planning.runtime.next_collab_replan_runtime import (
 from modules.mission_planning._paths import mission_planner_root, mission_planning_root, project_root
 from modules.mission_planning.pipelines.next_collab_path_builder import (
     _coord_with_dem_altitude,
+    _area_sweep_items_xy,
     _area_reciprocal_terrain_profile,
+    _dem_alt,
+    _make_hold_waypoint,
+    _recompute_waypoint_timeline,
     build_formation_flight_path_from_template,
     build_flight_path_from_planned_row,
     build_mission_info_from_planned_row,
@@ -58,7 +62,16 @@ from modules.mission_planning.pipelines.next_collab_path_builder import (
 )
 from modules.mission_planning.pipelines.mission_path_trim import reassign_unique_waypoint_ids_inplace
 from modules.mission_planning.pipelines.ground_maneuver_mode import (
+    TYPE2_SELF_RELIANCE_GUARD_AREA,
     ground_maneuver_lah_info_for_input,
+    resolve_type2_self_reliance_phase,
+)
+from modules.mission_planning.pipelines.type2_boundary_guard_loop import (
+    annotate_boundary_guard_set,
+    apply_boundary_guard_contract,
+    extract_boundary_guard_contract,
+    link_boundary_guard_flight_path_sets,
+    sync_boundary_guard_contract_from_flight_paths,
 )
 from modules.mission_planning.pipelines.lah_operational_mode import lah_special_info_for_input
 from modules.mission_planning.pipelines.handover_terminal import (
@@ -85,6 +98,7 @@ from modules.mission_planning.MissionPlanner.planning_enhanced.algo.split_runner
     run_split_pipeline,
 )
 from modules.mission_planning.MissionPlanner.planning_enhanced.io.export_0302 import (
+    _apply_input_order_execution_barrier,
     build_0302_packages_from_split_with_lah,
     _piece_runtime_meta,
     _piece_to_mission_info,
@@ -105,6 +119,10 @@ from modules.mission_planning.MissionPlanner.planning_enhanced.models import (
 from modules.mission_planning.MissionPlanner.planning_enhanced.pathing.expected_path import generate_expected_paths
 from modules.mission_planning.MissionPlanner.planning_enhanced.pathing.expected_velocity import calculate_expected_velocity
 from modules.mission_planning.MissionPlanner.planning_enhanced.type_decider.logic import apply_logic_type_decider
+from modules.mission_planning.MissionPlanner import capture_physics
+from modules.mission_planning.pipelines.area_ownership_stitch import (
+    convex_hull_area_fragments_xy,
+)
 from shapely.geometry import GeometryCollection, LineString, MultiPolygon, Polygon
 from shapely.ops import nearest_points, triangulate, unary_union
 
@@ -364,6 +382,210 @@ def _build_replacement_flight_paths(
     return results
 
 
+_AREA_LINK_SCAN_MODE = 2
+
+
+def _area_link_scan_coords(waypoint: Dict[str, Any]) -> List[Dict[str, Any]]:
+    filming = waypoint.get("filmingProperty") if isinstance(waypoint.get("filmingProperty"), dict) else {}
+    line_search = filming.get("lineSearch") if isinstance(filming.get("lineSearch"), dict) else {}
+    coords = line_search.get("coordinateList")
+    return [item for item in (coords or []) if isinstance(item, dict) and item.get("latitude") is not None]
+
+
+def _area_link_waypoint_coord(waypoint: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The waypoint's own coordinate.
+
+    Deliberately not the scan run's endpoints: d0303 feeds the shared geometry
+    plain waypoint coordinates, and both builders have to agree on the input
+    convention or the same handover gets two different links.
+    """
+
+    coord = waypoint.get("coordinate") if isinstance(waypoint, dict) else None
+    return dict(coord) if isinstance(coord, dict) and coord.get("latitude") is not None else None
+
+
+def _area_link_altitude_fn(
+    prev_end: Dict[str, Any],
+    next_first: Dict[str, Any],
+) -> Callable[[float, float], int]:
+    """이웃 WP의 AGL을 이월하는 링크 고도 함수.
+
+    d0303 초기계획은 지면고+임무 오프셋(_mission_wp_alt)으로 링크 고도를 만드는데,
+    재계획이 맨 DEM 지면고만 쓰면 링크 WP가 지형에 붙어 버린다.  여기서는 양쪽
+    이웃 WP에서 관측된 AGL 중 큰 값을 지면 위에 그대로 이월한다.
+    """
+
+    agl_candidates: List[float] = []
+    msl_candidates: List[float] = []
+    for coord in (prev_end, next_first):
+        if not isinstance(coord, dict):
+            continue
+        alt = _to_float(coord.get("altitude"))
+        if alt is None or alt <= 0.0:
+            continue
+        msl_candidates.append(float(alt))
+        try:
+            ground = float(_dem_alt(float(coord["latitude"]), float(coord["longitude"])))
+        except Exception:
+            continue
+        if alt > ground:
+            agl_candidates.append(float(alt) - ground)
+    carried_agl = max(agl_candidates) if agl_candidates else 0.0
+    neighbor_floor = max(msl_candidates) if msl_candidates else 0.0
+
+    def _altitude(lat: float, lon: float) -> int:
+        try:
+            ground = float(_dem_alt(float(lat), float(lon)))
+        except Exception:
+            ground = 0.0
+        altitude = ground + carried_agl
+        if carried_agl <= 0.0:
+            # AGL을 못 구했으면 이웃 WP의 MSL 고도를 바닥으로 쓴다.
+            altitude = max(altitude, neighbor_floor)
+        return int(round(altitude))
+
+    return _altitude
+
+
+def _append_next_collab_area_transition_links(
+    *,
+    generated_fp_by_path: Dict[int, Dict[str, Any]],
+    ordered_path_ids_by_aircraft: Dict[int, List[int]],
+    emit: Callable[[str], None],
+    suppressed_link_pairs: Set[tuple[int, int]] | None = None,
+) -> int:
+    """Join consecutive area passes of one aircraft with a flyable turn link.
+
+    The initial-plan builder adds this inside d0303, but a next-collab replan
+    never goes through d0303 - it builds each replacement path independently -
+    so a rebuilt area pass used to end with the aircraft told to fly straight
+    from the end of one lane to the start of the next.  Both builders now share
+    ``compute_area_transition_link`` so a handover flies the same way whichever
+    produced it.
+    """
+
+    try:
+        from modules.mission_planning.engine.mission_generation.artifacts_0301_0302_0303_0304.d0303 import (
+            _dubins_link_available,
+            compute_area_transition_link,
+        )
+    except Exception:
+        return 0
+    # 초기계획(d0303)과 같은 스위치 — out-leg 링크는 기본 방출 안 함 (사용자
+    # 결정).  켜면 두 빌더가 같은 링크를 낸다.
+    suppressed_pairs = {
+        (int(prev_path_id), int(next_path_id))
+        for prev_path_id, next_path_id in (suppressed_link_pairs or set())
+    }
+    globally_enabled = bool(_dubins_link_available())
+    if not globally_enabled:
+        return 0
+
+    linked = 0
+    for aircraft_id, path_ids in sorted(ordered_path_ids_by_aircraft.items()):
+        ordered = [int(path_id) for path_id in path_ids]
+        for prev_path_id, next_path_id in zip(ordered[:-1], ordered[1:]):
+            # Sequential two-area routes use this geometry only to select the
+            # second capture direction. Their public mission intentionally
+            # omits out-leg/turn helpers and starts at the next capture WP.
+            if (int(prev_path_id), int(next_path_id)) in suppressed_pairs:
+                continue
+            prev_payload = generated_fp_by_path.get(int(prev_path_id))
+            next_payload = generated_fp_by_path.get(int(next_path_id))
+            if not isinstance(prev_payload, dict) or not isinstance(next_payload, dict):
+                continue
+            prev_wps = prev_payload.get("waypointList")
+            next_wps = next_payload.get("waypointList")
+            if not isinstance(prev_wps, list) or len(prev_wps) < 2:
+                continue
+            if not isinstance(next_wps, list) or len(next_wps) < 2:
+                continue
+            prev_start = _area_link_waypoint_coord(prev_wps[-2])
+            prev_end = _area_link_waypoint_coord(prev_wps[-1])
+            next_first = _area_link_waypoint_coord(next_wps[0])
+            next_second = _area_link_waypoint_coord(next_wps[1])
+            if not all((prev_start, prev_end, next_first, next_second)):
+                continue
+            cruise_speed_mps = _to_float(prev_wps[-1].get("speed")) or 40.0
+            try:
+                turn_radius_m = float(
+                    _turn_radius_m_for_area_link(float(cruise_speed_mps))
+                )
+            except Exception:
+                continue
+            try:
+                coords, link_speed_mps = compute_area_transition_link(
+                    prev_start_coord=prev_start,
+                    prev_end_coord=prev_end,
+                    next_first_coord=next_first,
+                    next_second_coord=next_second,
+                    turn_radius_m=turn_radius_m,
+                    cruise_speed_mps=float(cruise_speed_mps),
+                    # 맨 DEM 지면고를 쓰면 링크 WP가 지형에 붙는다 — 이웃 WP의
+                    # AGL을 이월한다 (d0303의 지면고+오프셋 규약과 같은 효과).
+                    altitude_fn=_area_link_altitude_fn(prev_end, next_first),
+                    min_link_gap_m=max(80.0, turn_radius_m * 0.2),
+                )
+            except Exception:
+                continue
+            if not coords:
+                continue
+            # The camera stays on the last captured point of the finished pass,
+            # so the link never leaves an observation gap.
+            stare_coord = None
+            for waypoint in reversed(prev_wps):
+                scan = _area_link_scan_coords(waypoint)
+                if scan:
+                    stare_coord = dict(scan[-1])
+                    break
+            if stare_coord is None:
+                stare_coord = dict(next_first)
+            template_filming = (
+                prev_wps[-1].get("filmingProperty")
+                if isinstance(prev_wps[-1].get("filmingProperty"), dict)
+                else {}
+            )
+            field_of_view_deg = _to_float(template_filming.get("fieldOfView")) or 7.2
+            sensor_type = _to_int(template_filming.get("sensorType")) or 1
+            for coord in coords:
+                # 진출점(out leg)은 실제로 통과해야 하는 선회 접점 — FLYOVER.
+                # 링크는 경로별 flyover 정규화 이후에 덧붙으므로 여기 값이
+                # 최종값이고, 마커를 남기면 0303 출력으로 새기만 한다.
+                link_wp = _make_hold_waypoint(
+                    coordinate=coord,
+                    speed_mps=float(link_speed_mps),
+                    sensor_type=int(sensor_type),
+                    field_of_view_deg=float(field_of_view_deg),
+                    orientation_coordinate=stare_coord,
+                    waypoint_pass_type=3,
+                )
+                prev_wps.append(link_wp)
+            prev_payload["waypointList"] = prev_wps
+            # Link waypoints are created after the replacement path builder has
+            # finalized its timeline.  Continue the cumulative ETA through the
+            # appended turn instead of leaving the new points at their factory
+            # default (eta=0), which makes ETA decrease after the last sweep.
+            _recompute_waypoint_timeline(
+                prev_wps,
+                default_speed_mps=float(cruise_speed_mps),
+            )
+            linked += len(coords)
+            emit(
+                "[NEXTCOLLAB][AREA] area transition link "
+                f"aircraft={int(aircraft_id)} {int(prev_path_id)}->{int(next_path_id)} "
+                f"points={len(coords)} radius_speed={float(link_speed_mps):.1f}m/s"
+            )
+    return linked
+
+
+def _turn_radius_m_for_area_link(speed_mps: float) -> float:
+    from modules.mission_planning.engine.mission_generation.artifacts_0301_0302_0303_0304.d0303 import (
+        _turn_radius_m_for_speed,
+    )
+
+    return float(_turn_radius_m_for_speed(float(speed_mps)))
+
+
 def _assign_replacement_waypoint_ids_in_order(
     *,
     generated_fp_by_path: Dict[int, Dict[str, Any]],
@@ -503,6 +725,49 @@ def _normalize_search_speed_scale_multiplier(value: Any) -> float:
     return max(float(parsed), 0.1)
 
 
+def _effective_type2_three_branch_search_speed_scale_multiplier(
+    value: Any,
+    *,
+    is_type2_branch_mission: bool,
+    locked_type2_ownership: Dict[int, List[int]] | None,
+    emit: Callable[[str], None] | None = None,
+) -> float:
+    """Add an execution margin only to the Type-2 three-branch span.
+
+    AREA already has its general scan-completion margin, while LINE is normally
+    synchronized almost exactly to the incoming waypoint leg. The independent
+    branches have additional activation/turn hand-off latency, so both
+    geometries need one shared margin after branch ownership is resolved.
+    """
+
+    base_multiplier = _normalize_search_speed_scale_multiplier(value)
+    ownership = (
+        locked_type2_ownership
+        if isinstance(locked_type2_ownership, dict)
+        else {}
+    )
+    if not bool(is_type2_branch_mission) or len(ownership) != 3:
+        return float(base_multiplier)
+    try:
+        branch_multiplier = float(
+            get_runtime_float(
+                "next_collab_type2_three_branch_search_speed_scale",
+                1.10,
+            )
+        )
+    except Exception:
+        branch_multiplier = 1.10
+    branch_multiplier = max(0.10, min(5.0, float(branch_multiplier)))
+    effective_multiplier = float(base_multiplier) * float(branch_multiplier)
+    if emit is not None and abs(float(branch_multiplier) - 1.0) > 1e-6:
+        emit(
+            "[NEXTCOLLAB][TYPE2] three-branch AREA/LINE searchSpeed margin "
+            f"applied factor={float(branch_multiplier):.2f} "
+            f"effective={float(effective_multiplier):.2f}."
+        )
+    return float(effective_multiplier)
+
+
 def _apply_search_speed_scale_multiplier_to_rows(
     rows: List[Dict[str, Any]],
     *,
@@ -559,6 +824,77 @@ class _PreparedReplacements:
     uav_work_summary: Dict[int, int] = field(default_factory=dict)
     runtime_preservation: Dict[str, Any] = field(default_factory=dict)
     planning_mode: Dict[str, Any] = field(default_factory=dict)
+
+
+def _apply_type2_boundary_guard_loop_to_prepared(
+    prepared: _PreparedReplacements,
+    *,
+    input_data: Dict[str, Any],
+    input_package_id: int,
+    target_input_id: int,
+) -> _PreparedReplacements:
+    """Finalize the strict Type-2 guard AREA contract after waypoint IDs exist."""
+
+    if (
+        resolve_type2_self_reliance_phase(input_data, int(target_input_id))
+        != TYPE2_SELF_RELIANCE_GUARD_AREA
+    ):
+        return prepared
+
+    duration_s = float(
+        get_runtime_float("type2_boundary_guard_duration_s", 600.0)
+    )
+    annotated_missions: List[Dict[str, Any]] = []
+    for aircraft_id in sorted(prepared.replacement_by_aircraft):
+        owner_rows = [
+            mission
+            for mission in prepared.replacement_by_aircraft.get(int(aircraft_id), [])
+            if isinstance(mission, dict)
+            and _mission_input_id(mission) == int(target_input_id)
+        ]
+        if not owner_rows:
+            continue
+        annotate_boundary_guard_set(
+            owner_rows,
+            set_id=(
+                f"type2-boundary:{int(input_package_id)}:{int(target_input_id)}:"
+                f"aircraft-{int(aircraft_id)}"
+            ),
+            duration_s=duration_s,
+            include_individual_mission_info=True,
+        )
+        annotated_missions.extend(owner_rows)
+        for mission in owner_rows:
+            path_id = _to_int(mission.get("pathID"))
+            flight_path = (
+                prepared.generated_fp_by_path.get(int(path_id))
+                if path_id is not None
+                else None
+            )
+            if isinstance(flight_path, dict):
+                apply_boundary_guard_contract(
+                    flight_path,
+                    extract_boundary_guard_contract(
+                        mission,
+                        mission.get("individualMissionInfo"),
+                    ),
+                )
+
+    link_boundary_guard_flight_path_sets(
+        prepared.generated_fp_by_path.values(),
+        strict=True,
+    )
+    sync_boundary_guard_contract_from_flight_paths(
+        annotated_missions,
+        prepared.generated_fp_by_path.values(),
+    )
+    prepared.review_report = dict(prepared.review_report or {})
+    prepared.review_report["boundaryGuardLoop"] = {
+        "enabled": bool(annotated_missions),
+        "durationS": float(duration_s),
+        "ownerMissionCount": len(annotated_missions),
+    }
+    return prepared
 
 
 class _NextCollabPrepareTimer:
@@ -1015,15 +1351,17 @@ def _single_aircraft_sequential_area_entries(
     mission_polygon: List[Dict[str, Any]],
     *,
     enabled: bool,
+    stage_count: int = 2,
 ) -> tuple[List[Dict[str, Any]], Dict[str, Any] | None]:
-    """Provide a second, planning-only aircraft so one UAV receives two pieces.
+    """Provide planning-only aircraft so one UAV receives stage 1..N pieces.
 
-    The synthetic aircraft never leaves this Area-planner call.  Its assigned
-    piece is folded back onto the real aircraft as the second sequential
-    individual mission by ``_collapse_single_aircraft_sequential_area_result``.
+    Synthetic aircraft never leave this Area-planner call. Their assigned
+    pieces are folded back onto the real aircraft as sequential missions by
+    ``_collapse_single_aircraft_sequential_area_result``.
     """
 
     valid_entries = [deepcopy(row) for row in aircraft_entries if isinstance(row, dict)]
+    stage_count = max(2, int(stage_count))
     if not enabled or len(valid_entries) != 1:
         return valid_entries, None
 
@@ -1056,7 +1394,7 @@ def _single_aircraft_sequential_area_entries(
         outward_norm = 1.0
     unit_x = outward_x / outward_norm
     unit_y = outward_y / outward_norm
-    virtual_xy = (
+    opposite_xy = (
         center_x - unit_x * placement_radius_m,
         center_y - unit_y * placement_radius_m,
     )
@@ -1066,40 +1404,58 @@ def _single_aircraft_sequential_area_entries(
         for row in valid_entries
         if int(_to_int(row.get("aircraftID")) or 0) > 0
     }
-    virtual_aircraft_id = max(existing_ids | {real_aircraft_id}) + 1_000_000
-    while virtual_aircraft_id in existing_ids:
-        virtual_aircraft_id += 1
+    planner_entries = [real_entry]
+    virtual_aircraft_ids: List[int] = []
+    next_virtual_id = max(existing_ids | {real_aircraft_id}) + 1_000_000
+    for virtual_index in range(1, stage_count):
+        while next_virtual_id in existing_ids:
+            next_virtual_id += 1
+        virtual_aircraft_id = int(next_virtual_id)
+        next_virtual_id += 1
+        existing_ids.add(virtual_aircraft_id)
+        virtual_aircraft_ids.append(virtual_aircraft_id)
 
-    virtual_entry = deepcopy(real_entry)
-    virtual_entry["aircraftID"] = int(virtual_aircraft_id)
-    virtual_entry["coordinate"] = meters_to_coord(
-        float(virtual_xy[0]),
-        float(virtual_xy[1]),
-        alt_m=float(real_coord.get("altitude", 0.0) or 0.0),
-    )
-    virtual_entry["headingDeg"] = (
-        math.degrees(math.atan2(center_x - virtual_xy[0], center_y - virtual_xy[1]))
-        + 360.0
-    ) % 360.0
-    # A copied live prediction still points at the real UAV and would collapse
-    # both planner entries back onto the same position.
-    for key in (
-        "linePredictedEntryCoordinate",
-        "linePredictedHeadingDeg",
-        "linePredictionLeadS",
-        "lineTurnDirectionConfidence",
-        "lineTurnDataAgeS",
-        "lineTrendTurnSign",
-        "lineTrendTurnRateDps",
-        "lineTrendSampleCount",
-        "turnSign",
-        "turnRateDps",
-    ):
-        virtual_entry.pop(key, None)
+        fraction = float(virtual_index) / float(stage_count - 1)
+        virtual_xy = (
+            float(real_xy[0]) + (float(opposite_xy[0]) - float(real_xy[0])) * fraction,
+            float(real_xy[1]) + (float(opposite_xy[1]) - float(real_xy[1])) * fraction,
+        )
+        virtual_entry = deepcopy(real_entry)
+        virtual_entry["aircraftID"] = int(virtual_aircraft_id)
+        virtual_entry["coordinate"] = meters_to_coord(
+            float(virtual_xy[0]),
+            float(virtual_xy[1]),
+            alt_m=float(real_coord.get("altitude", 0.0) or 0.0),
+        )
+        virtual_entry["headingDeg"] = (
+            math.degrees(
+                math.atan2(center_x - virtual_xy[0], center_y - virtual_xy[1])
+            )
+            + 360.0
+        ) % 360.0
+        # A copied live prediction still points at the real UAV and would
+        # collapse every planning entry back onto the same live position.
+        for key in (
+            "linePredictedEntryCoordinate",
+            "linePredictedHeadingDeg",
+            "linePredictionLeadS",
+            "lineTurnDirectionConfidence",
+            "lineTurnDataAgeS",
+            "lineTrendTurnSign",
+            "lineTrendTurnRateDps",
+            "lineTrendSampleCount",
+            "turnSign",
+            "turnRateDps",
+        ):
+            virtual_entry.pop(key, None)
+        planner_entries.append(virtual_entry)
 
-    return [real_entry, virtual_entry], {
+    return planner_entries, {
         "realAircraftID": int(real_aircraft_id),
-        "virtualAircraftID": int(virtual_aircraft_id),
+        "virtualAircraftID": int(virtual_aircraft_ids[0]),
+        "virtualAircraftIDs": list(virtual_aircraft_ids),
+        "plannerAircraftIDs": [int(real_aircraft_id), *virtual_aircraft_ids],
+        "stageCount": int(stage_count),
         "realEntryCoordinate": deepcopy(real_coord),
         "realEntryXY": (float(real_xy[0]), float(real_xy[1])),
     }
@@ -1110,8 +1466,9 @@ def _branch_aircraft_sequential_area_entries(
     mission_polygon: List[Dict[str, Any]],
     *,
     enabled: bool,
+    stage_count: int = 2,
 ) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    """Create one planning-only partner for every sticky branch owner.
+    """Create N-1 planning-only partners for every sticky branch owner.
 
     With several owners, each partner stays next to its real UAV instead of on
     the opposite side of the whole polygon.  The division planner therefore
@@ -1120,6 +1477,7 @@ def _branch_aircraft_sequential_area_entries(
     """
 
     valid_entries = [deepcopy(row) for row in aircraft_entries if isinstance(row, dict)]
+    stage_count = max(2, int(stage_count))
     if not enabled or not valid_entries:
         return valid_entries, []
     if len(valid_entries) == 1:
@@ -1127,6 +1485,7 @@ def _branch_aircraft_sequential_area_entries(
             valid_entries,
             mission_polygon,
             enabled=True,
+            stage_count=stage_count,
         )
         return pair, [context] if isinstance(context, dict) else []
 
@@ -1142,17 +1501,10 @@ def _branch_aircraft_sequential_area_entries(
             [real_entry],
             mission_polygon,
             enabled=True,
+            stage_count=stage_count,
         )
-        if len(pair) != 2 or not isinstance(context, dict):
+        if len(pair) != stage_count or not isinstance(context, dict):
             return valid_entries, []
-
-        virtual_entry = pair[1]
-        virtual_id = int(_to_int(context.get("virtualAircraftID")) or 0)
-        while virtual_id <= 0 or virtual_id in used_ids:
-            virtual_id += 1
-        virtual_entry["aircraftID"] = int(virtual_id)
-        context["virtualAircraftID"] = int(virtual_id)
-        used_ids.add(int(virtual_id))
 
         real_xy = context.get("realEntryXY")
         real_coord = context.get("realEntryCoordinate")
@@ -1162,24 +1514,54 @@ def _branch_aircraft_sequential_area_entries(
             and isinstance(real_coord, dict)
         ):
             return valid_entries, []
-        # A tiny deterministic local offset resolves equal-position ties while
-        # keeping both planner entries in the same ownership neighbourhood.
-        angle_rad = math.radians(float((pair_index * 137.507764) % 360.0))
-        offset_m = 2.0
-        virtual_entry["coordinate"] = meters_to_coord(
-            float(real_xy[0]) + math.cos(angle_rad) * offset_m,
-            float(real_xy[1]) + math.sin(angle_rad) * offset_m,
-            alt_m=float(real_coord.get("altitude", 0.0) or 0.0),
-        )
-        virtual_entry["headingDeg"] = float(_to_float(real_entry.get("headingDeg")) or 0.0)
-        planner_entries.extend((pair[0], virtual_entry))
+        remapped_virtual_ids: List[int] = []
+        for virtual_index, virtual_entry in enumerate(pair[1:], start=1):
+            virtual_id = int(_to_int(virtual_entry.get("aircraftID")) or 0)
+            while virtual_id <= 0 or virtual_id in used_ids:
+                virtual_id += 1
+            virtual_entry["aircraftID"] = int(virtual_id)
+            used_ids.add(int(virtual_id))
+            remapped_virtual_ids.append(int(virtual_id))
+            # Tiny deterministic local offsets resolve equal-position ties
+            # while keeping every synthetic stage in its owner's neighbourhood.
+            angle_rad = math.radians(
+                float(
+                    (
+                        pair_index * 137.507764
+                        + virtual_index * (360.0 / stage_count)
+                    )
+                    % 360.0
+                )
+            )
+            offset_m = 2.0 * float(virtual_index)
+            virtual_entry["coordinate"] = meters_to_coord(
+                float(real_xy[0]) + math.cos(angle_rad) * offset_m,
+                float(real_xy[1]) + math.sin(angle_rad) * offset_m,
+                alt_m=float(real_coord.get("altitude", 0.0) or 0.0),
+            )
+            virtual_entry["headingDeg"] = float(
+                _to_float(real_entry.get("headingDeg")) or 0.0
+            )
+        context["virtualAircraftID"] = int(remapped_virtual_ids[0])
+        context["virtualAircraftIDs"] = list(remapped_virtual_ids)
+        context["plannerAircraftIDs"] = [
+            int(_to_int(real_entry.get("aircraftID")) or 0),
+            *remapped_virtual_ids,
+        ]
+        context["stageCount"] = int(stage_count)
+        planner_entries.extend(pair)
         contexts.append(context)
 
     return planner_entries, contexts
 
 
 def _area_path_row_start_xy(row: Dict[str, Any]) -> tuple[float, float] | None:
-    for key in ("waypointStartXY", "entryTPrimeXY", "targetXY"):
+    for key in (
+        "areaSweepRouteStartXY",
+        "waypointStartXY",
+        "entryTPrimeXY",
+        "targetXY",
+    ):
         raw_xy = row.get(key)
         if isinstance(raw_xy, (tuple, list)) and len(raw_xy) >= 2:
             return (float(raw_xy[0]), float(raw_xy[1]))
@@ -1192,9 +1574,10 @@ def _area_path_row_start_xy(row: Dict[str, Any]) -> tuple[float, float] | None:
 
 
 def _area_path_row_end_xy(row: Dict[str, Any]) -> tuple[float, float] | None:
-    raw_xy = row.get("waypointEndXY")
-    if isinstance(raw_xy, (tuple, list)) and len(raw_xy) >= 2:
-        return (float(raw_xy[0]), float(raw_xy[1]))
+    for key in ("areaSweepRouteEndXY", "waypointEndXY"):
+        raw_xy = row.get(key)
+        if isinstance(raw_xy, (tuple, list)) and len(raw_xy) >= 2:
+            return (float(raw_xy[0]), float(raw_xy[1]))
     route_xy = row.get("routeXY")
     if isinstance(route_xy, list) and route_xy:
         raw_xy = route_xy[-1]
@@ -1203,15 +1586,314 @@ def _area_path_row_end_xy(row: Dict[str, Any]) -> tuple[float, float] | None:
     return None
 
 
+def _area_path_row_capture_anchors_xy(
+    row: Dict[str, Any],
+) -> List[tuple[float, float]]:
+    """Return the commanded capture anchors, excluding route-offset helpers."""
+
+    scan_lines_xy: List[List[tuple[float, float]]] = []
+    for raw_line in row.get("sweepLineListXY") or []:
+        if not isinstance(raw_line, list):
+            continue
+        line_xy = [
+            (float(raw_xy[0]), float(raw_xy[1]))
+            for raw_xy in raw_line
+            if isinstance(raw_xy, (tuple, list)) and len(raw_xy) >= 2
+        ]
+        if len(line_xy) >= 2:
+            scan_lines_xy.append(line_xy)
+    if not scan_lines_xy:
+        return []
+    try:
+        items = _area_sweep_items_xy(
+            row,
+            scan_lines_xy,
+            deduped_scan_lines_xy=scan_lines_xy,
+        )
+    except Exception:
+        return []
+    anchors: List[tuple[float, float]] = []
+    for item in items:
+        raw_anchor = item.get("anchorXY") if isinstance(item, dict) else None
+        if not (isinstance(raw_anchor, (tuple, list)) and len(raw_anchor) >= 2):
+            continue
+        anchor_xy = (float(raw_anchor[0]), float(raw_anchor[1]))
+        if anchors and math.hypot(
+            anchor_xy[0] - anchors[-1][0],
+            anchor_xy[1] - anchors[-1][1],
+        ) <= 1.0:
+            continue
+        anchors.append(anchor_xy)
+    return anchors
+
+
+def _area_path_row_capture_exit_xy(
+    row: Dict[str, Any],
+) -> tuple[float, float] | None:
+    anchors = _area_path_row_capture_anchors_xy(row)
+    if anchors:
+        return anchors[-1]
+    return _area_path_row_end_xy(row)
+
+
+def _area_path_row_turn_speed_radius(
+    row: Dict[str, Any],
+) -> tuple[float, float] | None:
+    """Return the production AREA speed/radius pair when it is explicit.
+
+    ``resolvedVelMps`` is the historical planner field name, but its value is
+    km/h.  Under-specified rows deliberately return ``None`` so old/fallback
+    payloads retain the proven nearest-endpoint behavior.
+    """
+
+    resolved_vel_kmh = _to_float(row.get("resolvedVelMps"))
+    if resolved_vel_kmh is None or resolved_vel_kmh <= 0.0:
+        return None
+    speed_mps = float(resolved_vel_kmh) / 3.6
+    try:
+        radius_m = float(_turn_radius_m_for_area_link(float(speed_mps)))
+    except Exception:
+        return None
+    if not math.isfinite(radius_m) or radius_m <= 1.0:
+        return None
+    return float(speed_mps), float(radius_m)
+
+
+def _area_path_row_planned_turn_approach_cost_m(
+    row: Dict[str, Any],
+) -> float | None:
+    """Return the planner's fixed-wing approach cost to one AREA stage.
+
+    Every width stage was independently solved from the same live/predicted
+    aircraft state.  Its mission phase start therefore contains the turn arc
+    and any straight ingress generated with that aircraft's turn radius.  The
+    value is converted back to metres so the two terminal stages can be
+    compared without mixing speed and time units.
+    """
+
+    origin_xy = row.get("originXY")
+    origin_heading_deg = _to_float(row.get("originHeadingDeg"))
+    speed_radius = _area_path_row_turn_speed_radius(row)
+    if (
+        not isinstance(origin_xy, (tuple, list))
+        or len(origin_xy) < 2
+        or origin_heading_deg is None
+        or speed_radius is None
+    ):
+        return None
+    speed_mps, _radius_m = speed_radius
+
+    horizon_sec = _to_float(row.get("horizonSec"))
+    tangent_xy = row.get("tangentXY")
+    waypoint_start_xy = row.get("waypointStartXY")
+    if (
+        horizon_sec is not None
+        and math.isfinite(horizon_sec)
+        and horizon_sec >= 0.0
+        and isinstance(tangent_xy, (tuple, list))
+        and len(tangent_xy) >= 2
+        and isinstance(waypoint_start_xy, (tuple, list))
+        and len(waypoint_start_xy) >= 2
+    ):
+        straight_ingress_m = math.hypot(
+            float(waypoint_start_xy[0]) - float(tangent_xy[0]),
+            float(waypoint_start_xy[1]) - float(tangent_xy[1]),
+        )
+        explicit_turn_speed_mps = _to_float(row.get("turnSpeedMps"))
+        turn_speed_mps = (
+            float(explicit_turn_speed_mps)
+            if explicit_turn_speed_mps is not None
+            and math.isfinite(explicit_turn_speed_mps)
+            and explicit_turn_speed_mps > 0.0
+            else float(speed_mps)
+        )
+        return (
+            float(horizon_sec) * float(turn_speed_mps)
+        ) + float(straight_ingress_m)
+
+    # Older planner rows expose only the capture/waypoint phase boundary.
+    for phase_row in row.get("phaseRows") or []:
+        if not isinstance(phase_row, dict):
+            continue
+        if str(phase_row.get("kind") or "").strip().lower() != "waypoint":
+            continue
+        start_sec = _to_float(phase_row.get("startSec"))
+        if start_sec is not None and math.isfinite(start_sec) and start_sec >= 0.0:
+            return float(start_sec) * float(speed_mps)
+    return None
+
+
+def _reverse_single_owner_width_stage_execution_order(
+    sequence_rows: Dict[int, Dict[str, Any]],
+    split_count: int,
+) -> bool:
+    """Choose either end of one owner's strip chain from the turn solution.
+
+    Only the complete order is reversed, so the aircraft still consumes
+    adjacent pieces (N..1) and never jumps through the middle.  Physical
+    ``splitStage`` lineage remains untouched; ``areaSingleAircraftSequence`` is
+    the execution order consumed by the path emitter.
+    """
+
+    split_count = int(split_count)
+    if split_count < 2 or any(
+        not isinstance(sequence_rows.get(sequence), dict)
+        for sequence in range(1, split_count + 1)
+    ):
+        return False
+    owner_counts = {
+        int(_to_int(row.get("areaSequentialOwnerCount")) or 0)
+        for row in sequence_rows.values()
+        if isinstance(row, dict)
+    }
+    if owner_counts != {1}:
+        return False
+
+    first_row = sequence_rows[1]
+    last_row = sequence_rows[split_count]
+    first_origin = first_row.get("originXY")
+    last_origin = last_row.get("originXY")
+    first_heading_deg = _to_float(first_row.get("originHeadingDeg"))
+    last_heading_deg = _to_float(last_row.get("originHeadingDeg"))
+    if (
+        not isinstance(first_origin, (tuple, list))
+        or len(first_origin) < 2
+        or not isinstance(last_origin, (tuple, list))
+        or len(last_origin) < 2
+        or first_heading_deg is None
+        or last_heading_deg is None
+        or math.hypot(
+            float(first_origin[0]) - float(last_origin[0]),
+            float(first_origin[1]) - float(last_origin[1]),
+        )
+        > 1.0
+        or abs(
+            (
+                float(first_heading_deg)
+                - float(last_heading_deg)
+                + 180.0
+            )
+            % 360.0
+            - 180.0
+        )
+        > 1.0
+    ):
+        # Costs produced from different synthetic/live starts are not
+        # comparable; preserve the planner's canonical adjacency order.
+        return False
+
+    first_cost_m = _area_path_row_planned_turn_approach_cost_m(first_row)
+    last_cost_m = _area_path_row_planned_turn_approach_cost_m(last_row)
+    first_speed_radius = _area_path_row_turn_speed_radius(first_row)
+    last_speed_radius = _area_path_row_turn_speed_radius(last_row)
+    switch_margin_m = max(
+        25.0,
+        min(
+            float(first_speed_radius[0]) if first_speed_radius is not None else 0.0,
+            float(last_speed_radius[0]) if last_speed_radius is not None else 0.0,
+        ),
+    )
+    if (
+        first_cost_m is None
+        or last_cost_m is None
+        # About one second of nominal flight prevents numerical noise from
+        # flipping the whole stage chain when both terminal approaches tie.
+        or float(last_cost_m) + float(switch_margin_m) >= float(first_cost_m)
+    ):
+        return False
+
+    for physical_sequence, row in sequence_rows.items():
+        row["areaSingleAircraftSequence"] = (
+            int(split_count) - int(physical_sequence) + 1
+        )
+        row["areaSequentialExecutionOrderReversed"] = True
+    return True
+
+
+def _area_path_row_execution_state(
+    row: Dict[str, Any],
+    entry_xy: tuple[float, float] | None,
+) -> tuple[tuple[float, float] | None, float | None, bool]:
+    """Return the actual capture exit, exit bearing, and route direction.
+
+    AREA rows are stored in canonical sweep order, while the path builder
+    reverses that order when the live/sequential entry is closer to the
+    canonical end.  Sequential hand-over must make the same decision before
+    assigning the following stage; otherwise stage 3 starts from stage 2's
+    unused canonical end after stage 2 has actually flown in reverse.
+    """
+
+    anchors = _area_path_row_capture_anchors_xy(row)
+    # Sequential AREA ingress legs are planning aids and can be oblique to the
+    # actual sweep. Direction selection and hand-over must compare the live
+    # entry with the capture route itself; otherwise an unrelated T0 -> WP_E
+    # diagonal can reverse a stage and seed the next one from the wrong side.
+    route_start_xy = anchors[0] if anchors else _area_path_row_start_xy(row)
+    route_end_xy = anchors[-1] if anchors else _area_path_row_end_xy(row)
+    reverse = bool(
+        entry_xy is not None
+        and route_start_xy is not None
+        and route_end_xy is not None
+        and math.hypot(
+            float(entry_xy[0]) - float(route_end_xy[0]),
+            float(entry_xy[1]) - float(route_end_xy[1]),
+        )
+        + 1.0e-6
+        < math.hypot(
+            float(entry_xy[0]) - float(route_start_xy[0]),
+            float(entry_xy[1]) - float(route_start_xy[1]),
+        )
+    )
+    ordered_anchors = list(reversed(anchors)) if reverse else list(anchors)
+    exit_xy = (
+        ordered_anchors[-1]
+        if ordered_anchors
+        else (route_start_xy if reverse else route_end_xy)
+    )
+    previous_xy: tuple[float, float] | None = (
+        ordered_anchors[-2] if len(ordered_anchors) >= 2 else None
+    )
+    route_points_xy = [
+        (float(raw_xy[0]), float(raw_xy[1]))
+        for raw_xy in (row.get("routeXY") or [])
+        if isinstance(raw_xy, (tuple, list)) and len(raw_xy) >= 2
+    ]
+    ordered_route_xy = (
+        list(reversed(route_points_xy)) if reverse else route_points_xy
+    )
+    if previous_xy is None and exit_xy is not None:
+        for candidate_xy in reversed(ordered_route_xy[:-1]):
+            if math.hypot(
+                float(candidate_xy[0]) - float(exit_xy[0]),
+                float(candidate_xy[1]) - float(exit_xy[1]),
+            ) > 1.0:
+                previous_xy = candidate_xy
+                break
+    if previous_xy is None:
+        previous_xy = route_end_xy if reverse else route_start_xy
+    exit_bearing_deg: float | None = None
+    if exit_xy is not None and previous_xy is not None:
+        delta_x = float(exit_xy[0]) - float(previous_xy[0])
+        delta_y = float(exit_xy[1]) - float(previous_xy[1])
+        if math.hypot(delta_x, delta_y) > 1.0e-6:
+            exit_bearing_deg = (
+                math.degrees(math.atan2(delta_x, delta_y)) + 360.0
+            ) % 360.0
+    return exit_xy, exit_bearing_deg, bool(reverse)
+
+
 def _area_path_row_exit_bearing_deg(row: Dict[str, Any]) -> float | None:
     """Heading the UAV still holds as it leaves this piece."""
 
-    end_xy = _area_path_row_end_xy(row)
+    capture_anchors = _area_path_row_capture_anchors_xy(row)
+    end_xy = capture_anchors[-1] if capture_anchors else _area_path_row_end_xy(row)
     if end_xy is None:
         return None
-    previous_xy: tuple[float, float] | None = None
+    previous_xy: tuple[float, float] | None = (
+        capture_anchors[-2] if len(capture_anchors) >= 2 else None
+    )
     route_xy = row.get("routeXY")
-    if isinstance(route_xy, list) and len(route_xy) >= 2:
+    if previous_xy is None and isinstance(route_xy, list) and len(route_xy) >= 2:
         for raw_xy in reversed(route_xy[:-1]):
             if not (isinstance(raw_xy, (tuple, list)) and len(raw_xy) >= 2):
                 continue
@@ -1234,12 +1916,23 @@ def _sequential_area_ordered_pair(
     planner_result: Any,
     context: Dict[str, Any],
 ) -> List[Dict[str, Any]] | None:
-    """Return this owner's two planner rows ordered first-flown, second-flown."""
+    """Return this owner's planner rows ordered in their flown sequence."""
 
     real_aircraft_id = int(_to_int(context.get("realAircraftID")) or 0)
-    virtual_aircraft_id = int(_to_int(context.get("virtualAircraftID")) or 0)
+    planner_aircraft_ids = {
+        int(_to_int(value) or 0)
+        for value in (
+            context.get("plannerAircraftIDs")
+            or [
+                real_aircraft_id,
+                *(context.get("virtualAircraftIDs") or []),
+                context.get("virtualAircraftID"),
+            ]
+        )
+        if int(_to_int(value) or 0) > 0
+    }
     real_entry_xy = context.get("realEntryXY")
-    if real_aircraft_id <= 0 or virtual_aircraft_id <= 0:
+    if real_aircraft_id <= 0 or len(planner_aircraft_ids) < 2:
         return None
     if not (isinstance(real_entry_xy, (tuple, list)) and len(real_entry_xy) >= 2):
         return None
@@ -1249,9 +1942,9 @@ def _sequential_area_ordered_pair(
         for row in (getattr(planner_result, "expected_paths", None) or [])
         if isinstance(row, dict)
         and int(_to_int(row.get("aircraftID")) or 0)
-        in {real_aircraft_id, virtual_aircraft_id}
+        in planner_aircraft_ids
     ]
-    if len(rows) != 2:
+    if len(rows) != len(planner_aircraft_ids):
         return None
     rows.sort(
         key=lambda row: math.hypot(
@@ -1285,43 +1978,79 @@ def _sequential_area_second_pass_entries(
     }
     moved = 0
     for context in contexts:
-        virtual_aircraft_id = int(_to_int(context.get("virtualAircraftID")) or 0)
-        virtual_entry = updated_by_id.get(virtual_aircraft_id)
-        if virtual_entry is None:
-            return None
         rows = _sequential_area_ordered_pair(planner_result, context)
         if rows is None:
             return None
-        first_end_xy = _area_path_row_end_xy(rows[0])
-        if first_end_xy is None:
+        real_entry_xy = context.get("realEntryXY")
+        if not (
+            isinstance(real_entry_xy, (tuple, list))
+            and len(real_entry_xy) >= 2
+        ):
             return None
+        current_entry_xy = (
+            float(real_entry_xy[0]),
+            float(real_entry_xy[1]),
+        )
+        previous_exit_bearing_deg: float | None = None
         altitude_m = float(
             ((context.get("realEntryCoordinate") or {}).get("altitude", 0.0)) or 0.0
         )
-        virtual_entry["coordinate"] = meters_to_coord(
-            float(first_end_xy[0]),
-            float(first_end_xy[1]),
-            alt_m=float(altitude_m),
-        )
-        exit_bearing_deg = _area_path_row_exit_bearing_deg(rows[0])
-        if exit_bearing_deg is not None:
-            virtual_entry["headingDeg"] = float(exit_bearing_deg)
-        # A live prediction copied from the real UAV would drag the partner
-        # back onto the aircraft's current track instead of the piece exit.
-        for key in (
-            "linePredictedEntryCoordinate",
-            "linePredictedHeadingDeg",
-            "linePredictionLeadS",
-            "lineTurnDirectionConfidence",
-            "lineTurnDataAgeS",
-            "lineTrendTurnSign",
-            "lineTrendTurnRateDps",
-            "lineTrendSampleCount",
-            "turnSign",
-            "turnRateDps",
-        ):
-            virtual_entry.pop(key, None)
-        context["secondEntryXY"] = (float(first_end_xy[0]), float(first_end_xy[1]))
+        stage_entry_xy: Dict[int, tuple[float, float]] = {}
+        for sequence, current_row in enumerate(rows, start=1):
+            if sequence >= 2:
+                planner_aircraft_id = int(
+                    _to_int(current_row.get("aircraftID")) or 0
+                )
+                virtual_entry = updated_by_id.get(planner_aircraft_id)
+                if virtual_entry is None:
+                    return None
+                virtual_entry["coordinate"] = meters_to_coord(
+                    float(current_entry_xy[0]),
+                    float(current_entry_xy[1]),
+                    alt_m=float(altitude_m),
+                )
+                if previous_exit_bearing_deg is not None:
+                    virtual_entry["headingDeg"] = float(
+                        previous_exit_bearing_deg
+                    )
+                # A live prediction copied from the real UAV would drag the
+                # partner back onto the aircraft's current track instead of
+                # the preceding stage's actual capture exit.
+                for key in (
+                    "linePredictedEntryCoordinate",
+                    "linePredictedHeadingDeg",
+                    "linePredictionLeadS",
+                    "lineTurnDirectionConfidence",
+                    "lineTurnDataAgeS",
+                    "lineTrendTurnSign",
+                    "lineTrendTurnRateDps",
+                    "lineTrendSampleCount",
+                    "turnSign",
+                    "turnRateDps",
+                ):
+                    virtual_entry.pop(key, None)
+                stage_entry_xy[int(sequence)] = (
+                    float(current_entry_xy[0]),
+                    float(current_entry_xy[1]),
+                )
+            (
+                current_exit_xy,
+                current_exit_bearing_deg,
+                _current_reversed,
+            ) = _area_path_row_execution_state(
+                current_row,
+                current_entry_xy,
+            )
+            if current_exit_xy is None:
+                return None
+            current_entry_xy = (
+                float(current_exit_xy[0]),
+                float(current_exit_xy[1]),
+            )
+            previous_exit_bearing_deg = current_exit_bearing_deg
+        if 2 in stage_entry_xy:
+            context["secondEntryXY"] = stage_entry_xy[2]
+        context["stageEntryXY"] = stage_entry_xy
         moved += 1
     return updated if moved else None
 
@@ -1356,16 +2085,31 @@ def _collapse_single_aircraft_sequential_area_result(
     if not isinstance(context, dict):
         return True
     real_aircraft_id = int(_to_int(context.get("realAircraftID")) or 0)
-    virtual_aircraft_id = int(_to_int(context.get("virtualAircraftID")) or 0)
+    planner_aircraft_ids = {
+        int(_to_int(value) or 0)
+        for value in (
+            context.get("plannerAircraftIDs")
+            or [
+                real_aircraft_id,
+                *(context.get("virtualAircraftIDs") or []),
+                context.get("virtualAircraftID"),
+            ]
+        )
+        if int(_to_int(value) or 0) > 0
+    }
     real_entry_xy = context.get("realEntryXY")
     rows = [
         row
         for row in (getattr(planner_result, "expected_paths", None) or [])
         if isinstance(row, dict)
         and int(_to_int(row.get("aircraftID")) or 0)
-        in {real_aircraft_id, virtual_aircraft_id}
+        in planner_aircraft_ids
     ]
-    if real_aircraft_id <= 0 or virtual_aircraft_id <= 0 or len(rows) != 2:
+    if (
+        real_aircraft_id <= 0
+        or len(planner_aircraft_ids) < 2
+        or len(rows) != len(planner_aircraft_ids)
+    ):
         return False
 
     if isinstance(real_entry_xy, (tuple, list)) and len(real_entry_xy) >= 2:
@@ -1377,7 +2121,13 @@ def _collapse_single_aircraft_sequential_area_result(
             )
         )
 
-    previous_end_xy: tuple[float, float] | None = None
+    real_entry_xy = context.get("realEntryXY")
+    current_entry_xy: tuple[float, float] | None = (
+        (float(real_entry_xy[0]), float(real_entry_xy[1]))
+        if isinstance(real_entry_xy, (tuple, list)) and len(real_entry_xy) >= 2
+        else None
+    )
+    previous_exit_bearing_deg: float | None = None
     altitude_m = float(
         ((context.get("realEntryCoordinate") or {}).get("altitude", 0.0)) or 0.0
     )
@@ -1387,27 +2137,201 @@ def _collapse_single_aircraft_sequential_area_result(
         row["areaSingleAircraftSequentialSplit"] = True
         row["areaSingleAircraftSequence"] = int(sequence)
         row["areaSingleAircraftOriginalPlannerOwner"] = int(original_owner)
-        if previous_end_xy is not None:
+        if sequence >= 2 and current_entry_xy is not None:
             row["areaSingleAircraftEntryCoordinate"] = meters_to_coord(
-                float(previous_end_xy[0]),
-                float(previous_end_xy[1]),
+                float(current_entry_xy[0]),
+                float(current_entry_xy[1]),
                 alt_m=float(altitude_m),
             )
-        previous_end_xy = _area_path_row_end_xy(row) or previous_end_xy
+            if previous_exit_bearing_deg is not None:
+                row["areaSingleAircraftEntryHeadingDeg"] = float(
+                    previous_exit_bearing_deg
+                )
+        (
+            current_exit_xy,
+            current_exit_bearing_deg,
+            execution_reversed,
+        ) = _area_path_row_execution_state(
+            row,
+            current_entry_xy,
+        )
+        row["areaSingleAircraftExecutionReversed"] = bool(execution_reversed)
+        if current_exit_xy is not None:
+            current_entry_xy = (
+                float(current_exit_xy[0]),
+                float(current_exit_xy[1]),
+            )
+        previous_exit_bearing_deg = current_exit_bearing_deg
 
     split_result = getattr(planner_result, "split_result", None)
     for piece in getattr(split_result, "pieces", None) or []:
-        if int(_to_int(getattr(piece, "assigned_uav", None)) or 0) in {
-            real_aircraft_id,
-            virtual_aircraft_id,
-        }:
+        if (
+            int(_to_int(getattr(piece, "assigned_uav", None)) or 0)
+            in planner_aircraft_ids
+        ):
             piece.assigned_uav = int(real_aircraft_id)
         data = getattr(piece, "data", None)
         if isinstance(data, dict):
             for key in ("aircraftID", "assignedUAV", "assigned_uav"):
-                if int(_to_int(data.get(key)) or 0) == virtual_aircraft_id:
+                if int(_to_int(data.get(key)) or 0) in planner_aircraft_ids:
                     data[key] = int(real_aircraft_id)
     return True
+
+
+def _apply_width_split_sequence_metadata(
+    path_rows: List[Dict[str, Any]],
+    split_pieces: List[SplitPiece],
+    entry_coordinate_by_aircraft: Dict[int, Dict[str, Any]] | None = None,
+) -> int:
+    """Carry stage 1..N sequencing from split pieces into final path rows.
+
+    The headless planner keeps ``splitStage`` on ``SplitPiece.data`` but does
+    not copy it to ``expected_paths``. Without this bridge, downstream path
+    building sees unrelated AREA missions and cannot enter each next stage from
+    the previous stage's capture exit.
+    """
+
+    sequence_by_piece: Dict[tuple[int, int], tuple[int, int]] = {}
+    outer_meta_by_piece: Dict[tuple[int, int], Dict[str, Any]] = {}
+    for piece in split_pieces:
+        if not isinstance(piece, SplitPiece):
+            continue
+        data = piece.data if isinstance(piece.data, dict) else {}
+        aircraft_id = int(_to_int(piece.assigned_uav) or 0)
+        piece_index = int(_to_int(piece.piece_index) or 0)
+        if aircraft_id > 0 and piece_index > 0:
+            outer_meta_by_piece[(aircraft_id, piece_index)] = {
+                key: deepcopy(data.get(key))
+                for key in (
+                    "areaSequentialOwnerSlot",
+                    "areaSequentialOwnerCount",
+                    "areaOuterOwner",
+                    "areaOuterSide",
+                    "areaOuterFirstSweep",
+                )
+                if key in data
+            }
+        split_count = int(_to_int(data.get("splitCount")) or 0)
+        if not bool(data.get("areaSequentialWidthSplit")) or split_count < 2:
+            continue
+        sequence = int(_to_int(data.get("splitStage")) or 0)
+        if (
+            aircraft_id > 0
+            and piece_index > 0
+            and 1 <= sequence <= split_count
+        ):
+            sequence_by_piece[(aircraft_id, piece_index)] = (
+                sequence,
+                split_count,
+            )
+
+    sequenced_rows: Dict[int, Dict[int, Dict[str, Any]]] = {}
+    split_count_by_aircraft: Dict[int, int] = {}
+    for row in path_rows:
+        if not isinstance(row, dict):
+            continue
+        aircraft_id = int(_to_int(row.get("aircraftID")) or 0)
+        piece_index = int(_to_int(row.get("pieceIndex")) or 0)
+        outer_meta = outer_meta_by_piece.get((aircraft_id, piece_index))
+        if isinstance(outer_meta, dict):
+            row.update(deepcopy(outer_meta))
+        sequence_info = sequence_by_piece.get((aircraft_id, piece_index))
+        if sequence_info is None:
+            continue
+        sequence, split_count = sequence_info
+        row["areaSequentialWidthSplit"] = True
+        row["splitStage"] = int(sequence)
+        row["splitCount"] = int(split_count)
+        row["areaSingleAircraftSequentialSplit"] = True
+        row["areaSingleAircraftSequence"] = int(sequence)
+        row["areaSingleAircraftOriginalPlannerOwner"] = int(aircraft_id)
+        sequenced_rows.setdefault(int(aircraft_id), {})[int(sequence)] = row
+        split_count_by_aircraft[int(aircraft_id)] = max(
+            int(split_count_by_aircraft.get(int(aircraft_id), 0)),
+            int(split_count),
+        )
+
+    completed_sequences = 0
+    for aircraft_id, sequence_rows in sequenced_rows.items():
+        split_count = int(split_count_by_aircraft.get(int(aircraft_id), 0))
+        if split_count < 2 or any(
+            not isinstance(sequence_rows.get(sequence), dict)
+            for sequence in range(1, split_count + 1)
+        ):
+            continue
+        if _reverse_single_owner_width_stage_execution_order(
+            sequence_rows,
+            split_count,
+        ):
+            sequence_rows = {
+                int(_to_int(row.get("areaSingleAircraftSequence")) or 0): row
+                for row in sequence_rows.values()
+                if isinstance(row, dict)
+            }
+            sequenced_rows[int(aircraft_id)] = sequence_rows
+        entry_coord = (
+            (entry_coordinate_by_aircraft or {}).get(int(aircraft_id))
+            if isinstance(entry_coordinate_by_aircraft, dict)
+            else None
+        )
+        altitude_m = float(
+            _to_float(
+                (entry_coord or {}).get("altitude")
+                if isinstance(entry_coord, dict)
+                else None
+            )
+            or 0.0
+        )
+        first_entry_xy = (
+            coord_to_xy(entry_coord)
+            if isinstance(entry_coord, dict)
+            else None
+        )
+        current_entry_xy: tuple[float, float] | None = (
+            (float(first_entry_xy[0]), float(first_entry_xy[1]))
+            if first_entry_xy is not None
+            else _area_path_row_start_xy(sequence_rows[1])
+        )
+        previous_exit_bearing_deg: float | None = None
+        sequence_complete = current_entry_xy is not None
+        for sequence in range(1, split_count + 1):
+            current_row = sequence_rows[sequence]
+            if sequence >= 2 and current_entry_xy is not None:
+                next_entry = meters_to_coord(
+                    float(current_entry_xy[0]),
+                    float(current_entry_xy[1]),
+                    alt_m=float(altitude_m),
+                )
+                current_row["areaSingleAircraftEntryCoordinate"] = deepcopy(
+                    next_entry
+                )
+                current_row["areaPassEntryCoordinate"] = deepcopy(next_entry)
+                if previous_exit_bearing_deg is not None:
+                    current_row["areaSingleAircraftEntryHeadingDeg"] = float(
+                        previous_exit_bearing_deg
+                    )
+            (
+                current_exit_xy,
+                current_exit_bearing_deg,
+                execution_reversed,
+            ) = _area_path_row_execution_state(
+                current_row,
+                current_entry_xy,
+            )
+            current_row["areaSingleAircraftExecutionReversed"] = bool(
+                execution_reversed
+            )
+            if current_exit_xy is None:
+                sequence_complete = False
+                break
+            current_entry_xy = (
+                float(current_exit_xy[0]),
+                float(current_exit_xy[1]),
+            )
+            previous_exit_bearing_deg = current_exit_bearing_deg
+        if sequence_complete:
+            completed_sequences += 1
+    return int(completed_sequences)
 
 
 def _area_assignment_pass_rank(path_row: Dict[str, Any]) -> int:
@@ -2401,6 +3325,399 @@ def _branch_area_ownership_for_target(
     return {int(k): [int(a) for a in v] for k, v in ownership.items()}
 
 
+def _line_geometry_xy(coords: Any) -> Optional[LineString]:
+    points_xy: List[tuple[float, float]] = []
+    for coord in _normalize_coord_list(coords):
+        point_xy = coord_to_xy(coord)
+        if point_xy is None:
+            continue
+        point = (float(point_xy[0]), float(point_xy[1]))
+        if points_xy and math.hypot(
+            points_xy[-1][0] - point[0],
+            points_xy[-1][1] - point[1],
+        ) < 0.01:
+            continue
+        points_xy.append(point)
+    if len(points_xy) < 2:
+        return None
+    try:
+        line = LineString(points_xy)
+    except Exception:
+        return None
+    return line if not line.is_empty and float(line.length or 0.0) > 0.01 else None
+
+
+def _mission_artifact_branch_index(
+    missions: List[Dict[str, Any]],
+    *,
+    branch_count: int,
+) -> Optional[int]:
+    """Read the durable branch marker emitted by newer 0302 artifacts."""
+
+    indices: Set[int] = set()
+    for mission in missions:
+        if not isinstance(mission, dict):
+            continue
+        info = _template_mission_info(mission)
+        for raw_index in (
+            mission.get("branchIndex"),
+            mission.get("sourceBranchIndex"),
+            info.get("branchIndex"),
+            info.get("sourceBranchIndex"),
+        ):
+            branch_index = _to_int(raw_index)
+            if branch_index is None:
+                continue
+            if not (0 <= int(branch_index) < int(branch_count)):
+                return None
+            indices.add(int(branch_index))
+    if len(indices) != 1:
+        return None
+    return next(iter(indices))
+
+
+def _individual_mission_artifact_geometries(
+    missions: List[Dict[str, Any]],
+    *,
+    kind: str,
+) -> List[Any]:
+    geometries: List[Any] = []
+    for mission in missions:
+        if not isinstance(mission, dict):
+            continue
+        info = _template_mission_info(mission)
+        if kind == "area":
+            area_rows = info.get("areaList") if isinstance(info.get("areaList"), list) else []
+            for row in area_rows:
+                if not isinstance(row, dict) or bool(row.get("isHole")):
+                    continue
+                poly = _coord_list_to_polygon_xy(row.get("coordinateList"))
+                if poly is not None and not poly.is_empty and float(poly.area or 0.0) > 1.0:
+                    geometries.append(poly)
+            continue
+
+        # Prefer the immutable deployment/source centerline when it exists.
+        # Older initial plans only contain lineList, so retain that fallback.
+        coordinate_candidates = (
+            info.get("sourceCoordinateList"),
+            info.get("lineDeploymentCoordinateList"),
+        )
+        selected_lines: List[LineString] = []
+        for candidate in coordinate_candidates:
+            line = _line_geometry_xy(candidate)
+            if line is not None:
+                selected_lines = [line]
+                break
+        if not selected_lines:
+            line_rows = info.get("lineList") if isinstance(info.get("lineList"), list) else []
+            selected_lines = [
+                line
+                for row in line_rows
+                if isinstance(row, dict)
+                for line in [_line_geometry_xy(row.get("coordinateList"))]
+                if line is not None
+            ]
+        geometries.extend(selected_lines)
+    return geometries
+
+
+def _sampled_line_distance_m(candidate: LineString, reference: LineString) -> float:
+    if candidate.is_empty or reference.is_empty:
+        return math.inf
+    length_m = float(candidate.length or 0.0)
+    if length_m <= 0.01:
+        return math.inf
+    distances: List[float] = []
+    for sample_index in range(9):
+        point = candidate.interpolate(length_m * float(sample_index) / 8.0)
+        distances.append(float(point.distance(reference)))
+    return sum(distances) / float(len(distances)) if distances else math.inf
+
+
+def _match_artifact_geometries_to_branch(
+    geometries: List[Any],
+    source_branches: List[Dict[str, Any]],
+    *,
+    kind: str,
+) -> Optional[int]:
+    if not geometries or not source_branches:
+        return None
+
+    if kind == "area":
+        try:
+            artifact_geometry = unary_union(geometries)
+        except Exception:
+            return None
+        artifact_area = float(getattr(artifact_geometry, "area", 0.0) or 0.0)
+        if artifact_geometry.is_empty or artifact_area <= 1.0:
+            return None
+        overlap_scores: List[tuple[float, int]] = []
+        for branch_index, branch in enumerate(source_branches):
+            source_poly = _coord_list_to_polygon_xy(branch.get("coordinateList"))
+            if source_poly is None or source_poly.is_empty:
+                overlap_scores.append((0.0, int(branch_index)))
+                continue
+            try:
+                overlap = float(artifact_geometry.intersection(source_poly).area or 0.0)
+            except Exception:
+                overlap = 0.0
+            overlap_scores.append((max(0.0, min(1.0, overlap / artifact_area)), int(branch_index)))
+        overlap_scores.sort(reverse=True)
+        best_score, best_index = overlap_scores[0]
+        runner_up = overlap_scores[1][0] if len(overlap_scores) > 1 else 0.0
+        if best_score < 0.55:
+            return None
+        if len(overlap_scores) > 1 and best_score - runner_up < 0.20:
+            return None
+        return int(best_index)
+
+    artifact_lines = [
+        geometry
+        for geometry in geometries
+        if isinstance(geometry, LineString)
+        and not geometry.is_empty
+        and float(geometry.length or 0.0) > 0.01
+    ]
+    if not artifact_lines:
+        return None
+    distance_scores: List[tuple[float, int, float]] = []
+    for branch_index, branch in enumerate(source_branches):
+        source_line = _line_geometry_xy(branch.get("coordinateList"))
+        if source_line is None:
+            continue
+        weighted_distance = 0.0
+        total_weight = 0.0
+        for artifact_line in artifact_lines:
+            weight = max(1.0, float(artifact_line.length or 0.0))
+            weighted_distance += _sampled_line_distance_m(artifact_line, source_line) * weight
+            total_weight += weight
+        average_distance = weighted_distance / total_weight if total_weight > 0.0 else math.inf
+        source_width_m = max(0.0, float(_to_float(branch.get("width")) or 0.0))
+        distance_scores.append((float(average_distance), int(branch_index), source_width_m))
+    if not distance_scores:
+        return None
+    distance_scores.sort(key=lambda item: (item[0], item[1]))
+    best_distance, best_index, source_width_m = distance_scores[0]
+    tolerance_m = max(250.0, source_width_m * 0.75)
+    if not math.isfinite(best_distance) or best_distance > tolerance_m:
+        return None
+    if len(distance_scores) > 1:
+        runner_up_distance = distance_scores[1][0]
+        required_margin_m = max(50.0, source_width_m * 0.10)
+        if runner_up_distance - best_distance < required_margin_m:
+            return None
+    return int(best_index)
+
+
+def _recover_type2_branch_ownership_from_source_artifacts(
+    *,
+    input_data: Dict[str, Any],
+    target_input_id: int,
+    packages_by_aircraft: Dict[int, Dict[str, Any]],
+    target_aircraft_ids: List[int],
+) -> tuple[Dict[int, List[int]], Optional[int], str]:
+    """Rebuild immutable ownership only from already-assigned source IMP geometry.
+
+    This deliberately never consults current aircraft positions.  A current
+    position is valid for route entry, but it is not evidence that ownership may
+    move to a different self-reliance branch.
+    """
+
+    try:
+        from modules.mission_planning.pipelines.ground_maneuver_mode import (
+            detect_ground_maneuver_profile,
+        )
+
+        profile = detect_ground_maneuver_profile(input_data, package_type=2)
+    except Exception:
+        profile = None
+    if not isinstance(profile, dict):
+        return {}, None, ""
+
+    branch_count = _to_int(profile.get("branchCount")) or 0
+    branch_ids = [
+        int(mission_id)
+        for mission_id in (profile.get("branchInputMissionIDs") or [])
+        if _to_int(mission_id) is not None
+    ]
+    if branch_count <= 0 or int(target_input_id) not in set(branch_ids):
+        return {}, None, ""
+
+    missions_by_order = profile.get("missionsByOrder")
+    if not isinstance(missions_by_order, dict):
+        return {}, None, ""
+    profile_entries: Dict[int, Dict[str, Any]] = {}
+    for raw_entry in missions_by_order.values():
+        if not isinstance(raw_entry, dict):
+            continue
+        mission_id = _to_int(raw_entry.get("inputMissionID"))
+        branches = raw_entry.get("branches")
+        if (
+            mission_id is None
+            or not isinstance(branches, list)
+            or len(branches) != int(branch_count)
+        ):
+            continue
+        profile_entries[int(mission_id)] = raw_entry
+
+    phase_ids = [int(target_input_id)]
+    anchor_id = _to_int(profile.get("anchorInputMissionID"))
+    if anchor_id is not None and int(anchor_id) not in phase_ids:
+        phase_ids.append(int(anchor_id))
+    phase_ids.extend(
+        mission_id
+        for mission_id in branch_ids
+        if int(mission_id) not in set(phase_ids)
+    )
+
+    required_ids = {
+        int(aircraft_id)
+        for aircraft_id in target_aircraft_ids
+        if _to_int(aircraft_id) is not None and int(aircraft_id) > 3
+    }
+    candidate_ids = sorted(
+        int(aircraft_id)
+        for aircraft_id in packages_by_aircraft
+        if _to_int(aircraft_id) is not None and int(aircraft_id) > 3
+    )
+    if not required_ids or not candidate_ids:
+        return {}, None, ""
+
+    for phase_id in phase_ids:
+        profile_entry = profile_entries.get(int(phase_id))
+        if not isinstance(profile_entry, dict):
+            continue
+        kind = str(profile_entry.get("kind") or "").strip().lower()
+        if kind not in {"line", "area"}:
+            continue
+        source_branches = profile_entry.get("branches")
+        if not isinstance(source_branches, list):
+            continue
+
+        aircraft_to_branch: Dict[int, int] = {}
+        evidence_mode = "geometry"
+        for aircraft_id in candidate_ids:
+            package = packages_by_aircraft.get(int(aircraft_id))
+            missions = (
+                package.get("individualMissionList")
+                if isinstance(package, dict)
+                and isinstance(package.get("individualMissionList"), list)
+                else []
+            )
+            phase_missions = [
+                mission
+                for mission in missions
+                if isinstance(mission, dict)
+                and _mission_input_id(mission) == int(phase_id)
+            ]
+            if not phase_missions:
+                continue
+            branch_index = _mission_artifact_branch_index(
+                phase_missions,
+                branch_count=int(branch_count),
+            )
+            if branch_index is not None:
+                evidence_mode = "marker"
+            else:
+                geometries = _individual_mission_artifact_geometries(
+                    phase_missions,
+                    kind=kind,
+                )
+                branch_index = _match_artifact_geometries_to_branch(
+                    geometries,
+                    source_branches,
+                    kind=kind,
+                )
+            if branch_index is not None:
+                aircraft_to_branch[int(aircraft_id)] = int(branch_index)
+
+        if not required_ids.issubset(set(aircraft_to_branch)):
+            continue
+        if set(aircraft_to_branch.values()) != set(range(int(branch_count))):
+            continue
+        ownership: Dict[int, List[int]] = {
+            int(branch_index): [] for branch_index in range(int(branch_count))
+        }
+        for aircraft_id, branch_index in sorted(aircraft_to_branch.items()):
+            ownership[int(branch_index)].append(int(aircraft_id))
+        if all(ownership.values()):
+            return ownership, int(phase_id), str(evidence_mode)
+    return {}, None, ""
+
+
+def _resolve_locked_type2_ownership_with_artifact_recovery(
+    *,
+    input_data: Dict[str, Any],
+    target_input_id: int,
+    packages_by_aircraft: Dict[int, Dict[str, Any]],
+    target_aircraft_ids: List[int],
+    emit: Callable[[str], None],
+) -> tuple[bool, Dict[int, List[int]]]:
+    if _branch_ownership_store is None:
+        return False, {}
+    try:
+        is_branch_mission = _branch_ownership_store.is_locked_type2_branch_mission(
+            input_data,
+            int(target_input_id),
+        )
+        ownership = _branch_ownership_store.get_locked_type2_branch_ownership(
+            input_data,
+            int(target_input_id),
+        )
+    except Exception:
+        return False, {}
+    if not is_branch_mission or ownership:
+        return bool(is_branch_mission), ownership
+
+    recovered, evidence_mission_id, evidence_mode = (
+        _recover_type2_branch_ownership_from_source_artifacts(
+            input_data=input_data,
+            target_input_id=int(target_input_id),
+            packages_by_aircraft=packages_by_aircraft,
+            target_aircraft_ids=target_aircraft_ids,
+        )
+    )
+    if not recovered:
+        return True, {}
+
+    try:
+        from modules.mission_planning.pipelines.ground_maneuver_mode import (
+            detect_ground_maneuver_profile,
+        )
+
+        profile = detect_ground_maneuver_profile(input_data, package_type=2)
+        package_id = _to_int(
+            input_data.get("inputMissionPackageID")
+            or input_data.get("InputMissionPackageID")
+            or input_data.get("inputMissionPackageId")
+        )
+        if not isinstance(profile, dict) or package_id is None or package_id <= 0:
+            return True, {}
+        _branch_ownership_store.register_branch_ownership(
+            package_id=int(package_id),
+            branch_count=int(profile.get("branchCount") or len(recovered)),
+            ownership=recovered,
+            branch_mission_ids=profile.get("branchInputMissionIDs") or [],
+            anchor_input_mission_id=profile.get("anchorInputMissionID"),
+            source="source_mission_plan_artifact_recovery",
+            immutable=True,
+        )
+        persisted = _branch_ownership_store.get_locked_type2_branch_ownership(
+            input_data,
+            int(target_input_id),
+        )
+    except Exception:
+        persisted = {}
+    if persisted:
+        emit(
+            "[NEXTCOLLAB][TYPE2] restored immutable branch ownership from "
+            f"source IMP {evidence_mode} evidence "
+            f"(inputMissionID={evidence_mission_id}, ownership={persisted})."
+        )
+        return True, persisted
+    return True, {}
+
+
 def _coords_centroid_ll(coords: Any) -> Optional[tuple[float, float]]:
     rows = coords if isinstance(coords, list) else []
     lats = [float(c["latitude"]) for c in rows if isinstance(c, dict) and "latitude" in c]
@@ -2595,6 +3912,50 @@ def _area_planner_components_from_detail(detail: Dict[str, Any]) -> List[Dict[st
     return components
 
 
+def _area_ownership_limit_polygon(detail: Dict[str, Any]) -> Optional[Polygon]:
+    """Return the original/stable single AREA outer boundary when available."""
+
+    mission_detail = detail if isinstance(detail, dict) else {}
+    assignment_detail = mission_detail.get("areaAssignmentDetail")
+    candidates: List[Any] = []
+    if isinstance(assignment_detail, dict):
+        assignment_coordinate_polygon = _coord_list_to_polygon_xy(
+            assignment_detail.get("coordinateList")
+        )
+        if assignment_coordinate_polygon is not None:
+            candidates.append(assignment_coordinate_polygon)
+
+        assignment_outer_polygons = [
+            polygon
+            for row in (assignment_detail.get("areaList") or [])
+            if isinstance(row, dict) and not bool(row.get("isHole"))
+            for polygon in [_coord_list_to_polygon_xy(row.get("coordinateList"))]
+            if polygon is not None
+        ]
+        if assignment_outer_polygons:
+            try:
+                candidates.append(unary_union(assignment_outer_polygons))
+            except Exception:
+                pass
+
+    # Legacy payloads often retain the original outer boundary in
+    # coordinateList while areaList contains the fragmented remaining work.
+    coordinate_polygon = _coord_list_to_polygon_xy(
+        mission_detail.get("coordinateList")
+    )
+    if coordinate_polygon is not None:
+        candidates.append(coordinate_polygon)
+
+    for candidate in candidates:
+        polygons = _iter_polygons_xy(candidate)
+        if len(polygons) != 1:
+            continue
+        shell = Polygon(polygons[0].exterior)
+        if not shell.is_empty and float(shell.area or 0.0) > 1.0:
+            return shell
+    return None
+
+
 def _single_area_ownership_component(detail: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Build one connected, hole-free polygon for ownership division only.
 
@@ -2638,18 +3999,43 @@ def _single_area_ownership_component(detail: Dict[str, Any]) -> Optional[Dict[st
     merged_polygons = _iter_polygons_xy(merged)
     if not merged_polygons:
         return None
-    if len(merged_polygons) == 1:
-        ownership_polygon = Polygon(merged_polygons[0].exterior)
-        decomposition = "single_outer_shell"
+    hull_summary: Optional[Dict[str, Any]] = None
+    # 연결된 계단형/좁은-neck 잔여도 이미 Polygon 하나라는 이유로 외곽선을
+    # 그대로 통과시키지 않는다. 비-branch AREA는 조각 수와 무관하게 항상
+    # convex hull 소유영역을 만들고 안정 assignment 경계로 크기를 제한한다.
+    limit_polygon = _area_ownership_limit_polygon(mission_detail)
+    hull_polygon, hull_info = convex_hull_area_fragments_xy(
+        merged_polygons,
+        limit_geometry=limit_polygon,
+    )
+    if hull_polygon is not None:
+        ownership_polygon = hull_polygon
+        decomposition = "convex_hull_ownership_envelope"
+        hull_summary = {
+            "partsBefore": int(hull_info.get("partsBefore") or 0),
+            "sourceAreaM2": round(float(hull_info.get("sourceAreaM2") or 0.0), 1),
+            "rawHullAreaM2": round(float(hull_info.get("rawHullAreaM2") or 0.0), 1),
+            "resultAreaM2": round(float(hull_info.get("resultAreaM2") or 0.0), 1),
+            "limitAreaM2": round(float(hull_info.get("limitAreaM2") or 0.0), 1),
+            "clippedToLimit": bool(hull_info.get("clippedToLimit")),
+            "usedLimitFallback": bool(hull_info.get("usedLimitFallback")),
+        }
     else:
-        try:
-            ownership_polygon = unary_union(merged_polygons).convex_hull
-        except Exception:
-            ownership_polygon = max(
-                merged_polygons,
-                key=lambda item: float(item.area or 0.0),
-            )
-        decomposition = "connected_ownership_envelope"
+        # 제한형 hull 생성이 실패한 경우에도 원래 경계가 있으면 그보다
+        # 커질 수 없는 경계를 사용한다. 경계 자체가 없는 legacy payload만
+        # 마지막으로 raw convex hull에 의존한다.
+        if limit_polygon is not None:
+            ownership_polygon = limit_polygon
+            decomposition = "original_boundary_ownership_fallback"
+        else:
+            try:
+                ownership_polygon = unary_union(merged_polygons).convex_hull
+            except Exception:
+                ownership_polygon = max(
+                    merged_polygons,
+                    key=lambda item: float(item.area or 0.0),
+                )
+            decomposition = "convex_hull_ownership_fallback"
     if not isinstance(ownership_polygon, Polygon) or ownership_polygon.is_empty:
         return None
     if not ownership_polygon.is_valid:
@@ -2662,13 +4048,16 @@ def _single_area_ownership_component(detail: Dict[str, Any]) -> Optional[Dict[st
     coords = _polygon_exterior_to_coords(ownership_polygon, altitude_m=float(altitude_m))
     if len(coords) < 3:
         return None
-    return {
+    component: Dict[str, Any] = {
         "componentIndex": 1,
         "componentSource": "stable_area_assignment",
         "componentDecomposition": str(decomposition),
         "areaM2": float(ownership_polygon.area or 0.0),
         "coordinateList": coords,
     }
+    if hull_summary is not None:
+        component["componentHull"] = hull_summary
+    return component
 
 
 def _area_planner_component_input_summary(detail: Dict[str, Any]) -> Dict[str, Any]:
@@ -4251,6 +5640,40 @@ def _prepare_line_replacements(
     if not ordered_path_rows:
         emit("[NEXTCOLLAB][LINE] planner returned no valid path rows.")
         return None
+    required_piece_ids = {
+        int(piece.piece_index or 0)
+        for piece in (getattr(planner_result.split_result, "pieces", None) or [])
+        if int(piece.piece_index or 0) > 0
+    }
+    planned_piece_ids = {
+        int(_to_int(row.get("pieceIndex")) or 0)
+        for row in ordered_path_rows
+        if int(_to_int(row.get("pieceIndex")) or 0) > 0
+    }
+    if planned_piece_ids != required_piece_ids:
+        emit(
+            "[NEXTCOLLAB][LINE] partial piece output rejected; "
+            f"required={sorted(required_piece_ids)}, planned={sorted(planned_piece_ids)}. "
+            "Existing non-overlapping LINE assignments will be preserved."
+        )
+        return None
+    planned_aircraft_ids = {
+        int(_to_int(row.get("aircraftID")) or 0)
+        for row in ordered_path_rows
+        if int(_to_int(row.get("aircraftID")) or 0) > 0
+    }
+    required_aircraft_ids = {
+        int(aircraft_id)
+        for aircraft_id in target_aircraft_ids
+        if int(aircraft_id) > 0
+    }
+    if planned_aircraft_ids != required_aircraft_ids:
+        emit(
+            "[NEXTCOLLAB][LINE] partial aircraft output rejected; "
+            f"required={sorted(required_aircraft_ids)}, planned={sorted(planned_aircraft_ids)}. "
+            "Existing non-overlapping LINE assignments will be preserved."
+        )
+        return None
     if locked_type2_ownership:
         required_owner_ids = {
             int(aircraft_id)
@@ -5027,45 +6450,32 @@ def _prepare_area_replacements(
                     f"[NEXTCOLLAB][AREA] branch component {component_index} -> "
                     f"owner UAV {sorted(present_owner_ids)}"
                 )
-            # Every self-reliance boundary owner follows the same two-piece
-            # contract as a normal remaining Area flown by one UAV: split it
-            # spatially, then fold each planning-only partner back onto its
-            # real sticky owner as consecutive individual missions.  Keep the
-            # explicit caller option for non-branch Areas unchanged.
+            # Plan first with only the real surviving aircraft. The shared AREA
+            # splitter now emits stage 1..N from the 700 m target / 900 m cap.
+            # with a synthetic partner here used to force attack replans to two
+            # pieces before the actual width could be considered.
             split_branch_owner_group = bool(
                 branch_ownership_map is not None
                 and int(_to_int(planning_mode_ctx.get("package_type")) or 0) in (2, 3)
                 and component_aircraft_entries
             )
-            split_normal_single_owner = bool(
+            split_normal_owner_group = bool(
                 branch_ownership_map is None
                 and split_single_aircraft_into_two
-                and len(component_aircraft_entries) == 1
+                and component_aircraft_entries
             )
-            if split_branch_owner_group:
-                planner_aircraft_entries, sequential_area_contexts = (
-                    _branch_aircraft_sequential_area_entries(
-                        component_aircraft_entries,
-                        mission_polygon,
-                        enabled=True,
-                    )
-                )
-            else:
-                planner_aircraft_entries, single_aircraft_context = (
-                    _single_aircraft_sequential_area_entries(
-                        component_aircraft_entries,
-                        mission_polygon,
-                        enabled=split_normal_single_owner,
-                    )
-                )
-                sequential_area_contexts = (
-                    [single_aircraft_context]
-                    if isinstance(single_aircraft_context, dict)
-                    else []
-                )
-            sequential_split_requested = bool(
-                split_branch_owner_group or split_normal_single_owner
+            minimum_stages_per_owner = (
+                2
+                if split_branch_owner_group or split_normal_owner_group
+                else 1
             )
+            planner_aircraft_entries = [
+                deepcopy(entry)
+                for entry in component_aircraft_entries
+                if isinstance(entry, dict)
+            ]
+            sequential_area_contexts: List[Dict[str, Any]] = []
+            sequential_split_requested = False
             try:
                 planner_result = run_next_collab_division_plan(
                     mission_polygon=mission_polygon,
@@ -5080,9 +6490,132 @@ def _prepare_area_replacements(
                     f"{component_index}: {exc}"
                 )
                 return False
-            # The first pass solves both pieces from the aircraft's replan-time
-            # position, so the second piece is entered from far outside the
-            # Area.  Re-solve it from the first piece's exit instead.
+            try:
+                width_target_m = float(
+                    capture_physics.area_sequential_split_width_m()
+                )
+                width_threshold_m = float(
+                    capture_physics.area_sequential_split_max_width_m()
+                )
+            except Exception:
+                width_target_m = 0.0
+                width_threshold_m = 0.0
+            widest_part_m = 0.0
+            current_count_by_owner: Dict[int, int] = {}
+            for path_row in getattr(planner_result, "expected_paths", None) or []:
+                if not isinstance(path_row, dict):
+                    continue
+                row_owner = int(_to_int(path_row.get("aircraftID")) or 0)
+                if row_owner > 0:
+                    current_count_by_owner[row_owner] = (
+                        int(current_count_by_owner.get(row_owner, 0)) + 1
+                    )
+                if width_threshold_m <= 0.0:
+                    continue
+                try:
+                    part_span_m = float(
+                        capture_physics.max_sweep_row_chord_m_xy(
+                            path_row.get("partPolygonXY"),
+                            path_row.get("bearingDeg"),
+                        )
+                    )
+                except Exception:
+                    continue
+                widest_part_m = max(widest_part_m, part_span_m)
+            # Production expected-path rows do not always retain
+            # ``partPolygonXY``. Split pieces are the authoritative geometry
+            # for the final allowed-width verification.
+            if width_threshold_m > 0.0:
+                split_result = getattr(planner_result, "split_result", None)
+                for piece in getattr(split_result, "pieces", None) or []:
+                    data = (
+                        piece.data
+                        if isinstance(piece, SplitPiece)
+                        and isinstance(piece.data, dict)
+                        else {}
+                    )
+                    try:
+                        part_span_m = float(
+                            capture_physics.max_sweep_row_chord_m_llh(
+                                data.get("coordinateList"),
+                                data.get(
+                                    "bearing_deg",
+                                    data.get("phaseMoveBearing_deg"),
+                                ),
+                            )
+                        )
+                    except Exception:
+                        continue
+                    widest_part_m = max(widest_part_m, part_span_m)
+
+            real_owner_ids = {
+                int(_to_int(entry.get("aircraftID")) or 0)
+                for entry in component_aircraft_entries
+                if isinstance(entry, dict)
+                and int(_to_int(entry.get("aircraftID")) or 0) > 0
+            }
+            minimum_stage_missing = any(
+                int(current_count_by_owner.get(owner_id, 0))
+                < int(minimum_stages_per_owner)
+                for owner_id in real_owner_ids
+            )
+            width_stage_missing = bool(
+                width_threshold_m > 0.0
+                and widest_part_m > width_threshold_m + 1.0
+            )
+            if minimum_stage_missing or width_stage_missing:
+                width_stage_count = (
+                    int(math.ceil(widest_part_m / width_threshold_m))
+                    if width_threshold_m > 0.0
+                    and widest_part_m > width_threshold_m
+                    else 1
+                )
+                requested_stage_count = max(
+                    int(minimum_stages_per_owner),
+                    int(width_stage_count),
+                )
+                width_entries, width_contexts = (
+                    _branch_aircraft_sequential_area_entries(
+                        component_aircraft_entries,
+                        mission_polygon,
+                        enabled=True,
+                        stage_count=int(requested_stage_count),
+                    )
+                )
+                if width_contexts and len(width_entries) == (
+                    int(requested_stage_count)
+                    * len(component_aircraft_entries)
+                ):
+                    try:
+                        width_result = run_next_collab_division_plan(
+                            mission_polygon=mission_polygon,
+                            aircraft_entries=width_entries,
+                            turn_radius_scale=float(turn_radius_scale),
+                            planning_mode=planning_mode_ctx,
+                            log=None,
+                        )
+                    except Exception as exc:
+                        width_result = None
+                        emit(
+                            "[NEXTCOLLAB][AREA][WARN] sequential AREA re-plan "
+                            f"failed for component {component_index}: {exc}. "
+                            "Keeping the real-aircraft division."
+                        )
+                    if width_result is not None:
+                        planner_result = width_result
+                        planner_aircraft_entries = width_entries
+                        sequential_area_contexts = width_contexts
+                        sequential_split_requested = True
+                        emit(
+                            "[NEXTCOLLAB][AREA] sequential split applied "
+                            f"(component {component_index}, stagesPerOwner="
+                            f"{requested_stage_count}, widthTarget="
+                            f"{width_target_m:,.0f}m, widthLimit="
+                            f"{width_threshold_m:,.0f}m, owners="
+                            f"{sorted(int(c['realAircraftID']) for c in width_contexts)})."
+                        )
+            # Synthetic stages are initially solved from replan-time positions.
+            # Re-seed every later stage from its preceding capture exit.
             if sequential_area_contexts and bool(
                 get_runtime_bool(
                     "next_collab_area_sequential_second_entry_from_first_end_enabled",
@@ -5122,7 +6655,7 @@ def _prepare_area_replacements(
                     ):
                         planner_result = rerun_result
                         emit(
-                            "[NEXTCOLLAB][AREA] second piece re-entered from first piece exit "
+                            "[NEXTCOLLAB][AREA] sequential stages re-entered from preceding exits "
                             f"(component {component_index}, owners="
                             f"{sorted(int(context['realAircraftID']) for context in sequential_area_contexts)})."
                         )
@@ -5142,8 +6675,9 @@ def _prepare_area_replacements(
                     break
             if not collapse_ok:
                 emit(
-                    "[NEXTCOLLAB][AREA][WARN] sequential two-piece split did not "
-                    "produce exactly two paths per owner; preserving the original one-piece plan."
+                    "[NEXTCOLLAB][AREA][WARN] sequential split did not produce "
+                    "the requested path count per owner; preserving the "
+                    "real-aircraft width-based plan."
                 )
                 try:
                     planner_result = run_next_collab_division_plan(
@@ -5161,8 +6695,8 @@ def _prepare_area_replacements(
                     return False
                 sequential_area_contexts = []
             # Validate the final owner IDs after the planning-only virtual UAV
-            # has been folded back to the sticky branch owner.  Checking before
-            # the collapse would reject every valid two-piece branch result.
+            # has been folded back to the sticky branch owner. Checking before
+            # the collapse would reject every valid sequential branch result.
             if branch_ownership_map is not None:
                 planned_aircraft_ids = {
                     int(_to_int(row.get("aircraftID")) or 0)
@@ -5181,14 +6715,15 @@ def _prepare_area_replacements(
                 if split_branch_owner_group:
                     emit(
                         "[NEXTCOLLAB][TYPE2][AREA] boundary component "
-                        f"{component_index} assigned as two sequential missions "
+                        f"{component_index} assigned as sequential missions "
                         "per sticky owner UAV "
                         f"{sorted(int(context['realAircraftID']) for context in sequential_area_contexts)}."
                     )
                 else:
                     emit(
-                        "[NEXTCOLLAB][AREA] one remaining UAV received two sequential "
-                        f"area missions (aircraft={int(sequential_area_contexts[0]['realAircraftID'])})."
+                        "[NEXTCOLLAB][AREA] remaining UAVs received sequential "
+                        "area missions (aircraft="
+                        f"{sorted(int(context['realAircraftID']) for context in sequential_area_contexts)})."
                     )
             planner_results.append((component, planner_result))
         return True
@@ -5289,6 +6824,7 @@ def _prepare_area_replacements(
             if isinstance(component.get("areaPassContract"), dict)
             else area_pass_contract
         )
+        component_path_rows: List[Dict[str, Any]] = []
         for row in planner_result.expected_paths:
             if not isinstance(row, dict):
                 continue
@@ -5312,7 +6848,20 @@ def _prepare_area_replacements(
                     1 if component_pass == "forward" else 2
                 )
             _apply_area_coverage_pass_contract(row_copy, component_contract)
-            final_path_rows.append(row_copy)
+            component_path_rows.append(row_copy)
+        entry_coordinate_by_aircraft = component.get(
+            "areaPassEntryCoordinateByAircraft"
+        )
+        _apply_width_split_sequence_metadata(
+            component_path_rows,
+            list(planner_result.split_result.pieces or []),
+            (
+                entry_coordinate_by_aircraft
+                if isinstance(entry_coordinate_by_aircraft, dict)
+                else None
+            ),
+        )
+        final_path_rows.extend(component_path_rows)
     if not final_path_rows:
         emit("[NEXTCOLLAB] division planner returned no final path rows.")
         return None
@@ -5475,6 +7024,12 @@ def _prepare_area_replacements(
     waypoint_id_provider = _ReplacementWaypointIdProvider(
         scope="AREA",
     )
+    # Emission order per aircraft, so consecutive area passes can be joined by
+    # a turn link once every path has been built.
+    area_path_ids_by_aircraft: Dict[int, List[int]] = {}
+    sequential_path_ids_by_owner_component: Dict[
+        tuple[int, int], Dict[int, int]
+    ] = {}
 
     def _record_flight_path_metrics(metrics: Dict[str, Any]) -> None:
         with flight_path_metrics_lock:
@@ -5529,6 +7084,17 @@ def _prepare_area_replacements(
             related_mission["inputMissionID"] = int(target_input_id)
             related_mission["priorMissionID"] = _to_int(related_mission.get("priorMissionID")) or 0
             generated_path_ids.add(int(new_path_id))
+            area_path_ids_by_aircraft.setdefault(int(row_aircraft_id), []).append(
+                int(new_path_id)
+            )
+            if bool(path_row.get("areaSingleAircraftSequentialSplit")):
+                sequence = int(
+                    _to_int(path_row.get("areaSingleAircraftSequence")) or 0
+                )
+                if sequence > 0:
+                    sequential_path_ids_by_owner_component.setdefault(
+                        (int(row_aircraft_id), int(component_index)), {}
+                    )[int(sequence)] = int(new_path_id)
             new_mission_entry: Dict[str, Any] = {
                 "individualMissionID": int(individual_id),
                 "isDone": False,
@@ -5587,6 +7153,23 @@ def _prepare_area_replacements(
         emit=emit,
         scope="AREA",
         min_workers=2,
+    )
+    capture_only_transition_pairs = {
+        (
+            int(sequence_map[sequence]),
+            int(sequence_map[sequence + 1]),
+        )
+        for sequence_map in sequential_path_ids_by_owner_component.values()
+        for sequence in sorted(sequence_map)
+        if sequence + 1 in sequence_map
+    }
+    # Before IDs are handed out, so the link waypoints get numbered with the
+    # rest of the path they belong to.
+    _append_next_collab_area_transition_links(
+        generated_fp_by_path=generated_fp_by_path,
+        ordered_path_ids_by_aircraft=area_path_ids_by_aircraft,
+        emit=emit,
+        suppressed_link_pairs=capture_only_transition_pairs,
     )
     _assign_replacement_waypoint_ids_in_order(
         generated_fp_by_path=generated_fp_by_path,
@@ -5762,25 +7345,15 @@ def prepare_next_collab_input_replacements(
     if not target_aircraft_ids:
         emit("[NEXTCOLLAB] no target aircraft IDs resolved.")
         return None
-    locked_type2_ownership: Dict[int, List[int]] = {}
-    is_type2_branch_mission = False
-    if _branch_ownership_store is not None:
-        try:
-            is_type2_branch_mission = (
-                _branch_ownership_store.is_locked_type2_branch_mission(
-                    input_data,
-                    int(target_input_id),
-                )
-            )
-            locked_type2_ownership = (
-                _branch_ownership_store.get_locked_type2_branch_ownership(
-                    input_data,
-                    int(target_input_id),
-                )
-            )
-        except Exception:
-            locked_type2_ownership = {}
-            is_type2_branch_mission = False
+    is_type2_branch_mission, locked_type2_ownership = (
+        _resolve_locked_type2_ownership_with_artifact_recovery(
+            input_data=input_data,
+            target_input_id=int(target_input_id),
+            packages_by_aircraft=packages_by_aircraft,
+            target_aircraft_ids=target_aircraft_ids,
+            emit=emit,
+        )
+    )
     if is_type2_branch_mission and not locked_type2_ownership:
         emit(
             "[NEXTCOLLAB][TYPE2] immutable branch state unavailable; "
@@ -5822,13 +7395,24 @@ def prepare_next_collab_input_replacements(
     effective_turn_radius_scale = _to_float(turn_radius_scale)
     if effective_turn_radius_scale is None or effective_turn_radius_scale <= 0.0:
         effective_turn_radius_scale = float(get_runtime_float("next_collab_turn_radius_scale", 1.2))
-    effective_search_speed_scale_multiplier = _normalize_search_speed_scale_multiplier(
-        search_speed_scale_multiplier
+    effective_search_speed_scale_multiplier = (
+        _effective_type2_three_branch_search_speed_scale_multiplier(
+            search_speed_scale_multiplier,
+            is_type2_branch_mission=bool(is_type2_branch_mission),
+            locked_type2_ownership=locked_type2_ownership,
+            emit=emit,
+        )
     )
 
     def _with_prepare_metadata(prepared: Optional[_PreparedReplacements]) -> Optional[_PreparedReplacements]:
         if prepared is None:
             return None
+        prepared = _apply_type2_boundary_guard_loop_to_prepared(
+            prepared,
+            input_data=input_data,
+            input_package_id=int(source_input_pkg_id),
+            target_input_id=int(target_input_id),
+        )
         prepared.source_cache = source_cache.summary()
         prepared.timing_ms = prepare_timer.snapshot()
         if id_reservation_summaries:
@@ -6128,25 +7712,15 @@ def run_next_collab_replan_pipeline(
         emit("[NEXTCOLLAB] no target aircraft IDs resolved.")
         return None
 
-    locked_type2_ownership: Dict[int, List[int]] = {}
-    is_type2_branch_mission = False
-    if _branch_ownership_store is not None:
-        try:
-            is_type2_branch_mission = (
-                _branch_ownership_store.is_locked_type2_branch_mission(
-                    input_data,
-                    int(target_input_id),
-                )
-            )
-            locked_type2_ownership = (
-                _branch_ownership_store.get_locked_type2_branch_ownership(
-                    input_data,
-                    int(target_input_id),
-                )
-            )
-        except Exception:
-            locked_type2_ownership = {}
-            is_type2_branch_mission = False
+    is_type2_branch_mission, locked_type2_ownership = (
+        _resolve_locked_type2_ownership_with_artifact_recovery(
+            input_data=input_data,
+            target_input_id=int(target_input_id),
+            packages_by_aircraft=packages_by_aircraft,
+            target_aircraft_ids=target_aircraft_ids,
+            emit=emit,
+        )
+    )
     if is_type2_branch_mission and not locked_type2_ownership:
         emit(
             "[NEXTCOLLAB][TYPE2] immutable branch state unavailable; "
@@ -6242,6 +7816,14 @@ def run_next_collab_replan_pipeline(
     turn_radius_scale = _to_float(detail.get("turnRadiusScale"))
     if turn_radius_scale is None or turn_radius_scale <= 0.0:
         turn_radius_scale = float(get_runtime_float("next_collab_turn_radius_scale", 1.2))
+    search_speed_scale_multiplier = (
+        _effective_type2_three_branch_search_speed_scale_multiplier(
+            1.0,
+            is_type2_branch_mission=bool(is_type2_branch_mission),
+            locked_type2_ownership=locked_type2_ownership,
+            emit=emit,
+        )
+    )
     prepared: Optional[_PreparedReplacements] = None
     if _is_formation_input_mission(target_input_mission):
         prepared = _prepare_formation_replacements(
@@ -6316,6 +7898,7 @@ def run_next_collab_replan_pipeline(
             template_record_map=template_record_map,
             now_ms=int(now_ms),
             turn_radius_scale=float(turn_radius_scale),
+            search_speed_scale_multiplier=float(search_speed_scale_multiplier),
             emit=emit,
             prepare_timer=prepare_timer,
             id_reservation_summaries=id_reservation_summaries,
@@ -6349,6 +7932,7 @@ def run_next_collab_replan_pipeline(
             template_record_map=template_record_map,
             now_ms=int(now_ms),
             turn_radius_scale=float(turn_radius_scale),
+            search_speed_scale_multiplier=float(search_speed_scale_multiplier),
             emit=emit,
             prepare_timer=prepare_timer,
             id_reservation_summaries=id_reservation_summaries,
@@ -6370,6 +7954,22 @@ def run_next_collab_replan_pipeline(
         planner_result_text = str(prepared.planner_result_text or "")
         planned_result_count = int(prepared.planned_result_count)
         area_review_report = dict(prepared.review_report)
+
+    prepared = _apply_type2_boundary_guard_loop_to_prepared(
+        prepared,
+        input_data=input_data,
+        input_package_id=int(source_input_pkg_id),
+        target_input_id=int(target_input_id),
+    )
+    replacement_by_aircraft = {
+        int(aid): list(rows)
+        for aid, rows in prepared.replacement_by_aircraft.items()
+    }
+    generated_fp_by_path = {
+        int(path_id): payload
+        for path_id, payload in prepared.generated_fp_by_path.items()
+    }
+    area_review_report = dict(prepared.review_report or {})
 
     mission_mode = str(prepared.mission_mode or "")
     prepare_timings_ms = dict(prepared.timing_ms or prepare_timer.snapshot())
@@ -6471,6 +8071,19 @@ def run_next_collab_replan_pipeline(
             preserve_current_input=bool(preserve_current_input_for_takeover),
         )
         replacement_insert_policy_by_aircraft[int(aircraft_id)] = dict(insert_policy)
+
+    execution_barrier = _apply_input_order_execution_barrier(
+        list(packages_by_aircraft.values()),
+        input_plan=input_data,
+        target_input_id=int(target_input_id),
+    )
+    area_review_report["executionBarrier"] = dict(execution_barrier)
+    emit(
+        "[NEXTCOLLAB] input-order execution barrier applied "
+        f"targetInputMissionID={int(target_input_id)} "
+        f"targetUnblocked={int(execution_barrier['targetUnblocked'])} "
+        f"laterBlocked={int(execution_barrier['laterBlocked'])}"
+    )
 
     if replacement_insert_policy_by_aircraft:
         area_review_report["replacementInsertPolicyByAircraft"] = {

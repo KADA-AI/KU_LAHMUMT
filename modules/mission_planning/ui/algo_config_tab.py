@@ -232,6 +232,7 @@ NEXT_COLLAB_GROUPS: list[tuple[str, str, list[FieldSpec]]] = [
                 choices=(("0401 current", "current_position"), ("중간점 진입", "midpoint_to_next_start"), ("4초 예측 진입", "turn_projection")),
             ),
             FieldSpec("values", "next_collab_turn_radius_scale", "다음협업 속도기반 선회반경 배수", "float", 0.10, 5.00, 0.05, 2),
+            FieldSpec("values", "next_collab_turn_radius_uncertainty_margin_m", "다음협업 선회 예측 여유(m)", "float", 0.0, 2000.0, 10.0, 1),
             FieldSpec("values", "next_collab_takeover_first_step_ratio", "첫 스윕 추가 촘촘 비율", "float", 0.10, 1.00, 0.05, 2),
         ],
     ),
@@ -243,6 +244,15 @@ NEXT_COLLAB_GROUPS: list[tuple[str, str, list[FieldSpec]]] = [
             FieldSpec("values", "next_collab_entry_tprime_ratio_scale", "T' 진입거리 미세조정 배수", "float", 0.10, 5.00, 0.05, 2),
             FieldSpec("values", "next_collab_area_path0_trigger_sep_m", "Area 시작 진입 최대 SEP(m)", "float", 0.0, 1500.0, 100.0, 1),
             FieldSpec("values", "next_collab_area_path0_target_sep_ratio", "Area 시작 목표 SEP 비율", "float", 0.05, 1.00, 0.05, 2),
+        ],
+    ),
+    (
+        "LINE / AREA 촬영 타이밍",
+        "다음협업기저임무의 LINE과 AREA가 함께 사용하는 촬영 완료 여유와 첫 촬영 활성화 안전값입니다.",
+        [
+            FieldSpec("values", "next_collab_capture_completion_speed_scale", "공통 촬영완료 배수", "float", 1.00, 1.50, 0.05, 2),
+            FieldSpec("values", "next_collab_first_capture_activation_delay_s", "첫 촬영 활성화 지연(s)", "float", 0.00, 10.00, 0.10, 2),
+            FieldSpec("values", "next_collab_area_first_capture_stale_entry_guard_s", "AREA 첫 진입 stale 여유(s)", "float", 0.00, 20.00, 0.50, 1),
         ],
     ),
     (
@@ -382,6 +392,15 @@ LAH_GROUPS: list[tuple[str, str, list[FieldSpec]]] = [
             FieldSpec("values", "lah_path_mode", "경로 모드", "choice", choices=LAH_PATH_MODE_CHOICES),
             FieldSpec("values", "lah_rl_hex_step", "RL Hex Step (1칸≈N×30m)", "int", 10, 100, 1),
             FieldSpec("values", "lah_rl_area_km", "RL 영역 크기 (km)", "float", 2.0, 50.0, 1.0, 1),
+            FieldSpec("values", "lah_max_speed_mps", "LAH 최대 속도(m/s)", "float", 1.0, 100.0, 1.0, 1),
+            FieldSpec("values", "lah_operational_climb_rate_mps", "LAH 운용 상승률(m/s)", "float", 0.1, 20.0, 0.1, 1),
+            FieldSpec("values", "lah_operational_descent_rate_mps", "LAH 운용 하강률(m/s)", "float", 0.1, 20.0, 0.1, 1),
+            FieldSpec("values", "lah_vertical_transition_enabled", "LAH 고도 전이 WP 생성", "bool"),
+            FieldSpec("values", "lah_vertical_transition_tolerance_m", "고도 전이 허용오차(m)", "float", 0.0, 20.0, 0.5, 1),
+            FieldSpec("values", "lah_altitude_smoothing_enabled", "DEM 고도 평탄화", "bool"),
+            FieldSpec("values", "lah_altitude_short_dip_max_depth_m", "무시할 짧은 하강 깊이(m)", "float", 0.0, 200.0, 5.0, 1),
+            FieldSpec("values", "lah_altitude_short_dip_max_span_m", "짧은 하강 최대 구간(m)", "float", 0.0, 5000.0, 100.0, 1),
+            FieldSpec("values", "lah_altitude_redundant_tolerance_m", "고도 중간점 제거 허용오차(m)", "float", 0.0, 50.0, 1.0, 1),
         ],
     ),
 ]
@@ -469,9 +488,56 @@ OPERATION_FIELD_IDS = {
     for spec in specs
 }
 
+NEXT_COLLAB_FIELD_IDS = {
+    f"{spec.section}.{spec.key}"
+    for _, _, specs in NEXT_COLLAB_GROUPS
+    for spec in specs
+}
+
+NEXT_COLLAB_LAYOUT_COLUMNS: tuple[tuple[str, ...], tuple[str, ...]] = (
+    (
+        "핵심 진입",
+        "세부 진입 거리",
+        "AREA 보정",
+    ),
+    (
+        "LINE / AREA 촬영 타이밍",
+        "Line FOV",
+        "전문가 / 첫 LINE",
+    ),
+)
+
 ALL_FIELD_SPECS = _unique_field_specs(
     OPERATION_GROUPS + GENERAL_GROUPS + NEXT_COLLAB_GROUPS + PRIOR_GROUPS + ATTACK_GROUPS + LAH_GROUPS
 )
+
+
+def _validate_group_layout_columns(
+    group_titles: tuple[str, ...],
+    columns: tuple[tuple[str, ...], ...],
+    *,
+    layout_name: str,
+) -> None:
+    placed_titles = [
+        title
+        for column in columns
+        for title in column
+    ]
+    if (
+        len(placed_titles) != len(set(placed_titles))
+        or set(placed_titles) != set(group_titles)
+    ):
+        missing = sorted(set(group_titles) - set(placed_titles))
+        duplicate = sorted(
+            title
+            for title in set(placed_titles)
+            if placed_titles.count(title) > 1
+        )
+        unknown = sorted(set(placed_titles) - set(group_titles))
+        raise RuntimeError(
+            f"{layout_name} group layout mismatch: "
+            f"missing={missing}, duplicate={duplicate}, unknown={unknown}"
+        )
 
 
 class _FocusWheelComboBox(QComboBox):
@@ -695,7 +761,8 @@ class MissionAlgoConfigTab(QWidget):
             detail_specs = [
                 spec
                 for spec in specs
-                if self._field_id(spec.section, spec.key) not in OPERATION_FIELD_IDS
+                if self._field_id(spec.section, spec.key)
+                not in (OPERATION_FIELD_IDS | NEXT_COLLAB_FIELD_IDS)
             ]
             if detail_specs:
                 widgets.append(self._build_group_box(title, note, detail_specs))
@@ -730,21 +797,20 @@ class MissionAlgoConfigTab(QWidget):
         layout = frame.layout()
         assert isinstance(layout, QVBoxLayout)
 
+        group_titles = tuple(title for title, _note, _specs in NEXT_COLLAB_GROUPS)
+        _validate_group_layout_columns(
+            group_titles,
+            NEXT_COLLAB_LAYOUT_COLUMNS,
+            layout_name="next-collaboration",
+        )
         widgets = {
             title: self._build_group_box(title, note, specs)
             for title, note, specs in NEXT_COLLAB_GROUPS
         }
         layout.addLayout(
             self._build_column_board(
-                [
-                    widgets["핵심 진입"],
-                    widgets["세부 진입 거리"],
-                    widgets["AREA 보정"],
-                ],
-                [
-                    widgets["Line FOV"],
-                    widgets["전문가 / 첫 LINE"],
-                ],
+                [widgets[title] for title in NEXT_COLLAB_LAYOUT_COLUMNS[0]],
+                [widgets[title] for title in NEXT_COLLAB_LAYOUT_COLUMNS[1]],
             )
         )
         return frame
@@ -925,6 +991,10 @@ class MissionAlgoConfigTab(QWidget):
 
     def _create_widget(self, spec: FieldSpec) -> QWidget:
         widget_id = self._field_id(spec.section, spec.key)
+        if widget_id in self._widgets:
+            raise RuntimeError(
+                f"duplicate algorithm setting widget ID: {widget_id}"
+            )
         if spec.kind == "bool":
             widget = QCheckBox()
             widget.stateChanged.connect(self._on_field_changed)
@@ -1150,7 +1220,7 @@ class MissionAlgoConfigTab(QWidget):
                 10.0,
                 self._as_float(
                     values.get("next_collab_area_density_scale"),
-                    max(self._as_float(values.get("area_density_scale"), 1.2), 2.4),
+                    max(self._as_float(values.get("area_density_scale"), 1.2), 1.5),
                 ),
             ),
         )
@@ -1197,7 +1267,7 @@ class MissionAlgoConfigTab(QWidget):
         )
         values["enhanced_auto_fov_from_db"] = bool(values.get("enhanced_auto_fov_from_db", True))
         values["manual_fov_global_sync_enabled"] = True
-        values["area_dubins_entry_links_enabled"] = bool(values.get("area_dubins_entry_links_enabled", True))
+        values["area_dubins_entry_links_enabled"] = bool(values.get("area_dubins_entry_links_enabled", False))
         values["entry_hold_gimbal_pitch"] = max(
             -180.0,
             min(180.0, self._as_float(values.get("entry_hold_gimbal_pitch"), -90.0)),
@@ -1232,6 +1302,16 @@ class MissionAlgoConfigTab(QWidget):
             0.10,
             min(5.0, self._as_float(values.get("next_collab_turn_radius_scale"), 1.20)),
         )
+        values["next_collab_turn_radius_uncertainty_margin_m"] = max(
+            0.0,
+            min(
+                2000.0,
+                self._as_float(
+                    values.get("next_collab_turn_radius_uncertainty_margin_m"),
+                    120.0,
+                ),
+            ),
+        )
         next_collab_entry_strategy = str(values.get("next_collab_default_entry_strategy", "turn_projection") or "turn_projection").strip().lower()
         if next_collab_entry_strategy not in {"current_position", "midpoint_to_next_start", "turn_projection"}:
             next_collab_entry_strategy = "turn_projection"
@@ -1248,6 +1328,38 @@ class MissionAlgoConfigTab(QWidget):
         values["next_collab_area_search_speed_scale"] = max(
             0.10,
             min(5.0, self._as_float(values.get("next_collab_area_search_speed_scale"), 1.30)),
+        )
+        values["next_collab_capture_completion_speed_scale"] = max(
+            1.00,
+            min(
+                1.50,
+                self._as_float(
+                    values.get("next_collab_capture_completion_speed_scale"),
+                    1.10,
+                ),
+            ),
+        )
+        values["next_collab_first_capture_activation_delay_s"] = max(
+            0.0,
+            min(
+                10.0,
+                self._as_float(
+                    values.get("next_collab_first_capture_activation_delay_s"),
+                    1.50,
+                ),
+            ),
+        )
+        values["next_collab_area_first_capture_stale_entry_guard_s"] = max(
+            0.0,
+            min(
+                20.0,
+                self._as_float(
+                    values.get(
+                        "next_collab_area_first_capture_stale_entry_guard_s"
+                    ),
+                    6.00,
+                ),
+            ),
         )
         values["next_collab_line_db_width_weight"] = max(
             0.0,

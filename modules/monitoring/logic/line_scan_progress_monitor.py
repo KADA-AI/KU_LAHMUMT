@@ -137,7 +137,7 @@ def _mission_source_coordinate_list(
     mission: dict[str, Any],
     rows: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    for key in ("input_coordinate_list", "coordinate_list"):
+    for key in ("source_coordinate_list", "input_coordinate_list", "coordinate_list"):
         coords = _coord_list(mission.get(key), min_len=2)
         if len(coords) >= 2:
             return coords
@@ -244,6 +244,7 @@ class _LineMissionRuntime:
     sweep_point_count: int
     line_def: LineSweepDefinition
     requires_filming_completion: bool
+    independent_line_progress: bool = False
     is_current: bool = False
     source_line_rows: list[dict[str, Any]] = field(default_factory=list)
     source_line_width_m: float | None = None
@@ -258,6 +259,7 @@ class _LineMissionRuntime:
     last_timestamp_ms: int | None = None
     carried_covered_length_m: float = 0.0
     carry_source_aircraft_ids: tuple[int, ...] = ()
+    exact_path_progress_preserved: bool = False
 
 
 @dataclass(frozen=True)
@@ -621,6 +623,50 @@ def _seed_runtime_common_coverage(
     runtime.carry_source_aircraft_ids = tuple(source_aircraft_ids)
 
 
+def _restore_exact_path_progress(
+    runtime: _LineMissionRuntime,
+    previous: _LineMissionRuntime | None,
+) -> bool:
+    """Restore only progress measured on the same immutable aircraft path."""
+
+    if previous is None:
+        return False
+    if (
+        int(previous.aircraft_id) != int(runtime.aircraft_id)
+        or previous.path_id is None
+        or runtime.path_id is None
+        or int(previous.path_id) != int(runtime.path_id)
+        or previous.input_id != runtime.input_id
+        or not bool(previous.independent_line_progress)
+    ):
+        return False
+    previous_lengths = list(previous.line_def.line_lengths_m)
+    current_lengths = list(runtime.line_def.line_lengths_m)
+    if len(previous_lengths) != len(current_lengths):
+        return False
+    for previous_length, current_length in zip(previous_lengths, current_lengths):
+        tolerance_m = max(
+            0.5,
+            0.001 * max(abs(float(previous_length)), abs(float(current_length))),
+        )
+        if abs(float(previous_length) - float(current_length)) > tolerance_m:
+            return False
+
+    runtime.state = deepcopy(previous.state)
+    runtime.last_observed_line_index = previous.last_observed_line_index
+    runtime.last_line_delta_sign = previous.last_line_delta_sign
+    runtime.line_transition_count = int(previous.line_transition_count)
+    runtime.line_direction_change_count = int(previous.line_direction_change_count)
+    runtime.visited_line_indexes = set(previous.visited_line_indexes)
+    runtime.line_visit_sequence = list(previous.line_visit_sequence)
+    runtime.last_timestamp_ms = previous.last_timestamp_ms
+    # This is exact path-local continuity, not cross-path/common coverage.
+    runtime.carried_covered_length_m = 0.0
+    runtime.carry_source_aircraft_ids = ()
+    runtime.exact_path_progress_preserved = True
+    return True
+
+
 class LineScanProgressMonitor:
     """Line-only scan monitor for replan progress, independent from visualization UI."""
 
@@ -640,9 +686,14 @@ class LineScanProgressMonitor:
         self._last_persist_monotonic = 0.0
 
     def apply_mission_plan(self, mission_plan_id: int | None) -> None:
+        previous_by_exact_path: dict[tuple[int, int], _LineMissionRuntime] = {
+            (int(runtime.aircraft_id), int(runtime.path_id)): runtime
+            for runtime in self._missions.values()
+            if runtime.path_id is not None
+        }
         previous_by_input: dict[int, list[_LineMissionRuntime]] = {}
         for runtime in self._missions.values():
-            if runtime.input_id is None:
+            if runtime.input_id is None or bool(runtime.independent_line_progress):
                 continue
             previous_by_input.setdefault(int(runtime.input_id), []).append(runtime)
         carry_by_input = {
@@ -668,6 +719,8 @@ class LineScanProgressMonitor:
             for mission in entry.get("missions") or []:
                 if not isinstance(mission, dict):
                     continue
+                if bool(mission.get("execution_blocked_until_next_collab")):
+                    continue
                 mission_id = _to_int(mission.get("individual_mission_id"))
                 if mission_id is None:
                     continue
@@ -684,6 +737,9 @@ class LineScanProgressMonitor:
                     sweep_point_count=max(0, int(_to_int(mission.get("sweep_point_count")) or 0)),
                     line_def=line_def,
                     requires_filming_completion=_requires_filming_completion(mission),
+                    independent_line_progress=bool(
+                        mission.get("independent_line_progress")
+                    ),
                     is_current=bool(
                         self._aircraft_current_mission.get(int(aid)) == int(mission_id)
                     ),
@@ -691,7 +747,14 @@ class LineScanProgressMonitor:
                     source_line_width_m=source_width_m,
                     source_coordinate_list=_mission_source_coordinate_list(mission, source_line_rows),
                 )
-                if runtime.input_id is not None:
+                if runtime.independent_line_progress and runtime.path_id is not None:
+                    _restore_exact_path_progress(
+                        runtime,
+                        previous_by_exact_path.get(
+                            (int(runtime.aircraft_id), int(runtime.path_id))
+                        ),
+                    )
+                elif runtime.input_id is not None and runtime.is_current:
                     _seed_runtime_common_coverage(
                         runtime,
                         carry_by_input.get(int(runtime.input_id)),
@@ -875,6 +938,7 @@ class LineScanProgressMonitor:
             "aircraftID": int(runtime.aircraft_id),
             "missionID": int(runtime.mission_id),
             "isCurrent": bool(runtime.is_current),
+            "independentLineProgress": bool(runtime.independent_line_progress),
             "inputMissionID": int(runtime.input_id) if runtime.input_id is not None else None,
             "pathID": int(runtime.path_id) if runtime.path_id is not None else None,
             "enabled": bool(enabled),
@@ -905,6 +969,8 @@ class LineScanProgressMonitor:
             payload["carriedCoveredLengthM"] = _round_m(runtime.carried_covered_length_m)
             payload["coverageCarryPolicy"] = "previous_active_owner_intersection"
             payload["coverageCarrySourceAircraftIDs"] = list(runtime.carry_source_aircraft_ids)
+        elif runtime.exact_path_progress_preserved:
+            payload["coverageCarryPolicy"] = "same_aircraft_exact_path"
         return payload
 
     def _persist(self, *, force: bool) -> None:

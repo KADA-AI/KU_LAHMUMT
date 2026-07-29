@@ -1,13 +1,12 @@
-"""Cover and a firing solution are mutually exclusive, and a pop-up must climb.
+"""The planned attack base must be distinct, low, and terrain-safe.
 
 Observed: 30% of manned attack waypoints sat on the exact hide point - same
 lat/lon, same altitude, same ETA. The aircraft was ordered to fly to where it
 already was, never registered the arrival, and held at cover without shooting.
 
-The cause was upstream: the sightline from the hide point cleared the ridge by
-+0.6 m, which the concealment test (0.25 m numerical nudge) called blocked and
-the attack solver called open. Concealment now needs a real margin, and a
-pop-up that would not leave cover is lifted to a flyable minimum.
+The SIM performs the vertical LOS climb, so the mission must not carry the
+solved firing altitude.  It does still need a distinct horizontal attack point
+so the armed waypoint cannot collapse onto the preceding hide waypoint.
 """
 
 from __future__ import annotations
@@ -59,24 +58,32 @@ def test_a_position_well_below_the_sightline_is_still_cover() -> None:
     assert int(visible[0]) == 0
 
 
-def test_a_popup_must_actually_leave_cover() -> None:
-    assert attack._LAH_MIN_POPUP_CLIMB_M >= 5.0
+def test_an_attack_waypoint_must_move_a_little_from_cover() -> None:
+    assert (
+        attack.get_runtime_attack_float(
+            "attack_point_min_horizontal_offset_m", 5.0
+        )
+        >= 1.0
+    )
 
 
-def test_the_firing_point_is_lifted_off_the_hide_altitude() -> None:
-    """A vertical pop-up solved level with cover gets the minimum climb."""
+def test_the_firing_altitude_is_certification_only() -> None:
 
     import inspect
 
     source = inspect.getsource(attack._attack_coordinate_at_hide_endpoint)
-    assert "_LAH_MIN_POPUP_CLIMB_M" in source
-    # Attack LOS altitude is intentionally exempt from the ordinary envelope.
+    assert "attack_point_min_horizontal_offset_m" in source
+    assert "_attack_point_low_level_base" in source
+    # Internal LOS certification may search above the normal envelope, but the
+    # resulting altitude is never serialized into the attack waypoint.
     assert "ceiling_m=None" in source
-    assert "DEFAULT_ENVELOPE" not in source
+    low_base_source = inspect.getsource(attack._attack_point_low_level_base)
+    assert 'attack_altitude_control"] = "sim_los_popup"' in low_base_source
 
 
-def test_a_zero_length_firing_leg_is_never_emitted() -> None:
+def test_the_plan_ends_at_the_low_popup_base_without_a_return_leg() -> None:
     import inspect
 
     source = inspect.getsource(attack._build_lah_low_level_attack_waypoints)
-    assert "_same_lah_3d_coordinate" in source
+    assert "_build_lah_low_level_waypoint_route" in source
+    assert "del regain_cover_coord" in source

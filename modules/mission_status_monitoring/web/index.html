@@ -59,7 +59,8 @@
               <legend>지도 레이어</legend>
               <div class="layer-options">
                 <label><input type="checkbox" data-layer-toggle="areas" checked /><span class="swatch swatch-area"></span>임무구역</label>
-                <label><input type="checkbox" data-layer-toggle="optionAssignments" checked /><span class="swatch swatch-assignment"></span>옵션할당</label>
+                <label><input type="checkbox" data-layer-toggle="areaProgress" checked /><span class="swatch swatch-area-progress"></span>영역 진행</label>
+                <label><input type="checkbox" data-layer-toggle="optionAssignments" /><span class="swatch swatch-assignment"></span>후보 옵션</label>
                 <label><input type="checkbox" data-layer-toggle="corridors" checked /><span class="swatch swatch-corridor"></span>선형회랑</label>
                 <label><input type="checkbox" data-layer-toggle="paths" checked /><span class="swatch swatch-path"></span>계획경로</label>
                 <label><input type="checkbox" data-layer-toggle="tracks" checked /><span class="swatch swatch-track"></span>비행궤적</label>
@@ -70,6 +71,24 @@
                 <label><input type="checkbox" data-layer-toggle="targets" checked /><span class="swatch swatch-target"></span>표적</label>
               </div>
             </fieldset>
+
+            <div class="mission-focus-control" aria-label="임무 표시 범위">
+              <div class="mission-focus-heading">
+                <span class="control-title">임무 표시</span>
+                <strong id="mission-focus-status">현재 임무 자동</strong>
+              </div>
+              <div id="mission-view-segments" class="segments mission-view-segments" role="group" aria-label="임무 표시 모드">
+                <button type="button" class="segment is-active" data-mission-view="current" aria-pressed="true">현재</button>
+                <button type="button" class="segment" data-mission-view="selected" aria-pressed="false" disabled>선택</button>
+                <button type="button" class="segment" data-mission-view="all" aria-pressed="false">전체</button>
+              </div>
+              <label class="history-toggle">
+                <input id="show-mission-history" type="checkbox" />
+                <span aria-hidden="true"></span>
+                완료 이력
+              </label>
+              <small id="mission-focus-hint">임무 표나 지도 라벨을 누르면 해당 임무만 집중 표시합니다.</small>
+            </div>
 
             <fieldset class="coverage-depth-control">
               <legend>촬영 깊이 · 2회 기준</legend>

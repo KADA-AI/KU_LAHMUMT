@@ -56,16 +56,19 @@ try:
     from modules.mission_planning.MissionPlanner.runtime_settings import (
         get_runtime_altitude_layers_m as _get_runtime_altitude_layers_m,
         get_runtime_value as _get_runtime_value,
+        load_runtime_settings as _load_runtime_settings,
     )
 except Exception:
     try:
         from modules.mission_planning.MissionPlanner.runtime_settings import (  # type: ignore
             get_runtime_altitude_layers_m as _get_runtime_altitude_layers_m,
             get_runtime_value as _get_runtime_value,
+            load_runtime_settings as _load_runtime_settings,
         )
     except Exception:
         _get_runtime_altitude_layers_m = None
         _get_runtime_value = None
+        _load_runtime_settings = None
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[5]
 _MISSION_PLANNER_DIR = _PROJECT_ROOT / "modules" / "mission_planning" / "MissionPlanner"
@@ -86,6 +89,10 @@ ALTITUDE_LAYERS_M = (1000.0, 1010.0, 1020.0)
 CAPSTONE_AREA_AGL_M = 200.0
 CAPSTONE_BATTLE_HOLD_SEC = 3600
 LAH_DEFAULT_CRUISE_SPEED_MPS = 40.0
+LAH_OPERATIONAL_CLIMB_RATE_MPS = 5.0
+LAH_OPERATIONAL_DESCENT_RATE_MPS = 5.0
+LAH_MAX_SPEED_MPS = 72.0
+LAH_VERTICAL_TRANSITION_TOLERANCE_M = 1.0
 LAH_UAV_ETA_PAIR_MAP = {1: 4, 2: 5, 3: 6}
 # LAH1 is the command aircraft and carries the team datalink relay, so its
 # altitude has to clear terrain to every UAV, not just its ETA-paired one.
@@ -312,6 +319,7 @@ def _terrain_follow_non_attack_waypoints(
     low_terrain_constrained_leg_start_index: int = 0,
     low_terrain_corridor_m: float = LAH_LOW_TERRAIN_CORRIDOR_M,
     prefer_low_terrain: bool = True,
+    runtime_payload: dict | None = None,
 ) -> list[OrderedDict]:
     """Replace a sparse horizontal route with a collision-safe DEM profile."""
 
@@ -330,6 +338,8 @@ def _terrain_follow_non_attack_waypoints(
         low_terrain_corridor_m=low_terrain_corridor_m,
         low_terrain_segment_allowed=low_terrain_segment_allowed,
         low_terrain_constrained_leg_start_index=low_terrain_constrained_leg_start_index,
+        cruise_speed_mps=float(cruise_speed),
+        runtime_payload=runtime_payload,
     )
     if not profile:
         fallback = [OrderedDict(waypoint) for waypoint in waypoints or []]
@@ -388,6 +398,7 @@ def _terrain_refine_existing_lah_waypoints(
     waypoints: list[dict],
     *,
     cruise_speed: float,
+    runtime_payload: dict | None = None,
 ) -> list[OrderedDict]:
     """Insert terrain-driven transit points without replacing mission anchors.
 
@@ -438,6 +449,8 @@ def _terrain_refine_existing_lah_waypoints(
                 clearance_m=LAH_LOW_LEVEL_CLEARANCE_M,
                 terrain_provider=_terrain_profile_many,
                 prefer_low_terrain=False,
+                cruise_speed_mps=float(cruise_speed),
+                runtime_payload=runtime_payload,
             )
         except Exception:
             profile = []
@@ -1054,6 +1067,7 @@ def _mission_low_terrain_segment_checker(
     try:
         from shapely.geometry import LineString, Point, Polygon
         from shapely.ops import unary_union
+        from shapely.prepared import prep
     except Exception:
         return _deny_detour
 
@@ -1136,6 +1150,7 @@ def _mission_low_terrain_segment_checker(
         allowed_geometry = unary_union(allowed_parts).buffer(0)
         if allowed_geometry.is_empty:
             return _deny_detour
+        prepared_allowed_geometry = prep(allowed_geometry)
     except Exception:
         return _deny_detour
 
@@ -1145,9 +1160,9 @@ def _mission_low_terrain_segment_checker(
     ) -> bool:
         try:
             if _dist_ll_m(start, end) <= 0.01:
-                return bool(allowed_geometry.covers(Point(_xy(start))))
+                return bool(prepared_allowed_geometry.covers(Point(_xy(start))))
             return bool(
-                allowed_geometry.covers(
+                prepared_allowed_geometry.covers(
                     LineString([_xy(start), _xy(end)])
                 )
             )
@@ -1277,6 +1292,14 @@ def _truthy_lah_flag(value: object) -> bool:
     if isinstance(value, str):
         return value.strip().lower() in {"1", "true", "yes", "on", "y"}
     return False
+
+
+def _is_shared_lah_terminal_cover(info: object) -> bool:
+    return (
+        isinstance(info, dict)
+        and _truthy_lah_flag(info.get("_lahTerminalCoverEnabled"))
+        and _truthy_lah_flag(info.get("_lahSharedTerminalCoverPoint"))
+    )
 
 
 def _lah_line_hold_seconds(mission: dict, info: dict) -> int | None:
@@ -1551,15 +1574,35 @@ def _coord_dist_m(c0: dict, c1: dict) -> float:
 def _lah_vertical_rate_mps(altitude_delta_m: float) -> float:
     """Return a conservative planning rate for one LAH vertical leg."""
 
-    rate_attr = "climb_rate_mps" if float(altitude_delta_m) >= 0.0 else "descent_rate_mps"
-    fallback_rate_mps = 8.9 if float(altitude_delta_m) >= 0.0 else 7.0
+    climbing = float(altitude_delta_m) >= 0.0
+    runtime_key = (
+        "lah_operational_climb_rate_mps"
+        if climbing
+        else "lah_operational_descent_rate_mps"
+    )
+    envelope_attr = (
+        "operational_climb_rate_mps"
+        if climbing
+        else "operational_descent_rate_mps"
+    )
+    fallback_rate_mps = (
+        LAH_OPERATIONAL_CLIMB_RATE_MPS
+        if climbing
+        else LAH_OPERATIONAL_DESCENT_RATE_MPS
+    )
     try:
-        rate_mps = float(getattr(DEFAULT_ENVELOPE, rate_attr, fallback_rate_mps))
+        envelope_rate_mps = float(
+            getattr(DEFAULT_ENVELOPE, envelope_attr, fallback_rate_mps)
+        )
     except Exception:
-        rate_mps = float(fallback_rate_mps)
+        envelope_rate_mps = float(fallback_rate_mps)
+    try:
+        rate_mps = float(_runtime_value(runtime_key, envelope_rate_mps))
+    except Exception:
+        rate_mps = float(envelope_rate_mps)
     if not math.isfinite(rate_mps) or rate_mps <= 0.0:
         rate_mps = float(fallback_rate_mps)
-    return max(0.1, rate_mps * float(LAH_VERTICAL_RATE_USE_RATIO))
+    return max(0.1, rate_mps)
 
 
 def _minimum_lah_leg_time_s(start_coord: dict, end_coord: dict, speed_mps: float) -> float:
@@ -2081,14 +2124,26 @@ def _positive_waypoint_speed_mps(waypoint: dict, default: float = LAH_DEFAULT_CR
 
 
 def _lah_max_speed_mps() -> float:
-    max_speed_mps = 75.0
+    max_speed_mps = float(LAH_MAX_SPEED_MPS)
     try:
         if DEFAULT_ENVELOPE is not None:
-            max_speed_mps = float(getattr(DEFAULT_ENVELOPE, "max_speed_kmh", 270.0)) / 3.6
+            max_speed_mps = float(
+                getattr(
+                    DEFAULT_ENVELOPE,
+                    "max_speed_kmh",
+                    float(LAH_MAX_SPEED_MPS) * 3.6,
+                )
+            ) / 3.6
     except Exception:
-        max_speed_mps = 75.0
+        max_speed_mps = float(LAH_MAX_SPEED_MPS)
+    try:
+        max_speed_mps = float(
+            _runtime_value("lah_max_speed_mps", max_speed_mps)
+        )
+    except Exception:
+        pass
     if not math.isfinite(max_speed_mps) or max_speed_mps <= 0.0:
-        max_speed_mps = 75.0
+        max_speed_mps = float(LAH_MAX_SPEED_MPS)
     return max(1.0, float(max_speed_mps))
 
 
@@ -2214,7 +2269,12 @@ def _terminal_support_coordinate_for_uav_timeline(
     return support_coord, float(initial_gap_m), float(final_gap_m)
 
 
-def _terrain_profile_between_lah_coords(start_coord: dict, end_coord: dict) -> list[dict]:
+def _terrain_profile_between_lah_coords(
+    start_coord: dict,
+    end_coord: dict,
+    *,
+    cruise_speed_mps: float = 40.0,
+) -> list[dict]:
     try:
         profile = build_lah_terrain_following_path(
             [start_coord, end_coord],
@@ -2223,6 +2283,7 @@ def _terrain_profile_between_lah_coords(start_coord: dict, end_coord: dict) -> l
             # UAV-support/continuity legs have no LINE/AREA geometry.  Keep
             # their horizontal course instead of making an unbounded detour.
             prefer_low_terrain=False,
+            cruise_speed_mps=float(cruise_speed_mps),
         )
     except Exception:
         profile = []
@@ -2319,6 +2380,239 @@ def _finalize_modified_lah_packet_inplace(packet: dict) -> None:
     _recompute_lah_ecf_inplace(packet)
     _normalize_lah_waypoint_list_inplace(packet.get("lahWaypointList") or [])
     _repair_lah_waypoint_chain_inplace(packet)
+
+
+def enforce_lah_kinematic_feasibility_inplace(
+    packet: dict,
+    *,
+    preserve_existing_timing: bool = True,
+    allocate_waypoint_ids: bool | None = None,
+) -> int:
+    """Make every emitted LAH leg executable at the operational vertical rate.
+
+    ETA alone is not sufficient for consumers which fly the commanded
+    horizontal speed: they can arrive at the next latitude/longitude before
+    reaching its altitude and start circling there.  For an infeasible climb,
+    this pass inserts an action-free waypoint at the departure XY and performs
+    only the climb which cannot fit into the following horizontal leg.  For an
+    infeasible descent it flies to the arrival XY at a safe intermediate
+    altitude, then descends vertically.  Original action waypoints never move.
+
+    The pass is idempotent.  Existing same-XY vertical legs are retained and
+    receive a physically valid ETA instead of being duplicated.
+    """
+
+    if not isinstance(packet, dict):
+        return 0
+    raw_enabled = _runtime_value("lah_vertical_transition_enabled", True)
+    if isinstance(raw_enabled, str):
+        enabled = raw_enabled.strip().lower() not in {
+            "",
+            "0",
+            "false",
+            "no",
+            "off",
+        }
+    else:
+        enabled = bool(raw_enabled)
+    if not enabled:
+        return 0
+
+    list_key = None
+    waypoints = packet.get("lahWaypointList")
+    if isinstance(waypoints, list):
+        list_key = "lahWaypointList"
+    else:
+        try:
+            aircraft_id = int(packet.get("aircraftID", 0) or 0)
+        except Exception:
+            aircraft_id = 0
+        fallback = packet.get("waypointList")
+        if aircraft_id in (1, 2, 3) and isinstance(fallback, list):
+            list_key = "waypointList"
+            waypoints = fallback
+    if list_key is None or not isinstance(waypoints, list) or not waypoints:
+        return 0
+
+    originals = [waypoint for waypoint in waypoints if isinstance(waypoint, dict)]
+    if not originals:
+        return 0
+
+    max_speed_mps = _lah_max_speed_mps()
+    for waypoint in originals:
+        try:
+            speed_mps = float(waypoint.get("speed", 0.0) or 0.0)
+        except Exception:
+            continue
+        if math.isfinite(speed_mps) and speed_mps > max_speed_mps:
+            waypoint["speed"] = round(float(max_speed_mps), 2)
+
+    def _eta_s(waypoint: dict) -> float:
+        try:
+            return max(
+                0.0,
+                float(
+                    _eta_to_seconds(
+                        waypoint.get("eta", 0),
+                        assume_ms=False,
+                    )
+                ),
+            )
+        except Exception:
+            return 0.0
+
+    original_eta_s = [_eta_s(waypoint) for waypoint in originals]
+    try:
+        tolerance_m = max(
+            0.0,
+            float(
+                _runtime_value(
+                    "lah_vertical_transition_tolerance_m",
+                    LAH_VERTICAL_TRANSITION_TOLERANCE_M,
+                )
+            ),
+        )
+    except Exception:
+        tolerance_m = float(LAH_VERTICAL_TRANSITION_TOLERANCE_M)
+
+    output: list[dict] = [originals[0]]
+    generated_waypoints: list[dict] = []
+    output[0]["eta"] = 0
+    cumulative_eta_s = 0
+
+    for index in range(1, len(originals)):
+        left = originals[index - 1]
+        right = originals[index]
+        left_coord = _coord_from_wp(left)
+        right_coord = _coord_from_wp(right)
+        nodes: list[dict] = []
+
+        if left_coord is not None and right_coord is not None:
+            horizontal_m = _coord_dist_m(left_coord, right_coord)
+            speed_mps = _positive_waypoint_speed_mps(right)
+            horizontal_time_s = horizontal_m / max(speed_mps, 1e-6)
+            altitude_delta_m = float(right_coord.get("altitude", 0.0)) - float(
+                left_coord.get("altitude", 0.0)
+            )
+
+            if horizontal_m > 1.0 and altitude_delta_m > tolerance_m:
+                climb_rate_mps = _lah_vertical_rate_mps(altitude_delta_m)
+                departure_altitude_m = int(
+                    math.ceil(
+                        float(right_coord["altitude"])
+                        - climb_rate_mps * horizontal_time_s
+                        - 1e-9
+                    )
+                )
+                if departure_altitude_m > float(left_coord["altitude"]) + tolerance_m:
+                    transition_coord = {
+                        "latitude": float(left_coord["latitude"]),
+                        "longitude": float(left_coord["longitude"]),
+                        "altitude": min(
+                            int(right_coord["altitude"]),
+                            int(departure_altitude_m),
+                        ),
+                    }
+                    transition = _make_lah_transit_waypoint(
+                        transition_coord,
+                        speed_mps=speed_mps,
+                        waypoint_id=0,
+                    )
+                    nodes.append(transition)
+                    generated_waypoints.append(transition)
+            elif horizontal_m > 1.0 and altitude_delta_m < -tolerance_m:
+                descent_rate_mps = _lah_vertical_rate_mps(altitude_delta_m)
+                arrival_altitude_m = int(
+                    math.ceil(
+                        float(left_coord["altitude"])
+                        - descent_rate_mps * horizontal_time_s
+                        - 1e-9
+                    )
+                )
+                if arrival_altitude_m > float(right_coord["altitude"]) + tolerance_m:
+                    transition_coord = {
+                        "latitude": float(right_coord["latitude"]),
+                        "longitude": float(right_coord["longitude"]),
+                        "altitude": min(
+                            int(left_coord["altitude"]),
+                            int(arrival_altitude_m),
+                        ),
+                    }
+                    transition = _make_lah_transit_waypoint(
+                        transition_coord,
+                        speed_mps=speed_mps,
+                        waypoint_id=0,
+                    )
+                    nodes.append(transition)
+                    generated_waypoints.append(transition)
+
+        nodes.append(right)
+        segment_start = output[-1]
+        segment_times_s: list[int] = []
+        for node in nodes:
+            start_coord = _coord_from_wp(segment_start)
+            end_coord = _coord_from_wp(node)
+            if start_coord is None or end_coord is None:
+                segment_time_s = 0
+            else:
+                segment_time_s = int(
+                    _minimum_lah_leg_time_s(
+                        start_coord,
+                        end_coord,
+                        _positive_waypoint_speed_mps(node),
+                    )
+                )
+            segment_times_s.append(max(0, int(segment_time_s)))
+            segment_start = node
+
+        physical_leg_time_s = int(sum(segment_times_s))
+        original_leg_time_s = max(
+            0,
+            int(
+                math.ceil(
+                    original_eta_s[index] - original_eta_s[index - 1] - 1e-9
+                )
+            ),
+        )
+        planned_leg_time_s = (
+            max(physical_leg_time_s, original_leg_time_s)
+            if preserve_existing_timing
+            else physical_leg_time_s
+        )
+        extra_time_s = max(0, planned_leg_time_s - physical_leg_time_s)
+        for node_index, (node, segment_time_s) in enumerate(
+            zip(nodes, segment_times_s)
+        ):
+            cumulative_eta_s += int(segment_time_s)
+            if node_index == len(nodes) - 1:
+                cumulative_eta_s += int(extra_time_s)
+            node["eta"] = _clamp_eta_seconds(cumulative_eta_s)
+            output.append(node)
+
+    if allocate_waypoint_ids is None:
+        allocate_waypoint_ids = any(
+            _coerce_bounded_int(waypoint.get("waypointID"), default=0) > 0
+            for waypoint in originals
+        )
+    if generated_waypoints and allocate_waypoint_ids:
+        generated_ids = _reserve_lah_waypoint_ids(len(generated_waypoints))
+        for waypoint, waypoint_id in zip(generated_waypoints, generated_ids):
+            waypoint["waypointID"] = int(waypoint_id)
+
+    working_packet = (
+        packet
+        if list_key == "lahWaypointList"
+        else {"lahWaypointList": output}
+    )
+    working_packet["lahWaypointList"] = output
+    _recompute_lah_ecf_inplace(working_packet)
+    _normalize_lah_waypoint_list_inplace(output)
+    _repair_lah_waypoint_chain_inplace(working_packet)
+
+    packet[list_key] = output
+    if list_key == "lahWaypointList" and isinstance(packet.get("waypointList"), list):
+        packet["waypointList"] = deepcopy(output)
+    return int(len(generated_waypoints))
 
 
 def _prepend_reported_lah_start_altitude_inplace(
@@ -2517,7 +2811,11 @@ def _replace_lah_terminal_support_route_inplace(
 
     speed_mps = max(1.0, float(reposition_speed_mps))
     if _lah_path_is_stationary(waypoints) and len(waypoints) == 1:
-        profile = _terrain_profile_between_lah_coords(original_terminal_coord, support_coord)
+        profile = _terrain_profile_between_lah_coords(
+            original_terminal_coord,
+            support_coord,
+            cruise_speed_mps=speed_mps,
+        )
         support_altitude = int(round(float(profile[-1].get("altitude", 0) or 0))) if profile else int(
             support_coord.get("altitude", 0) or 0
         )
@@ -2536,7 +2834,11 @@ def _replace_lah_terminal_support_route_inplace(
     anchor_coord = _coord_from_wp(anchor_waypoint)
     if anchor_coord is None:
         return False, original_terminal_coord, original_terminal_coord, initial_gap_m, final_gap_m
-    profile = _terrain_profile_between_lah_coords(anchor_coord, support_coord)
+    profile = _terrain_profile_between_lah_coords(
+        anchor_coord,
+        support_coord,
+        cruise_speed_mps=speed_mps,
+    )
     if len(profile) < 2:
         return False, original_terminal_coord, original_terminal_coord, initial_gap_m, final_gap_m
 
@@ -2604,7 +2906,11 @@ def _append_lah_terminal_support_route_inplace(
     if original_terminal_coord is None:
         return False, None, None, initial_gap_m, final_gap_m
     speed_mps = max(1.0, float(reposition_speed_mps))
-    profile = _terrain_profile_between_lah_coords(original_terminal_coord, support_coord)
+    profile = _terrain_profile_between_lah_coords(
+        original_terminal_coord,
+        support_coord,
+        cruise_speed_mps=speed_mps,
+    )
     if len(profile) < 2:
         return False, original_terminal_coord, original_terminal_coord, initial_gap_m, final_gap_m
     samples_to_add = [dict(sample) for sample in profile[1:]]
@@ -2738,7 +3044,15 @@ def _prepend_lah_continuity_route_inplace(
     join_coord = _coord_from_wp(waypoints[join_index])
     if join_coord is None:
         return False
-    profile = _terrain_profile_between_lah_coords(previous_support_terminal, join_coord)
+    try:
+        continuity_speed_mps = float(waypoints[join_index].get("speed", 40.0) or 40.0)
+    except Exception:
+        continuity_speed_mps = 40.0
+    profile = _terrain_profile_between_lah_coords(
+        previous_support_terminal,
+        join_coord,
+        cruise_speed_mps=continuity_speed_mps,
+    )
     if len(profile) < 2:
         return False
 
@@ -2795,6 +3109,17 @@ def _relocate_lah_terminal_to_cover_inplace(
 ) -> tuple[bool, dict | None, dict | None]:
     """Refine one preselected AREA-internal cover point with ETA UAV LOS."""
 
+    # Operational target cover is selected once from all branch threat
+    # directions.  Per-aircraft refinement would split that one hide site back
+    # into separate positions according to each aircraft's paired UAV.
+    if _is_shared_lah_terminal_cover(info):
+        waypoints = packet.get("lahWaypointList") or []
+        terminal = (
+            _coord_from_wp(waypoints[-1])
+            if isinstance(waypoints, list) and waypoints
+            else None
+        )
+        return False, terminal, terminal
     if not callable(select_lah_terminal_cover_point):
         return False, None, None
     area_rows = _lah_terminal_cover_area_rows(info)
@@ -3008,13 +3333,18 @@ def _apply_uav_terminal_proximity_plan(
             uav_packet = paired_uav_packet_by_lah.get(id(packet))
             uav_timeline = _uav_timeline_from_packet(uav_packet) if isinstance(uav_packet, dict) else []
             _maximize_lah_packet_speed_when_initially_far(packet, uav_timeline)
+            constraint_info = (cover_info_by_path or {}).get(
+                int(packet.get("pathID", 0) or 0)
+            )
+            if _is_shared_lah_terminal_cover(constraint_info):
+                previous_original_terminal = None
+                previous_support_terminal = None
+                continue
             adjusted, original_terminal, support_terminal, _initial_gap, _final_gap = (
                 _apply_lah_terminal_support_route_inplace(
                     packet,
                     uav_timeline,
-                    constraint_info=(cover_info_by_path or {}).get(
-                        int(packet.get("pathID", 0) or 0)
-                    ),
+                    constraint_info=constraint_info,
                 )
             )
             current_waypoints = packet.get("lahWaypointList") or []
@@ -3310,6 +3640,11 @@ def apply_uav_eta_follow_speed_plan(
                 continue
         except Exception:
             pass
+        enforce_lah_kinematic_feasibility_inplace(
+            pkt,
+            preserve_existing_timing=True,
+            allocate_waypoint_ids=None,
+        )
         _normalize_lah_waypoint_list_inplace(pkt.get("lahWaypointList") or [])
     return lah_packets
 
@@ -3518,6 +3853,13 @@ def build_lah_flight_plans_from_mrpk(
             ("aircraftID", aid),
             ("lahWaypointList", new_list),
         ]))
+
+    for pkt in out_packets:
+        enforce_lah_kinematic_feasibility_inplace(
+            pkt,
+            preserve_existing_timing=False,
+            allocate_waypoint_ids=False,
+        )
 
     if getattr(wp_alloc, "_use_global", False):
         total_wp_count = sum(len(pkt.get("lahWaypointList") or []) for pkt in out_packets)
@@ -3845,9 +4187,20 @@ def build_lah_flight_plans_fixed(
     route_start_by_aircraft: dict[int, object] | None = None,
     initial_hold_by_aircraft: dict[int, object] | None = None,
     wp_alloc: _WPAllocator | None = None,
+    runtime_payload: dict | None = None,
 ) -> List[dict]:
 
     reset_lah_mission_plan_timings()
+    if not isinstance(runtime_payload, dict) and callable(_load_runtime_settings):
+        try:
+            loaded_runtime_payload = _load_runtime_settings()
+            runtime_payload = (
+                loaded_runtime_payload
+                if isinstance(loaded_runtime_payload, dict)
+                else None
+            )
+        except Exception:
+            runtime_payload = None
     wp_alloc = wp_alloc or _WPAllocator()
     now_ms   = now_ms_since_2000()
     packets: List[dict] = []
@@ -3951,7 +4304,7 @@ def build_lah_flight_plans_fixed(
 
         unshifted_coords = list(coords)
         offset_north = 0.0
-        if not is_area_capstone:
+        if not is_area_capstone and not _is_shared_lah_terminal_cover(info):
             if aid == 2:
                 offset_north = 100.0      # +100 m north
             elif aid == 3:
@@ -4167,6 +4520,7 @@ def build_lah_flight_plans_fixed(
                 # LINE/AREA containment checker is available. Geometry-less
                 # coordinate/hold missions keep their original course.
                 prefer_low_terrain=callable(mission_segment_allowed),
+                runtime_payload=runtime_payload,
             )
             _prepend_reported_lah_start_altitude_inplace(
                 wplist,
@@ -4176,6 +4530,7 @@ def build_lah_flight_plans_fixed(
             wplist = _terrain_refine_existing_lah_waypoints(
                 wplist,
                 cruise_speed=cruise_speed,
+                runtime_payload=runtime_payload,
             )
 
         if wplist:
@@ -4211,6 +4566,12 @@ def build_lah_flight_plans_fixed(
         )
 
     _harmonize_lah_packet_boundary_altitudes_inplace(packets)
+    for pkt in packets:
+        enforce_lah_kinematic_feasibility_inplace(
+            pkt,
+            preserve_existing_timing=False,
+            allocate_waypoint_ids=False,
+        )
 
     if getattr(wp_alloc, "_use_global", False):
         total_wp_count = sum(len(pkt.get("lahWaypointList") or []) for pkt in packets)
